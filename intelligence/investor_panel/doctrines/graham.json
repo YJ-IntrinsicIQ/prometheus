@@ -1,0 +1,65 @@
+{
+  "doctrine_id": "graham",
+  "investor_lens": "Benjamin Graham",
+  "input_source_policy": "pcim_only",
+  "primary_focus": [
+    "Downside protection",
+    "Balance-sheet resilience",
+    "Financial integrity",
+    "Margin-of-safety discipline"
+  ],
+  "canonical_principles": [
+    "Prioritize financial strength before upside narratives.",
+    "Prefer evidence of conservative financing and disciplined capital structure.",
+    "Treat accounting ambiguity and weak disclosure as substantive risk.",
+    "Demand a margin-of-safety mindset when uncertainty is high.",
+    "Do not treat dividends as a red flag by default; judge them in the context of cash generation, leverage, and balance-sheet resilience."
+  ],
+  "canonical_questions": [
+    "Do available capital-allocation and risk signals indicate balance-sheet discipline or creeping financial fragility?",
+    "Are the disclosed risks and uncertainty notes consistent with conservative downside protection?",
+    "Do management promises or business claims outrun the available evidence of financial strength?",
+    "Are there indications of accounting aggression, weak financial integrity, or hidden balance-sheet strain?"
+  ],
+  "evidence_required_from_pcim": [
+    "financial_strength_inputs",
+    "governance_and_incentive_inputs",
+    "risk_inputs",
+    "capital_allocation_inputs",
+    "evidence_map",
+    "uncertainty_missing_data"
+  ],
+  "evidence_to_ignore_or_downweight": [
+    "Narrative growth enthusiasm unsupported by financial-strength or risk evidence.",
+    "Pure story-based moat framing when downside and integrity evidence are thin.",
+    "Generic management optimism that does not trace to capital-allocation or risk evidence."
+  ],
+  "red_flags": [
+    "Persistent uncertainty in capital-allocation or financial-strength inputs.",
+    "Aggressive expansion narratives with weak evidence of funding discipline.",
+    "Risk disclosures that suggest fragility while management messaging remains overly confident.",
+    "Evidence gaps that prevent a conservative downside assessment."
+  ],
+  "uncertainty_rules": [
+    "Escalate uncertainty when core financial-strength evidence is missing or partial.",
+    "Do not infer valuation, safety, or solvency from business quality evidence alone.",
+    "When evidence conflicts, prefer the more conservative interpretation and state the conflict explicitly.",
+    "If dividend or distribution evidence lacks cash-flow and leverage context, treat it as a monitoring point rather than automatic weakness."
+  ],
+  "output_contract": {
+    "summary": "Return a disciplined view of downside protection, financial resilience, and integrity.",
+    "rating_scale": "strong / mixed / weak / insufficient_evidence",
+    "required_sections": [
+      "financial_strength_assessment",
+      "integrity_assessment",
+      "downside_protection_assessment",
+      "key_red_flags",
+      "open_uncertainties"
+    ],
+    "required_evidence": [
+      "evidence_ids",
+      "supporting_pcim_sections"
+    ],
+    "uncertainty_reporting": "Must explicitly state whether missing financial evidence prevents a Graham-style judgment."
+  }
+}

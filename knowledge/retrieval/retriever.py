@@ -8,7 +8,7 @@ from .constants import DEFAULT_TOP_K, SEMANTIC_TOP_K, BM25_TOP_K
 from .embedder import embed_texts
 from .hybrid import merge_results
 from .indexer import ChunkIndexer
-from .loader import load_chunks_from_outputs
+from .loader import load_chunks
 from .schema import RetrievedChunk, RetrievalResult
 
 
@@ -19,15 +19,26 @@ class HybridRetriever:
         self._bm25 = None
 
     def build_index(self, chunks: Optional[List[Dict[str, Any]]] = None) -> List[str]:
-        documents = chunks or load_chunks_from_outputs()
+        documents = chunks
         self._documents = [chunk["text"] for chunk in documents]
         self._bm25 = BM25(self._documents)
         self.indexer.clear()
         return self.indexer.index_chunks(documents)
 
+    def build_company_index(
+        self,
+        company: str,
+        year: str,
+    ):
+        chunks = load_chunks(company, year)
+        return self.build_index(chunks)
+
     def search(self, query: str, top_k: int = DEFAULT_TOP_K) -> RetrievalResult:
         if not self._documents:
-            self.build_index()
+            raise RuntimeError(
+                "Retriever index has not been built. "
+                "Call build_company_index(company, year) before retrieve()."
+            )
 
         semantic_results = self._semantic_search(query, top_k=SEMANTIC_TOP_K)
         bm25_results = self._bm25_search(query, top_k=BM25_TOP_K)
@@ -44,6 +55,20 @@ class HybridRetriever:
         ]
         return RetrievalResult(company="unknown", module="retrieval", chunks=chunks)
 
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = DEFAULT_TOP_K,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> RetrievalResult:
+        """
+        Future-proof retrieval API.
+
+        Currently delegates to hybrid search.
+        Filters are reserved for future metadata-based retrieval.
+        """
+        return self.search(query=query, top_k=top_k)
+
     def _semantic_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
         embedding = embed_texts([query])[0]
         result = self.indexer.collection.query(query_embeddings=[embedding], n_results=top_k)
@@ -59,7 +84,10 @@ class HybridRetriever:
 
     def _bm25_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
         if self._bm25 is None:
-            self.build_index()
+            raise RuntimeError(
+                "BM25 index has not been built. "
+                "Call build_company_index(company, year) first."
+            )
 
         ranked = self._bm25.scores(query)
         ranked = sorted(ranked, key=lambda item: item[1], reverse=True)[:top_k]

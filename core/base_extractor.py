@@ -1,14 +1,17 @@
 import json
 import os
-from pathlib import Path
-
-from dotenv import load_dotenv
-from groq import Groq
 
 from core.context_paths import (
     discovery_path,
     extraction_path,
 )
+from knowledge.ai import get_llm
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional local dependency
+    def load_dotenv():
+        return False
 
 load_dotenv()
 
@@ -26,28 +29,37 @@ class BaseExtractor:
 
         self.prompt = prompt
         self.output_key = output_key
-        self.client = Groq(
-            api_key=os.getenv("GROQ_API_KEY")
-        )
+        self.llm = get_llm()
+        self.model = getattr(self.llm, "model", "")
+        self.max_batch_chars = 4000
+
+    def _resolve_max_items_cap(self):
+        raw_value = os.getenv("EXTRACTOR_MAX_ITEMS")
+        if raw_value is None or not raw_value.strip():
+            return None
+
+        try:
+            max_items = int(raw_value)
+        except ValueError as exc:
+            raise ValueError(
+                "EXTRACTOR_MAX_ITEMS must be an integer when set"
+            ) from exc
+
+        if max_items <= 0:
+            raise ValueError(
+                "EXTRACTOR_MAX_ITEMS must be greater than 0 when set"
+            )
+
+        return max_items
 
     def extract(self, chunk_text):
-        response = self.client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = self.llm.generate(
+            prompt=chunk_text,
+            system_prompt=self.prompt,
             temperature=0,
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": self.prompt,
-                },
-                {
-                    "role": "user",
-                    "content": chunk_text,
-                },
-            ],
+            response_schema={"type": "object"},
         )
-
-        content = response.choices[0].message.content
+        content = response.text
 
         if not content or not content.strip():
             raise ValueError("Empty response from model")
@@ -61,6 +73,72 @@ class BaseExtractor:
 
         return json.loads(text)
 
+    def _split_oversized_part(self, part):
+        if len(part) <= self.max_batch_chars:
+            return [part]
+
+        slices = []
+        start = 0
+
+        while start < len(part):
+            end = min(
+                start + self.max_batch_chars,
+                len(part),
+            )
+            slices.append(
+                part[start:end].strip()
+            )
+            start = end
+
+        return [slice_text for slice_text in slices if slice_text]
+
+    def _build_chunk_batches(self, chunk_text):
+        text = (chunk_text or "").strip()
+        if not text:
+            return []
+
+        if len(text) <= self.max_batch_chars:
+            return [text]
+
+        parts = [
+            part.strip()
+            for part in text.split("\n\n")
+            if part.strip()
+        ]
+        if not parts:
+            return self._split_oversized_part(text)
+
+        batches = []
+        current_batch = []
+        current_length = 0
+
+        for part in parts:
+            for segment in self._split_oversized_part(part):
+                separator_length = 2 if current_batch else 0
+                projected_length = (
+                    current_length
+                    + separator_length
+                    + len(segment)
+                )
+
+                if current_batch and projected_length > self.max_batch_chars:
+                    batches.append(
+                        "\n\n".join(current_batch)
+                    )
+                    current_batch = [segment]
+                    current_length = len(segment)
+                    continue
+
+                current_batch.append(segment)
+                current_length = projected_length
+
+        if current_batch:
+            batches.append(
+                "\n\n".join(current_batch)
+            )
+
+        return batches or self._split_oversized_part(text)
+
     def run(self):
         with open(
             self.input_file,
@@ -69,12 +147,66 @@ class BaseExtractor:
         ) as f:
             chunks = json.load(f)
 
-        extracted_items = []
-
-        for item in chunks:
-            result = self.extract(
-                item["chunk"]
+        total_input_items = len(chunks)
+        max_items = self._resolve_max_items_cap()
+        if max_items is not None and total_input_items > max_items:
+            print(
+                f"[EXTRACT] {self.input_file.name}: "
+                f"total input items={total_input_items}, "
+                f"capped to {max_items} for test run"
             )
+            chunks = chunks[:max_items]
+
+        extracted_items = []
+        chunk_batches = []
+        for item_index, item in enumerate(chunks):
+            item_batches = self._build_chunk_batches(
+                item.get("chunk", "")
+            )
+            for batch_index, chunk_text in enumerate(
+                item_batches,
+                start=1,
+            ):
+                chunk_batches.append(
+                    {
+                        "item_index": item_index,
+                        "item_count": len(item_batches),
+                        "item": item,
+                        "chunk_text": chunk_text,
+                        "item_batch_index": batch_index,
+                    }
+                )
+
+        print(
+            f"[EXTRACT] {self.input_file.name}: "
+            f"total input items={total_input_items}, "
+            f"items processed={len(chunks)}, "
+            f"total batches={len(chunk_batches)}"
+        )
+
+        for batch_number, batch in enumerate(
+            chunk_batches,
+            start=1,
+        ):
+            item = batch["item"]
+            print(
+                f"[EXTRACT] batch {batch_number}/{len(chunk_batches)} "
+                f"(item {batch['item_index'] + 1}/{len(chunks)}, "
+                f"part {batch['item_batch_index']}/{batch['item_count']})"
+            )
+
+            try:
+                result = self.extract(
+                    batch["chunk_text"]
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Extraction failed for {self.input_file.name} "
+                    f"at batch {batch_number}/{len(chunk_batches)} "
+                    f"(item {batch['item_index'] + 1}/{len(chunks)}, "
+                    f"part {batch['item_batch_index']}/{batch['item_count']}, "
+                    f"page={item.get('page')})"
+                ) from exc
 
             items = result.get(
                 self.output_key,

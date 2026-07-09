@@ -69,19 +69,34 @@ class ChunkIndexer:
             metadata["text_length"] = len(chunk["text"])
             metadatas.append(metadata)
 
-        self.collection.add(
-            embeddings=embeddings,
-            documents=texts,
-            metadatas=metadatas,
-            ids=ids,
-        )
+        try:
+            self.collection.add(
+                embeddings=embeddings,
+                documents=texts,
+                metadatas=metadatas,
+                ids=ids,
+            )
+        except Exception as exc:
+            if exc.__class__.__name__ != "NotFoundError":
+                raise
+            self.collection = self.client.get_or_create_collection(name=COLLECTION_NAME)
+            self.collection.add(
+                embeddings=embeddings,
+                documents=texts,
+                metadatas=metadatas,
+                ids=ids,
+            )
         return ids
 
     def clear(self) -> None:
         if self.client is None:
             self.collection = _InMemoryCollection()
             return
-        self.client.delete_collection(name=COLLECTION_NAME)
+        try:
+            self.client.delete_collection(name=COLLECTION_NAME)
+        except Exception as exc:
+            if exc.__class__.__name__ != "NotFoundError":
+                raise
         self.collection = self.client.get_or_create_collection(name=COLLECTION_NAME)
 
 

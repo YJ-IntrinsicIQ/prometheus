@@ -2,6 +2,7 @@ import json
 
 from core.context_paths import (
     extraction_path,
+    intelligence_path,
 )
 
 from pipelines.pipeline_context import (
@@ -30,6 +31,7 @@ from knowledge.evidence import (
 from knowledge.entity_matcher import (
     find_matching_entity,
 )
+from knowledge.question_engine import QuestionRegistry
 
 def get_company():
 
@@ -51,6 +53,23 @@ def load_json(filename):
     if not path.exists():
 
         return []
+
+    with open(
+        path,
+        "r",
+        encoding="utf-8",
+    ) as f:
+
+        return json.load(f)
+
+
+def load_intelligence_json(filename):
+
+    path = intelligence_path(filename)
+
+    if not path.exists():
+
+        return {}
 
     with open(
         path,
@@ -95,6 +114,16 @@ def load_clean_data():
             ),
     }
 
+
+def load_business_artifacts():
+
+    return {
+        "business_blueprint": load_intelligence_json("business_blueprint.json"),
+        "business_classification": load_intelligence_json("business_classification.json"),
+        "module_results": load_intelligence_json("module_results.json"),
+        "discovery_runtime": load_intelligence_json("discovery_runtime.json"),
+    }
+
 # ============================================================
 # Metadata
 # ============================================================
@@ -132,6 +161,122 @@ def register_document(cim):
     )
 
     return cim
+
+
+def populate_business_section(cim, artifacts):
+
+    business = cim["business"]
+    blueprint = artifacts.get("business_blueprint") or {}
+    classification = artifacts.get("business_classification") or {}
+    module_results = artifacts.get("module_results") or {}
+    discovery_runtime = artifacts.get("discovery_runtime") or {}
+
+    business_understanding = blueprint.get("business_understanding") or {}
+    characteristics = blueprint.get("characteristics") or []
+    dna_values = classification.get("business_dnas") or []
+    question_modules = _resolve_question_modules(
+        classification.get("question_modules") or [],
+        dna_values,
+    )
+    executed_modules = discovery_runtime.get("executed_modules") or []
+
+    report_template = _resolve_report_template(
+        classification.get("report_template"),
+        dna_values,
+    )
+
+    if dna_values or question_modules or report_template:
+        business["dna"] = {
+            "business_dnas": dna_values,
+            "question_modules": question_modules,
+            "report_template": report_template,
+        }
+
+    industry_profile = {}
+    if business_understanding.get("business_summary"):
+        industry_profile["business_summary"] = business_understanding["business_summary"]
+    if business_understanding.get("business_model"):
+        industry_profile["business_model"] = business_understanding["business_model"]
+    if business_understanding.get("value_creation"):
+        industry_profile["value_creation"] = business_understanding["value_creation"]
+    if characteristics:
+        industry_profile["characteristics"] = [
+            item.get("name")
+            for item in characteristics
+            if isinstance(item, dict) and item.get("name")
+        ]
+    metadata = blueprint.get("metadata") or {}
+    if metadata.get("version"):
+        industry_profile["blueprint_version"] = metadata.get("version")
+    if metadata.get("confidence") is not None:
+        industry_profile["confidence"] = metadata.get("confidence")
+    if industry_profile:
+        business["industry_profile"] = industry_profile
+
+    competitive_position = {}
+    if business_understanding.get("competitive_position"):
+        competitive_position["summary"] = business_understanding["competitive_position"]
+    supporting_modules = []
+    if executed_modules:
+        supporting_modules.extend(executed_modules)
+    elif isinstance(module_results, dict):
+        module_results_items = module_results.get("module_results") or []
+        if module_results_items:
+            supporting_modules.extend([
+                item.get("module_id")
+                for item in module_results_items
+                if isinstance(item, dict) and item.get("module_id")
+            ])
+    supporting_modules.extend(question_modules)
+    supporting_modules = list(
+        dict.fromkeys(
+            module_id
+            for module_id in supporting_modules
+            if module_id
+        )
+    )
+    if supporting_modules:
+        competitive_position["supporting_modules"] = supporting_modules
+    if competitive_position:
+        business["competitive_position"] = competitive_position
+
+    return cim
+
+
+def _resolve_question_modules(current_modules, business_dnas):
+    registry = QuestionRegistry()
+    resolved = []
+
+    for module_id in current_modules or []:
+        resolved_id = registry.resolve_module_id(module_id)
+        if resolved_id:
+            resolved.append(resolved_id)
+
+    for module in registry.modules_for_dnas(business_dnas or []):
+        resolved.append(module.module_id)
+
+    return list(dict.fromkeys(module_id for module_id in resolved if module_id))
+
+
+def _resolve_report_template(current_template, business_dnas):
+
+    if current_template and current_template != "generic_v1":
+        return current_template
+
+    dna_set = set(
+        business_dnas or []
+    )
+
+    if "Semiconductor" in dna_set:
+        return "semiconductor_v1"
+
+    if dna_set.intersection({"IP Library", "Platform Monetization", "Consumer"}):
+        return "media_v1"
+
+    if "Manufacturing" in dna_set:
+        return "manufacturing_v1"
+
+    return current_template
 
 # ============================================================
 # Entity Builders
@@ -407,6 +552,12 @@ def build_company_intelligence():
     register_document(cim)
 
     clean_data = load_clean_data()
+    business_artifacts = load_business_artifacts()
+
+    populate_business_section(
+        cim,
+        business_artifacts,
+    )
 
     process_projects(
         cim,

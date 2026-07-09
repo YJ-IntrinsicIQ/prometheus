@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
 
 from knowledge.business_blueprint import BusinessBlueprint
 
@@ -9,7 +9,60 @@ class ValidationError(ValueError):
     pass
 
 
-def validate_blueprint_payload(payload: Dict[str, Any]) -> BusinessBlueprint:
+def _validate_llm_classification_payload(payload: Any) -> Optional[Dict[str, Any]]:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ValidationError("classification must be an object")
+
+    selected = payload.get("selected_dnas", [])
+    if not isinstance(selected, list):
+        raise ValidationError("classification.selected_dnas must be a list")
+    for index, item in enumerate(selected):
+        if not isinstance(item, dict):
+            raise ValidationError(f"classification.selected_dnas[{index}] must be an object")
+        name = (item.get("name") or "").strip()
+        if not name:
+            raise ValidationError(f"classification.selected_dnas[{index}].name is required")
+        confidence = item.get("confidence")
+        if confidence is not None and (
+            not isinstance(confidence, (int, float)) or not 0 <= float(confidence) <= 1
+        ):
+            raise ValidationError(
+                f"classification.selected_dnas[{index}].confidence must be between 0 and 1"
+            )
+
+    rejected = payload.get("rejected_dnas", [])
+    if not isinstance(rejected, list):
+        raise ValidationError("classification.rejected_dnas must be a list")
+    for index, item in enumerate(rejected):
+        if not isinstance(item, dict):
+            raise ValidationError(f"classification.rejected_dnas[{index}] must be an object")
+        name = (item.get("name") or "").strip()
+        reason = (item.get("reason") or "").strip()
+        if not name:
+            raise ValidationError(f"classification.rejected_dnas[{index}].name is required")
+        if not reason:
+            raise ValidationError(f"classification.rejected_dnas[{index}].reason is required")
+
+    rationale = payload.get("rationale", [])
+    if rationale is not None and not isinstance(rationale, list):
+        raise ValidationError("classification.rationale must be a list")
+
+    evidence_used = payload.get("evidence_used", [])
+    if evidence_used is not None and not isinstance(evidence_used, list):
+        raise ValidationError("classification.evidence_used must be a list")
+
+    confidence = payload.get("confidence")
+    if confidence is not None and (
+        not isinstance(confidence, (int, float)) or not 0 <= float(confidence) <= 1
+    ):
+        raise ValidationError("classification.confidence must be between 0 and 1")
+
+    return payload
+
+
+def validate_blueprint_payload(payload: Dict[str, Any]) -> Tuple[BusinessBlueprint, Optional[Dict[str, Any]]]:
     if not isinstance(payload, dict):
         raise ValidationError("payload must be an object")
 
@@ -61,4 +114,5 @@ def validate_blueprint_payload(payload: Dict[str, Any]) -> BusinessBlueprint:
         if not statement:
             raise ValidationError(f"reasoning[{index}].statement is required")
 
-    return BusinessBlueprint.from_dict(payload)
+    classification = _validate_llm_classification_payload(payload.get("classification"))
+    return BusinessBlueprint.from_dict(payload), classification

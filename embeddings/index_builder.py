@@ -17,8 +17,10 @@ sys.path.insert(0, str(ROOT))
 import chromadb  # noqa: E402
 from sentence_transformers import SentenceTransformer  # noqa: E402
 
+from core.context_paths import extraction_path  # noqa: E402
 from core.document_registry import (  # noqa: E402
     DocumentRegistry,
+    metadata_filter,
     normalize_company,
     normalize_document_type,
     normalize_year,
@@ -125,6 +127,76 @@ def chunk_metadata(
     }
 
 
+def indexed_chunk_count(
+    company=None,
+    year=None,
+    document_type="annual_report",
+):
+    client = chromadb.PersistentClient(
+        path=CHROMA_PATH
+    )
+
+    try:
+        collection = client.get_collection(
+            name=COLLECTION_NAME
+        )
+    except Exception:
+        return 0
+
+    where = metadata_filter(
+        company=company,
+        year=year,
+        document_type=document_type,
+    )
+
+    payload = collection.get(
+        where=where,
+        include=["metadatas"],
+    )
+
+    return len(
+        payload.get("ids", [])
+    )
+
+
+def ensure_company_year_index(
+    pdf_path,
+    company=None,
+    year=None,
+    document_type="annual_report",
+):
+    existing = indexed_chunk_count(
+        company=company,
+        year=year,
+        document_type=document_type,
+    )
+
+    if existing > 0:
+        print(
+            f"Index already present for {company} {year} "
+            f"({existing} chunks)"
+        )
+        return existing
+
+    print(
+        f"Index missing for {company} {year}; "
+        f"building active company/year slice"
+    )
+
+    build_index(
+        pdf_path=pdf_path,
+        company=company,
+        year=year,
+        document_type=document_type,
+    )
+
+    return indexed_chunk_count(
+        company=company,
+        year=year,
+        document_type=document_type,
+    )
+
+
 def build_index(
     pdf_path=PDF_PATH,
     company=None,
@@ -145,7 +217,13 @@ def build_index(
     print("Loading PDF...")
 
     pages = extract_pages(pdf_path)
-    chunks = chunk_pages(pages)
+    chunks = chunk_pages(
+        pages,
+        company=document_metadata["company"],
+        year=document_metadata["year"],
+        document_type=document_metadata["document_type"],
+        output_path=extraction_path("clean_chunks.json"),
+    )
 
     print(
         f"Chunks before filtering: {len(chunks)}"
