@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "throughput_or_production", "metric_group": "scale", "aliases": ["production", "throughput"], "why_it_matters": "Core utilization and scale metric across energy assets."}
+  ]
+}

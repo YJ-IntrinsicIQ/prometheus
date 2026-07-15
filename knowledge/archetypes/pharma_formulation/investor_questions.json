@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "pharma_formulation_pipeline", "question": "Is growth supported by a credible launch and approval pipeline with compliant plants?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["filings", "approvals", "regulatory observations"]}
+  ]
+}

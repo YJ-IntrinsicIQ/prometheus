@@ -32,6 +32,7 @@ from knowledge.entity_matcher import (
     find_matching_entity,
 )
 from knowledge.question_engine import QuestionRegistry
+from knowledge.business_identity import build_business_identity_manifest
 
 def get_company():
 
@@ -191,6 +192,10 @@ def populate_business_section(cim, artifacts):
             "question_modules": question_modules,
             "report_template": report_template,
         }
+    business["identity_manifest"] = build_business_identity_manifest(
+        blueprint,
+        classification,
+    )
 
     industry_profile = {}
     if business_understanding.get("business_summary"):

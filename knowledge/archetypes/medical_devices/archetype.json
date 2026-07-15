@@ -1,0 +1,9 @@
+{
+  "archetype_id": "medical_devices",
+  "display_name": "Medical Devices",
+  "parent_archetypes": ["regulated_business", "capex_heavy_manufacturing"],
+  "description": "Medical-device manufacturing and distribution businesses.",
+  "applies_to": ["device makers", "implant manufacturers"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

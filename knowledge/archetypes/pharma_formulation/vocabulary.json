@@ -1,0 +1,7 @@
+{
+  "core_terms": ["formulation", "dosage", "generic", "branded generic"],
+  "synonyms": ["regulatory filing", "product approval", "therapy area"],
+  "product_terms": ["tablet", "capsule", "injectable"],
+  "operating_terms": ["market authorization", "field force", "plant approval"],
+  "financial_terms": ["product mix", "margin expansion", "launch pipeline"]
+}

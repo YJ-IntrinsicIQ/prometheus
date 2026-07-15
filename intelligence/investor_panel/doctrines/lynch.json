@@ -23,7 +23,10 @@
   ],
   "evidence_required_from_pcim": [
     "business_understanding",
+    "management_quality_inputs",
     "growth_execution_inputs",
+    "simplicity_and_story_inputs",
+    "multi_year_inputs",
     "story_vs_numbers_inputs",
     "evidence_map",
     "uncertainty_missing_data"

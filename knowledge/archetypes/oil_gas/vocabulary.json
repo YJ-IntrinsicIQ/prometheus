@@ -1,0 +1,7 @@
+{
+  "core_terms": ["oil", "gas", "refining", "pipeline"],
+  "synonyms": ["exploration", "throughput", "marketing margin"],
+  "product_terms": ["crude", "lng", "petroleum products"],
+  "operating_terms": ["throughput", "refinery utilization", "production"],
+  "financial_terms": ["gross refining margin", "upstream realization", "inventory gain"]
+}

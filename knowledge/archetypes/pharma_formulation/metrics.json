@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "filings_and_approvals", "metric_group": "innovation", "aliases": ["filings", "approvals"], "why_it_matters": "Launch pipeline and regulatory execution matter for pharma growth."}
+  ]
+}

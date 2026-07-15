@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "fuel_supply_risk", "risk_group": "operations", "keywords": ["fuel linkage", "coal supply", "gas availability"], "description": "Fuel access and input-cost risk in power generation."}
+  ]
+}

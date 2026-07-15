@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "power_equipment_backlog", "question": "How visible is demand through order backlog and tender pipeline?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["order book disclosures", "execution commentary"]}
+  ]
+}

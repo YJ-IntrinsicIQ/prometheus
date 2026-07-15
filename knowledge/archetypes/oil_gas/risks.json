@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "energy_price_risk", "risk_group": "commercial", "keywords": ["crude price", "gas price", "inventory loss", "margin volatility"], "description": "Pricing and margin volatility in energy markets."}
+  ]
+}

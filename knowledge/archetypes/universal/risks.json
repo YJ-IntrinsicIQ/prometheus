@@ -1,0 +1,18 @@
+{
+  "risks": [
+    {"canonical_risk": "internal_control_risk", "risk_group": "governance", "priority": 180, "keywords": ["internal control", "internal controls", "deficiencies in internal controls", "operational risk internal controls"], "description": "Weaknesses or deficiencies in internal controls and control design."},
+    {"canonical_risk": "related_party_risk", "risk_group": "governance", "priority": 175, "keywords": ["related party transactions", "related party transaction", "related party", "conflict of interest"], "description": "Governance risks arising from related-party dependence or conflicts."},
+    {"canonical_risk": "regulatory_risk", "risk_group": "governance", "priority": 170, "keywords": ["non compliance", "non-compliance", "sebi", "companies act", "fema", "statutory", "regulatory", "tax litigation", "compliance breach"], "description": "Regulatory, statutory, tax, or compliance exposure."},
+    {"canonical_risk": "derivative_hedging_risk", "risk_group": "financial", "priority": 160, "keywords": ["forward contracts", "forward contract", "derivative loss", "derivative risk", "hedging", "derivative contracts"], "description": "Derivative and hedging losses or control failures."},
+    {"canonical_risk": "credit_risk", "risk_group": "financial", "priority": 120, "keywords": ["credit risk", "receivables", "counterparty default"], "description": "Risk of customer or counterparty non-payment."},
+    {"canonical_risk": "liquidity_risk", "risk_group": "financial", "priority": 165, "keywords": ["liquidity risk", "refinancing", "short term borrowings", "borrowings and other liabilities", "maturity concentration"], "description": "Risk of funding or refinancing strain."},
+    {"canonical_risk": "interest_rate_risk", "risk_group": "financial", "priority": 140, "keywords": ["interest rate risk", "variable rates", "rate risk", "floating rate"], "description": "Exposure to interest-rate movements."},
+    {"canonical_risk": "foreign_exchange_risk", "risk_group": "financial", "priority": 110, "keywords": ["foreign exchange", "foreign currency", "fx risk", "currency exposure"], "description": "Exposure to currency volatility."},
+    {"canonical_risk": "execution_risk", "risk_group": "operations", "priority": 100, "keywords": ["execution risk", "project delay", "delivery risk", "implementation risk"], "description": "Risk of failing to execute plans effectively."},
+    {"canonical_risk": "customer_concentration_risk", "risk_group": "commercial", "priority": 100, "keywords": ["customer concentration", "customer dependency", "single customer"], "description": "Dependence on a narrow customer base."},
+    {"canonical_risk": "supply_chain_risk", "risk_group": "operations", "priority": 100, "keywords": ["supply chain", "raw material", "supplier concentration", "logistics"], "description": "Disruption in sourcing or logistics."},
+    {"canonical_risk": "governance_risk", "risk_group": "governance", "priority": 90, "keywords": ["governance", "board oversight", "fraud", "ethical concerns"], "description": "Failures in governance or oversight."},
+    {"canonical_risk": "risk_management_weakness", "risk_group": "governance", "priority": 130, "keywords": ["risk management governance risk", "risk management weakness"], "description": "Weakness in risk-governance design or execution."},
+    {"canonical_risk": "market_risk", "risk_group": "financial", "priority": 50, "keywords": ["market risk"], "description": "Broad market and pricing exposure."}
+  ]
+}

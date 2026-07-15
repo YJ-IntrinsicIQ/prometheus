@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "throughput_or_transaction_scale", "metric_group": "platform_scale", "aliases": ["throughput", "transactions processed", "message volume"], "why_it_matters": "Shows scaled adoption of trust or compliance infrastructure."}
+  ]
+}

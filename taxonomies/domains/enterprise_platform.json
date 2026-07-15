@@ -1,0 +1,14 @@
+{
+  "themes": [
+    {
+      "canonical_theme": "platform_operations",
+      "theme_group": "operations",
+      "keywords": ["platform operations", "api-first", "platform integration", "workflow platform", "enterprise messaging"]
+    },
+    {
+      "canonical_theme": "customer_embeddedness",
+      "theme_group": "commercial",
+      "keywords": ["customer embeddedness", "switching costs", "enterprise deployments", "partner integrations"]
+    }
+  ]
+}

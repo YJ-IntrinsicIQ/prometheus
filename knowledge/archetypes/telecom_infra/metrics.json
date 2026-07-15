@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "tenancy_ratio", "metric_group": "utilization", "aliases": ["co-location ratio", "tenancy"], "why_it_matters": "Utilization and operating leverage in shared telecom assets."}
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "archetype_id": "diagnostics",
+  "display_name": "Diagnostics",
+  "parent_archetypes": ["regulated_business"],
+  "description": "Diagnostics and pathology businesses driven by test volumes, network reach, and quality controls.",
+  "applies_to": ["diagnostics chains", "pathology labs"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

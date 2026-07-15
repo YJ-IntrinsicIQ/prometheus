@@ -1,0 +1,9 @@
+{
+  "archetype_id": "universal",
+  "display_name": "Universal Business Signals",
+  "parent_archetypes": [],
+  "description": "Cross-industry business signals used by the multi-year memory engine.",
+  "applies_to": ["all companies"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

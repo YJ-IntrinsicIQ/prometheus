@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "utilization_or_volume", "metric_group": "scale", "aliases": ["volume growth", "capacity utilization"], "why_it_matters": "Volume and utilization drive cement operating leverage."}
+  ]
+}

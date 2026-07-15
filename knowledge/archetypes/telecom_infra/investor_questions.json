@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "telecom_infra_utilization", "question": "Is infrastructure rollout translating into durable tenancy and utilization?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["tenancy disclosures", "rollout commentary", "operator mix"]}
+  ]
+}

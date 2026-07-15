@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "tenant_concentration_risk", "risk_group": "commercial", "keywords": ["tenant concentration", "operator dependency", "tenancy churn"], "description": "Dependence on a narrow set of telecom operators."}
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "channel_reach_or_market_share", "metric_group": "commercial", "aliases": ["dealer count", "market share"], "why_it_matters": "Distribution reach and market share shape seasonal demand capture."}
+  ]
+}

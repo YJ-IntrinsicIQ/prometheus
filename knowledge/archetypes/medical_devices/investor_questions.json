@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "medical_device_adoption", "question": "Are device approvals and clinical adoption translating into durable scale?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["approval commentary", "sales/adoption signals", "capacity additions"]}
+  ]
+}

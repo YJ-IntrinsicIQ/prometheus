@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "recurring_revenue", "metric_group": "monetization", "aliases": ["arr", "mrr", "subscription revenue"], "why_it_matters": "Core recurring revenue base for software businesses."}
+  ]
+}

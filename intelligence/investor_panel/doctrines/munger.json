@@ -26,6 +26,7 @@
     "risk_inputs",
     "management_quality_inputs",
     "capital_allocation_inputs",
+    "multi_year_inputs",
     "evidence_map",
     "uncertainty_missing_data"
   ],

@@ -1,0 +1,17 @@
+{
+  "categories": [
+    {"category": "cwip", "keywords": ["capital work in progress", "cwip", "projects in progress"], "investor_relevance": "Signals unfinished capex pipeline."},
+    {"category": "share_split", "keywords": ["share subdivision", "sub-division", "share split", "split of equity shares"], "investor_relevance": "Capital structure action, not productive capex."},
+    {"category": "treasury_investment", "keywords": ["mutual fund", "debt mutual fund", "treasury investment", "liquidity management investment"], "investor_relevance": "Cash parking and liquidity management."},
+    {"category": "dividend", "keywords": ["dividend", "interim dividend", "final dividend"], "investor_relevance": "Return of capital to shareholders."},
+    {"category": "buyback", "keywords": ["buyback", "share repurchase", "share buyback"], "investor_relevance": "Repurchase of equity capital."},
+    {"category": "equity_issuance", "keywords": ["equity issuance", "preferential issue", "rights issue", "qip", "share issuance"], "investor_relevance": "External equity funding or dilution."},
+    {"category": "esop_rsu", "keywords": ["esop", "rsu", "share-based payment", "stock option", "equity-settled"], "investor_relevance": "Equity compensation and dilution."},
+    {"category": "debt_borrowing", "keywords": ["borrowing", "term loan", "bank loan", "debenture", "working capital loan", "credit facility"], "investor_relevance": "Leverage and refinancing profile."},
+    {"category": "acquisition", "keywords": ["acquisition", "merger", "takeover", "purchase of business"], "investor_relevance": "Strategic inorganic deployment."},
+    {"category": "related_party_transaction", "keywords": ["related party", "promoter entity", "associate company", "subsidiary transaction"], "investor_relevance": "Potential governance sensitivity."},
+    {"category": "loan_or_advance", "keywords": ["loan", "advance", "inter-corporate deposit", "loan given"], "investor_relevance": "Capital extended outside core operations."},
+    {"category": "auditor_observation", "keywords": ["auditor", "qualified opinion", "emphasis of matter", "key audit matter"], "investor_relevance": "Independent assurance signal."},
+    {"category": "capex", "keywords": ["capital expenditure", "capex", "plant", "machinery", "factory", "land", "construction", "capacity expansion"], "investor_relevance": "Productive long-term investment."}
+  ]
+}

@@ -27,6 +27,8 @@ Canonical architecture, summarized:
 7. `knowledge/retrieval` provides supporting chunks.
 8. Discovery runtime executes module extraction.
 9. CIM / PCIM intelligence artifacts are written.
+10. `multi_year_memory` derives order-independent company-level history from yearly intelligence snapshots.
+11. `knowledge/archetypes` provides the curated deterministic registry and pack vocabulary used to normalize multi-year themes, risks, metrics, and capital-allocation signals.
 
 Artifact roles:
 
@@ -34,11 +36,13 @@ Artifact roles:
 - `company_memory`: transient runtime artifact.
 - `business_blueprint`: reasoning artifact.
 - `business_classification`: classification artifact.
+- `knowledge/archetypes`: curated archetype-pack registry activated by Business DNA for deterministic normalization.
 
 ## 4. Canonical Pipelines
 
 - Production pipeline: `pipelines/run_company_pipeline.py`.
 - Business-understanding stage: `knowledge/business_understanding/pipeline.py`.
+- Multi-year company-memory stage: `multi_year_memory` via `knowledge/company_memory/multi_year.py`.
 - Experimental pipeline: `run_business_pipeline.py`.
 - Merge target: validated work from `run_business_pipeline.py` merges into `pipelines/run_company_pipeline.py`.
 
@@ -56,6 +60,7 @@ Artifact roles:
 | `knowledge.module_extractor` | Integrated |
 | `knowledge.discovery_runtime` | Integrated |
 | `knowledge.business_understanding` | Integrated |
+| `knowledge.archetypes` | Integrated |
 | `knowledge.cim*` / PCIM helpers | Production |
 | `scripts.smart_chunker` | Production |
 | `scripts/chunker.py` | Deprecated |
@@ -98,4 +103,3 @@ Merge validated experimental pipeline behavior into `pipelines/run_company_pipel
 ## 10. Next Milestone
 
 Prepare the implementation plan for merging validated behavior from `run_business_pipeline.py` into `pipelines/run_company_pipeline.py`.
-

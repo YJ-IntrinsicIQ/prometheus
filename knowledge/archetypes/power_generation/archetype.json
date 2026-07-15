@@ -1,0 +1,9 @@
+{
+  "archetype_id": "power_generation",
+  "display_name": "Power Generation",
+  "parent_archetypes": ["regulated_business", "capex_heavy_manufacturing"],
+  "description": "Power-generation businesses with plant, fuel, and dispatch economics.",
+  "applies_to": ["generation utilities"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

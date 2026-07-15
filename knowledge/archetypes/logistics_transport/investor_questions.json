@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "logistics_network_quality", "question": "Is network expansion improving utilization and service density?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["fleet/network disclosures", "utilization commentary", "route expansion"]}
+  ]
+}

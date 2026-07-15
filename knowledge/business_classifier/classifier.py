@@ -82,6 +82,12 @@ class BusinessClassifier:
             characteristics,
             texts=context_texts,
         )
+        classification.update(
+            self._build_blueprint_extras(
+                blueprint,
+                classification.get("business_dnas", []),
+            )
+        )
         validate_classification(classification)
         return classification
 
@@ -121,8 +127,54 @@ class BusinessClassifier:
                 )
             )
 
+        for key, value in self._build_blueprint_extras(
+            blueprint,
+            classification.get("business_dnas", []),
+        ).items():
+            classification.setdefault(key, value)
+
         validate_classification(classification)
         return classification
+
+    @staticmethod
+    def _build_blueprint_extras(
+        blueprint: BusinessBlueprint,
+        selected_dnas: List[str],
+    ) -> Dict[str, Any]:
+        extras: Dict[str, Any] = {}
+        candidate_signals = {item.name: item for item in blueprint.candidate_dna_signals if item.name}
+
+        rationale: List[str] = []
+        for dna in selected_dnas:
+            signal = candidate_signals.get(dna)
+            if signal and signal.supporting_reason:
+                rationale.append(f"{dna}: {signal.supporting_reason}")
+        if not rationale and selected_dnas:
+            rationale.append(
+                "Selected Business DNAs were inferred from the business summary, business model, value creation, and evidence-backed characteristics."
+            )
+        if rationale:
+            extras["rationale"] = rationale
+
+        evidence_used: List[str] = []
+        if blueprint.business_understanding.business_summary:
+            evidence_used.append(blueprint.business_understanding.business_summary)
+        if blueprint.business_understanding.business_model:
+            evidence_used.append(blueprint.business_understanding.business_model)
+        evidence_used.extend(item.name for item in blueprint.characteristics if item.name)
+        if evidence_used:
+            extras["evidence_used"] = list(dict.fromkeys(evidence_used[:8]))
+
+        if "confidence" not in extras and selected_dnas:
+            confidence_values = [
+                candidate_signals[dna].confidence
+                for dna in selected_dnas
+                if dna in candidate_signals
+            ]
+            if confidence_values:
+                extras["confidence"] = round(sum(confidence_values) / len(confidence_values), 4)
+
+        return extras
 
     def _build_ranked_candidate_pack(
         self,

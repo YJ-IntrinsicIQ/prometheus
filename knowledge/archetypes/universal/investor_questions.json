@@ -1,0 +1,6 @@
+{
+  "questions": [
+    {"question_id": "universal_capital_1", "question": "What is management prioritizing in capital allocation over time?", "relevant_for": ["all"], "evidence_needed": ["capital allocation actions", "management focus"]},
+    {"question_id": "universal_risk_1", "question": "Which risks repeat across years, and are they intensifying?", "relevant_for": ["all"], "evidence_needed": ["risk evolution", "numeric trend signals"]}
+  ]
+}

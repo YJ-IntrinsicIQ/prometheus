@@ -1,0 +1,7 @@
+{
+  "core_terms": ["cement", "clinker", "grinding", "kiln"],
+  "synonyms": ["utilization", "blended cement", "dealer network"],
+  "product_terms": ["opc", "ppc", "ready mix"],
+  "operating_terms": ["capacity utilization", "freight", "fuel cost"],
+  "financial_terms": ["realization per bag", "ebitda per ton", "cost per ton"]
+}

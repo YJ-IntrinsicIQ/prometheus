@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "production_volume", "metric_group": "scale", "aliases": ["ore production", "metal production"], "why_it_matters": "Volume and recovery determine operating leverage in resource businesses."}
+  ]
+}

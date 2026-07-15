@@ -7,8 +7,22 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from knowledge.ai import get_llm
+from knowledge.ai.input_packs import (
+    build_llm_input_pack,
+    call_llm_with_input_pack,
+    render_llm_input_pack,
+    resolve_stage_token_budget,
+)
 
+from .briefs import LENS_CONFIG, validate_user_facing_brief
 from .doctrine_registry import InvestorDoctrineRegistry
+from .evidence_grounding import (
+    build_evidence_lookup,
+    normalize_evidence_ids_with_summary,
+    normalize_text_evidence_ids,
+    validate_analyst_evidence_grounding,
+    validate_prompt_payload,
+)
 
 
 PCIM_FILE = "pcim_v1.json"
@@ -42,8 +56,14 @@ REQUIRED_OUTPUT_KEYS = {
     "red_flags",
     "open_uncertainties",
     "evidence_ids",
+    "historical_context_used",
+    "years_considered",
     "supporting_pcim_sections",
+    "evidence_id_normalization",
+    "evidence_grounding_status",
+    "evidence_grounding_warnings",
     "reasoning_limits",
+    "user_facing_brief",
     "generated_at",
 }
 
@@ -242,6 +262,9 @@ def _deterministic_panel_output(
     missing_sections = _missing_sections(pcim, consumed_sections)
     evidence_ids = _collect_section_evidence_ids(pcim, consumed_sections)
     rating = _rating_for_sections(doctrine, pcim, consumed_sections, evidence_ids)
+    multi_year = pcim.get("multi_year_inputs") or {}
+    historical_context_used = "multi_year_inputs" in consumed_sections and not _section_empty(multi_year)
+    years_considered = list(multi_year.get("years_covered", []) or pcim.get("available_years", []))
 
     assessment = {}
     for section_name in doctrine["output_contract"]["required_sections"]:
@@ -265,11 +288,28 @@ def _deterministic_panel_output(
         "red_flags": list(doctrine.get("red_flags", [])),
         "open_uncertainties": _open_uncertainties(doctrine, missing_sections, pcim),
         "evidence_ids": evidence_ids,
+        "historical_context_used": historical_context_used,
+        "years_considered": years_considered,
         "supporting_pcim_sections": consumed_sections,
+        "evidence_id_normalization": {
+            "applied": False,
+            "replacements": [],
+            "unresolved_ids": [],
+        },
+        "evidence_grounding_status": "pass",
+        "evidence_grounding_warnings": [],
         "reasoning_limits": [
             "Dry-run/deterministic scaffold mode does not perform analyst-style LLM reasoning.",
             "Assessment text is structural and derived from doctrine plus PCIM availability only.",
         ],
+        "user_facing_brief": {
+            "title": LENS_CONFIG[doctrine["doctrine_id"]]["title"],
+            "lens": LENS_CONFIG[doctrine["doctrine_id"]]["lens_text"],
+            "what_looks_good": ["No live analyst reasoning was run in dry-run mode."],
+            "what_needs_caution": ["This output is a deterministic scaffold and not a final investor judgment."],
+            "what_is_missing": ["Analyst-specific LLM reasoning was not executed in dry-run mode."],
+            "bottom_line": "This dry-run payload preserves the schema shape only and should not be read as a finished analyst brief.",
+        },
         "generated_at": utc_now(),
     }
 
@@ -590,18 +630,31 @@ def _build_compact_prompt(
     pcim: Dict[str, Any],
     sections: List[str],
 ) -> Tuple[str, Dict[str, Any], Dict[str, Dict[str, int]], Dict[str, int], bool]:
+    stage_budget = resolve_stage_token_budget("investor_panel_analyst")
     compact_pcim, section_stats, limits_used, input_compacted = _prepare_compact_prompt_pack(
         pcim,
         sections,
+    )
+    llm_input_pack = _build_prompt_input_pack(
+        company=company,
+        doctrine=doctrine,
+        pcim_path=pcim_path,
+        compact_pcim=compact_pcim,
+        allowed_sections=sections,
+        limits_used=limits_used,
+        input_compacted=input_compacted,
     )
     prompt = _build_llm_prompt(
         doctrine=doctrine,
         company=company,
         pcim_path=pcim_path,
-        selected_pcim=compact_pcim,
+        llm_input_pack=llm_input_pack,
         allowed_sections=sections,
     )
-    while len(prompt) > limits_used["max_total_prompt_chars"]:
+    while (
+        len(prompt) > limits_used["max_total_prompt_chars"]
+        or _estimate_prompt_tokens(prompt) > stage_budget
+    ):
         next_limits = _shrink_limits(limits_used)
         if next_limits is None:
             break
@@ -612,14 +665,60 @@ def _build_compact_prompt(
             limits_used,
         )
         input_compacted = input_compacted or next_truncated
+        llm_input_pack = _build_prompt_input_pack(
+            company=company,
+            doctrine=doctrine,
+            pcim_path=pcim_path,
+            compact_pcim=compact_pcim,
+            allowed_sections=sections,
+            limits_used=limits_used,
+            input_compacted=input_compacted,
+        )
         prompt = _build_llm_prompt(
             doctrine=doctrine,
             company=company,
             pcim_path=pcim_path,
-            selected_pcim=compact_pcim,
+            llm_input_pack=llm_input_pack,
             allowed_sections=sections,
         )
     return prompt, compact_pcim, section_stats, limits_used, input_compacted
+
+
+def _build_prompt_input_pack(
+    *,
+    company: str,
+    doctrine: Dict[str, Any],
+    pcim_path: Path,
+    compact_pcim: Dict[str, Any],
+    allowed_sections: List[str],
+    limits_used: Dict[str, int],
+    input_compacted: bool,
+) -> Dict[str, Any]:
+    limitations = [COMPACTION_REASONING_LIMIT] if input_compacted else []
+    return build_llm_input_pack(
+        stage="investor_panel_analyst",
+        purpose=f"Produce doctrine-bound investor analysis for {doctrine['doctrine_id']} from declared PCIM sections only.",
+        company=company,
+        year=None,
+        selected_input={"selected_pcim": compact_pcim},
+        observations=[
+            {
+                "selected_pcim": compact_pcim,
+            }
+        ],
+        limitations=limitations,
+        source_artifacts=[str(pcim_path)],
+        pack_name=f"{doctrine['doctrine_id']}_input_pack",
+        policy={
+            "allowed_sections": ["selected_pcim"],
+            "max_items": limits_used["max_items_per_section"],
+            "max_chars": limits_used["max_total_prompt_chars"],
+            "include_evidence_ids": True,
+            "collect_evidence_ids": False,
+            "include_short_excerpts": True,
+            "include_source_chunks": False,
+        },
+    )
 
 
 def _required_assessment_keys(doctrine: Dict[str, Any]) -> List[str]:
@@ -655,8 +754,24 @@ def _llm_output_template(doctrine: Dict[str, Any], allowed_sections: List[str]) 
             }
         ],
         "evidence_ids": ["string"],
+        "historical_context_used": True,
+        "years_considered": ["fy24", "fy25"],
         "supporting_pcim_sections": allowed_sections,
         "reasoning_limits": ["string"],
+        "user_facing_brief": {
+            "title": {
+                "graham": "Graham School of Thought: Downside Protection",
+                "buffett": "Buffett School of Thought: Business Quality & Capital Allocation",
+                "fisher": "Fisher School of Thought: Growth Quality & Management Ambition",
+                "munger": "Munger School of Thought: Incentives, Governance & Avoidable Mistakes",
+                "lynch": "Lynch School of Thought: Simple Story, Growth Runway & Hype Check",
+            }.get(doctrine["doctrine_id"], "string"),
+            "lens": LENS_CONFIG[doctrine["doctrine_id"]]["lens_text"],
+            "what_looks_good": ["string"],
+            "what_needs_caution": ["string"],
+            "what_is_missing": ["string"],
+            "bottom_line": "string",
+        },
     }
 
 
@@ -673,7 +788,7 @@ def _build_llm_prompt(
     doctrine: Dict[str, Any],
     company: str,
     pcim_path: Path,
-    selected_pcim: Dict[str, Any],
+    llm_input_pack: Dict[str, Any],
     allowed_sections: List[str],
 ) -> str:
     return "\n".join(
@@ -687,6 +802,7 @@ def _build_llm_prompt(
             "Rules:",
             "- Use only the PCIM sections provided below.",
             "- Return only valid JSON. No markdown, no prose before or after JSON.",
+            "- Return one valid JSON object containing both the internal analysis fields and user_facing_brief.",
             "- Distinguish evidence found from judgment inferred.",
             "- Cite evidence_ids for every major finding, red flag, and uncertainty when available.",
             "- If evidence_ids are unavailable, mention that in reasoning_limits.",
@@ -700,6 +816,23 @@ def _build_llm_prompt(
             "- Use plain investor language in assessment text where possible; avoid repeating internal PCIM labels unless needed for precision.",
             "- Distinguish clearly between positive evidence, red flags, and missing evidence that limits confidence.",
             "- Do not treat dividends, related-party advances, or governance ambiguity as automatic condemnation without context from the supplied PCIM.",
+            "- Use multi_year_inputs only as historical context when that section is provided.",
+            "- Treat two-year trends as provisional unless the supplied evidence clearly supports a stronger claim.",
+            "- Do not infer promise fulfillment unless it is explicitly shown in the supplied evidence.",
+            "- Treat not_detected_this_year as absence of detection, not confirmed discontinuation.",
+            "- Use recurring risks and worsening risks when relevant to the doctrine, but mention limitations when history is thin.",
+            "- Do not overstate strategy shifts from deterministic theme matching alone.",
+            "- user_facing_brief must not mention PCIM, evidence_ids, analysis_mode, sections_consumed, evidence_map, or reasoning_limits.",
+            "- user_facing_brief must not contain evidence ID patterns like ev_ and must not contain buy/sell/hold recommendation language.",
+            "- user_facing_brief should use simple, serious investor language and preserve the analyst's school of thought.",
+            "- user_facing_brief must be a faithful summary of the internal analysis, not a second analysis.",
+            "- user_facing_brief must not introduce new facts, risks, positives, or conclusions absent from the internal analysis.",
+            "- user_facing_brief bullets should be concise: max 5 bullets per list, one sentence each.",
+            "- user_facing_brief bottom_line should clearly reflect the rating/confidence level without using buy/sell/hold language.",
+            "- Before returning JSON, self-check user_facing_brief and remove all internal system terms.",
+            "- In user_facing_brief, never say PCIM. Say 'available evidence', 'available disclosures', or 'provided evidence' instead.",
+            "- In user_facing_brief, never say evidence_ids. Say 'supporting evidence' instead.",
+            "- In user_facing_brief, never say sections, evidence_map, analysis_mode, or reasoning_limits.",
             "- supporting_pcim_sections must contain only values from the allowed list shown below.",
             "- Do not include any PCIM section not shown in the allowed list, even if it seems relevant.",
             "- If you wish you had another section, mention it under open_uncertainties or reasoning_limits, not under supporting_pcim_sections.",
@@ -722,6 +855,19 @@ def _build_llm_prompt(
             "Uncertainty rules:",
             json.dumps(doctrine.get("uncertainty_rules", []), indent=2, ensure_ascii=False),
             "",
+            "Historical-context guidance for this analyst:",
+            json.dumps(
+                {
+                    "graham": "Use multi_year_inputs to assess recurring financial or risk concerns, worsening liquidity, capital-allocation pattern, and missing cash-flow evidence.",
+                    "buffett": "Use multi_year_inputs to assess consistency of business direction, capital-allocation pattern, repeated themes, and durability of business quality.",
+                    "fisher": "Use multi_year_inputs to assess management ambition, execution continuity, product or R&D promises, and whether growth claims are followed through.",
+                    "munger": "Use multi_year_inputs to assess incentives, governance ambiguity, recurring risks, related-party or internal-control or regulatory issues, and avoidable mistakes.",
+                    "lynch": "Use multi_year_inputs to assess whether the story remains simple and consistent, whether growth matches observable evidence, and whether hype is increasing.",
+                }.get(doctrine["doctrine_id"], ""),
+                indent=2,
+                ensure_ascii=False,
+            ),
+            "",
             "Output contract:",
             json.dumps(doctrine.get("output_contract", {}), indent=2, ensure_ascii=False),
             "",
@@ -729,7 +875,15 @@ def _build_llm_prompt(
             json.dumps(_llm_output_template(doctrine, allowed_sections), indent=2, ensure_ascii=False),
             "",
             "Selected compact PCIM sections:",
-            json.dumps(selected_pcim, indent=2, ensure_ascii=False),
+            render_llm_input_pack(llm_input_pack, include_policy=False),
+            "User-facing wording replacements:",
+            json.dumps({
+                "PCIM": "available evidence",
+                "evidence_ids": "supporting evidence",
+                "sections_consumed": "materials reviewed",
+                "reasoning_limits": "limitations",
+                "evidence_map": "supporting evidence"
+            }, indent=2, ensure_ascii=False),
         ]
     )
 
@@ -743,6 +897,14 @@ def _normalize_string_list(value: Any, field: str) -> List[str]:
             raise ValueError(f"{field} must contain non-empty strings")
         normalized.append(item.strip())
     return normalized
+
+
+def _normalize_optional_bool(value: Any, field: str, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise ValueError(f"{field} must be a boolean when provided")
+    return value
 
 
 def _normalize_findings(value: Any, field: str) -> Tuple[List[str], List[str]]:
@@ -768,6 +930,50 @@ def _normalize_findings(value: Any, field: str) -> Tuple[List[str], List[str]]:
     return findings, evidence_ids
 
 
+def _normalize_findings_with_map(value: Any, field: str) -> Tuple[List[str], List[str], List[List[str]]]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be a list")
+    findings: List[str] = []
+    merged_evidence: List[str] = []
+    per_item_evidence: List[List[str]] = []
+    for item in value:
+        if isinstance(item, str):
+            text = item.strip()
+            item_evidence = []
+        elif isinstance(item, dict):
+            text = str(item.get("finding") or item.get("flag") or item.get("uncertainty") or "").strip()
+            item_evidence = _normalize_optional_evidence_ids(item.get("evidence_ids"), field)
+        else:
+            raise ValueError(f"{field} items must be strings or objects")
+        if not text:
+            raise ValueError(f"{field} items must include non-empty text")
+        findings.append(text)
+        per_item_evidence.append(item_evidence)
+        for evidence_id in item_evidence:
+            if evidence_id not in merged_evidence:
+                merged_evidence.append(evidence_id)
+    return findings, merged_evidence, per_item_evidence
+
+
+def _merge_normalization_summaries(*summaries: Dict[str, Any]) -> Dict[str, Any]:
+    replacements: List[Dict[str, str]] = []
+    unresolved_ids: List[str] = []
+    for summary in summaries:
+        if not isinstance(summary, dict):
+            continue
+        for replacement in summary.get("replacements", []) or []:
+            if replacement not in replacements:
+                replacements.append(replacement)
+        for unresolved_id in summary.get("unresolved_ids", []) or []:
+            if unresolved_id not in unresolved_ids:
+                unresolved_ids.append(unresolved_id)
+    return {
+        "applied": bool(replacements),
+        "replacements": replacements,
+        "unresolved_ids": unresolved_ids,
+    }
+
+
 def _normalize_optional_evidence_ids(value: Any, field: str) -> List[str]:
     if value is None:
         return []
@@ -780,6 +986,7 @@ def _validate_llm_panel_output(
     company: str,
     pcim_path: Path,
     pcim_version: Any,
+    pcim: Dict[str, Any],
     consumed_sections: List[str],
     allowed_evidence_ids: List[str],
 ) -> Dict[str, Any]:
@@ -806,12 +1013,15 @@ def _validate_llm_panel_output(
     if not isinstance(rating, str) or rating not in ALLOWED_RATINGS:
         raise ValueError("rating must be one of strong, mixed, weak, insufficient_evidence")
 
-    key_findings, finding_evidence = _normalize_findings(parsed.get("key_findings"), "key_findings")
-    red_flags, red_flag_evidence = _normalize_findings(parsed.get("red_flags"), "red_flags")
-    open_uncertainties, uncertainty_evidence = _normalize_findings(
+    key_findings, finding_evidence, key_finding_map = _normalize_findings_with_map(parsed.get("key_findings"), "key_findings")
+    red_flags, red_flag_evidence, red_flag_map = _normalize_findings_with_map(parsed.get("red_flags"), "red_flags")
+    open_uncertainties, uncertainty_evidence, uncertainty_map = _normalize_findings_with_map(
         parsed.get("open_uncertainties"), "open_uncertainties"
     )
     reasoning_limits = _normalize_string_list(parsed.get("reasoning_limits"), "reasoning_limits")
+    if parsed.get("user_facing_brief") is None:
+        raise ValueError("user_facing_brief is required")
+    user_facing_brief = validate_user_facing_brief(doctrine["doctrine_id"], parsed.get("user_facing_brief"))
 
     supporting_pcim_sections = _normalize_string_list(
         parsed.get("supporting_pcim_sections"), "supporting_pcim_sections"
@@ -831,10 +1041,131 @@ def _validate_llm_panel_output(
             )
 
     supplied_evidence_ids = _normalize_string_list(parsed.get("evidence_ids"), "evidence_ids")
-    merged_evidence_ids: List[str] = []
-    for evidence_id in supplied_evidence_ids + finding_evidence + red_flag_evidence + uncertainty_evidence:
-        if evidence_id in allowed_evidence_ids and evidence_id not in merged_evidence_ids:
-            merged_evidence_ids.append(evidence_id)
+    multi_year = pcim.get("multi_year_inputs") or {}
+    historical_context_used = _normalize_optional_bool(
+        parsed.get("historical_context_used"),
+        "historical_context_used",
+        default=("multi_year_inputs" in consumed_sections and not _section_empty(multi_year)),
+    )
+    years_considered = _normalize_string_list(parsed.get("years_considered"), "years_considered") if parsed.get("years_considered") is not None else []
+    if historical_context_used and not years_considered:
+        years_considered = list(multi_year.get("years_covered", []) or pcim.get("available_years", []))
+
+    evidence_lookup = build_evidence_lookup(pcim)
+    allowed_set = list(allowed_evidence_ids)
+
+    normalized_key_finding_map: List[List[str]] = []
+    key_finding_summaries: List[Dict[str, Any]] = []
+    for evidence_ids in key_finding_map:
+        normalized_ids, summary = normalize_evidence_ids_with_summary(
+            evidence_ids,
+            evidence_lookup,
+            allowed_evidence_ids=allowed_set,
+        )
+        normalized_key_finding_map.append(normalized_ids)
+        key_finding_summaries.append(summary)
+
+    normalized_red_flag_map: List[List[str]] = []
+    red_flag_summaries: List[Dict[str, Any]] = []
+    for evidence_ids in red_flag_map:
+        normalized_ids, summary = normalize_evidence_ids_with_summary(
+            evidence_ids,
+            evidence_lookup,
+            allowed_evidence_ids=allowed_set,
+        )
+        normalized_red_flag_map.append(normalized_ids)
+        red_flag_summaries.append(summary)
+
+    normalized_uncertainty_map: List[List[str]] = []
+    uncertainty_summaries: List[Dict[str, Any]] = []
+    for evidence_ids in uncertainty_map:
+        normalized_ids, summary = normalize_evidence_ids_with_summary(
+            evidence_ids,
+            evidence_lookup,
+            allowed_evidence_ids=allowed_set,
+        )
+        normalized_uncertainty_map.append(normalized_ids)
+        uncertainty_summaries.append(summary)
+
+    supplied_evidence_ids, top_level_summary = normalize_evidence_ids_with_summary(
+        supplied_evidence_ids,
+        evidence_lookup,
+        allowed_evidence_ids=allowed_set,
+    )
+    merged_evidence_ids, merged_summary = normalize_evidence_ids_with_summary(
+        supplied_evidence_ids
+        + [item for group in normalized_key_finding_map for item in group]
+        + [item for group in normalized_red_flag_map for item in group]
+        + [item for group in normalized_uncertainty_map for item in group],
+        evidence_lookup,
+        allowed_evidence_ids=allowed_set,
+    )
+    text_summaries = []
+    normalized_assessment_final = {}
+    for key, value in normalized_assessment.items():
+        normalized_text, replacements, unresolved = normalize_text_evidence_ids(value, evidence_lookup)
+        normalized_assessment_final[key] = normalized_text
+        text_summaries.append(
+            {
+                "applied": bool(replacements),
+                "replacements": replacements,
+                "unresolved_ids": unresolved,
+            }
+        )
+    normalized_assessment = normalized_assessment_final
+    normalization_summary = _merge_normalization_summaries(
+        top_level_summary,
+        merged_summary,
+        *key_finding_summaries,
+        *red_flag_summaries,
+        *uncertainty_summaries,
+        *text_summaries,
+    )
+
+    claim_evidence_map = {
+        **{
+            f"key_findings.{idx}": evidence_ids
+            for idx, evidence_ids in enumerate(normalized_key_finding_map)
+        },
+        **{
+            f"red_flags.{idx}": evidence_ids
+            for idx, evidence_ids in enumerate(normalized_red_flag_map)
+        },
+        **{
+            f"open_uncertainties.{idx}": evidence_ids
+            for idx, evidence_ids in enumerate(normalized_uncertainty_map)
+        },
+        **{
+            f"assessment.{key}": merged_evidence_ids
+            for key in normalized_assessment.keys()
+        },
+    }
+    grounding = validate_analyst_evidence_grounding(
+        assessment=normalized_assessment,
+        key_findings=key_findings,
+        red_flags=red_flags,
+        open_uncertainties=open_uncertainties,
+        claim_evidence_map=claim_evidence_map,
+        supporting_pcim_sections=supporting_pcim_sections,
+        consumed_sections=consumed_sections,
+        supplied_evidence_ids=supplied_evidence_ids,
+        evidence_lookup=evidence_lookup,
+    )
+    unresolved_ids = normalization_summary.get("unresolved_ids", []) or []
+    if unresolved_ids:
+        if grounding["evidence_grounding_status"] == "pass":
+            grounding["evidence_grounding_status"] = "warning"
+        critical_unresolved = any(
+            unresolved_id in evidence_ids
+            for unresolved_id in unresolved_ids
+            for evidence_ids in (
+                [claim_evidence_map.get(f"key_findings.{idx}", []) for idx in range(len(key_findings))]
+                + [claim_evidence_map.get(f"red_flags.{idx}", []) for idx in range(len(red_flags))]
+                + [claim_evidence_map.get(f"assessment.{key}", []) for key in normalized_assessment.keys()]
+            )
+        )
+        if critical_unresolved:
+            grounding["evidence_grounding_status"] = "fail"
 
     return {
         "doctrine_id": doctrine["doctrine_id"],
@@ -849,8 +1180,14 @@ def _validate_llm_panel_output(
         "red_flags": red_flags,
         "open_uncertainties": open_uncertainties,
         "evidence_ids": merged_evidence_ids,
+        "historical_context_used": historical_context_used,
+        "years_considered": years_considered,
         "supporting_pcim_sections": supporting_pcim_sections,
+        "evidence_id_normalization": normalization_summary,
+        "evidence_grounding_status": grounding["evidence_grounding_status"],
+        "evidence_grounding_warnings": grounding["evidence_grounding_warnings"],
         "reasoning_limits": reasoning_limits,
+        "user_facing_brief": user_facing_brief,
         "generated_at": utc_now(),
     }
 
@@ -909,13 +1246,23 @@ class InvestorPanelRunner:
         pcim: Dict[str, Any],
     ) -> Tuple[Dict[str, Any], str]:
         consumed_sections = list(doctrine["evidence_required_from_pcim"])
-        prompt, _compact_pcim, section_stats, limits_used, input_compacted = _build_compact_prompt(
+        prompt, compact_pcim, section_stats, limits_used, input_compacted = _build_compact_prompt(
             doctrine=doctrine,
             company=self.company,
             pcim_path=pcim_path,
             pcim=pcim,
             sections=consumed_sections,
         )
+        llm_input_pack = _build_prompt_input_pack(
+            company=self.company,
+            doctrine=doctrine,
+            pcim_path=pcim_path,
+            compact_pcim=compact_pcim,
+            allowed_sections=consumed_sections,
+            limits_used=limits_used,
+            input_compacted=input_compacted,
+        )
+        validate_prompt_payload(compact_pcim, pcim_source=str(pcim_path))
         allowed_evidence_ids = _collect_section_evidence_ids(pcim, consumed_sections)
         prompt_chars = len(prompt)
         prompt_tokens = _estimate_prompt_tokens(prompt)
@@ -929,8 +1276,12 @@ class InvestorPanelRunner:
             f"limits={limits_used}"
         )
 
-        response = self.llm.generate(
+        response = call_llm_with_input_pack(
+            llm=self.llm,
             prompt=prompt,
+            input_pack=llm_input_pack,
+            manifest_path=self.output_dir / "investor_panel_llm_call_manifest.json",
+            require_source_artifacts=True,
             response_schema={"type": "object"},
             temperature=0.0,
             system_prompt=_build_system_prompt(),
@@ -941,6 +1292,7 @@ class InvestorPanelRunner:
             company=self.company,
             pcim_path=pcim_path,
             pcim_version=pcim.get("contract_version"),
+            pcim=pcim,
             consumed_sections=consumed_sections,
             allowed_evidence_ids=allowed_evidence_ids,
         )
@@ -955,13 +1307,23 @@ class InvestorPanelRunner:
         pcim: Dict[str, Any],
     ) -> Tuple[Dict[str, Any], str]:
         consumed_sections = list(doctrine["evidence_required_from_pcim"])
-        prompt, _compact_pcim, section_stats, limits_used, input_compacted = _build_compact_prompt(
+        prompt, compact_pcim, section_stats, limits_used, input_compacted = _build_compact_prompt(
             doctrine=doctrine,
             company=self.company,
             pcim_path=pcim_path,
             pcim=pcim,
             sections=consumed_sections,
         )
+        _build_prompt_input_pack(
+            company=self.company,
+            doctrine=doctrine,
+            pcim_path=pcim_path,
+            compact_pcim=compact_pcim,
+            allowed_sections=consumed_sections,
+            limits_used=limits_used,
+            input_compacted=input_compacted,
+        )
+        validate_prompt_payload(compact_pcim, pcim_source=str(pcim_path))
         payload = _deterministic_panel_output(
             doctrine=doctrine,
             company=self.company,

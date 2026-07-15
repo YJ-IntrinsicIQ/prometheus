@@ -26,6 +26,7 @@
     "management_quality_inputs",
     "growth_execution_inputs",
     "moat_inputs",
+    "multi_year_inputs",
     "evidence_map",
     "uncertainty_missing_data"
   ],

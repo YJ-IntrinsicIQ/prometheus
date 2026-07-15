@@ -1,0 +1,9 @@
+{
+  "archetype_id": "pharma_formulation",
+  "display_name": "Pharma Formulation",
+  "parent_archetypes": ["regulated_business"],
+  "description": "Finished-dosage pharmaceutical businesses with brand and regulatory execution.",
+  "applies_to": ["formulations", "branded generics"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

@@ -1,0 +1,9 @@
+{
+  "archetype_id": "logistics_transport",
+  "display_name": "Logistics & Transport",
+  "parent_archetypes": [],
+  "description": "Logistics, freight, and transport businesses with network and utilization economics.",
+  "applies_to": ["logistics", "freight", "transport operators"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

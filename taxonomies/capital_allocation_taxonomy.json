@@ -1,0 +1,17 @@
+{
+  "categories": [
+    {"canonical_category": "cwip", "keywords": ["capital work in progress", "cwip", "projects in progress"]},
+    {"canonical_category": "share_split", "keywords": ["share subdivision", "sub-division", "share split", "split of equity shares"]},
+    {"canonical_category": "treasury_investment", "keywords": ["mutual fund", "debt mutual fund", "treasury investment", "liquidity management investment"]},
+    {"canonical_category": "dividend", "keywords": ["dividend", "interim dividend", "final dividend"]},
+    {"canonical_category": "buyback", "keywords": ["buyback", "share repurchase", "share buyback"]},
+    {"canonical_category": "equity_issuance", "keywords": ["equity issuance", "preferential issue", "rights issue", "qip", "share issuance"]},
+    {"canonical_category": "esop_rsu", "keywords": ["esop", "rsu", "share-based payment", "stock option", "equity-settled"]},
+    {"canonical_category": "debt_borrowing", "keywords": ["borrowing", "term loan", "bank loan", "debenture", "working capital loan", "credit facility"]},
+    {"canonical_category": "acquisition", "keywords": ["acquisition", "merger", "takeover", "purchase of business"]},
+    {"canonical_category": "related_party_transaction", "keywords": ["related party", "promoter entity", "associate company", "subsidiary transaction"]},
+    {"canonical_category": "loan_or_advance", "keywords": ["loan", "advance", "inter-corporate deposit", "loan given"]},
+    {"canonical_category": "auditor_observation", "keywords": ["auditor", "qualified opinion", "emphasis of matter", "key audit matter"]},
+    {"canonical_category": "capex", "keywords": ["capital expenditure", "capex", "plant", "machinery", "factory", "land", "construction", "capacity expansion"]}
+  ]
+}

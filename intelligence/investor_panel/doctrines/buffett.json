@@ -26,7 +26,9 @@
     "business_economics_inputs",
     "moat_inputs",
     "capital_allocation_inputs",
+    "management_quality_inputs",
     "governance_and_incentive_inputs",
+    "multi_year_inputs",
     "evidence_map",
     "uncertainty_missing_data"
   ],

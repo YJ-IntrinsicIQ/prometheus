@@ -1,0 +1,5 @@
+{
+  "themes": [
+    {"canonical_theme": "network_density_and_utilization", "theme_group": "operations", "keywords": ["fleet utilization", "hub expansion", "network density"], "description": "Network density and utilization in transport/logistics."}
+  ]
+}

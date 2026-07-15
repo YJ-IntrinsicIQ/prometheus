@@ -43,6 +43,14 @@ def test_interpreter_builds_blueprint_from_company_memory():
                     {"name": "Capital Intensive", "confidence": 0.8},
                     {"name": "Asset Heavy", "confidence": 0.7},
                 ],
+                "candidate_dna_signals": [
+                    {
+                        "name": "Manufacturing",
+                        "confidence": 0.81,
+                        "supporting_reason": "Physical operations dominate the memory.",
+                        "evidence_ids": [],
+                    }
+                ],
                 "reasoning": [{"statement": "The memory emphasizes physical operations and capital deployment."}],
                 "classification": {
                     "selected_dnas": [
@@ -64,6 +72,7 @@ def test_interpreter_builds_blueprint_from_company_memory():
     assert result.blueprint.metadata.company == "acme"
     assert result.blueprint.business_understanding.business_summary == "Manufactures industrial equipment"
     assert [item.name for item in result.blueprint.characteristics] == ["Capital Intensive", "Asset Heavy"]
+    assert result.blueprint.candidate_dna_signals[0].name == "Manufacturing"
     assert result.classification["selected_dnas"][0]["name"] == "Manufacturing"
 
 
@@ -83,6 +92,14 @@ def test_parser_extracts_blueprint_and_classification_bundle():
                 "competitive_position": "Competes in niche market",
             },
             "characteristics": [{"name": "Capital Intensive", "confidence": 0.8}],
+            "candidate_dna_signals": [
+                {
+                    "name": "Manufacturing",
+                    "confidence": 0.8,
+                    "supporting_reason": "Physical operations dominate.",
+                    "evidence_ids": [],
+                }
+            ],
             "reasoning": [{"statement": "Reasoning is present."}],
             "classification": {
                 "selected_dnas": [{"name": "Manufacturing", "confidence": 0.8, "reason": "Physical operations dominate."}],
@@ -134,6 +151,7 @@ def test_prompt_matches_blueprint_validator_contract():
     assert f'"version": "{DEFAULT_BLUEPRINT_VERSION}"' in prompt
     assert '"business_summary": ""' in prompt
     assert '"characteristics"' in prompt
+    assert '"candidate_dna_signals"' in prompt
     assert "business_characteristics" not in prompt
 
 
@@ -141,7 +159,7 @@ def test_prompt_uses_compact_company_memory_view():
     prompt = build_prompt(_company_memory())
 
     assert '"facts": []' in prompt
-    assert "evidence_ids" not in prompt
+    assert '"company_id": "acme"' in prompt
 
 
 def test_prompt_explicitly_marks_business_summary_as_required():
@@ -188,3 +206,30 @@ def test_prompt_includes_classification_context_when_supplied():
     assert "Classification Context" in prompt
     assert '"allowed_dnas"' in prompt
     assert "Do not infer a DNA from generic words alone" in prompt
+    assert "authoritative final business dna selection" in prompt.lower()
+
+
+def test_validator_derives_candidate_dna_signals_from_selected_dnas_when_missing():
+    payload = {
+        "metadata": {"company": "acme", "version": "1.0", "confidence": 0.7},
+        "business_understanding": {
+            "business_summary": "Makes goods",
+            "business_model": "Manufacturing",
+            "value_creation": "Creates value",
+            "competitive_position": "Competes in niche market",
+        },
+        "characteristics": [{"name": "Capital Intensive", "confidence": 0.8}],
+        "reasoning": [{"statement": "Reasoning is present."}],
+        "classification": {
+            "selected_dnas": [{"name": "Manufacturing", "confidence": 0.8, "reason": "Physical operations dominate."}],
+            "rejected_dnas": [],
+            "rationale": ["Manufacturing fits best."],
+            "evidence_used": ["Makes goods"],
+            "confidence": 0.8,
+        },
+    }
+
+    blueprint, classification = validate_blueprint_payload(payload)
+
+    assert classification["selected_dnas"][0]["name"] == "Manufacturing"
+    assert blueprint.candidate_dna_signals[0].name == "Manufacturing"

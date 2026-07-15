@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "customer_validation_risk", "risk_group": "commercial", "keywords": ["validation delay", "customer approval", "regulatory delay"], "description": "Risk that validation or approvals delay commercial ramp."}
+  ]
+}

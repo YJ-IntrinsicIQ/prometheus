@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "customer_qualification_risk", "risk_group": "commercial", "keywords": ["customer qualification", "validation delay", "order concentration"], "description": "Delay or concentration risk around customer approvals and program ramps."}
+  ]
+}

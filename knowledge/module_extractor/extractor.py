@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, List, Optional
 
 from knowledge.question_engine.schema import QuestionModule
 
 from .parser import ParserError, parse_module_extraction_payload
-from .prompt import build_prompt
+from .prompt import build_input_pack, build_prompt
 from .schema import ModuleAnswer, ModuleExtractionResult
 
 
 class ModuleExtractor:
-    def __init__(self, llm_client: Optional[Any] = None):
+    def __init__(self, llm_client: Optional[Any] = None, manifest_path: Optional[Path] = None):
         self.llm_client = llm_client
+        self.manifest_path = manifest_path
 
     def extract(self, module: QuestionModule, chunks: List[dict]) -> ModuleExtractionResult:
         if not isinstance(module, QuestionModule):
@@ -21,8 +23,12 @@ class ModuleExtractor:
         if not self.llm_client:
             raise RuntimeError("llm_client is required")
 
-        prompt = build_prompt(module, chunks)
-        response = self.llm_client(prompt)
+        llm_input_pack = build_input_pack(module, chunks)
+        prompt = build_prompt(module, chunks, llm_input_pack=llm_input_pack)
+        try:
+            response = self.llm_client(prompt, llm_input_pack=llm_input_pack)
+        except TypeError:
+            response = self.llm_client(prompt)
         if not isinstance(response, str) or not response.strip():
             raise ValueError("llm_client returned an empty response")
 

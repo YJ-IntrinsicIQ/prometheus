@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
+from knowledge.ai.input_packs import build_llm_input_pack, render_llm_input_pack
 
 from knowledge.business_blueprint import DEFAULT_BLUEPRINT_VERSION
 
@@ -47,9 +48,44 @@ def _compact_company_memory(company_memory: Any) -> Any:
     }
 
 
-def build_prompt(company_memory: Any, classification_context: Optional[Dict[str, Any]] = None) -> str:
+def build_input_pack(company_memory: Any, classification_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     compact_memory = _compact_company_memory(company_memory)
     classification_context = classification_context or {}
+    return build_llm_input_pack(
+        stage="business_understanding",
+        purpose="Interpret company memory into business blueprint and constrained business classification.",
+        company=str(compact_memory.get("company_id") or ""),
+        year=None,
+        selected_input={
+            "company_memory": compact_memory,
+            "classification_context": classification_context,
+        },
+        facts=compact_memory.get("facts", []),
+        observations=[
+            {
+                "company_memory": {
+                    "company_id": compact_memory.get("company_id"),
+                    "entities": compact_memory.get("entities", []),
+                }
+            },
+            {"classification_context": classification_context},
+        ],
+        evidence_ids=[],
+        limitations=[],
+        source_artifacts=["company_memory.json", "business_classification_context"],
+        pack_name="business_understanding_input_pack",
+    )
+
+
+def build_prompt(
+    company_memory: Any,
+    classification_context: Optional[Dict[str, Any]] = None,
+    llm_input_pack: Optional[Dict[str, Any]] = None,
+) -> str:
+    llm_input_pack = llm_input_pack or build_input_pack(
+        company_memory,
+        classification_context=classification_context,
+    )
     return f"""You are an expert business analyst.
 
 Your task is to interpret the supplied Company Memory into:
@@ -63,6 +99,8 @@ Rules:
 - Never make unsupported assumptions.
 - If information is insufficient, express lower confidence rather than guessing.
 - Keep all summaries concise and objective.
+- `business_classification` is the authoritative final Business DNA selection.
+- `candidate_dna_signals` should contain evidence-backed DNA candidates, not official final DNAs.
 - Return VALID JSON ONLY.
 - Do NOT include markdown.
 - Do NOT include explanations outside the JSON.
@@ -99,6 +137,7 @@ Rules:
 - Select only the smallest set of DNAs that is strongly supported by the evidence, with a maximum of 3.
 - If a nearby archetype is plausible but unsupported, place it in `classification.rejected_dnas` with a short reason.
 - `classification.question_modules`, `classification.discovery_profile`, and `classification.extraction_profile` are NOT part of the response. Local code will derive them deterministically.
+- `dnas` is not part of the requested output. Official DNAs will be written from classification by local code.
 
 Return exactly this JSON structure:
 
@@ -119,6 +158,14 @@ Return exactly this JSON structure:
     {{
       "name": "",
       "confidence": 0.0
+    }}
+  ],
+  "candidate_dna_signals": [
+    {{
+      "name": "",
+      "confidence": 0.0,
+      "supporting_reason": "",
+      "evidence_ids": []
     }}
   ],
   "reasoning": [
@@ -161,6 +208,7 @@ All of the following are required in the final JSON:
 - `business_understanding.value_creation`
 - `business_understanding.competitive_position`
 - at least one item in `characteristics`
+- `candidate_dna_signals` may be empty if no DNA candidate is supported
 - at least one item in `reasoning`
 - `classification.selected_dnas` may be empty only if none of the allowed DNAs is supported
 - every selected DNA must come from the supplied allowed DNAs
@@ -177,12 +225,9 @@ Before finalizing your answer, check that:
 7. each characteristic is concrete and company-specific rather than generic
 8. each selected DNA comes only from the supplied allowed DNAs
 9. generic words alone were not used as justification for classification
+10. candidate_dna_signals describe plausible DNA candidates without claiming final authority
 
-Classification Context:
+Classification Context and Company Memory:
 
-{json.dumps(classification_context, indent=2, ensure_ascii=False)}
-
-Company Memory:
-
-{json.dumps(compact_memory, indent=2, ensure_ascii=False)}
+{render_llm_input_pack(llm_input_pack, title="Company Memory LLM Input Pack", include_policy=False)}
 """

@@ -1,0 +1,9 @@
+{
+  "archetype_id": "pharma_api_cdmo",
+  "display_name": "Pharma API / CDMO",
+  "parent_archetypes": ["regulated_business", "capex_heavy_manufacturing"],
+  "description": "API, intermediates, or contract-development and manufacturing businesses.",
+  "applies_to": ["api", "cdmo", "specialty pharma manufacturing"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

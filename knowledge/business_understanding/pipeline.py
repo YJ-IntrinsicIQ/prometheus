@@ -6,6 +6,11 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from core.context_paths import intelligence_path
 from knowledge.ai import get_llm
+from knowledge.ai.input_packs import call_llm_with_input_pack
+from knowledge.business_identity import (
+    align_blueprint_with_classification,
+    ensure_business_identity_contract,
+)
 from knowledge.business_classifier import BusinessClassifier
 from knowledge.business_interpreter import BusinessInterpreter
 from knowledge.company_memory import CompanyMemory, CompanyMemoryBuilder, save_company_memory
@@ -244,9 +249,36 @@ def _build_business_understanding_bundle(
         year=context.year if context is not None else None,
     )
 
-    def ai_adapter(prompt: str) -> str:
-        response = llm.generate(
+    def ai_adapter(prompt: str, *, llm_input_pack: Optional[Dict[str, Any]] = None) -> str:
+        response = call_llm_with_input_pack(
+            llm=llm,
             prompt=prompt,
+            input_pack=llm_input_pack or {
+                "pack_name": "business_understanding_input_pack",
+                "stage": "business_understanding",
+                "company": context.company if context is not None else company_memory.company_id,
+                "year": context.year if context is not None else None,
+                "purpose": "Interpret company memory into business blueprint and constrained business classification.",
+                "input_policy": {},
+                "facts": [],
+                "observations": [],
+                "evidence_ids": [],
+                "limitations": [],
+                "metadata": {
+                    "source_artifacts": ["company_memory.json"],
+                    "source_hashes": [],
+                    "tokens_estimated": 1,
+                    "chars": 1,
+                    "truncation_applied": False,
+                    "warnings": [],
+                },
+            },
+            manifest_path=(
+                context.intelligence_dir / "business_understanding_llm_call_manifest.json"
+                if context is not None
+                else None
+            ),
+            require_source_artifacts=True,
             response_schema={"type": "object"},
         )
         print(f"AI Provider: {response.provider}")
@@ -266,10 +298,19 @@ def _build_business_understanding_bundle(
         company=context.company if context is not None else business_blueprint.metadata.company,
         year=context.year if context is not None else None,
     )
+    business_blueprint = align_blueprint_with_classification(
+        business_blueprint,
+        business_classification,
+    )
+    business_identity_manifest = ensure_business_identity_contract(
+        business_blueprint,
+        business_classification,
+    )
     return {
         "business_blueprint": business_blueprint,
         "business_classification": business_classification,
         "classification_context": classification_context,
+        "business_identity_manifest": business_identity_manifest,
     }
 
 
@@ -305,4 +346,5 @@ def run_business_understanding(context=None) -> Dict[str, Any]:
         "business_blueprint": business_blueprint,
         "business_classification": business_classification,
         "classification_context": interpretation_bundle["classification_context"],
+        "business_identity_manifest": interpretation_bundle["business_identity_manifest"],
     }

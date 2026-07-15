@@ -1,0 +1,5 @@
+{
+  "themes": [
+    {"canonical_theme": "contract_manufacturing_execution", "theme_group": "operations", "keywords": ["contract manufacturing", "ems", "odm", "electronics manufacturing services", "design-led manufacturing"], "description": "Execution quality in contract or design-led manufacturing."}
+  ]
+}

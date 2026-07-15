@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "utilization_risk", "risk_group": "operations", "keywords": ["utilization", "bench", "attrition", "resource mismatch"], "description": "Risk from weak utilization or talent mismatch in services delivery."}
+  ]
+}

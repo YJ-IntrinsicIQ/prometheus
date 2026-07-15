@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "saas_revenue_quality", "question": "How recurring and sticky is the software revenue base?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["subscription model disclosures", "customer retention commentary"]}
+  ]
+}

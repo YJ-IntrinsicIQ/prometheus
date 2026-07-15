@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "approval_and_inventory_risk", "risk_group": "commercial", "keywords": ["approval delay", "inventory overhang", "collection slowdown"], "description": "Approval, inventory, and collection risks in real estate."}
+  ]
+}

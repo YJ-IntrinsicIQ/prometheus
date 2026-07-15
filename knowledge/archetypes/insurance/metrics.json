@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "gross_written_premium", "metric_group": "scale", "aliases": ["gwp", "premium income"], "why_it_matters": "Scale of premium sourcing in insurance."}
+  ]
+}

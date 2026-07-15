@@ -218,6 +218,42 @@ Chronological engineering history only.
 - Backlog items created: None.
 - Next session goal: Re-run the FY24 extraction/cleaning/business-understanding chain in a working AI-provider environment and verify substantive FY24 business-understanding artifacts now that discovery is populated.
 
+## 2026-07-12
+
+- Date: 2026-07-12
+- Sprint: Phase 3.8 Investment Committee Synthesis
+- What was completed: Added the first committee-synthesis layer under `intelligence/investor_panel`, including compact analyst-input loading, analyst field validation, a single constrained LLM synthesis call using the approved committee prompts, strict committee-output validation, and a new `committee_synthesis` CLI stage that writes `committee_synthesis.json` from analyst outputs only.
+- Important decisions: No architecture changes were made; committee synthesis was added in the existing `intelligence/investor_panel` package rather than creating a duplicate `knowledge/investor_panel` path, and it consumes analyst outputs only without reading raw annual reports, CIM, or PCIM directly.
+- Backlog items created: None.
+- Next session goal: Validate committee synthesis on a real company run and decide whether the next step is committee-quality tightening or user-facing committee brief rendering.
+
+## 2026-07-10
+
+- Date: 2026-07-10
+- Sprint: Investor Briefs V1
+- What was completed: Added a user-facing `investor_briefs` stage that reads only investor panel analysis JSON files, writes standalone markdown briefs for Graham, Buffett, Fisher, Munger, and Lynch, and preserves hidden evidence traceability in `brief_index.json`. Added focused tests for internal-term stripping, evidence-id hiding, recommendation-language suppression, missing-analyst tolerance, and CLI dispatch, then verified the stage end to end for `tanla`.
+- Important decisions: No architecture changes were made; the brief layer is a pure formatter over analyst outputs and does not read raw documents, CIM, or PCIM directly.
+- Backlog items created: None.
+- Next session goal: Review whether the current brief tone and sectioning need further polish for broader user-facing output layers.
+
+## 2026-07-10
+
+- Date: 2026-07-10
+- Sprint: Investor Panel Embedded Brief Contract
+- What was completed: Updated the investor panel LLM contract so analyst outputs now require an embedded `user_facing_brief` alongside internal evidence-backed analysis, extended prompt and validation rules to block internal jargon and evidence IDs from the brief, kept internal evidence preservation intact, and updated the Python-only `investor_briefs` renderer to prefer the embedded brief while remaining backward-compatible with older analyst files. Added focused tests for embedded brief validation, no-LLM rendering, and markdown extraction, then verified the brief stage again for `tanla`.
+- Important decisions: No architecture changes were made; the analyst LLM still makes a single call, and the user-facing brief is now part of the same canonical analyst JSON output rather than a second-generation step.
+- Backlog items created: None.
+- Next session goal: Re-run live investor panel analysts in a connected environment so persisted analyst JSON files are upgraded to the new embedded-brief schema.
+
+## 2026-07-10
+
+- Date: 2026-07-10
+- Sprint: Investor Panel Brief Validation Hardening
+- What was completed: Updated the investor panel JSON template to show the full combined analyst output shape, tightened `user_facing_brief` validation with analyst-specific titles, forbidden-term checks, recommendation-language blocking, bullet and character limits, and explicit failure messages, and expanded runner tests to cover missing briefs, missing keys, internal-term leakage, evidence-ID leakage, recommendation leakage, and oversized bullet lists. Focused investor-panel suites passed locally.
+- Important decisions: No architecture changes were made; validation now fails clearly on unsafe or malformed user-facing brief content rather than attempting silent repair.
+- Backlog items created: None.
+- Next session goal: Retry a live analyst run once provider connectivity is available and confirm persisted analyst JSON includes the embedded `user_facing_brief`.
+
 ## 2026-07-05
 
 - Date: 2026-07-05
@@ -423,3 +459,219 @@ Chronological engineering history only.
 - Important decisions: No architecture changes were made; the fix stays inside the investor-panel prompt-pack layer and preserves PCIM-only discipline plus evidence-ID traceability. Compacted analyst outputs now append a reasoning-limit note when truncation occurs so downstream consumers know the analyst saw a budgeted PCIM view.
 - Backlog items created: None.
 - Next session goal: Re-run the compacted investor-panel path in a working provider/network environment, inspect real analyst-output quality after compaction, and decide whether any doctrine-specific compact-view shaping is needed beyond the current generic budgets.
+
+## 2026-07-11
+
+- Date: 2026-07-11
+- Sprint: Multi-Year Company Memory V1
+- What was completed: Added a new deterministic `knowledge.company_memory.multi_year` builder that scans `companies/<company>/fy*` in financial-year order, tolerates partial yearly intelligence, and writes eight order-independent artifacts under `companies/<company>/company_memory/multi_year/`: `company_year_index.json`, `business_dna_evolution.json`, `strategy_timeline.json`, `promise_tracker.json`, `risk_evolution.json`, `capital_allocation_timeline.json`, `management_consistency.json`, and `multi_year_index.json`. Wired a new `multi_year_memory` CLI stage into `pipelines/run_company_pipeline.py`, added the stage to the canonical `all` flow after yearly intelligence generation, and added focused tests for year sorting, missing-artifact tolerance, idempotent rebuilds, promise/risk linking, capital-allocation provenance preservation, and no-LLM execution. Real local verification succeeded for `python pipelines/run_company_pipeline.py tanla --stage multi_year_memory`.
+- Important decisions: No architecture redesign was introduced; year folders remain immutable yearly snapshots, and multi-year company memory is a derived, rebuildable layer written separately under `company_memory/multi_year/`. V1 stays deterministic and provenance-first, reusing yearly intelligence artifacts plus existing company-level CIM/PCIM files only as optional source references rather than introducing any new model calls or append-only state.
+- Backlog items created: `ENG-010` to strengthen deterministic cross-year normalization/linking beyond the current token-overlap heuristics while preserving rebuildability and provenance.
+- Next session goal: Decide whether the next multi-year iteration should deepen cross-year grouping for initiatives/strategy themes and then map the richer historical layer into future management-consistency or investor-facing trend analysis without breaking the current deterministic contract.
+
+## 2026-07-11
+
+- Date: 2026-07-11
+- Sprint: Multi-Year Normalization & Signal Quality
+- What was completed: Hardened `knowledge.company_memory.multi_year` with a deterministic taxonomy layer for strategy themes, risks, and capital allocation; corrected capital-allocation classification so share splits no longer fall under capex and debt mutual fund investments now land under treasury investments; added separate CWIP handling while keeping CWIP-derived capex visible; introduced cautious business-DNA status handling (`continued`, `newly_detected`, `not_detected_this_year`, `possibly_discontinued`) so single-year classification gaps no longer look like true exits; canonicalized strategy/management themes for consistency tracking; deduplicated repeated risks within a year; removed full `source_chunk` carry-forward from multi-year risk outputs in favor of short excerpts; and added basic numeric/severity worsening detection including borrowings-driven liquidity-risk worsening. Re-ran `python pipelines/run_company_pipeline.py polymatech --stage multi_year_memory` and verified the refreshed Polymatech artifacts now show `Export` as `not_detected_this_year` rather than disappeared, classify FY24 share subdivision as `share_split`, classify FY25 debt mutual fund investment as `treasury_investment`, preserve CWIP under both `cwip` and capex context, merge CSR variants into canonical `csr`, and emit non-empty multi-year limitations.
+- Important decisions: No architecture changes were made; the upgrade stays fully deterministic, provenance-preserving, and file-backed. The multi-year layer now intentionally prefers cautious status labels and compact evidence summaries over stronger but unsupported historical claims, which keeps it better suited for later investor-panel consumption without adding model calls.
+- Backlog items created: None.
+- Next session goal: Inspect whether a second deterministic pass should broaden canonical theme coverage for additional manufacturing-side management labels that still fall back to generic normalized IDs, while preserving the current architecture and evidence boundaries.
+
+## 2026-07-11
+
+- Date: 2026-07-11
+- Sprint: Multi-Year Taxonomy Extraction
+- What was completed: Refactored multi-year theme/risk/capital taxonomy knowledge out of `knowledge.company_memory.multi_year` and into repo-level JSON config under `taxonomies/`, then added a deterministic `TaxonomyLoader` in `knowledge.company_memory.taxonomy` that always loads universal themes and selectively loads domain packs from active Business DNAs. `multi_year.py` now delegates theme normalization, risk-category normalization, and capital-allocation category lookup to the loader instead of carrying domain-specific keyword lists in code. Added domain packs for manufacturing, semiconductor, media/IP, enterprise platform, and compliance infrastructure; added `taxonomy_review_candidates.json` so unknown labels are surfaced for curation instead of being silently converted into fake canonical themes; and verified the canonical Polymatech multi-year run still maps domain-specific labels correctly while keeping semiconductor-specific vocabulary out of the builder itself.
+- Important decisions: No architecture changes were made; this is a separation-of-knowledge refactor, not a pipeline redesign. The builder remains deterministic and generic, while taxonomy knowledge is now curated as data so future domains can be expanded without editing multi-year orchestration code.
+- Backlog items created: None.
+- Next session goal: Review the newly surfaced `taxonomy_review_candidates.json` outputs across companies and decide which unknown labels deserve promotion into universal versus domain-specific packs without weakening the new generic builder boundary.
+
+## 2026-07-11
+
+- Date: 2026-07-11
+- Sprint: Project-Level Archetype Registry V1
+- What was completed: Replaced the earlier multi-year taxonomy shim with a project-level `knowledge.archetypes` registry and deterministic `ArchetypeRegistry` loader that always activates the universal pack and then resolves additional archetype packs from Business DNA via `knowledge/archetypes/registry.json`. Refactored `knowledge.company_memory.multi_year` to consume the registry for theme normalization, risk normalization, capital-allocation classification, relevant metrics, investor questions, and taxonomy-review capture, while keeping unknown labels explicit in `taxonomy_review_candidates.json`. Added broad-but-shallow archetype packs across manufacturing, semiconductor, media/IP, enterprise-platform, regulated-financial, healthcare, infrastructure, energy, industrial, and materials families so future domains can be activated through config rather than new hardcoded logic. Verified `multi_year.py` no longer contains semiconductor-specific vocabulary, reran `python pipelines/run_company_pipeline.py polymatech --stage multi_year_memory`, and confirmed the canonical nine multi-year artifacts are still generated successfully.
+- Important decisions: This is a modest architecture extension, not a redesign: code remains the stable engine, `knowledge/archetypes` becomes the curated business-intelligence registry, and Business DNA decides which packs activate. The previous `knowledge.company_memory.taxonomy.TaxonomyLoader` path is preserved as a compatibility wrapper so the consumer boundary stays stable while the knowledge layer moves out of pipeline code. No LLM calls were added.
+- Backlog items created: None.
+- Next session goal: Decide which real `taxonomy_review_candidates.json` labels should graduate into universal packs versus domain packs, then let additional consumers beyond `multi_year_memory` reuse the same archetype registry without duplicating domain vocabulary.
+
+## 2026-07-11
+
+- Date: 2026-07-11
+- Sprint: Archetype Pack Curation & Field-Aware Matching
+- What was completed: Curated the `knowledge.archetypes` packs to improve real multi-year output quality without changing the registry architecture. Expanded `universal/themes.json` with separate `csr`, `energy_efficiency`, `resource_efficiency`, stronger `quality_improvement`, better `capacity_expansion`, and tighter `governance_compliance` coverage; added priority metadata so CSR wins before generic sustainability and governance/control risks win before broad fallbacks. Expanded `capex_heavy_manufacturing`, `electronics_esdm`, and `semiconductor_components` themes so construction, LED/electronics manufacturing, and wafer/component language classify more cleanly. Hardened `universal/risks.json` with explicit `internal_control_risk`, `related_party_risk`, `regulatory_risk`, and `derivative_hedging_risk` coverage plus matching priority. Updated `knowledge.archetypes.registry_loader` so theme/risk/capital matching is field-aware across value/category/status/evidence category rather than raw label only, and updated `knowledge.company_memory.multi_year` to pass that structured context through while restricting borrowings-derived numeric signals to liquidity and rate-sensitive risk lanes. Re-ran `python -m pytest tests/knowledge/company_memory/test_multi_year_memory.py -q` and `python pipelines/run_company_pipeline.py polymatech --stage multi_year_memory`; Polymatech review-candidate count dropped from 13 to 0, CSR now remains distinct from sustainability, capacity/construction labels classify into manufacturing/construction buckets, and borrowings no longer leak into FX or generic market-risk buckets.
+- Important decisions: No architecture changes were made; the fix stayed inside curated pack data plus deterministic matching logic in the registry loader. Field-aware matching deliberately uses compact structured context and avoids broad `source_chunk` matching, so the engine remains generic and explainable rather than turning into ad hoc text scraping.
+- Backlog items created: None.
+- Next session goal: Review whether the now-empty Polymatech taxonomy review queue reflects healthy pack coverage or whether future companies should preserve a small curation queue through narrower universal keywords, then decide which other consumers beyond `multi_year_memory` should start using the same field-aware archetype matching.
+
+## 2026-07-11
+
+- Date: 2026-07-11
+- Sprint: Risk Evolution Grouping + Project Theme Inclusion
+- What was completed: Tightened `knowledge.company_memory.multi_year` so same-year risk grouping now classifies each risk item primarily from its own category and value rather than from a shared financial-note excerpt, which stopped cross-risk pollution inside the canonical `risk_evolution.json` output. Added bounded risk QA warnings for canonical/value mismatches and numeric-signal leakage, kept borrowings-derived numeric attachment limited to liquidity and explicit rate-sensitive lanes, and improved representative risk-value selection so the carried-forward wording stays inside the correct canonical risk bucket. Also routed `major_projects` through the same archetype normalization path as management focus and initiatives, compacted project evidence into page plus short excerpt form, and made project-derived canonical themes contribute to `strategy_timeline.json`, `management_consistency.json`, and shift detection. Re-ran `python -m pytest tests/knowledge/company_memory/test_multi_year_memory.py -q` and `python pipelines/run_company_pipeline.py polymatech --stage multi_year_memory`; Polymatech FY24 now yields clean separate risk records for `credit_risk`, `liquidity_risk`, `interest_rate_risk`, `foreign_exchange_risk`, `internal_control_risk`, `related_party_risk`, `risk_management_weakness`, and `market_risk`, while FY25 project themes now include `manufacturing_capacity_expansion` and `semiconductor_manufacturing` from the Atal manufacturing-facility projects.
+- Important decisions: No architecture changes were made; the fix stayed inside deterministic grouping, validation, and normalization logic already owned by `multi_year_memory`. Project-theme inclusion reuses the existing archetype registry rather than adding a separate project-only classifier, and project evidence remains provenance-preserving while dropping raw `source_chunk` payloads from the derived multi-year artifact.
+- Backlog items created: None.
+- Next session goal: Decide whether a small additional curation pass should absorb the remaining FY25 project `unclassified_theme` cases like low-energy membrane transitions and employee energy-program labels, while keeping the registry generic and the review queue honest.
+
+## 2026-07-12
+
+- Date: 2026-07-12
+- Sprint: Phase 3.5 Multi-Year PCIM Integration
+- What was completed: Added a deterministic `knowledge.company_memory.pcim_multi_year_builder` adapter that compacts the existing multi-year company-memory artifacts into a bounded `multi_year_inputs` section inside `pcim_v1.json`. The new PCIM section now carries years covered, cautious business-DNA evolution, management-consistency observations, strategy evolution, promise follow-through, recurring-risk summaries, capital-allocation pattern signals, a compact multi-year evidence map, and carried-forward limitations without copying raw `source_chunk` payloads into PCIM. Wired the builder into `knowledge.cim_contract.CIMContractBuilder`, added focused contract tests for presence, fallback behavior, cautious `not_detected_this_year` handling, recurring-risk evidence preservation, CWIP amount retention, share-split preservation, strategy-shift wording, compactness, and deterministic rebuilds, then verified `python -m pytest tests/knowledge/test_cim_contract.py -q`, `python -m pytest tests/knowledge/company_memory/test_multi_year_memory.py -q`, and `python pipelines/run_company_pipeline.py polymatech --stage pcim`.
+- Important decisions: No architecture changes were made; PCIM now consumes multi-year history through a dedicated compact adapter rather than embedding full multi-year JSON or adding new model calls. The integration stays deterministic, provenance-aware, and investor-panel-friendly while keeping multi-year status language cautious when later-year evidence is missing.
+- Backlog items created: None.
+- Next session goal: Let the investor-panel path start consuming `multi_year_inputs`, then inspect whether any analyst-specific prompt pack needs further compaction or tighter selection once real multi-year history is included.
+
+## 2026-07-12
+
+- Date: 2026-07-12
+- Sprint: Phase 3.6 Multi-Year Inputs into Investor Panel
+- What was completed: Extended the investor doctrine registry and panel runner so `multi_year_inputs` is now a first-class allowed PCIM section for Graham, Buffett, Fisher, Munger, and Lynch where relevant. Updated doctrine mappings, prompt guidance, compact prompt packing, and output validation so analysts can consume bounded multi-year context without loading raw multi-year JSON files, while preserving `evidence_ids`, `years_covered`, and limitations and continuing to strip `source_chunk` from prompt payloads. Added focused tests for analyst-by-analyst section inclusion, compact multi-year prompt content, evidence preservation, supporting-section validation for `multi_year_inputs`, no raw multi-year file access, optional historical metadata fields, and missing-multi-year tolerance. Verified `python -m pytest tests/test_investor_doctrine_registry.py tests/test_investor_panel_runner.py -q` and `python -m pytest tests/knowledge/company_memory/test_multi_year_memory.py -q`. A live `python pipelines/run_company_pipeline.py polymatech --stage investor_panel --analyst graham` run reached the provider call with the new compact prompt and correct section selection, but failed on external OpenAI connection error; a dry-run rerun succeeded and produced `graham_analysis_dry_run.json` with `multi_year_inputs` present in `supporting_pcim_sections`.
+- Important decisions: No architecture changes were made; investor-panel history remains PCIM-only and multi-year data enters only through the compact `multi_year_inputs` contract, not through direct file reads. Historical context is explicitly treated as provisional when only two years are available, and deterministic strategy-shift or `not_detected_this_year` signals are framed cautiously in prompt guidance rather than as confirmed business change.
+- Backlog items created: None.
+- Next session goal: Re-run a live investor-panel analyst in a provider-connected environment, inspect how real doctrine reasoning uses the new historical context, and decide whether analyst-specific prompt compaction or section-order tuning is needed now that multi-year context is available.
+
+## 2026-07-12
+
+- Date: 2026-07-12
+- Sprint: Phase 3.6.1 Analyst Evidence Grounding QA
+- What was completed: Added a deterministic evidence-grounding layer for investor-panel outputs in `intelligence.investor_panel.evidence_grounding`. The runner now builds a compact evidence lookup from PCIM, validates cited evidence IDs against claim categories for findings, red flags, uncertainties, and evidence-bearing assessment text, and records `evidence_grounding_status` plus structured `evidence_grounding_warnings` in persisted analyst outputs. Also added prompt-payload QA to block `source_chunk` leakage and ensure multi-year context still comes only from `pcim_v1.json` while preserving `limitations`. Added focused tests for evidence lookup capture, risk/category compatibility rules, missing-ID failure, mixed-evidence warnings, prompt-payload safety, and updated investor-panel runner tests to include the new grounding fields. Verified `python -m pytest tests/knowledge/investor_panel/test_evidence_grounding.py -q`, `python -m pytest tests/test_investor_panel_runner.py tests/test_investor_doctrine_registry.py -q`, and `python -m pytest tests/knowledge/company_memory/test_multi_year_memory.py -q`. A live `python pipelines/run_company_pipeline.py polymatech --stage investor_panel --analyst graham` rerun again reached the provider call but failed on external OpenAI connection error; a dry-run rerun succeeded and produced `graham_analysis_dry_run.json` with `evidence_grounding_status: pass`.
+- Important decisions: No architecture changes were made; the new grounding QA is a validator layer on top of the existing PCIM-only panel flow, not a prompt or doctrine redesign. V1 prefers warnings over automatic evidence mutation, except for already-existing supporting-section repair logic, so mismatches are surfaced clearly without silently rewriting analyst reasoning.
+- Backlog items created: None.
+- Next session goal: Re-run a live analyst once provider connectivity is available and inspect whether real LLM outputs produce any grounding warnings that suggest tighter claim-specific evidence assignment or narrower top-level evidence usage.
+
+## 2026-07-12
+
+- Date: 2026-07-12
+- Sprint: Phase 3.6.2 Evidence QA Noise Reduction + Evidence ID Normalization
+- What was completed: Reduced investor-panel evidence-grounding noise in `intelligence.investor_panel.evidence_grounding` by adding canonical evidence-ID normalization, lookup aliases for common `company_intelligence` and `business_classification` variants, sentence/claim splitting for broad assessment paragraphs, claim-local evidence matching that ignores unrelated evidence instead of warning on it, uncertainty-aware handling for missing-data claims, and warning dedupe/priority limiting. Updated `intelligence.investor_panel.runner` so saved analyst outputs canonicalize alias evidence IDs before persistence while still preserving normalization warnings during validation. Expanded focused tests for alias resolution, claim splitting, claim-specific compatibility, ignored unrelated evidence, uncertainty-backed missing-data claims, warning cleanup, and canonicalized saved output behavior. Revalidated the existing `companies/polymatech/company_memory/investor_panel/graham_analysis.json` with the new grounding logic, which reduced the warning set from noisy multi-topic false positives to one actionable warning about weak metadata on a business-classification evidence reference.
+- Important decisions: No architecture changes were made; the fix stays inside deterministic grounding and output validation rather than changing PCIM, doctrine structure, or analyst prompts. Evidence normalization is permissive for lookup and persistence, but missing IDs still fail, and unrelated evidence is now ignored rather than treated as incompatible support.
+- Backlog items created: None.
+- Next session goal: Decide whether the remaining weak-metadata warning should be addressed by tightening how governance/compliance claims choose supporting evidence IDs upstream, without widening doctrine scope or loosening the grounding gate.
+
+## 2026-07-12
+
+- Date: 2026-07-12
+- Sprint: Phase 3.6.3 Auto-Normalize Analyst Evidence IDs Before Save
+- What was completed: Extended the investor-panel save path so analyst evidence IDs are canonicalized against PCIM before grounding validation and persistence. Added reusable structured normalization helpers in `intelligence.investor_panel.evidence_grounding` for evidence-ID lists and inline evidence-ID text, then updated `intelligence.investor_panel.runner` to normalize top-level evidence IDs, per-finding/per-red-flag/per-uncertainty evidence bindings, merged saved evidence IDs, and any inline `ev_...` references in assessment prose when safe. Added a new top-level `evidence_id_normalization` summary to saved analyst outputs with `applied`, `replacements`, and `unresolved_ids`, and kept unresolved IDs visible so real grounding failures still surface instead of being silently dropped. Expanded focused tests for risk/capalloc alias replacement, business-classification alias safety, unresolved-ID preservation, deduped canonical saved IDs, normalization summaries, and the absence of normalization-only warnings after canonical save. Revalidated the existing `companies/polymatech/company_memory/investor_panel/graham_analysis.json` through the new path; its saved evidence IDs are now canonical and the normalization summary records the applied replacements.
+- Important decisions: No architecture changes were made; this remains a deterministic validation-and-save refinement inside the existing investor-panel path. Safe normalization only occurs when the canonical ID exists in the PCIM evidence lookup; otherwise the original ID is preserved and can still trigger a real warning or failure.
+- Backlog items created: None.
+- Next session goal: Decide whether the remaining Graham governance-related warnings should be reduced by narrower evidence selection for integrity/governance claims, or whether the current warnings are the right signal because the cited evidence is still only weakly categorized.
+
+## 2026-07-12
+
+- Date: 2026-07-12
+- Sprint: Phase 3.6.4 Strip Inline Evidence Prose + Promise Alias Routing
+- What was completed: Tightened `intelligence.investor_panel.evidence_grounding` so inline parenthetical evidence notes like `(supporting evidence: ev_...)` are stripped from claim text before splitting and validation, while inline evidence IDs are still recoverable as a fallback only when no structured evidence binding exists. Extended evidence normalization/allowed-ID handling so canonical promise aliases like `ev_fy24_company_intelligence_prom_00001` and `ev_fy25_company_intelligence_prom_00001/00002` now resolve safely to their `..._json_prom_...` forms when the canonical PCIM IDs exist. Added promise-aware routing rules so promise evidence is ignored for Graham-style liquidity, interest-rate, capex, and downside-protection claims unless the claim explicitly discusses promises, targets, guidance, or follow-through. Expanded focused tests for promise alias normalization, inline evidence stripping, fake-claim prevention, and promise-evidence routing, then revalidated the existing `companies/polymatech/company_memory/investor_panel/graham_analysis.json`; unresolved promise IDs disappeared and the warning set fell to one real governance-evidence mismatch.
+- Important decisions: No architecture changes were made; the fix stays inside the deterministic evidence-grounding layer and continues to prefer structured evidence bindings over prose-embedded IDs. Promise evidence remains available for uncertainty/follow-through reasoning, but it is no longer treated as financial support for Graham downside claims by default.
+- Backlog items created: None.
+- Next session goal: Decide whether the last remaining Graham governance warning should be addressed by improving analyst-side evidence selection for governance/disclosure claims, or preserved as a legitimate signal that the current evidence bundle is still mismatched for that specific claim.
+
+## 2026-07-12
+
+- Date: 2026-07-12
+- Sprint: Phase 3.7.1 Cross-Analyst Evidence QA Consistency Patch
+- What was completed: Hardened cross-analyst grounding consistency in `intelligence.investor_panel.evidence_grounding` and `intelligence.investor_panel.runner`. Added a status guard so analyst outputs with non-empty `evidence_id_normalization.unresolved_ids` can no longer remain `pass`; they now downgrade to `warning` or `fail` depending on whether unresolved IDs back material findings/assessment text. Improved business-classification alias handling by preferring richer canonical business-understanding DNA evidence over coarser multi-year aliases when both exist, which cleared Lynch’s stale unresolved export-DNA alias. Tightened routing so governance/incentive claims no longer accidentally match on substrings like `conduct` inside `semiconductor`, and capital-allocation/business-quality claims ignore stray risk evidence instead of misrouting it through governance logic. Added more nuanced support rules so Buffett-style business-model evidence is acceptable for business description/understandability, but still only weak support for strong moat claims about pricing power or durable advantage. Expanded focused tests for unresolved-ID status consistency, business-classification alias normalization, governance/risk routing, and Buffett business-model support, then revalidated the saved `lynch_analysis.json`, `munger_analysis.json`, and `buffett_analysis.json` artifacts locally through the updated validator path.
+- Important decisions: No architecture changes were made; this remains a deterministic QA/routing refinement inside the existing investor-panel save-and-validate flow. Local artifact refreshes were used for verification because the environment still has intermittent provider/network constraints for live reruns.
+- Backlog items created: None.
+- Next session goal: Decide whether the remaining Munger and Buffett warnings reflect acceptable evidence-bound caution, or whether the analyst outputs themselves should be nudged to cite cleaner governance/incentive evidence for those specific claims before committee synthesis begins.
+
+## 2026-07-12
+
+- Date: 2026-07-12
+- Sprint: Phase 3.8.1 Committee Synthesis Cleanup
+- What was completed: Added a deterministic committee-synthesis cleanup pass that canonicalizes committee-level evidence IDs, records an `evidence_id_normalization` summary, recalculates `evidence_quality_notes` directly from saved analyst artifacts, and tags every disagreement with `disagreement_type`. Added `--cleanup-only` support to the `committee_synthesis` stage so an existing `committee_synthesis.json` can be repaired without another LLM call, and tightened moat-language cleanup so Buffett is no longer mislabeled as positive on moat durability when his analysis says the moat is still unproven.
+- Important decisions: No architecture changes were made; cleanup stays inside the existing `intelligence/investor_panel` package and operates as deterministic post-processing on analyst outputs plus the saved committee artifact. Committee validation now treats canonical evidence-ID normalization and disagreement typing as part of the contract rather than optional polish.
+- Backlog items created: None.
+- Next session goal: Run the cleaned committee synthesis on real saved artifacts, then decide whether the next step is committee-level user-facing briefing or tighter synthesis prompt guidance for future first-pass outputs.
+
+## 2026-07-13
+
+- Date: 2026-07-13
+- Sprint: Phase 3.8.1A Final Committee Evidence Alias Patch
+- What was completed: Extended committee cleanup so committee evidence normalization can safely reuse the canonical PCIM evidence lookup in addition to analyst evidence IDs. This lets committee cleanup resolve management-summary aliases like `ev_fy24_management_summary_init_00007` to `ev_fy24_management_summary_json_init_00007` when the canonical ID exists in the evidence lookup, while still leaving unresolved IDs visible when no safe canonical target exists. Added focused committee tests for safe management-summary alias replacement via PCIM, unsafe alias preservation, and cleanup-only behavior without any LLM call.
+- Important decisions: No architecture changes were made; this remains a deterministic post-processing refinement inside committee cleanup and validation. Canonicalization is still conservative: if the canonical ID is absent from analyst evidence, the committee evidence pool, and the PCIM evidence lookup, cleanup records the raw alias under `unresolved_ids` instead of inventing a replacement.
+- Backlog items created: None.
+- Next session goal: Re-run the real saved committee artifact and confirm evidence normalization is fully clean before moving on to the next committee-facing output layer.
+
+## 2026-07-13
+
+- Date: 2026-07-13
+- Sprint: Phase 3.9 Committee Brief Renderer
+- What was completed: Added a Python-only committee brief renderer that reads only `committee_synthesis.json`, validates the committee artifact for required structure and forbidden recommendation language, and renders `committee_brief.md` in a fixed investor-facing Markdown structure. Wired a new `committee_brief` CLI stage into `pipelines/run_company_pipeline.py` with optional `--include-evidence-ids` support, and added focused renderer tests covering default rendering, optional evidence-reference inclusion, missing optional evidence-quality notes, forbidden-language rejection, source-chunk rejection, and stage dispatch without any LLM call.
+- Important decisions: No architecture changes were made; the renderer was added inside the existing `intelligence/investor_panel` package so committee-facing code stays in one canonical lane instead of creating a parallel `knowledge/investor_panel` stack. Evidence IDs remain hidden by default in the human brief and only appear in an optional final references section when explicitly requested.
+- Backlog items created: None.
+- Next session goal: Run the renderer on real committee synthesis output, inspect the readability of `committee_brief.md`, and then decide whether the next layer should be richer committee-facing markdown polish or a higher-level final-report assembly step.
+
+## 2026-07-13
+
+- Date: 2026-07-13
+- Sprint: Phase 3.10 Committee Brief QA Gate
+- What was completed: Added a deterministic committee-brief QA gate in `intelligence/investor_panel/committee_brief_qa.py` that compares `committee_brief.md` directly against `committee_synthesis.json`, checks required section coverage, forbidden recommendation/valuation language, evidence-ID visibility rules, analyst-name validity, and source-fidelity for major committee content. Wired a new `committee_brief_qa` CLI stage into `pipelines/run_company_pipeline.py`, and also made the existing `committee_brief` stage automatically emit `committee_brief_qa.json` after rendering. Added focused tests covering valid brief pass, missing sections, forbidden language, evidence-ID visibility defaults and opt-in allowance, unknown analyst names, missing agreement/risk/question fidelity, synthesis-limit preservation, and stage dispatch without any LLM call.
+- Important decisions: No architecture changes were made; the QA gate remains a deterministic validation layer over the existing committee brief and does not rewrite the brief or call models. The gate is intentionally strict in V1: missing major source items, forbidden language, or evidence IDs showing up without the opt-in flag all fail the artifact rather than being softened into warnings.
+- Backlog items created: None.
+- Next session goal: Run the QA gate on the real committee brief, confirm a clean pass on Polymatech, and then decide whether the next step is stronger markdown polish or a higher-level committee-to-report assembly layer.
+
+## 2026-07-13
+
+- Date: 2026-07-13
+- Sprint: Phase 3.11 Panel Run Command
+- What was completed: Added a new `panel` stage to `pipelines/run_company_pipeline.py` that orchestrates the full investment-panel chain from PCIM check through five analysts, committee synthesis, committee cleanup, committee brief rendering, and committee brief QA. Added deterministic analyst-output validation, fail-fast stage handling, console summary output, and `panel_run_summary.json` generation with per-stage, per-analyst, and committee status tracking. Hardened the stage so execution exceptions in analyst, synthesis, brief, or brief-QA steps still produce a saved summary artifact before failing. Added focused pipeline tests for parser exposure, missing-PCIM failure, analyst order, fail-fast analyst stop, warning aggregation, committee-QA failure handling, and summary persistence on execution exceptions.
+- Important decisions: No architecture changes were made; the new `panel` command is an orchestration layer over the existing canonical investor-panel, committee, and brief stages rather than a new reasoning path. The stage is intentionally strict: analyst execution failures, analyst validation failures, committee cleanup failures, or a non-pass committee brief QA status all stop the run immediately instead of letting later stages continue on a broken chain.
+- Backlog items created: None.
+- Next session goal: Re-run the full `panel` command in a provider-connected environment, confirm the summary file captures any remaining analyst warnings cleanly, and decide whether the next step is better retry ergonomics or a higher-level report assembly command.
+
+## 2026-07-13
+
+- Date: 2026-07-13
+- Sprint: Pipeline Orchestration Audit & Fix
+- What was completed: Audited the actual stage dependencies in `pipelines/run_company_pipeline.py` and corrected the canonical `all` orchestration order to `preflight -> discovery -> extraction -> cleaning -> business_understanding -> business_intelligence -> intelligence -> cim/pcim -> multi_year_memory`. Added a fail-fast internal preflight that checks for raw annual-report documents, extractable text, non-empty chunk generation, and a non-zero active company/year retrieval index before discovery runs. Added stage dependency guards for discovery, extraction, cleaning, intelligence, investor panel, committee synthesis, committee brief, and committee brief QA; company-level guards for company-memory/CIM/multi-year stages; `--list-stages` output with dependencies and LLM usage; company-vs-year argument validation; and `run_summary.json` generation for `--stage all`. Added focused orchestration tests for stage order, preflight failure, zero-chunk failure, discovery/extraction/cleaning/intelligence dependency checks, stage listing, company-level year rejection, and one-year multi-year warnings.
+- Important decisions: The audit showed `intelligence` depends on Business Understanding and Business Intelligence artifacts to produce a populated business section, so the repo-backed canonical order keeps `intelligence` after those stages rather than moving it earlier. Raw-source support now prefers company/year raw documents when present but still honors the legacy `data/annual_reports` location so the orchestration fix does not force a storage migration.
+- Backlog items created: None.
+- Next session goal: Re-run the full `all` pipeline in a provider-connected environment, confirm the later stages write fully populated intelligence/CIM artifacts under the new order, and then decide whether any additional empty-artifact status marking should move from orchestration into lower-level stage writers.
+
+## 2026-07-14
+
+- Date: 2026-07-14
+- Sprint: Panel Validator Patch - Forbidden-Language Precision
+- What was completed: Replaced the blunt forbidden-language substring checks across the investor-panel and committee validation path with a shared phrase-aware matcher in `intelligence.investor_panel.forbidden_language`. The new helper returns structured matches, masks an allowlist of neutral corporate-action phrases such as `offer-for-sale`, `sale of shares`, `QIP`, `equity issuance`, and `capital raising`, and only fails on actual recommendation or valuation language such as `buy this stock`, `recommendation: buy`, `target price`, `undervalued`, or `looks like a buy`. Updated the panel-stage analyst validator, committee synthesis validator, committee brief source validator, committee brief QA gate, and analyst brief validation to reuse the same logic. Added focused regression tests for false-positive corporate-action phrases, true recommendation language, panel-stage continuation with Munger-style `offer-for-sale` wording, committee validator allowlisting, and committee brief QA allowlisting.
+- Important decisions: No architecture changes were made; this is a deterministic validator-precision patch inside the existing investor-panel and committee layers. The recommendation guardrail remains strict, but it now keys off recommendation intent and valuation phrasing instead of raw token presence, which avoids false failures on factual disclosure language while preserving hard stops for real investment calls.
+- Backlog items created: None.
+- Next session goal: Re-run the real `datapatterns --stage panel` flow in a provider-connected environment and confirm the run reaches or passes the old Munger boundary without a forbidden-language false positive, then decide whether any remaining panel failures are genuine evidence/LLM issues rather than validator noise.
+
+## 2026-07-14
+
+- Date: 2026-07-14
+- Sprint: Committee Synthesis Validation Order Patch
+- What was completed: Split `intelligence.investor_panel.committee_validator.validate_committee_output` into two explicit validation modes: `raw` for first-pass LLM output and `final` for post-cleanup committee artifacts. Raw mode now validates the core committee schema, evidence-id shape, forbidden recommendation/valuation language, and `source_chunk` exclusion without requiring post-cleanup fields like `evidence_id_normalization` or `disagreement_type`. Final mode keeps the strict contract, including `evidence_id_normalization`, `replacements`, `unresolved_ids`, and final disagreement typing. Updated `intelligence.investor_panel.committee_synthesizer` so live synthesis now follows `LLM -> raw validate -> cleanup/normalization -> final validate -> save`, and cleanup-only runs now load the saved artifact, apply cleanup, then final-validate before writing. Added focused regression tests proving raw outputs without normalization pass raw validation but fail final validation, that cleanup adds normalization/disagreement typing before final save, and that unresolved committee aliases now fail final validation instead of slipping through.
+- Important decisions: No architecture changes were made; this is a validation-order correction inside the existing committee synthesis path. The final committee artifact remains strict, but the raw LLM response is now judged against the right contract stage instead of being forced to contain cleanup-added fields.
+- Backlog items created: None.
+- Next session goal: Re-run the full panel in a provider-connected environment so the committee path can be exercised past analyst execution, then confirm the old early `evidence_id_normalization` failure no longer occurs and that any remaining failures are genuine provider/output issues rather than validator ordering.
+
+## 2026-07-14
+
+- Date: 2026-07-14
+- Sprint: PCIM Multi-Year Freshness & Source Integrity Patch
+- What was completed: Hardened `knowledge.company_memory.pcim_multi_year_builder` so each PCIM build now loads the current company-level multi-year source files directly, derives `multi_year_inputs` fresh from those files, and emits a new top-level `pcim_source_manifest` in `pcim_v1.json`. The manifest records per-file existence/load state, modified time, content hash, detected years, warnings, overall years available, years actually covered in `multi_year_inputs`, missing years, stale-source warnings, and pass/warning/fail status. Expanded the compact multi-year PCIM view to preserve richer yearly DNA status, strategy evolution, promise follow-through, risk evolution, and capital-allocation timeline summaries without leaking `source_chunk`. Added structural PCIM validation in `knowledge.cim_contract` so manifest coverage, missing-year computation, `generated_at`, and `source_chunk` exclusion are checked before save. Updated the investor-panel entrypoint and panel orchestration so PCIM source-manifest failures stop the run clearly, while source-manifest warnings stay visible and allow execution to continue. Added focused synthetic-fixture tests for full year coverage, fresh rebuild pickup after a new year appears, partial-coverage warning behavior, no-source-chunk leakage, and panel-stage handling of source-manifest warning/fail status.
+- Important decisions: No architecture changes were made; this remains a deterministic PCIM/build-time integrity patch rather than a doctrine, prompt, or committee-layer change. PCIM still consumes multi-year memory as a derived file-backed source, but it now declares source freshness and partial coverage explicitly instead of silently carrying forward stale or incomplete historical context.
+- Backlog items created: None.
+- Next session goal: Re-run a real company `--stage pcim` and then `--stage panel` flow on current artifacts to confirm the new manifest surfaces any live multi-year freshness gaps honestly and that analysts are consuming the refreshed historical context as expected.
+
+## 2026-07-14
+
+- Date: 2026-07-14
+- Sprint: Business Blueprint / Classification Contract Alignment Patch
+- What was completed: Audited the business-understanding path and tightened the contract between `business_blueprint.json` and `business_classification.json` so classification is now the explicit authoritative source of official Business DNA. Added `knowledge.business_identity` with deterministic alignment and validation helpers, updated `knowledge.business_understanding.pipeline` to mirror official classification DNAs into blueprint `dnas` with `dnas_source="business_classification"`, and fail fast on invalid identity contracts. Extended the blueprint schema to carry optional `candidate_dna_signals`, updated the interpreter prompt/validator so candidate DNA signals are produced or safely derived from constrained LLM-selected DNAs, and relaxed blueprint validation so missing standalone blueprint `dnas` no longer breaks a valid run. Hardened `knowledge.business_classifier.classifier` so fallback local classifications still emit rationale and evidence-backed support, preventing valid registry-based classifications from failing the stricter contract. Added `business.identity_manifest` to year-level company intelligence and `business_identity_manifest` to CIM/PCIM so downstream artifacts declare the official DNA source, candidate signals, confidence, and any warnings/failures. Added focused synthetic tests for source-of-truth alignment, conflict detection, empty-classification warning behavior, CIM manifest wiring, and PCIM official-source carry-forward, while updating blueprint/interpreter/business-understanding tests to match the canonical contract.
+- Important decisions: No architecture changes were made; this is a contract-and-validation tightening inside the existing business-understanding, CIM, and PCIM flow. Official Business DNA now comes from `business_classification.json`, while blueprint DNA content is mirrored/deprecated metadata only and is not treated as an independent authority downstream.
+- Backlog items created: None.
+- Next session goal: Re-run a real company `--stage business_understanding`, inspect the saved `business_blueprint.json` and `business_classification.json` pair for clean mirrored DNA alignment and candidate-signal quality, and then confirm downstream CIM/PCIM artifacts surface the new identity manifest clearly on real outputs.
+
+## 2026-07-14
+
+- Date: 2026-07-14
+- Sprint: LLM Context Budget & Input Pack Contract
+- What was completed: Added a shared deterministic input-pack layer in `knowledge.ai.input_packs` so active production LLM call paths no longer pass large raw artifacts directly. The new helper set builds stage-scoped `LLMInputPack` payloads, strips raw/debug/validation noise, compacts evidence references, estimates prompt size, enforces configurable stage budgets, validates forbidden fields, and appends stage-local `llm_call_manifest` entries after each call. Wired this contract into the canonical extraction path (`core.base_extractor`), Business Understanding interpreter path (`knowledge.business_interpreter` plus `knowledge.business_understanding.pipeline`), Business Intelligence module-extraction path (`knowledge.module_extractor` plus `pipelines/run_company_pipeline.py` runtime adapter), investor-panel analyst path (`intelligence.investor_panel.runner`), and committee synthesis (`intelligence.investor_panel.committee_synthesizer`). Tightened the investor-panel prompt compaction loop so final analyst prompts now shrink against the actual stage token budget instead of only a loose character cap. Added focused synthetic tests for raw-artifact rejection, source-chunk stripping, validation-noise stripping, budget enforcement, generic multi-company pack reuse, investor-panel doctrine-only input selection, committee-synthesis analyst-only isolation, and orchestration/test-fixture compatibility.
+- Important decisions: No architecture changes were made; this is a shared prompt-input hygiene layer over existing canonical call sites, not a new reasoning path. The investor-panel and committee prompts now render prompt-safe input-pack views without re-exposing policy internals, while manifests and validation still retain the stricter metadata contract off-prompt.
+- Backlog items created: None.
+- Next session goal: Run a real provider-backed `business_understanding` and `panel` flow, inspect the generated `llm_call_manifest` files for practical token/cost visibility, and decide whether any stage needs tighter relevance ranking beyond the current deterministic compaction rules.

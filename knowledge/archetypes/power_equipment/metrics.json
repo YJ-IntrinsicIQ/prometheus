@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "order_backlog", "metric_group": "commercial", "aliases": ["order book", "backlog"], "why_it_matters": "Shows future revenue visibility for equipment businesses."}
+  ]
+}

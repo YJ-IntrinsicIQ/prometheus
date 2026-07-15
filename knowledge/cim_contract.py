@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from knowledge.company_memory import CompanyMemoryAggregateBuilder, parse_financial_year
+from knowledge.business_identity import build_business_identity_manifest
+from knowledge.company_memory.pcim_multi_year_builder import (
+    PCIMMultiYearBuilder,
+    canonicalize_fiscal_year_label,
+)
 
 
 CONTRACT_VERSION = "1.0"
@@ -341,11 +347,18 @@ class CIMContractBuilder:
             for year in available_years
             if yearly_payloads.get(year, {}).get("company_intelligence")
         ]
+        latest_year = self._latest_year(available_years)
+        latest_payload = yearly_payloads.get(latest_year or "", {})
 
         cim_v1 = {
             "contract_version": CONTRACT_VERSION,
             "company": self.company,
             "available_years": available_years,
+            "business_identity_manifest": build_business_identity_manifest(
+                latest_payload.get("business_blueprint"),
+                latest_payload.get("business_classification"),
+                require_classification=bool(latest_year),
+            ),
             "business_dna_by_year": [
                 {
                     "year": snapshot["year"],
@@ -765,11 +778,16 @@ class CIMContractBuilder:
         business_economics_inputs = self._build_business_economics_inputs(cim_v1)
         growth_execution_inputs = self._build_growth_execution_inputs(cim_v1)
         story_vs_numbers_inputs = self._build_story_vs_numbers_inputs(cim_v1, business_understanding)
+        multi_year_builder = PCIMMultiYearBuilder(self.company_root, expected_years=available_years)
+        multi_year_inputs = multi_year_builder.build()
+        pcim_source_manifest = multi_year_builder.source_manifest
 
         pcim_v1 = {
             "contract_version": CONTRACT_VERSION,
             "company": self.company,
+            "generated_at": pcim_source_manifest.get("generated_at"),
             "available_years": available_years,
+            "business_identity_manifest": cim_v1.get("business_identity_manifest", {}),
             "business_understanding": business_understanding,
             "financial_strength_inputs": {
                 "capital_allocation_by_year": capital_allocation,
@@ -834,6 +852,8 @@ class CIMContractBuilder:
             "business_economics_inputs": business_economics_inputs,
             "growth_execution_inputs": growth_execution_inputs,
             "story_vs_numbers_inputs": story_vs_numbers_inputs,
+            "multi_year_inputs": multi_year_inputs,
+            "pcim_source_manifest": pcim_source_manifest,
             "evidence_map": {
                 "business_understanding": self._pcim_section_evidence(latest_business_model, latest_dna, latest_focus),
                 "financial_strength_inputs": [
@@ -912,6 +932,7 @@ class CIMContractBuilder:
                     for item in bucket.get("items", [])
                     for evidence_id in item.get("evidence_ids", [])
                 ],
+                "multi_year_inputs": list((multi_year_inputs.get("evidence_map") or {}).keys()),
             },
             "uncertainty_missing_data": cim_v1.get("uncertainty_missing_data", {}),
             "source_cim": "cim_v1.json",
@@ -928,7 +949,59 @@ class CIMContractBuilder:
 
         for key, values in list(pcim_v1["evidence_map"].items()):
             pcim_v1["evidence_map"][key] = list(dict.fromkeys(values))
+        self._validate_pcim_v1(pcim_v1)
         return pcim_v1
+
+    def _validate_pcim_v1(self, pcim_v1: Dict[str, Any]) -> None:
+        manifest = pcim_v1.get("pcim_source_manifest") or {}
+        if not manifest:
+            raise ValueError("pcim_source_manifest is required in PCIM output")
+
+        source_files = manifest.get("source_files") or []
+        multi_year_inputs = pcim_v1.get("multi_year_inputs") or {}
+        loaded_files = [entry for entry in source_files if entry.get("loaded")]
+        status = manifest.get("status")
+        years_covered = list(multi_year_inputs.get("years_covered", []))
+        manifest_years = list(manifest.get("years_covered_in_multi_year_inputs", []))
+
+        if loaded_files and not multi_year_inputs:
+            raise ValueError("multi_year_inputs missing despite loaded multi-year source files")
+        if years_covered != manifest_years:
+            raise ValueError("pcim_source_manifest.years_covered_in_multi_year_inputs does not match multi_year_inputs.years_covered")
+
+        if '"source_chunk"' in json.dumps(multi_year_inputs, ensure_ascii=False):
+            raise ValueError("multi_year_inputs must not contain source_chunk")
+
+        available_keys = {
+            canonicalize_fiscal_year_label(year)
+            for year in manifest.get("years_available", [])
+            if canonicalize_fiscal_year_label(year)
+        }
+        covered_keys = {
+            canonicalize_fiscal_year_label(year)
+            for year in years_covered
+            if canonicalize_fiscal_year_label(year)
+        }
+        expected_missing = [
+            year for year in manifest.get("years_available", [])
+            if canonicalize_fiscal_year_label(year) in (available_keys - covered_keys)
+        ]
+        if list(manifest.get("missing_years", [])) != expected_missing:
+            raise ValueError("pcim_source_manifest.missing_years does not match available minus covered years")
+
+        generated_at = pcim_v1.get("generated_at")
+        if generated_at:
+            generated_dt = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+            for entry in loaded_files:
+                modified_at = entry.get("modified_at")
+                if not modified_at:
+                    continue
+                modified_dt = datetime.fromisoformat(str(modified_at).replace("Z", "+00:00"))
+                if generated_dt < modified_dt:
+                    raise ValueError("PCIM generated_at predates a loaded multi-year source file")
+
+        if not loaded_files and status != "fail":
+            raise ValueError("pcim_source_manifest must be fail when no multi-year source files are loaded")
 
     def build(self) -> Dict[str, Path]:
         self._ensure_company_memory()

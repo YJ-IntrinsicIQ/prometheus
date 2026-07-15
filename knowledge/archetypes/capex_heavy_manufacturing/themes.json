@@ -1,0 +1,9 @@
+{
+  "themes": [
+    {"canonical_theme": "manufacturing_capacity_expansion", "theme_group": "growth_execution", "priority": 130, "keywords": ["capacity expansion", "manufacturing expansion", "production expansion", "capacity buildout", "manufacturing facility"], "description": "Expansion of manufacturing capacity and production footprint."},
+    {"canonical_theme": "plant_construction", "theme_group": "growth_execution", "priority": 135, "keywords": ["next phase of construction", "construction phase", "plant construction", "factory construction", "construction"], "description": "Construction and build-out of industrial plants or production blocks."},
+    {"canonical_theme": "land_facility_expansion", "theme_group": "growth_execution", "priority": 125, "keywords": ["industrial land", "facility expansion", "land acquisition", "factory expansion", "plant expansion"], "description": "Land, site, and industrial-facility expansion."},
+    {"canonical_theme": "project_execution", "theme_group": "operations", "priority": 120, "keywords": ["project execution", "commissioning", "execution milestone", "implementation phase"], "description": "Execution and milestone progress of industrial projects."},
+    {"canonical_theme": "capex_program", "theme_group": "finance", "priority": 115, "keywords": ["capital project", "capital work in progress", "cwip", "capital expenditure program"], "description": "Structured capex programs and work-in-progress investments."}
+  ]
+}

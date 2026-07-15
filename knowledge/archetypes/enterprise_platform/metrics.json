@@ -1,0 +1,1 @@
+{"metrics":[{"metric_name":"platform_usage","metric_group":"operations","aliases":["throughput","active deployments"],"why_it_matters":"Captures platform scale and embeddedness."}]}

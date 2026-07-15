@@ -1,0 +1,9 @@
+{
+  "archetype_id": "oil_gas",
+  "display_name": "Oil & Gas",
+  "parent_archetypes": ["regulated_business", "capex_heavy_manufacturing"],
+  "description": "Oil, gas, and energy infrastructure businesses with reserve, throughput, and pricing exposure.",
+  "applies_to": ["upstream", "midstream", "integrated energy"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

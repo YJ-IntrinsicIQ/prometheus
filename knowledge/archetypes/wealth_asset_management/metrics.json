@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "aum", "metric_group": "scale", "aliases": ["assets under management"], "why_it_matters": "Primary scale metric for wealth and asset management businesses."}
+  ]
+}

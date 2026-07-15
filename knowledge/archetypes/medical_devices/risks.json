@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "product_approval_risk", "risk_group": "governance", "keywords": ["product approval", "clearance delay", "clinical failure"], "description": "Risk that device approvals or adoption lag expectations."}
+  ]
+}

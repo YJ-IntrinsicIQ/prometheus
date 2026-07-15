@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "commercialized_molecules", "metric_group": "pipeline", "aliases": ["molecules commercialized"], "why_it_matters": "Shows development-to-commercial conversion quality."}
+  ]
+}

@@ -96,6 +96,31 @@ class BusinessDNA:
 
 
 @dataclass
+class CandidateDNASignal:
+    name: str
+    confidence: float = DEFAULT_CONFIDENCE
+    supporting_reason: str = ""
+    evidence_ids: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "confidence": self.confidence,
+            "supporting_reason": self.supporting_reason,
+            "evidence_ids": list(self.evidence_ids),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "CandidateDNASignal":
+        return cls(
+            name=payload.get("name", ""),
+            confidence=float(payload.get("confidence", DEFAULT_CONFIDENCE)),
+            supporting_reason=payload.get("supporting_reason", ""),
+            evidence_ids=[str(item) for item in payload.get("evidence_ids", []) if str(item).strip()],
+        )
+
+
+@dataclass
 class ReasoningStatement:
     statement: str
 
@@ -122,7 +147,9 @@ class BusinessBlueprint:
     metadata: Metadata
     business_understanding: BusinessUnderstanding = field(default_factory=BusinessUnderstanding)
     characteristics: List[BusinessCharacteristic] = field(default_factory=list)
+    candidate_dna_signals: List[CandidateDNASignal] = field(default_factory=list)
     dnas: List[BusinessDNA] = field(default_factory=list)
+    dnas_source: Optional[str] = None
     reasoning: List[ReasoningStatement] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -130,7 +157,9 @@ class BusinessBlueprint:
             "metadata": self.metadata.to_dict(),
             "business_understanding": self.business_understanding.to_dict(),
             "characteristics": [item.to_dict() for item in self.characteristics],
+            "candidate_dna_signals": [item.to_dict() for item in self.candidate_dna_signals],
             "dnas": [item.to_dict() for item in self.dnas],
+            "dnas_source": self.dnas_source,
             "reasoning": [item.to_dict() for item in self.reasoning],
         }
 
@@ -140,6 +169,11 @@ class BusinessBlueprint:
             metadata=Metadata.from_dict(payload.get("metadata", {})),
             business_understanding=BusinessUnderstanding.from_dict(payload.get("business_understanding", {})),
             characteristics=[BusinessCharacteristic.from_dict(item) for item in payload.get("characteristics", [])],
+            candidate_dna_signals=[
+                CandidateDNASignal.from_dict(item)
+                for item in payload.get("candidate_dna_signals", [])
+            ],
             dnas=[BusinessDNA.from_dict(item) for item in payload.get("dnas", [])],
+            dnas_source=payload.get("dnas_source"),
             reasoning=[_normalize_reasoning_item(item) for item in payload.get("reasoning", [])],
         )

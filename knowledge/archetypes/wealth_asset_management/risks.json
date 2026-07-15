@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "market_linked_fee_risk", "risk_group": "commercial", "keywords": ["market correction", "aum decline", "redemption"], "description": "Fee pressure from market weakness or client outflows."}
+  ]
+}

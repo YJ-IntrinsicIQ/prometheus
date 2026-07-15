@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "real_estate_execution", "question": "Are launches, approvals, and collections progressing in line with project commitments?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["booking disclosures", "construction progress", "inventory/collection commentary"]}
+  ]
+}

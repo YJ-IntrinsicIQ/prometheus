@@ -26,6 +26,7 @@
     "governance_and_incentive_inputs",
     "risk_inputs",
     "capital_allocation_inputs",
+    "multi_year_inputs",
     "evidence_map",
     "uncertainty_missing_data"
   ],

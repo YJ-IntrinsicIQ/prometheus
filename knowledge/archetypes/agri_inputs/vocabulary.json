@@ -1,0 +1,7 @@
+{
+  "core_terms": ["crop protection", "seed", "fertilizer", "agri inputs"],
+  "synonyms": ["dealer network", "farmer outreach", "seasonality"],
+  "product_terms": ["hybrid seed", "herbicide", "fungicide"],
+  "operating_terms": ["kharif", "rabi", "channel inventory"],
+  "financial_terms": ["seasonal sales", "working capital", "dealer receivables"]
+}

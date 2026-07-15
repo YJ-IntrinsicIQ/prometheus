@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "resource_and_offtake_risk", "risk_group": "commercial", "keywords": ["irradiation", "wind resource", "offtake", "ppa counterparty"], "description": "Generation and offtake risk in renewables."}
+  ]
+}

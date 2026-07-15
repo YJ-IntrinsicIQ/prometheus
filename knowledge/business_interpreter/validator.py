@@ -62,6 +62,30 @@ def _validate_llm_classification_payload(payload: Any) -> Optional[Dict[str, Any
     return payload
 
 
+def _validate_candidate_dna_signals(payload: Any) -> None:
+    if payload is None:
+        return
+    if not isinstance(payload, list):
+        raise ValidationError("candidate_dna_signals must be a list")
+    seen = set()
+    for index, item in enumerate(payload):
+        if not isinstance(item, dict):
+            raise ValidationError(f"candidate_dna_signals[{index}] must be an object")
+        name = (item.get("name") or "").strip()
+        if not name:
+            raise ValidationError(f"candidate_dna_signals[{index}].name is required")
+        confidence = item.get("confidence")
+        if not isinstance(confidence, (int, float)) or not 0 <= float(confidence) <= 1:
+            raise ValidationError(f"candidate_dna_signals[{index}].confidence must be between 0 and 1")
+        supporting_reason = (item.get("supporting_reason") or "").strip()
+        if not supporting_reason:
+            raise ValidationError(f"candidate_dna_signals[{index}].supporting_reason is required")
+        key = name.lower()
+        if key in seen:
+            raise ValidationError(f"duplicate candidate_dna_signal: {name}")
+        seen.add(key)
+
+
 def validate_blueprint_payload(payload: Dict[str, Any]) -> Tuple[BusinessBlueprint, Optional[Dict[str, Any]]]:
     if not isinstance(payload, dict):
         raise ValidationError("payload must be an object")
@@ -103,6 +127,8 @@ def validate_blueprint_payload(payload: Dict[str, Any]) -> Tuple[BusinessBluepri
             raise ValidationError(f"duplicate characteristic: {name}")
         seen.add(key)
 
+    _validate_candidate_dna_signals(payload.get("candidate_dna_signals"))
+
     reasoning = payload.get("reasoning")
     if not isinstance(reasoning, list) or not reasoning:
         raise ValidationError("reasoning must contain at least one item")
@@ -115,4 +141,18 @@ def validate_blueprint_payload(payload: Dict[str, Any]) -> Tuple[BusinessBluepri
             raise ValidationError(f"reasoning[{index}].statement is required")
 
     classification = _validate_llm_classification_payload(payload.get("classification"))
+    if not payload.get("candidate_dna_signals") and isinstance(classification, dict):
+        selected = classification.get("selected_dnas", [])
+        if isinstance(selected, list) and selected:
+            payload = dict(payload)
+            payload["candidate_dna_signals"] = [
+                {
+                    "name": (item.get("name") or "").strip(),
+                    "confidence": float(item.get("confidence", 0.0) or 0.0),
+                    "supporting_reason": (item.get("reason") or "").strip() or "Derived from constrained classification candidate selection.",
+                    "evidence_ids": [],
+                }
+                for item in selected
+                if isinstance(item, dict) and (item.get("name") or "").strip()
+            ]
     return BusinessBlueprint.from_dict(payload), classification

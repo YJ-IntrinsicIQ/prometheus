@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "design_win_pipeline", "metric_group": "commercial", "aliases": ["design wins", "program wins"], "why_it_matters": "Signals future manufacturing revenue visibility."}
+  ]
+}

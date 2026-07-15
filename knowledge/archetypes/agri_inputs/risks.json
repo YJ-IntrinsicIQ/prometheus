@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "seasonality_and_channel_risk", "risk_group": "commercial", "keywords": ["monsoon", "seasonality", "dealer inventory", "crop cycle"], "description": "Weather and channel risks affecting agri-input demand."}
+  ]
+}

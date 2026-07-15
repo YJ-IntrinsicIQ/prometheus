@@ -1,0 +1,7 @@
+{
+  "core_terms": ["hospital", "bed occupancy", "arpoB", "clinical services"],
+  "synonyms": ["specialty care", "patient flow", "doctor network"],
+  "product_terms": ["inpatient", "outpatient", "surgery"],
+  "operating_terms": ["occupancy", "case mix", "new hospital"],
+  "financial_terms": ["arpob", "ebitda per bed", "matured hospital"]
+}

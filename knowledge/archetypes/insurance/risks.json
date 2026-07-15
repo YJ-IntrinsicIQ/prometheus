@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "claims_ratio_risk", "risk_group": "financial", "keywords": ["claims ratio", "loss ratio", "claims inflation"], "description": "Claims pressure undermining underwriting profitability."}
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "cement_cost_position", "question": "Are capacity additions improving volume reach without weakening cost position?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["capacity additions", "fuel/freight commentary", "volume disclosures"]}
+  ]
+}

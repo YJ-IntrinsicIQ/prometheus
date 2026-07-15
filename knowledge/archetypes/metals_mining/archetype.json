@@ -1,0 +1,9 @@
+{
+  "archetype_id": "metals_mining",
+  "display_name": "Metals & Mining",
+  "parent_archetypes": ["capex_heavy_manufacturing"],
+  "description": "Commodity extraction and processing businesses with reserve, grade, and cycle exposure.",
+  "applies_to": ["miners", "metal processors"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

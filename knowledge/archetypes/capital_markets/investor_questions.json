@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "capital_markets_activity", "question": "How dependent is business quality on cyclical market activity versus durable platform economics?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["client growth", "activity mix", "non-transaction revenue disclosures"]}
+  ]
+}

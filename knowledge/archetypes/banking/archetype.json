@@ -1,0 +1,9 @@
+{
+  "archetype_id": "banking",
+  "display_name": "Banking",
+  "parent_archetypes": ["regulated_business"],
+  "description": "Deposit-funded regulated financial institutions.",
+  "applies_to": ["banks"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

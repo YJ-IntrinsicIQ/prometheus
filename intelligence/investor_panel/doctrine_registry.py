@@ -19,6 +19,7 @@ VALID_PCIM_SECTIONS = {
     "business_economics_inputs",
     "growth_execution_inputs",
     "story_vs_numbers_inputs",
+    "multi_year_inputs",
     "evidence_map",
     "uncertainty_missing_data",
 }

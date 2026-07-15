@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "asset_quality_risk", "risk_group": "financial", "keywords": ["npa", "delinquency", "collection efficiency", "credit loss"], "description": "Credit losses or weak asset quality."}
+  ]
+}

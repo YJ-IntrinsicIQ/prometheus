@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "project_execution_risk", "risk_group": "operations", "keywords": ["site execution", "project completion", "tender delay", "customer acceptance"], "description": "Delay or execution risk in equipment-led projects."}
+  ]
+}

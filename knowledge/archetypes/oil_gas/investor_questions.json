@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "oil_gas_cycle_quality", "question": "Is capital deployment improving durable throughput and cost position beyond commodity price swings?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["throughput/production disclosures", "capex pipeline", "pricing commentary"]}
+  ]
+}

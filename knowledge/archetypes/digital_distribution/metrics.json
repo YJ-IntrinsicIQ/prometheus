@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "audience_reach", "metric_group": "distribution", "aliases": ["subscribers", "views", "followers", "audience reach"], "why_it_matters": "Measures owned and third-party digital reach."}
+  ]
+}

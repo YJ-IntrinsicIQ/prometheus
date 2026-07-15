@@ -2,8 +2,58 @@ from __future__ import annotations
 
 from typing import Any
 
+from knowledge.ai.input_packs import build_llm_input_pack, render_llm_input_pack
 
-def build_prompt(module: Any, chunks: Any) -> str:
+
+def build_input_pack(module: Any, chunks: Any) -> dict:
+    questions = []
+    for question in getattr(module, "questions", []) or []:
+        questions.append(
+            {
+                "question_id": question.id,
+                "question": question.question,
+            }
+        )
+
+    normalized_chunks = []
+    for index, chunk in enumerate(chunks or [], start=1):
+        if isinstance(chunk, dict):
+            chunk_id = chunk.get("chunk_id", f"chunk_{index}")
+            text = chunk.get("text", "")
+        else:
+            chunk_id = getattr(chunk, "chunk_id", f"chunk_{index}")
+            text = getattr(chunk, "text", "")
+        normalized_chunks.append({"chunk_id": chunk_id, "text": text})
+
+    return build_llm_input_pack(
+        stage="business_intelligence",
+        purpose="Answer module-specific investor questions using only retrieved evidence chunks.",
+        company="",
+        year=None,
+        selected_input={
+            "module": {
+                "module_id": getattr(module, "module_id", ""),
+                "module_name": getattr(module, "module_name", ""),
+            },
+            "questions": questions,
+            "chunks": normalized_chunks,
+        },
+        observations=[
+            {
+                "module": {
+                    "module_id": getattr(module, "module_id", ""),
+                    "module_name": getattr(module, "module_name", ""),
+                },
+                "questions": questions,
+                "chunks": normalized_chunks,
+            }
+        ],
+        source_artifacts=["retrieval_chunks"],
+        pack_name=f"{getattr(module, 'module_id', 'module')}_input_pack",
+    )
+
+
+def build_prompt(module: Any, chunks: Any, llm_input_pack: dict | None = None) -> str:
     questions = getattr(module, "questions", [])
 
     question_lines = []
@@ -12,18 +62,7 @@ def build_prompt(module: Any, chunks: Any) -> str:
             f"- {question.id}: {question.question}"
         )
 
-    chunk_lines = []
-    for index, chunk in enumerate(chunks, start=1):
-        if isinstance(chunk, dict):
-            chunk_id = chunk.get("chunk_id", f"chunk_{index}")
-            text = chunk.get("text", "")
-        else:
-            chunk_id = getattr(chunk, "chunk_id", f"chunk_{index}")
-            text = getattr(chunk, "text", "")
-
-        chunk_lines.append(
-            f"[{chunk_id}]\n{text}\n"
-        )
+    llm_input_pack = llm_input_pack or build_input_pack(module, chunks)
 
     return f"""You are a senior investment analyst.
 
@@ -64,7 +103,7 @@ Questions
 
 Evidence
 
-{chr(10).join(chunk_lines) if chunk_lines else "None"}
+{render_llm_input_pack(llm_input_pack, include_policy=False)}
 
 Return EXACTLY this JSON:
 

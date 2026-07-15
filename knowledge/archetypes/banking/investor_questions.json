@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "banking_funding_quality", "question": "How durable is the funding franchise relative to growth and asset quality?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["deposit mix", "nim", "asset-quality disclosures"]}
+  ]
+}

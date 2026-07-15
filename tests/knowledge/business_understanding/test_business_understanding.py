@@ -13,6 +13,13 @@ from knowledge.module_extractor.schema import ModuleAnswer, ModuleExtractionResu
 from knowledge.question_engine.schema import DiscoveryPlan, Question
 
 
+def _write_minimal_clean_inputs(context):
+    (context.extracted_dir / "clean_projects.json").write_text(
+        json.dumps([{"project_name": "Expansion", "source_chunk": "Expansion evidence", "page": 1}]),
+        encoding="utf-8",
+    )
+
+
 def test_run_business_understanding_persists_artifacts(tmp_path, monkeypatch):
     context = CompanyContext(company="tips", year="fy24")
     monkeypatch.chdir(tmp_path)
@@ -128,6 +135,7 @@ def test_run_business_intelligence_stage_persists_artifacts(tmp_path, monkeypatc
     monkeypatch.chdir(tmp_path)
     context.create_directories()
     set_context(context)
+    _write_minimal_clean_inputs(context)
     seen_contexts = []
     seen_runtime_kwargs = {}
 
@@ -156,7 +164,38 @@ def test_run_business_intelligence_stage_persists_artifacts(tmp_path, monkeypatc
 
     def fake_business_understanding(context=None):
         seen_contexts.append(context)
-        return {"business_classification": {"business_dnas": ["Capital Intensive"], "report_template": "Test"}}
+        return {
+            "business_blueprint": {
+                "metadata": {"company": "tips", "version": "1.0", "confidence": 0.8},
+                "business_understanding": {
+                    "business_summary": "Builds physical products",
+                    "business_model": "Manufacturing-led business",
+                    "value_creation": "Production assets create value",
+                    "competitive_position": "Competes through execution",
+                },
+                "characteristics": [{"name": "Capital-intensive production", "confidence": 0.8}],
+                "candidate_dna_signals": [
+                    {
+                        "name": "Manufacturing",
+                        "confidence": 0.8,
+                        "supporting_reason": "Production evidence supports manufacturing.",
+                        "evidence_ids": [],
+                    }
+                ],
+                "dnas": [{"name": "Manufacturing", "confidence": 0.8}],
+                "dnas_source": "business_classification",
+                "reasoning": [{"statement": "Reasoning present."}],
+            },
+            "business_classification": {
+                "business_dnas": ["Manufacturing"],
+                "question_modules": ["capital_allocation"],
+                "report_template": "manufacturing_v1",
+                "rationale": ["Production evidence dominates."],
+                "evidence_used": ["Builds physical products"],
+                "confidence": 0.8,
+                "rejected_dnas": [],
+            },
+        }
 
     def fake_runtime(retriever=None, extractor=None, module_definitions=None):
         seen_runtime_kwargs["retriever"] = retriever
@@ -186,12 +225,49 @@ def test_run_business_intelligence_stage_uses_saved_classification_before_rerunn
     monkeypatch.chdir(tmp_path)
     context.create_directories()
     set_context(context)
+    _write_minimal_clean_inputs(context)
+    (context.intelligence_dir / "business_blueprint.json").write_text(
+        json.dumps(
+            {
+                "metadata": {"company": "tanla", "version": "1.0", "confidence": 0.85},
+                "business_understanding": {
+                    "business_summary": "Enterprise messaging and compliance platform.",
+                    "business_model": "API-first platform with operator and enterprise integrations.",
+                    "value_creation": "Creates value through platform scale, trust controls, and partner deployments.",
+                    "competitive_position": "Differentiates through throughput, compliance, and platform integrations.",
+                },
+                "characteristics": [
+                    {"name": "API-first platform architecture", "confidence": 0.9},
+                    {"name": "Embedded compliance and anti-fraud controls", "confidence": 0.88},
+                ],
+                "candidate_dna_signals": [
+                    {
+                        "name": "Enterprise Platform",
+                        "confidence": 0.85,
+                        "supporting_reason": "Platform architecture supports enterprise platform candidate.",
+                        "evidence_ids": [],
+                    }
+                ],
+                "dnas": [
+                    {"name": "Compliance Infrastructure", "confidence": 0.85},
+                    {"name": "Enterprise Platform", "confidence": 0.85},
+                ],
+                "dnas_source": "business_classification",
+                "reasoning": [{"statement": "Reasoning present."}],
+            }
+        ),
+        encoding="utf-8",
+    )
     (context.intelligence_dir / "business_classification.json").write_text(
         json.dumps(
             {
                 "business_dnas": ["Compliance Infrastructure", "Enterprise Platform"],
                 "question_modules": ["technology", "platform_dependency"],
                 "report_template": "software_v1",
+                "rationale": ["Platform and compliance evidence dominate."],
+                "evidence_used": ["Enterprise messaging and compliance platform."],
+                "confidence": 0.84,
+                "rejected_dnas": [],
             }
         ),
         encoding="utf-8",
@@ -326,7 +402,38 @@ def test_build_runtime_retriever_generates_clean_chunks_when_missing(tmp_path, m
 def test_run_all_reuses_business_understanding_bundle_and_context(monkeypatch):
     context = CompanyContext(company="tips", year="fy24")
     calls = []
-    bundle = {"business_classification": {"business_dnas": ["Capital Intensive"], "report_template": "Test"}}
+    bundle = {
+        "business_blueprint": {
+            "metadata": {"company": "tips", "version": "1.0", "confidence": 0.8},
+            "business_understanding": {
+                "business_summary": "Builds physical products",
+                "business_model": "Manufacturing-led business",
+                "value_creation": "Production assets create value",
+                "competitive_position": "Competes through execution",
+            },
+            "characteristics": [{"name": "Capital-intensive production", "confidence": 0.8}],
+            "candidate_dna_signals": [
+                {
+                    "name": "Manufacturing",
+                    "confidence": 0.8,
+                    "supporting_reason": "Production evidence supports manufacturing.",
+                    "evidence_ids": [],
+                }
+            ],
+            "dnas": [{"name": "Manufacturing", "confidence": 0.8}],
+            "dnas_source": "business_classification",
+            "reasoning": [{"statement": "Reasoning present."}],
+        },
+        "business_classification": {
+            "business_dnas": ["Manufacturing"],
+            "question_modules": ["capital_allocation"],
+            "report_template": "manufacturing_v1",
+            "rationale": ["Production evidence dominates."],
+            "evidence_used": ["Builds physical products"],
+            "confidence": 0.8,
+            "rejected_dnas": [],
+        },
+    }
 
     def fake_business_understanding(context=None):
         calls.append(("business_understanding", context))
@@ -342,16 +449,28 @@ def test_run_all_reuses_business_understanding_bundle_and_context(monkeypatch):
     monkeypatch.setattr(run_company_pipeline, "run_extraction", lambda context=None: calls.append(("extraction", context)))
     monkeypatch.setattr(run_company_pipeline, "run_cleaning", lambda context=None: calls.append(("cleaning", context)))
     monkeypatch.setattr(run_company_pipeline, "run_intelligence", lambda context=None: calls.append(("intelligence", context)))
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_cim_stage",
+        lambda company, context=None: calls.append(("cim", company, context)),
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_multi_year_memory_stage",
+        lambda company, context=None: calls.append(("multi_year_memory", company, context)),
+    )
 
     run_company_pipeline.run_all(context=context)
 
     assert calls == [
-        ("business_understanding", context),
-        ("business_intelligence", context, bundle),
         ("discovery", context),
         ("extraction", context),
         ("cleaning", context),
+        ("business_understanding", context),
+        ("business_intelligence", context, bundle),
         ("intelligence", context),
+        ("cim", context.company, context),
+        ("multi_year_memory", context.company, context),
     ]
 
 
@@ -457,19 +576,39 @@ def test_main_runs_cim_without_year(monkeypatch):
     assert calls == [("run_cim_stage", "tips", None)]
 
 
+def test_main_runs_multi_year_memory_without_year(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_multi_year_memory_stage",
+        lambda company, context=None: calls.append(("run_multi_year_memory_stage", company, context)),
+    )
+    monkeypatch.setattr(
+        run_company_pipeline.sys,
+        "argv",
+        ["run_company_pipeline", "tips", "--stage", "multi_year_memory"],
+    )
+
+    run_company_pipeline.main()
+
+    assert calls == [("run_multi_year_memory_stage", "tips", None)]
+
+
 def test_run_discovery_ensures_active_company_year_index_before_steps(monkeypatch):
     context = CompanyContext(company="polymatech", year="fy24")
     calls = []
 
     monkeypatch.setattr(run_company_pipeline, "set_context", lambda current: calls.append(("set_context", current)))
-    monkeypatch.setattr(run_company_pipeline, "_ensure_discovery_index", lambda current: calls.append(("ensure_index", current)))
+    monkeypatch.setattr(run_company_pipeline, "_run_preflight", lambda current: calls.append(("preflight", current)))
+    monkeypatch.setattr(run_company_pipeline, "_ensure_discovery_index", lambda current: (calls.append(("ensure_index", current)), 1)[1])
     monkeypatch.setattr(run_company_pipeline, "run_steps", lambda stage, steps: calls.append(("run_steps", stage, steps)))
 
     run_company_pipeline.run_discovery(context=context)
 
     assert calls == [
         ("set_context", context),
-        ("ensure_index", context),
+        ("preflight", context),
         ("run_steps", "DISCOVERY", run_company_pipeline.get_discovery_steps),
     ]
 
@@ -488,10 +627,39 @@ def test_business_understanding_bundle_validation_fails_fast(bundle, message):
 
 
 def test_business_understanding_bundle_validation_returns_classification():
-    classification = {"business_dnas": ["Capital Intensive"], "report_template": "Test"}
+    classification = {
+        "business_dnas": ["Manufacturing"],
+        "question_modules": ["capital_allocation"],
+        "report_template": "manufacturing_v1",
+        "rationale": ["Production evidence dominates."],
+        "evidence_used": ["Builds physical products"],
+        "confidence": 0.8,
+        "rejected_dnas": [],
+    }
+    blueprint = {
+        "metadata": {"company": "tips", "version": "1.0", "confidence": 0.8},
+        "business_understanding": {
+            "business_summary": "Builds physical products",
+            "business_model": "Manufacturing-led business",
+            "value_creation": "Production assets create value",
+            "competitive_position": "Competes through execution",
+        },
+        "characteristics": [{"name": "Capital-intensive production", "confidence": 0.8}],
+        "candidate_dna_signals": [
+            {
+                "name": "Manufacturing",
+                "confidence": 0.8,
+                "supporting_reason": "Production evidence supports manufacturing.",
+                "evidence_ids": [],
+            }
+        ],
+        "dnas": [{"name": "Manufacturing", "confidence": 0.8}],
+        "dnas_source": "business_classification",
+        "reasoning": [{"statement": "Reasoning present."}],
+    }
 
     assert run_company_pipeline.validate_business_understanding_bundle(
-        {"business_classification": classification}
+        {"business_blueprint": blueprint, "business_classification": classification}
     ) is classification
 
 

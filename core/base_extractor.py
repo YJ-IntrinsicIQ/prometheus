@@ -6,6 +6,7 @@ from core.context_paths import (
     extraction_path,
 )
 from knowledge.ai import get_llm
+from knowledge.ai.input_packs import build_llm_input_pack, call_llm_with_input_pack
 
 try:
     from dotenv import load_dotenv
@@ -53,8 +54,38 @@ class BaseExtractor:
         return max_items
 
     def extract(self, chunk_text):
-        response = self.llm.generate(
-            prompt=chunk_text,
+        llm_input_pack = build_llm_input_pack(
+            stage="extraction",
+            purpose=f"Extract structured {self.output_key} items from discovery evidence.",
+            company="",
+            year=None,
+            selected_input={
+                "chunks": [
+                    {
+                        "chunk_id": "discovery_chunk_1",
+                        "text": chunk_text,
+                    }
+                ]
+            },
+            observations=[
+                {
+                    "chunks": [
+                        {
+                            "chunk_id": "discovery_chunk_1",
+                            "text": chunk_text,
+                        }
+                    ]
+                }
+            ],
+            source_artifacts=[self.input_file.name],
+            pack_name=f"{self.output_file.stem}_input_pack",
+        )
+        response = call_llm_with_input_pack(
+            llm=self.llm,
+            prompt=json.dumps(llm_input_pack, indent=2, ensure_ascii=False),
+            input_pack=llm_input_pack,
+            manifest_path=self.output_file.with_name(f"{self.output_file.stem}_llm_call_manifest.json"),
+            require_source_artifacts=True,
             system_prompt=self.prompt,
             temperature=0,
             response_schema={"type": "object"},

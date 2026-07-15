@@ -1,0 +1,6 @@
+{
+  "themes": [
+    {"canonical_theme": "electronics_manufacturing", "theme_group": "operations", "priority": 125, "keywords": ["electronics manufacturing", "production of led products", "led products", "component production", "electronic packaging", "materials manufacturing for energy efficient devices"], "description": "Electronics and component manufacturing footprint and production themes."},
+    {"canonical_theme": "product_manufacturing", "theme_group": "operations", "priority": 110, "keywords": ["product manufacturing", "production line", "manufacturing operations"], "description": "General product-manufacturing execution themes within electronics businesses."}
+  ]
+}

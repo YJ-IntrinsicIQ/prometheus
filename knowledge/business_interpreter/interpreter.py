@@ -7,7 +7,7 @@ from knowledge.business_blueprint import BusinessBlueprint
 from knowledge.company_memory import CompanyMemory
 
 from .parser import ParserError, parse_interpretation_bundle
-from .prompt import build_prompt
+from .prompt import build_input_pack, build_prompt
 from .validator import ValidationError, validate_blueprint_payload
 
 
@@ -26,8 +26,19 @@ class BusinessInterpreter:
         if self.llm_client is None:
             raise ValueError("llm_client is required")
 
-        prompt = build_prompt(self.company_memory, classification_context=classification_context)
-        response = self.llm_client(prompt)
+        llm_input_pack = build_input_pack(
+            self.company_memory,
+            classification_context=classification_context,
+        )
+        prompt = build_prompt(
+            self.company_memory,
+            classification_context=classification_context,
+            llm_input_pack=llm_input_pack,
+        )
+        try:
+            response = self.llm_client(prompt, llm_input_pack=llm_input_pack)
+        except TypeError:
+            response = self.llm_client(prompt)
 
         interpretation = parse_interpretation_bundle(response)
         blueprint, classification = validate_blueprint_payload(

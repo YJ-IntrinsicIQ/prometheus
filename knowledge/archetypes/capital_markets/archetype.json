@@ -1,0 +1,9 @@
+{
+  "archetype_id": "capital_markets",
+  "display_name": "Capital Markets",
+  "parent_archetypes": ["regulated_business"],
+  "description": "Brokerage, exchange-linked, or market-infrastructure businesses.",
+  "applies_to": ["broking", "exchange infrastructure", "market utilities"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "nbfc_asset_quality", "question": "Is loan growth translating into durable, well-underwritten asset quality?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["npa disclosures", "collection commentary", "funding disclosures"]}
+  ]
+}
