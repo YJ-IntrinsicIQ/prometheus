@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "churn_risk", "risk_group": "commercial", "keywords": ["churn", "retention", "customer attrition", "renewal risk"], "description": "Risk of weak customer retention or recurring-revenue loss."}
+  ]
+}

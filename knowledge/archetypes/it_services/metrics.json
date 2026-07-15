@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "billable_utilization", "metric_group": "operations", "aliases": ["utilization", "billable utilization"], "why_it_matters": "Core indicator of service-delivery efficiency."}
+  ]
+}

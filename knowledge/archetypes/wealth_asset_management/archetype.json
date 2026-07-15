@@ -1,0 +1,9 @@
+{
+  "archetype_id": "wealth_asset_management",
+  "display_name": "Wealth & Asset Management",
+  "parent_archetypes": ["regulated_business"],
+  "description": "Fee-based wealth, advisory, or asset-management businesses.",
+  "applies_to": ["wealth managers", "amcs", "advisory platforms"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

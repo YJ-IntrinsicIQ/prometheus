@@ -1,0 +1,9 @@
+{
+  "archetype_id": "cement",
+  "display_name": "Cement",
+  "parent_archetypes": ["capex_heavy_manufacturing"],
+  "description": "Cement and building-materials producers with utilization, freight, and energy-cost dynamics.",
+  "applies_to": ["cement producers"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

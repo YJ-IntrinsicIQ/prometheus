@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "regulatory_compliance_risk", "risk_group": "governance", "keywords": ["usfda", "warning letter", "gmp", "regulatory observation"], "description": "Regulatory or plant-compliance risk."}
+  ]
+}

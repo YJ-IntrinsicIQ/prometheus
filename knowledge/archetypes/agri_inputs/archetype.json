@@ -1,0 +1,9 @@
+{
+  "archetype_id": "agri_inputs",
+  "display_name": "Agri Inputs",
+  "parent_archetypes": ["working_capital_intensive"],
+  "description": "Agricultural-input businesses with seasonal channel and product-efficacy dynamics.",
+  "applies_to": ["seeds", "crop protection", "fertilizer"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

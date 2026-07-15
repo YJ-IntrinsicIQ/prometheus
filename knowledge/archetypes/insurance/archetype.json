@@ -1,0 +1,9 @@
+{
+  "archetype_id": "insurance",
+  "display_name": "Insurance",
+  "parent_archetypes": ["regulated_business"],
+  "description": "Underwriting and float-based insurance businesses.",
+  "applies_to": ["life insurance", "general insurance"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

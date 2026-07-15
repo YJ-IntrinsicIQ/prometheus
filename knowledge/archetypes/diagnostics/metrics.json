@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "test_volume", "metric_group": "scale", "aliases": ["tests processed", "samples processed"], "why_it_matters": "Primary volume indicator for diagnostics businesses."}
+  ]
+}

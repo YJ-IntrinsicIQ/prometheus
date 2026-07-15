@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "wealth_fee_quality", "question": "How durable are fee revenues relative to market direction and client retention?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["aum mix", "net flows", "client retention disclosures"]}
+  ]
+}

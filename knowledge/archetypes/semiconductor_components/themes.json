@@ -1,0 +1,6 @@
+{
+  "themes": [
+    {"canonical_theme": "semiconductor_manufacturing", "theme_group": "operations", "priority": 150, "keywords": ["sapphire wafer", "silicon wafer", "wafer", "clean room", "semiconductor manufacturing", "semi conductors and led lights", "semi conductors"], "description": "Semiconductor wafer and materials manufacturing themes."},
+    {"canonical_theme": "semiconductor_components", "theme_group": "operations", "priority": 145, "keywords": ["htcc", "ltcc", "packaged chips", "chip packaging", "substrate", "semiconductor components"], "description": "Semiconductor packaging, substrates, and advanced component themes."}
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "plant_load_factor", "metric_group": "operations", "aliases": ["plf", "availability factor"], "why_it_matters": "Core efficiency and utilization measure for generation assets."}
+  ]
+}

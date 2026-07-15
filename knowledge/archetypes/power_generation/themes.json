@@ -1,0 +1,5 @@
+{
+  "themes": [
+    {"canonical_theme": "generation_reliability", "theme_group": "operations", "keywords": ["plant load factor", "availability", "reliability"], "description": "Reliable generation and dispatch performance."}
+  ]
+}

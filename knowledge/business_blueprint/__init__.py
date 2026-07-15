@@ -4,6 +4,7 @@ from .schema import (
     BusinessUnderstanding,
     BusinessCharacteristic,
     BusinessDNA,
+    CandidateDNASignal,
     ReasoningStatement,
 )
 from .constants import (
@@ -22,6 +23,7 @@ __all__ = [
     "BusinessUnderstanding",
     "BusinessCharacteristic",
     "BusinessDNA",
+    "CandidateDNASignal",
     "ReasoningStatement",
     "DEFAULT_BLUEPRINT_VERSION",
     "DEFAULT_CONFIDENCE",

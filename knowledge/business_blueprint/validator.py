@@ -33,9 +33,15 @@ def validate_blueprint(blueprint: BusinessBlueprint) -> List[str]:
             if not 0 <= item.confidence <= 1:
                 errors.append(f"characteristics[{index}].confidence must be between 0 and 1")
 
-    if not blueprint.dnas:
-        errors.append("dnas must contain at least one item")
-    else:
+    for index, item in enumerate(blueprint.candidate_dna_signals):
+        if not item.name:
+            errors.append(f"candidate_dna_signals[{index}].name is required")
+        if not 0 <= item.confidence <= 1:
+            errors.append(f"candidate_dna_signals[{index}].confidence must be between 0 and 1")
+        if not item.supporting_reason:
+            errors.append(f"candidate_dna_signals[{index}].supporting_reason is required")
+
+    if blueprint.dnas:
         seen = set()
         for index, item in enumerate(blueprint.dnas):
             if not item.name:

@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "platform_reliability_risk", "risk_group": "operations", "keywords": ["uptime", "latency", "service outage", "active-active", "observability"], "description": "Operational reliability risk in enterprise platform delivery."}
+  ]
+}

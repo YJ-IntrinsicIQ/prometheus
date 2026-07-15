@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "catalogue_size", "metric_group": "monetization", "aliases": ["library size", "catalogue size"], "why_it_matters": "Signals the scale of reusable monetizable content."}
+  ]
+}

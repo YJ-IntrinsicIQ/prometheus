@@ -1,0 +1,5 @@
+{
+  "themes": [
+    {"canonical_theme": "grid_infrastructure_execution", "theme_group": "operations", "keywords": ["transformer", "switchgear", "power equipment", "grid infrastructure", "substation"], "description": "Execution in grid and power-equipment delivery."}
+  ]
+}

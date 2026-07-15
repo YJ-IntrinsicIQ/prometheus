@@ -1,0 +1,7 @@
+{
+  "core_terms": ["diagnostics", "pathology", "lab", "test volume"],
+  "synonyms": ["sample collection", "network lab", "b2c diagnostics"],
+  "product_terms": ["routine test", "specialized test", "radiology"],
+  "operating_terms": ["collection center", "processing lab", "turnaround time"],
+  "financial_terms": ["test mix", "realization per patient", "network utilization"]
+}

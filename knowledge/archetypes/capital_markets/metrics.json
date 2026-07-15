@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "active_clients", "metric_group": "scale", "aliases": ["active users", "active traders"], "why_it_matters": "Distribution and engagement scale in capital-markets businesses."}
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "core_terms": ["logistics", "transport", "freight", "warehouse"],
+  "synonyms": ["fleet", "distribution network", "supply chain services"],
+  "product_terms": ["road transport", "express logistics", "warehousing"],
+  "operating_terms": ["load factor", "fleet utilization", "hub network"],
+  "financial_terms": ["yield per shipment", "network density", "fleet cost"]
+}

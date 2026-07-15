@@ -1,0 +1,7 @@
+{
+  "core_terms": ["renewable energy", "solar", "wind", "generation"],
+  "synonyms": ["ppa", "open access", "green power"],
+  "product_terms": ["solar project", "wind project", "hybrid project"],
+  "operating_terms": ["commissioning", "load factor", "evacuation"],
+  "financial_terms": ["tariff", "generation yield", "project roi"]
+}

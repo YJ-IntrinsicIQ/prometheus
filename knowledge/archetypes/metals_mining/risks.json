@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "commodity_price_risk", "risk_group": "commercial", "keywords": ["commodity prices", "realization volatility", "price cycle"], "description": "Commodity-cycle exposure in metals and mining."}
+  ]
+}

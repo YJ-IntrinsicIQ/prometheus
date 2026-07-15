@@ -1,0 +1,9 @@
+{
+  "archetype_id": "renewable_energy",
+  "display_name": "Renewable Energy",
+  "parent_archetypes": ["regulated_business", "capex_heavy_manufacturing"],
+  "description": "Renewables developers and operators with project and generation economics.",
+  "applies_to": ["solar", "wind", "renewable platform"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

@@ -1,0 +1,9 @@
+{
+  "themes": [
+    {
+      "canonical_theme": "semiconductor_manufacturing",
+      "theme_group": "operations",
+      "keywords": ["semiconductor", "wafer", "chip", "htcc", "ltcc", "substrate", "clean room", "packaging"]
+    }
+  ]
+}

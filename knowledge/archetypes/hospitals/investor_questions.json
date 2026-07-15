@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "hospital_ramp_quality", "question": "Are new facilities ramping with healthy occupancy, doctor quality, and case mix?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["occupancy disclosures", "capacity additions", "service mix commentary"]}
+  ]
+}

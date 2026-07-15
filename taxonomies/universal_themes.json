@@ -1,0 +1,64 @@
+{
+  "themes": [
+    {
+      "canonical_theme": "capacity_expansion",
+      "theme_group": "growth_execution",
+      "keywords": ["capacity expansion", "capacity buildout", "production capacity"]
+    },
+    {
+      "canonical_theme": "geographic_expansion",
+      "theme_group": "growth_execution",
+      "keywords": ["geographic expansion", "geographic diversification", "global expansion", "regional expansion", "international", "overseas", "global distribution"]
+    },
+    {
+      "canonical_theme": "product_innovation",
+      "theme_group": "innovation",
+      "keywords": ["innovation", "product development", "research and development", "r&d"]
+    },
+    {
+      "canonical_theme": "quality_improvement",
+      "theme_group": "operations",
+      "keywords": ["quality improvement", "yield improvement", "process improvement", "stable quality", "quality management"]
+    },
+    {
+      "canonical_theme": "cost_efficiency",
+      "theme_group": "operations",
+      "keywords": ["cost efficiency", "cost optimization", "margin improvement", "process efficiency"]
+    },
+    {
+      "canonical_theme": "sustainability",
+      "theme_group": "sustainability",
+      "keywords": ["sustainability", "environmental", "green", "esg", "corporate social responsibility", "csr", "carbon neutrality", "energy and sustainability", "energy sustainability", "energy efficiency", "resource efficiency", "waste management", "resource optimization"]
+    },
+    {
+      "canonical_theme": "governance_compliance",
+      "theme_group": "governance",
+      "keywords": ["governance", "compliance", "legal", "regulatory disclosure", "regulatory compliance", "board governance", "corporate restructuring"]
+    },
+    {
+      "canonical_theme": "risk_management",
+      "theme_group": "governance",
+      "keywords": ["risk management", "country risk", "geopolitical risk", "risk mitigation"]
+    },
+    {
+      "canonical_theme": "human_capital",
+      "theme_group": "people",
+      "keywords": ["human resources", "talent", "people", "training", "workforce"]
+    },
+    {
+      "canonical_theme": "supply_chain_stability",
+      "theme_group": "operations",
+      "keywords": ["supply chain", "stable supply", "raw materials", "supplier", "procurement"]
+    },
+    {
+      "canonical_theme": "customer_channel",
+      "theme_group": "commercial",
+      "keywords": ["customer", "channel", "distribution", "customer acquisition", "sales capability"]
+    },
+    {
+      "canonical_theme": "capital_allocation",
+      "theme_group": "finance",
+      "keywords": ["capital allocation", "capital investment", "capital deployment", "strategic investment"]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "core_terms": ["medical device", "implant", "diagnostic device", "sterile manufacturing"],
+  "synonyms": ["regulatory clearance", "clinical adoption"],
+  "product_terms": ["implant", "catheter", "diagnostic machine"],
+  "operating_terms": ["sterile facility", "clinical validation", "distribution network"],
+  "financial_terms": ["product mix", "export sales", "gross margin"]
+}

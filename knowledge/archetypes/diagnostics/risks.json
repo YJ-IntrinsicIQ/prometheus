@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "pricing_pressure_risk", "risk_group": "commercial", "keywords": ["pricing pressure", "discounting", "competitive pricing"], "description": "Realization pressure in routine diagnostics."}
+  ]
+}

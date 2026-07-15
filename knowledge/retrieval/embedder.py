@@ -11,8 +11,12 @@ except ImportError:  # pragma: no cover - environment dependent
 
 from .constants import EMBEDDING_MODEL_NAME, ROOT
 
-os.environ.setdefault("HF_HOME", str(ROOT / "hf_cache"))
-os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", str(ROOT / "hf_cache"))
+CACHE_PATH = ROOT / "hf_cache"
+MODEL_CACHE_DIR = CACHE_PATH / "hub" / "models--sentence-transformers--all-MiniLM-L6-v2"
+MODEL_REF = MODEL_CACHE_DIR / "refs" / "main"
+
+os.environ.setdefault("HF_HOME", str(CACHE_PATH))
+os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", str(CACHE_PATH))
 
 _MODEL = None
 
@@ -24,7 +28,22 @@ def load_embedding_model():
     if SentenceTransformer is None:
         raise ImportError("sentence-transformers is required for embeddings; install it from requirements.txt")
 
-    _MODEL = SentenceTransformer(EMBEDDING_MODEL_NAME, cache_folder=str(ROOT / "hf_cache"))
+    model_path = EMBEDDING_MODEL_NAME
+    local_files_only = False
+
+    if MODEL_REF.exists():
+        revision = MODEL_REF.read_text().strip()
+        snapshot_path = MODEL_CACHE_DIR / "snapshots" / revision
+
+        if snapshot_path.exists():
+            model_path = str(snapshot_path)
+            local_files_only = True
+
+    _MODEL = SentenceTransformer(
+        model_path,
+        cache_folder=str(CACHE_PATH),
+        local_files_only=local_files_only,
+    )
     return _MODEL
 
 
@@ -36,7 +55,12 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
         return [[float(count) for count in _vectorize(text, vocab)] for text in texts]
 
     model = load_embedding_model()
-    return model.encode(texts, convert_to_numpy=False).tolist()
+    embeddings = model.encode(
+        texts,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+    )
+    return embeddings.tolist()
 
 
 def _tokenize(text: str) -> List[str]:

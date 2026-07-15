@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "library_refresh_risk", "risk_group": "commercial", "keywords": ["content freshness", "catalogue ageing", "release pipeline"], "description": "Risk that the library weakens without refresh or new additions."}
+  ]
+}

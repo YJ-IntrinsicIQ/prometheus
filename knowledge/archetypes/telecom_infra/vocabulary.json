@@ -1,0 +1,7 @@
+{
+  "core_terms": ["tower", "fiber", "telecom infrastructure", "tenancy"],
+  "synonyms": ["network rollout", "small cells", "shared infrastructure"],
+  "product_terms": ["tower tenancy", "fiber route", "network node"],
+  "operating_terms": ["rollout", "co-location", "uptime"],
+  "financial_terms": ["tenancy ratio", "lease revenue", "network utilization"]
+}

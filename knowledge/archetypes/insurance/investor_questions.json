@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "insurance_underwriting", "question": "Is growth coming with disciplined underwriting and healthy claims experience?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["premium growth", "claims ratio", "solvency disclosures"]}
+  ]
+}

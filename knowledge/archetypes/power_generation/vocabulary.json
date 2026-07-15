@@ -1,0 +1,7 @@
+{
+  "core_terms": ["power generation", "plant load factor", "dispatch", "ppa"],
+  "synonyms": ["generation capacity", "fuel supply", "merchant power"],
+  "product_terms": ["thermal plant", "hydro plant", "generation unit"],
+  "operating_terms": ["plf", "availability", "outage"],
+  "financial_terms": ["fuel cost", "realization", "regulated return"]
+}

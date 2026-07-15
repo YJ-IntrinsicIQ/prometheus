@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "content_library_refresh", "question": "How is management refreshing and extending the monetizable library?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["catalogue additions", "release cadence", "rights acquisition disclosures"]}
+  ]
+}

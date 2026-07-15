@@ -1,0 +1,9 @@
+{
+  "archetype_id": "telecom_infra",
+  "display_name": "Telecom Infrastructure",
+  "parent_archetypes": ["regulated_business"],
+  "description": "Telecom towers, fiber, and shared communications infrastructure businesses.",
+  "applies_to": ["tower companies", "fiber networks", "shared infra"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

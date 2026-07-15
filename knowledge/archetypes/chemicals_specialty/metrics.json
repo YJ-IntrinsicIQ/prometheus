@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "validated_customer_programs", "metric_group": "pipeline", "aliases": ["approved products", "validated customers"], "why_it_matters": "Shows quality of customer qualification and future order visibility."}
+  ]
+}

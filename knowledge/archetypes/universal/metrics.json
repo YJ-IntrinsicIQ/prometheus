@@ -1,0 +1,7 @@
+{
+  "metrics": [
+    {"metric_name": "revenue_growth", "metric_group": "growth", "aliases": ["sales growth", "topline growth"], "why_it_matters": "Indicates commercial momentum."},
+    {"metric_name": "operating_margin", "metric_group": "profitability", "aliases": ["ebit margin", "operating profitability"], "why_it_matters": "Shows economics and operating leverage."},
+    {"metric_name": "working_capital_days", "metric_group": "efficiency", "aliases": ["cash conversion cycle", "working capital cycle"], "why_it_matters": "Measures capital intensity and cash discipline."}
+  ]
+}

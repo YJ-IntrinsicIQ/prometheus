@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
 from knowledge.business_blueprint import BusinessBlueprint
 
@@ -11,7 +13,13 @@ class ParserError(ValueError):
     pass
 
 
-def parse_interpretation_payload(payload: str) -> BusinessBlueprint:
+@dataclass
+class InterpretationPayload:
+    blueprint: BusinessBlueprint
+    classification: Optional[Dict[str, Any]] = None
+
+
+def parse_interpretation_bundle(payload: str) -> InterpretationPayload:
     try:
         parsed = json.loads(payload)
     except (TypeError, json.JSONDecodeError) as exc:
@@ -21,6 +29,14 @@ def parse_interpretation_payload(payload: str) -> BusinessBlueprint:
         raise ParserError("Expected a JSON object")
 
     try:
-        return validate_blueprint_payload(parsed)
+        blueprint, classification = validate_blueprint_payload(parsed)
+        return InterpretationPayload(
+            blueprint=blueprint,
+            classification=classification,
+        )
     except ValidationError as exc:
         raise ParserError(str(exc)) from exc
+
+
+def parse_interpretation_payload(payload: str) -> BusinessBlueprint:
+    return parse_interpretation_bundle(payload).blueprint

@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "renewable_project_quality", "question": "Are new renewable projects commissioning on time with durable offtake economics?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["project pipeline", "ppa/offtake disclosures", "generation commentary"]}
+  ]
+}

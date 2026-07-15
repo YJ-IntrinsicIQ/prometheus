@@ -1,0 +1,9 @@
+{
+  "archetype_id": "chemicals_specialty",
+  "display_name": "Specialty Chemicals",
+  "parent_archetypes": ["capex_heavy_manufacturing", "export_oriented_business"],
+  "description": "Specialty-chemicals businesses with process, export, and customer-qualification dynamics.",
+  "applies_to": ["specialty chemicals", "custom chemistry"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

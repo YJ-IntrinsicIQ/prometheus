@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "nim", "metric_group": "profitability", "aliases": ["net interest margin"], "why_it_matters": "Core spread metric in banking economics."}
+  ]
+}

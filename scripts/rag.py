@@ -7,6 +7,8 @@ from sentence_transformers import SentenceTransformer
 from groq import Groq
 import chromadb
 
+from knowledge.ai.groq import resolve_groq_model
+
 # Load env vars
 load_dotenv()
 
@@ -76,7 +78,7 @@ Question:
 """
 
 response = client.chat.completions.create(
-    model="llama-3.3-70b-versatile",
+    model=resolve_groq_model(),
     messages=[
         {
             "role": "user",

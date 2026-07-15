@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "diagnostics_network_quality", "question": "Is network expansion improving scale without weakening pricing or quality?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["network expansion disclosures", "test mix", "pricing commentary"]}
+  ]
+}

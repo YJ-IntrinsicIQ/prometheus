@@ -1,0 +1,1 @@
+{"archetype_id":"electronics_esdm","display_name":"Electronics / ESDM","parent_archetypes":["universal","manufacturing"],"description":"Electronics system design and manufacturing signals.","applies_to":["electronics manufacturing"],"common_company_examples":[],"version":"1.0"}

@@ -1,0 +1,1 @@
+{"archetype_id":"semiconductor_components","display_name":"Semiconductor Components","parent_archetypes":["electronics_esdm","capex_heavy_manufacturing"],"description":"Semiconductor materials, wafers, packaging, and component manufacturing.","applies_to":["semiconductor materials","components"],"common_company_examples":[],"version":"1.0"}

@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "customer_program_risk", "risk_group": "commercial", "keywords": ["program ramp", "customer program delay", "design win concentration", "order visibility"], "description": "Risk tied to customer program wins and ramps."}
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "core_terms": ["insurance", "premium", "policy", "claims"],
+  "synonyms": ["underwriting", "renewal", "sum assured"],
+  "product_terms": ["life policy", "health policy", "motor policy"],
+  "operating_terms": ["claims settlement", "persistency", "distribution"],
+  "financial_terms": ["combined ratio", "embedded value", "solvency"]
+}

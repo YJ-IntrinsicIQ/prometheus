@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "asset_quality_risk", "risk_group": "financial", "keywords": ["npa", "slippage", "provision", "restructured assets"], "description": "Asset-quality deterioration in the loan book."}
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "energy_and_freight_cost_risk", "risk_group": "operations", "keywords": ["petcoke", "coal cost", "freight cost", "power cost"], "description": "Input and freight cost risk in cement economics."}
+  ]
+}

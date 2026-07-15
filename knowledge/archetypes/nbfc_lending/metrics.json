@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "aum", "metric_group": "balance_sheet", "aliases": ["assets under management", "loan book"], "why_it_matters": "Shows scale and growth of the lending book."}
+  ]
+}

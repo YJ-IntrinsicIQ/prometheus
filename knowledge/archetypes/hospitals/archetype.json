@@ -1,0 +1,9 @@
+{
+  "archetype_id": "hospitals",
+  "display_name": "Hospitals",
+  "parent_archetypes": ["regulated_business", "capex_heavy_manufacturing"],
+  "description": "Hospital businesses driven by occupancy, case mix, and clinical network expansion.",
+  "applies_to": ["hospital chains", "single specialty hospitals"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "ems_customer_mix", "question": "How diversified and durable is the customer and program mix?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["customer concentration disclosures", "program ramp commentary"]}
+  ]
+}

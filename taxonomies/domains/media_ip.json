@@ -1,0 +1,14 @@
+{
+  "themes": [
+    {
+      "canonical_theme": "library_economics",
+      "theme_group": "business_model",
+      "keywords": ["content library", "catalogue", "ip library", "rights monetization", "licensing"]
+    },
+    {
+      "canonical_theme": "audience_distribution",
+      "theme_group": "commercial",
+      "keywords": ["audience reach", "platform distribution", "owned channel", "digital distribution"]
+    }
+  ]
+}

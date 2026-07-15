@@ -1,0 +1,7 @@
+{
+  "core_terms": ["bank", "deposit", "loan", "branch"],
+  "synonyms": ["casa", "underwriting", "retail banking"],
+  "product_terms": ["current account", "savings account", "term loan", "credit card"],
+  "operating_terms": ["slr", "crr", "branch expansion"],
+  "financial_terms": ["nim", "credit cost", "casa ratio", "provision coverage"]
+}

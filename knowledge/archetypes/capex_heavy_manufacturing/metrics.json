@@ -1,0 +1,1 @@
+{"metrics":[{"metric_name":"capacity_utilization","metric_group":"operations","aliases":["utilization","line utilization"],"why_it_matters":"Shows whether installed capacity is productive."}]}

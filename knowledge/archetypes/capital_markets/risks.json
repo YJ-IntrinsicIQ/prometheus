@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "market_activity_risk", "risk_group": "commercial", "keywords": ["trading slowdown", "lower volumes", "market activity"], "description": "Sensitivity to trading or issuance activity."}
+  ]
+}

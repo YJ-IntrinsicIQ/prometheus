@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "occupancy_rate", "metric_group": "operations", "aliases": ["bed occupancy"], "why_it_matters": "Core efficiency and demand metric in hospitals."}
+  ]
+}

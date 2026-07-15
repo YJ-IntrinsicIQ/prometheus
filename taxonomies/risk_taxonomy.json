@@ -1,0 +1,16 @@
+{
+  "risks": [
+    {"canonical_risk": "credit_risk", "keywords": ["credit risk", "receivables", "counterparty default"]},
+    {"canonical_risk": "liquidity_risk", "keywords": ["liquidity risk", "refinancing", "short term borrowings", "borrowings and other liabilities"]},
+    {"canonical_risk": "interest_rate_risk", "keywords": ["interest rate risk", "variable rates", "rate risk"]},
+    {"canonical_risk": "foreign_exchange_risk", "keywords": ["foreign exchange", "foreign currency", "fx risk", "currency exposure"]},
+    {"canonical_risk": "regulatory_risk", "keywords": ["regulatory", "statutory", "disputed dues", "tax litigation", "compliance breach"]},
+    {"canonical_risk": "internal_control_risk", "keywords": ["internal control", "control weakness", "financial controls"]},
+    {"canonical_risk": "related_party_risk", "keywords": ["related party", "promoter entity", "group company exposure"]},
+    {"canonical_risk": "execution_risk", "keywords": ["execution risk", "project delay", "delivery risk", "implementation risk"]},
+    {"canonical_risk": "customer_concentration_risk", "keywords": ["customer concentration", "customer dependency", "single customer"]},
+    {"canonical_risk": "governance_risk", "keywords": ["governance", "board oversight", "fraud", "ethical concerns"]},
+    {"canonical_risk": "supply_chain_risk", "keywords": ["supply chain", "raw material", "supplier concentration", "logistics"]},
+    {"canonical_risk": "market_risk", "keywords": ["market risk"]}
+  ]
+}

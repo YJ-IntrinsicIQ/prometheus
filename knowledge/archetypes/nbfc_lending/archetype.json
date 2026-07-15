@@ -1,0 +1,9 @@
+{
+  "archetype_id": "nbfc_lending",
+  "display_name": "NBFC Lending",
+  "parent_archetypes": ["regulated_business"],
+  "description": "Non-bank lending businesses with underwriting, collections, and funding-cycle economics.",
+  "applies_to": ["nbfcs", "specialized lenders"],
+  "common_company_examples": [],
+  "version": "1.0"
+}

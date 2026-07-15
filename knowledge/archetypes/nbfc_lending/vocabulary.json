@@ -1,0 +1,7 @@
+{
+  "core_terms": ["nbfc", "lending", "loan book", "disbursement"],
+  "synonyms": ["credit underwriting", "collections", "borrower"],
+  "product_terms": ["secured loan", "unsecured loan", "msme loan", "vehicle finance"],
+  "operating_terms": ["disbursement", "collection efficiency", "npa"],
+  "financial_terms": ["aum", "spread", "cost of funds", "credit cost"]
+}

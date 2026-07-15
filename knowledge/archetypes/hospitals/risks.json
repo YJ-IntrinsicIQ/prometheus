@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "occupancy_ramp_risk", "risk_group": "operations", "keywords": ["occupancy", "new hospital ramp", "doctor recruitment"], "description": "Risk that new or existing hospitals do not ramp to efficient occupancy."}
+  ]
+}

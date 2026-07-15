@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "fleet_or_network_utilization", "metric_group": "operations", "aliases": ["fleet utilization", "load factor"], "why_it_matters": "Shows operating leverage in transport networks."}
+  ]
+}

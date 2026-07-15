@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "agri_channel_quality", "question": "How resilient is the product and channel position across seasonal demand cycles?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["dealer reach", "seasonality commentary", "working-capital disclosures"]}
+  ]
+}

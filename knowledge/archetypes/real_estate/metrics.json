@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "presales_or_bookings", "metric_group": "commercial", "aliases": ["presales", "bookings"], "why_it_matters": "Key demand and project-cashflow indicator in real estate."}
+  ]
+}

@@ -1,0 +1,1 @@
+{"archetype_id":"compliance_infrastructure","display_name":"Compliance Infrastructure","parent_archetypes":["regulated_business","enterprise_platform"],"description":"Businesses whose core value comes from trust, compliance, or control infrastructure.","applies_to":["compliance infrastructure"],"common_company_examples":[],"version":"1.0"}

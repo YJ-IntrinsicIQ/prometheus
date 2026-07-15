@@ -1,0 +1,7 @@
+{
+  "core_terms": ["mine", "ore", "smelter", "metal"],
+  "synonyms": ["reserve", "grade", "beneficiation"],
+  "product_terms": ["iron ore", "copper", "aluminium"],
+  "operating_terms": ["ore production", "strip ratio", "recovery"],
+  "financial_terms": ["realization", "commodity cycle", "cash cost"]
+}

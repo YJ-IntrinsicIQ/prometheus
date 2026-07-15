@@ -1,0 +1,5 @@
+{
+  "metrics": [
+    {"metric_name": "installed_base_or_units", "metric_group": "scale", "aliases": ["installed base", "units sold"], "why_it_matters": "Signals clinical and commercial adoption."}
+  ]
+}

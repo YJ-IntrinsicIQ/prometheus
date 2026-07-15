@@ -1,0 +1,1 @@
+{"archetype_id":"regulated_business","display_name":"Regulated Business","parent_archetypes":["universal"],"description":"Businesses where compliance regimes and regulatory permissions are core to operations.","applies_to":["financials","healthcare","compliance-heavy sectors"],"common_company_examples":[],"version":"1.0"}

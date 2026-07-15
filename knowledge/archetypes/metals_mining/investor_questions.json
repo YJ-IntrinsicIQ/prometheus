@@ -1,0 +1,5 @@
+{
+  "questions": [
+    {"question_id": "metals_cycle_quality", "question": "Is growth coming from better resource quality and cost position, or just the commodity cycle?", "relevant_for": ["multi_year_memory"], "evidence_needed": ["production volume", "cost position", "reserve or expansion commentary"]}
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "risks": [
+    {"canonical_risk": "freight_cycle_risk", "risk_group": "commercial", "keywords": ["freight rates", "demand slowdown", "route utilization"], "description": "Volume or pricing pressure in logistics demand cycles."}
+  ]
+}
