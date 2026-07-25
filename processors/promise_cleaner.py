@@ -215,6 +215,7 @@ def create_cleaner():
     return PromiseCleaner(
         INPUT_FILE,
         OUTPUT_FILE,
+        module_name="promises",
     )
 
 

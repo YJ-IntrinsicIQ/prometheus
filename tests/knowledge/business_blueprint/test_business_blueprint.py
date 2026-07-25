@@ -27,6 +27,7 @@ def test_blueprint_validates_successfully():
             )
         ],
         dnas=[BusinessDNA(name="Technology-first", confidence=0.9)],
+        dnas_status="deprecated_not_authoritative",
         dnas_source="business_classification",
         reasoning=["The company focuses on disciplined execution"],
     )
@@ -58,6 +59,7 @@ def test_blueprint_payload_rejects_duplicate_dna_when_present():
             {"name": "Technology-first", "confidence": 0.9},
             {"name": "technology-first", "confidence": 0.8},
         ],
+        "dnas_status": "deprecated_not_authoritative",
         "dnas_source": "business_classification",
         "reasoning": [{"statement": "The company focuses on disciplined execution"}],
     }
@@ -96,3 +98,4 @@ def test_blueprint_payload_allows_missing_dnas_when_candidate_signals_exist():
     assert errors == []
     assert blueprint.dnas == []
     assert blueprint.candidate_dna_signals[0].name == "Manufacturing"
+    assert blueprint.dnas_status == "deprecated_not_authoritative"

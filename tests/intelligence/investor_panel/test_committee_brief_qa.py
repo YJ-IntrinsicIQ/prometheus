@@ -21,6 +21,32 @@ def _committee_payload():
             "confidence": "medium",
             "dominant_tension": "Growth ambition versus balance-sheet resilience.",
         },
+        "financial_committee_view": {
+            "financials_used": True,
+            "basis_used": "consolidated",
+            "financial_consensus": [
+                "Revenue, PAT, and cash-conversion evidence support the business, but leverage still needs scrutiny."
+            ],
+            "financial_strengths": ["Revenue, PAT, and EPS are directionally supportive."],
+            "financial_concerns": ["Debt and funding pressure remain important constraints."],
+            "financial_disagreements": [
+                {
+                    "disagreement_type": "risk_weighting_difference",
+                    "analysts_involved": ["graham", "fisher"],
+                    "what_they_disagree_on": "How much weight to put on growth momentum versus funding pressure.",
+                    "why_it_matters": "That weighting shapes how durable the expansion story looks under funding pressure.",
+                    "uncertainty": "Cash-flow durability still needs more evidence.",
+                }
+            ],
+            "missing_financial_data": ["Share-count comparability remains limited."],
+            "financial_red_flags": ["Debt and funding pressure remain important constraints."],
+            "financial_interpretation_limits": [
+                "No new ratios were calculated beyond supplied financial inputs."
+            ],
+            "investor_questions_from_financials": [
+                "How sustainable are CFO and FCF as expansion continues?"
+            ],
+        },
         "areas_of_agreement": [
             {
                 "theme": "Capital-intensive manufacturing",
@@ -99,6 +125,19 @@ def test_committee_brief_qa_passes_valid_brief(tmp_path):
     assert result["checks"]["forbidden_language"]["status"] == "pass"
     assert result["checks"]["evidence_id_visibility"]["status"] == "pass"
     assert result["checks"]["source_fidelity"]["status"] == "pass"
+
+
+def test_committee_brief_qa_fails_missing_financial_view(tmp_path):
+    brief_path = _write_committee_files(tmp_path, _committee_payload())
+    brief_path.write_text(
+        brief_path.read_text(encoding="utf-8").replace("## Financial View", ""),
+        encoding="utf-8",
+    )
+    gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
+    result = json.loads(gate.build()["committee_brief_qa.json"].read_text(encoding="utf-8"))
+
+    assert result["status"] == "fail"
+    assert "## Financial View" in result["checks"]["required_sections"]["missing_sections"]
 
 
 def test_committee_brief_qa_fails_missing_required_section(tmp_path):

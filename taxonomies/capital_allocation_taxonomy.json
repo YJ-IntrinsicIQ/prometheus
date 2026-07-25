@@ -1,17 +1,301 @@
 {
+  "groups": {
+    "true_capital_deployment": {
+      "cash_flow_effect": "company_cash_outflow",
+      "balance_sheet_effect": "asset_increase"
+    },
+    "shareholder_returns": {
+      "cash_flow_effect": "company_cash_outflow",
+      "balance_sheet_effect": "equity_restructure"
+    },
+    "financing_actions": {
+      "cash_flow_effect": "unknown",
+      "balance_sheet_effect": "unknown"
+    },
+    "treasury_actions": {
+      "cash_flow_effect": "cash_reallocation",
+      "balance_sheet_effect": "cash_reallocation"
+    },
+    "corporate_actions_non_cash_or_admin": {
+      "cash_flow_effect": "non_cash",
+      "balance_sheet_effect": "equity_restructure"
+    },
+    "ownership_transfer_non_company_cashflow": {
+      "cash_flow_effect": "non_company_cashflow",
+      "balance_sheet_effect": "unknown"
+    },
+    "related_party_capital_flows": {
+      "cash_flow_effect": "unknown",
+      "balance_sheet_effect": "unknown"
+    },
+    "accounting_or_disclosure_only": {
+      "cash_flow_effect": "non_cash",
+      "balance_sheet_effect": "unknown"
+    },
+    "uncertain": {
+      "cash_flow_effect": "unknown",
+      "balance_sheet_effect": "unknown"
+    }
+  },
   "categories": [
-    {"canonical_category": "cwip", "keywords": ["capital work in progress", "cwip", "projects in progress"]},
-    {"canonical_category": "share_split", "keywords": ["share subdivision", "sub-division", "share split", "split of equity shares"]},
-    {"canonical_category": "treasury_investment", "keywords": ["mutual fund", "debt mutual fund", "treasury investment", "liquidity management investment"]},
-    {"canonical_category": "dividend", "keywords": ["dividend", "interim dividend", "final dividend"]},
-    {"canonical_category": "buyback", "keywords": ["buyback", "share repurchase", "share buyback"]},
-    {"canonical_category": "equity_issuance", "keywords": ["equity issuance", "preferential issue", "rights issue", "qip", "share issuance"]},
-    {"canonical_category": "esop_rsu", "keywords": ["esop", "rsu", "share-based payment", "stock option", "equity-settled"]},
-    {"canonical_category": "debt_borrowing", "keywords": ["borrowing", "term loan", "bank loan", "debenture", "working capital loan", "credit facility"]},
-    {"canonical_category": "acquisition", "keywords": ["acquisition", "merger", "takeover", "purchase of business"]},
-    {"canonical_category": "related_party_transaction", "keywords": ["related party", "promoter entity", "associate company", "subsidiary transaction"]},
-    {"canonical_category": "loan_or_advance", "keywords": ["loan", "advance", "inter-corporate deposit", "loan given"]},
-    {"canonical_category": "auditor_observation", "keywords": ["auditor", "qualified opinion", "emphasis of matter", "key audit matter"]},
-    {"canonical_category": "capex", "keywords": ["capital expenditure", "capex", "plant", "machinery", "factory", "land", "construction", "capacity expansion"]}
+    {
+      "canonical_category": "offer_for_sale",
+      "capital_allocation_group": "ownership_transfer_non_company_cashflow",
+      "keywords": ["offer for sale", "ofs", "sale by existing shareholders"]
+    },
+    {
+      "canonical_category": "promoter_sale",
+      "capital_allocation_group": "ownership_transfer_non_company_cashflow",
+      "keywords": ["promoter sale", "sale by promoter", "sale by promoters"]
+    },
+    {
+      "canonical_category": "secondary_sale",
+      "capital_allocation_group": "ownership_transfer_non_company_cashflow",
+      "keywords": ["secondary sale", "secondary transaction", "sale by existing investor"]
+    },
+    {
+      "canonical_category": "stake_sale_by_existing_shareholders",
+      "capital_allocation_group": "ownership_transfer_non_company_cashflow",
+      "keywords": ["stake sale by existing shareholders", "sale by existing shareholders", "existing shareholder stake sale"]
+    },
+    {
+      "canonical_category": "authorised_capital_change",
+      "capital_allocation_group": "corporate_actions_non_cash_or_admin",
+      "keywords": ["authorised share capital", "authorized share capital", "increase in authorised capital", "increase in authorized capital"]
+    },
+    {
+      "canonical_category": "share_split",
+      "capital_allocation_group": "corporate_actions_non_cash_or_admin",
+      "keywords": ["share subdivision", "sub-division", "share split", "split of equity shares", "face value split"]
+    },
+    {
+      "canonical_category": "bonus_issue",
+      "capital_allocation_group": "corporate_actions_non_cash_or_admin",
+      "keywords": ["bonus issue", "bonus shares"]
+    },
+    {
+      "canonical_category": "face_value_change",
+      "capital_allocation_group": "corporate_actions_non_cash_or_admin",
+      "keywords": ["change in face value", "face value of equity shares", "face value changed"]
+    },
+    {
+      "canonical_category": "listing",
+      "capital_allocation_group": "corporate_actions_non_cash_or_admin",
+      "keywords": ["listing of shares", "listed on", "listing approval"]
+    },
+    {
+      "canonical_category": "name_change",
+      "capital_allocation_group": "corporate_actions_non_cash_or_admin",
+      "keywords": ["change of name", "name change"]
+    },
+    {
+      "canonical_category": "debt_repaid",
+      "capital_allocation_group": "financing_actions",
+      "cash_flow_effect": "company_cash_outflow",
+      "balance_sheet_effect": "liability_reduction",
+      "keywords": ["term loan repaid", "loan repaid", "debt repaid", "repayment of borrowings", "principal repayment", "repayment of principal"]
+    },
+    {
+      "canonical_category": "lease_liability_payment",
+      "capital_allocation_group": "financing_actions",
+      "cash_flow_effect": "company_cash_outflow",
+      "balance_sheet_effect": "liability_reduction",
+      "keywords": ["lease liability payment", "repayment of lease liabilities", "lease liabilities paid"]
+    },
+    {
+      "canonical_category": "debt_raised",
+      "capital_allocation_group": "financing_actions",
+      "cash_flow_effect": "company_cash_inflow",
+      "balance_sheet_effect": "liability_increase",
+      "keywords": ["borrowing", "borrowings", "term loan", "bank loan", "debenture", "working capital loan", "credit facility", "debt raised", "loan availed"]
+    },
+    {
+      "canonical_category": "qualified_institutional_placement",
+      "capital_allocation_group": "financing_actions",
+      "cash_flow_effect": "company_cash_inflow",
+      "balance_sheet_effect": "equity_increase",
+      "keywords": ["qualified institutional placement", "qip"]
+    },
+    {
+      "canonical_category": "preferential_allotment",
+      "capital_allocation_group": "financing_actions",
+      "cash_flow_effect": "company_cash_inflow",
+      "balance_sheet_effect": "equity_increase",
+      "keywords": ["preferential allotment", "preferential issue"]
+    },
+    {
+      "canonical_category": "rights_issue",
+      "capital_allocation_group": "financing_actions",
+      "cash_flow_effect": "company_cash_inflow",
+      "balance_sheet_effect": "equity_increase",
+      "keywords": ["rights issue", "rights offering"]
+    },
+    {
+      "canonical_category": "equity_issuance",
+      "capital_allocation_group": "financing_actions",
+      "cash_flow_effect": "company_cash_inflow",
+      "balance_sheet_effect": "equity_increase",
+      "keywords": ["equity issuance", "share issuance", "shares allotted", "allotment of shares", "issued shares", "received proceeds"]
+    },
+    {
+      "canonical_category": "capital_reduction",
+      "capital_allocation_group": "shareholder_returns",
+      "cash_flow_effect": "company_cash_outflow",
+      "balance_sheet_effect": "equity_restructure",
+      "keywords": ["capital reduction", "reduction of capital"]
+    },
+    {
+      "canonical_category": "buyback",
+      "capital_allocation_group": "shareholder_returns",
+      "keywords": ["buyback", "share repurchase", "share buyback"]
+    },
+    {
+      "canonical_category": "dividend_declared",
+      "capital_allocation_group": "shareholder_returns",
+      "keywords": ["dividend declared", "recommend dividend", "proposed dividend"]
+    },
+    {
+      "canonical_category": "dividend_paid",
+      "capital_allocation_group": "shareholder_returns",
+      "keywords": ["dividend paid", "interim dividend", "final dividend", "dividend payout"]
+    },
+    {
+      "canonical_category": "security_margin_deposit",
+      "capital_allocation_group": "treasury_actions",
+      "keywords": ["margin deposit", "security deposit", "bank margin", "deposit with bank"]
+    },
+    {
+      "canonical_category": "bank_deposit",
+      "capital_allocation_group": "treasury_actions",
+      "keywords": ["bank deposit", "fixed deposit", "term deposit", "deposits with bank", "other bank balances"]
+    },
+    {
+      "canonical_category": "mutual_fund_investment",
+      "capital_allocation_group": "treasury_actions",
+      "keywords": ["mutual fund", "debt mutual fund", "liquid fund", "money market fund"]
+    },
+    {
+      "canonical_category": "temporary_investment",
+      "capital_allocation_group": "treasury_actions",
+      "keywords": ["temporary investment", "current investment", "short-term investment"]
+    },
+    {
+      "canonical_category": "cash_management",
+      "capital_allocation_group": "treasury_actions",
+      "keywords": ["liquidity management", "cash management", "surplus funds", "cash and cash equivalents management"]
+    },
+    {
+      "canonical_category": "related_party_guarantee",
+      "capital_allocation_group": "related_party_capital_flows",
+      "cash_flow_effect": "non_cash",
+      "balance_sheet_effect": "unknown",
+      "keywords": ["related party guarantee", "guarantee to related party", "corporate guarantee to subsidiary"]
+    },
+    {
+      "canonical_category": "related_party_repayment",
+      "capital_allocation_group": "related_party_capital_flows",
+      "keywords": ["related party repayment", "repayment from related party", "repaid by related party"]
+    },
+    {
+      "canonical_category": "related_party_dividend",
+      "capital_allocation_group": "related_party_capital_flows",
+      "keywords": ["dividend from subsidiary", "dividend from associate", "related party dividend"]
+    },
+    {
+      "canonical_category": "related_party_loan_received",
+      "capital_allocation_group": "related_party_capital_flows",
+      "cash_flow_effect": "company_cash_inflow",
+      "balance_sheet_effect": "liability_increase",
+      "keywords": ["loan from related party", "loan received from related party", "advance from related party"]
+    },
+    {
+      "canonical_category": "related_party_loan_given",
+      "capital_allocation_group": "related_party_capital_flows",
+      "cash_flow_effect": "company_cash_outflow",
+      "balance_sheet_effect": "asset_increase",
+      "keywords": ["loan given to related party", "loan to subsidiary", "related party loan", "advance in nature of loan", "loan given", "repayable on demand"]
+    },
+    {
+      "canonical_category": "related_party_investment",
+      "capital_allocation_group": "related_party_capital_flows",
+      "cash_flow_effect": "company_cash_outflow",
+      "balance_sheet_effect": "asset_increase",
+      "keywords": ["investment in subsidiary", "investment in associate", "investment in joint venture", "related party investment"]
+    },
+    {
+      "canonical_category": "contingent_liability_disclosure",
+      "capital_allocation_group": "accounting_or_disclosure_only",
+      "keywords": ["contingent liability", "contingent liabilities", "claims against the company"]
+    },
+    {
+      "canonical_category": "actuarial_assumption",
+      "capital_allocation_group": "accounting_or_disclosure_only",
+      "keywords": ["actuarial assumption", "defined benefit obligation", "gratuity assumptions"]
+    },
+    {
+      "canonical_category": "fair_value_measurement",
+      "capital_allocation_group": "accounting_or_disclosure_only",
+      "keywords": ["fair value measurement", "fair value hierarchy", "level 1", "level 2", "level 3"]
+    },
+    {
+      "canonical_category": "impairment_policy",
+      "capital_allocation_group": "accounting_or_disclosure_only",
+      "keywords": ["impairment policy", "impairment assessment", "impairment testing"]
+    },
+    {
+      "canonical_category": "depreciation_policy",
+      "capital_allocation_group": "accounting_or_disclosure_only",
+      "keywords": ["depreciation policy", "useful life", "depreciation method"]
+    },
+    {
+      "canonical_category": "accounting_policy",
+      "capital_allocation_group": "accounting_or_disclosure_only",
+      "keywords": ["accounting policy", "significant accounting policies", "accounting estimate", "accounting treatment"]
+    },
+    {
+      "canonical_category": "auditor_observation",
+      "capital_allocation_group": "accounting_or_disclosure_only",
+      "keywords": ["auditor", "qualified opinion", "emphasis of matter", "key audit matter", "according to the information and explanations"]
+    },
+    {
+      "canonical_category": "acquisitions",
+      "capital_allocation_group": "true_capital_deployment",
+      "keywords": ["acquisition", "merger", "takeover", "purchase of business", "business combination"]
+    },
+    {
+      "canonical_category": "working_capital_investment",
+      "capital_allocation_group": "true_capital_deployment",
+      "keywords": ["working capital investment", "inventory build", "receivables build", "working capital support"]
+    },
+    {
+      "canonical_category": "strategic_investments",
+      "capital_allocation_group": "true_capital_deployment",
+      "keywords": ["strategic investment", "long-term investment", "investment in strategic assets"]
+    },
+    {
+      "canonical_category": "r_and_d_investment",
+      "capital_allocation_group": "true_capital_deployment",
+      "keywords": ["research and development", "r&d", "development expenditure"]
+    },
+    {
+      "canonical_category": "technology_investment",
+      "capital_allocation_group": "true_capital_deployment",
+      "keywords": ["technology investment", "software platform investment", "platform infrastructure", "cloud infrastructure", "data center"]
+    },
+    {
+      "canonical_category": "capacity_expansion",
+      "capital_allocation_group": "true_capital_deployment",
+      "keywords": ["capacity expansion", "new production facility", "new manufacturing facility", "plant expansion", "facility commissioned"]
+    },
+    {
+      "canonical_category": "cwip",
+      "capital_allocation_group": "true_capital_deployment",
+      "keywords": ["capital work in progress", "cwip", "projects in progress"]
+    },
+    {
+      "canonical_category": "capex",
+      "capital_allocation_group": "true_capital_deployment",
+      "keywords": ["capital expenditure", "capex", "plant", "machinery", "property plant and equipment", "ppe", "construction of plant", "equipment purchase"]
+    }
   ]
 }

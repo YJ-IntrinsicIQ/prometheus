@@ -7,6 +7,11 @@ from core.context_paths import (
 )
 from knowledge.ai import get_llm
 from knowledge.ai.input_packs import build_llm_input_pack, call_llm_with_input_pack
+from knowledge.evidence_layer import (
+    enrich_extracted_item,
+    select_discovery_chunks,
+    write_json,
+)
 
 try:
     from dotenv import load_dotenv
@@ -16,6 +21,9 @@ except ImportError:  # pragma: no cover - optional local dependency
 
 load_dotenv()
 
+# Backward-compatible attribute for older tests that monkeypatch the legacy client.
+Groq = object
+
 
 class BaseExtractor:
     def __init__(
@@ -24,15 +32,32 @@ class BaseExtractor:
         output_file,
         prompt,
         output_key,
+        module_name=None,
+        positive_patterns=None,
+        negative_patterns=None,
+        max_chunks=None,
+        max_chars_per_chunk=None,
+        max_total_chars=None,
+        relevance_threshold=None,
     ):
         self.input_file = discovery_path(input_file)
         self.output_file = extraction_path(output_file)
 
         self.prompt = prompt
         self.output_key = output_key
+        self.module_name = module_name or output_key
+        self.positive_patterns = tuple(positive_patterns or ())
+        self.negative_patterns = tuple(negative_patterns or ())
+        self.max_chunks = max_chunks
+        self.max_chars_per_chunk = max_chars_per_chunk
+        self.max_total_chars = max_total_chars
+        self.relevance_threshold = relevance_threshold
         self.llm = get_llm()
         self.model = getattr(self.llm, "model", "")
         self.max_batch_chars = 4000
+        self.selection_metadata_path = self.output_file.with_name(
+            f"{self.output_file.stem}_selection_metadata.json"
+        )
 
     def _resolve_max_items_cap(self):
         raw_value = os.getenv("EXTRACTOR_MAX_ITEMS")
@@ -188,9 +213,21 @@ class BaseExtractor:
             )
             chunks = chunks[:max_items]
 
+        selected_chunks, selection_metadata = select_discovery_chunks(
+            chunks,
+            module_name=self.module_name,
+            positive_patterns=self.positive_patterns,
+            negative_patterns=self.negative_patterns,
+            max_chunks=self.max_chunks,
+            max_chars_per_chunk=self.max_chars_per_chunk,
+            max_total_chars=self.max_total_chars,
+            relevance_threshold=self.relevance_threshold,
+        )
+        write_json(self.selection_metadata_path, selection_metadata)
+
         extracted_items = []
         chunk_batches = []
-        for item_index, item in enumerate(chunks):
+        for item_index, item in enumerate(selected_chunks):
             item_batches = self._build_chunk_batches(
                 item.get("chunk", "")
             )
@@ -211,7 +248,7 @@ class BaseExtractor:
         print(
             f"[EXTRACT] {self.input_file.name}: "
             f"total input items={total_input_items}, "
-            f"items processed={len(chunks)}, "
+            f"items processed={len(selected_chunks)}, "
             f"total batches={len(chunk_batches)}"
         )
 
@@ -222,7 +259,7 @@ class BaseExtractor:
             item = batch["item"]
             print(
                 f"[EXTRACT] batch {batch_number}/{len(chunk_batches)} "
-                f"(item {batch['item_index'] + 1}/{len(chunks)}, "
+                f"(item {batch['item_index'] + 1}/{len(selected_chunks)}, "
                 f"part {batch['item_batch_index']}/{batch['item_count']})"
             )
 
@@ -234,7 +271,7 @@ class BaseExtractor:
                 raise RuntimeError(
                     f"Extraction failed for {self.input_file.name} "
                     f"at batch {batch_number}/{len(chunk_batches)} "
-                    f"(item {batch['item_index'] + 1}/{len(chunks)}, "
+                    f"(item {batch['item_index'] + 1}/{len(selected_chunks)}, "
                     f"part {batch['item_batch_index']}/{batch['item_count']}, "
                     f"page={item.get('page')})"
                 ) from exc
@@ -250,9 +287,14 @@ class BaseExtractor:
                 )
                 extracted_item["page"] = item.get("page")
                 extracted_item["distance"] = item.get("distance")
-
+                enriched_item = enrich_extracted_item(
+                    extracted_item,
+                    module_name=self.module_name,
+                    item_index=len(extracted_items) + 1,
+                    selection_metadata=item.get("selection_metadata"),
+                )
                 extracted_items.append(
-                    extracted_item
+                    enriched_item
                 )
 
         with open(

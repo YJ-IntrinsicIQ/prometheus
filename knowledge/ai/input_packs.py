@@ -46,16 +46,26 @@ DEFAULT_STAGE_POLICIES: Dict[str, Dict[str, Any]] = {
         "collect_evidence_ids": True,
         "include_short_excerpts": False,
         "include_source_chunks": True,
+        "max_chunks_per_question": 8,
+        "max_chars_per_chunk": 900,
+        "max_total_chunks": 20,
     },
     "investor_panel_analyst": {
         "allowed_sections": ["selected_pcim"],
         "excluded_sections": ["raw_text_fields", "debug_metadata", "validation_metadata"],
-        "max_items": 25,
+        "max_items": 3,
         "max_chars": 28000,
         "include_evidence_ids": True,
         "collect_evidence_ids": True,
-        "include_short_excerpts": True,
+        "include_short_excerpts": False,
         "include_source_chunks": False,
+        "max_sections": 8,
+        "max_items_per_section": 3,
+        "max_nested_items_per_item": 5,
+        "max_text_chars_per_value": 500,
+        "max_evidence_ids_per_item": 5,
+        "max_dict_keys_per_item": 8,
+        "drop_raw_evidence_references": True,
     },
     "committee_synthesis": {
         "allowed_sections": ["analysts", "missing_analysts", "excluded_analysts", "evidence_quality_notes"],
@@ -100,6 +110,65 @@ _DROP_EMPTY_KEYS = {
     "evidence_grounding_warnings",
     "reasoning_limits",
 }
+
+_INVESTOR_PANEL_DROP_FIELDS = {
+    "source_manifest",
+    "pcim_source_manifest",
+    "validation_report",
+    "validation_reports",
+    "validation_status",
+    "debug",
+    "debug_log",
+    "debug_logs",
+    "raw_text_fields",
+    "raw_text",
+    "full_text",
+    "source_chunk",
+    "source_chunks",
+    "source_hashes",
+    "content_hash",
+    "modified_at",
+    "generated_at",
+    "run_summary",
+    "stack_trace",
+    "analysis_mode",
+    "sections_consumed",
+    "source_mentions",
+    "source_references",
+    "yearly_mentions",
+    "full_evidence_map",
+    "validation_debug",
+}
+
+_INVESTOR_PANEL_PREFERRED_KEYS = [
+    "value",
+    "year",
+    "years_covered",
+    "business_summary",
+    "business_dnas",
+    "category",
+    "status",
+    "confidence",
+    "severity",
+    "severity_by_year",
+    "note",
+    "explanation",
+    "reason",
+    "normalized_risk",
+    "normalized_promise",
+    "normalized_promise_theme",
+    "theme",
+    "signal_type",
+    "evidence_ids",
+    "source_year",
+    "source_artifact",
+    "source_item_id",
+    "page",
+    "limitations",
+    "missing_sections",
+    "incomplete_years",
+    "items",
+]
 
 
 def estimate_tokens(text: str) -> int:
@@ -205,10 +274,18 @@ def build_llm_input_pack(
             "tokens_estimated": 0,
             "chars": 0,
             "truncation_applied": facts_truncated or observations_truncated,
+            "truncation_details": {
+                "chunks_before": 0,
+                "chunks_after": 0,
+                "estimated_tokens_before": 0,
+                "estimated_tokens_after": 0,
+                "dropped_chunk_count": 0,
+            },
             "warnings": [],
         },
     }
 
+    pack = _apply_stage_specific_compaction(pack)
     pack = _enforce_pack_budget(pack)
     return pack
 
@@ -344,9 +421,17 @@ def append_llm_call_manifest(
         "source_artifacts": list(metadata.get("source_artifacts") or []),
         "excluded_fields": list((input_pack.get("input_policy") or {}).get("excluded_sections") or []),
         "truncation_applied": bool(metadata.get("truncation_applied")),
+        "chunks_before": ((metadata.get("truncation_details") or {}).get("chunks_before")),
+        "chunks_after": ((metadata.get("truncation_details") or {}).get("chunks_after")),
+        "estimated_tokens_before": ((metadata.get("truncation_details") or {}).get("estimated_tokens_before")),
+        "estimated_tokens_after": ((metadata.get("truncation_details") or {}).get("estimated_tokens_after")),
+        "dropped_chunk_count": ((metadata.get("truncation_details") or {}).get("dropped_chunk_count")),
         "warnings": list(metadata.get("warnings") or []),
         "generated_at": getattr(response, "generated_at", None),
     }
+    manifest_extra = metadata.get("manifest_extra") or {}
+    if isinstance(manifest_extra, dict):
+        entry.update(deepcopy(manifest_extra))
     existing["entries"].append(entry)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -378,6 +463,9 @@ def _enforce_pack_budget(pack: Dict[str, Any]) -> Dict[str, Any]:
         pack["metadata"]["chars"] = chars
         pack["metadata"]["tokens_estimated"] = tokens_estimated
         if chars <= max_chars and tokens_estimated <= stage_budget:
+            truncation = pack["metadata"].setdefault("truncation_details", {})
+            if truncation.get("estimated_tokens_after", 0) <= 0:
+                truncation["estimated_tokens_after"] = tokens_estimated
             return pack
 
         shrunk = False
@@ -395,6 +483,8 @@ def _enforce_pack_budget(pack: Dict[str, Any]) -> Dict[str, Any]:
             pack["metadata"]["truncation_applied"] = True
             pack["metadata"]["chars"] = chars
             pack["metadata"]["tokens_estimated"] = tokens_estimated
+            truncation = pack["metadata"].setdefault("truncation_details", {})
+            truncation["estimated_tokens_after"] = tokens_estimated
             return pack
 
         pack["metadata"]["truncation_applied"] = True
@@ -403,6 +493,521 @@ def _enforce_pack_budget(pack: Dict[str, Any]) -> Dict[str, Any]:
         )
         if warning not in pack["metadata"]["warnings"]:
             pack["metadata"]["warnings"].append(warning)
+
+
+def _apply_stage_specific_compaction(pack: Dict[str, Any]) -> Dict[str, Any]:
+    stage = pack.get("stage")
+    if stage == "business_intelligence":
+        return _compact_business_intelligence_pack(pack)
+    if stage == "investor_panel_analyst":
+        return _compact_investor_panel_pack(pack)
+    return pack
+
+
+def _compact_investor_panel_pack(pack: Dict[str, Any]) -> Dict[str, Any]:
+    policy = pack.get("input_policy") or {}
+    metadata = pack.setdefault("metadata", {})
+    truncation = metadata.setdefault(
+        "truncation_details",
+        {
+            "chunks_before": 0,
+            "chunks_after": 0,
+            "estimated_tokens_before": 0,
+            "estimated_tokens_after": 0,
+            "dropped_chunk_count": 0,
+        },
+    )
+    warnings = metadata.setdefault("warnings", [])
+
+    before_text = json.dumps(pack, ensure_ascii=False)
+    before_tokens = estimate_tokens(before_text)
+    truncation["estimated_tokens_before"] = before_tokens
+    metadata["chars"] = len(before_text)
+    metadata["tokens_estimated"] = before_tokens
+
+    items_before: Dict[str, int] = {}
+    items_after: Dict[str, int] = {}
+    dropped_items_count = 0
+
+    observations = list(pack.get("observations") or [])
+    compacted_observations = []
+    for observation in observations:
+        compacted, stats = _compact_investor_panel_value(
+            observation,
+            policy=policy,
+            depth=0,
+            top_section=None,
+            parent_key=None,
+        )
+        compacted_observations.append(compacted)
+        for key, value in stats["items_before"].items():
+            items_before[key] = items_before.get(key, 0) + value
+        for key, value in stats["items_after"].items():
+            items_after[key] = items_after.get(key, 0) + value
+        dropped_items_count += stats["dropped_items_count"]
+    pack["observations"] = compacted_observations
+
+    compacted_facts = []
+    for fact in list(pack.get("facts") or []):
+        compacted, stats = _compact_investor_panel_value(
+            fact,
+            policy=policy,
+            depth=0,
+            top_section=None,
+            parent_key=None,
+        )
+        compacted_facts.append(compacted)
+        for key, value in stats["items_before"].items():
+            items_before[key] = items_before.get(key, 0) + value
+        for key, value in stats["items_after"].items():
+            items_after[key] = items_after.get(key, 0) + value
+        dropped_items_count += stats["dropped_items_count"]
+    pack["facts"] = compacted_facts
+
+    after_text = json.dumps(pack, ensure_ascii=False)
+    after_tokens = estimate_tokens(after_text)
+    truncation["estimated_tokens_after"] = after_tokens
+    metadata["chars"] = len(after_text)
+    metadata["tokens_estimated"] = after_tokens
+    if dropped_items_count > 0 or after_tokens < before_tokens:
+        metadata["truncation_applied"] = True
+        warning = "Investor panel input pack was recursively compacted to respect the analyst token budget."
+        if warning not in warnings:
+            warnings.append(warning)
+    metadata["manifest_extra"] = {
+        "sections_requested": sorted(items_before.keys()),
+        "sections_included": sorted(items_after.keys()),
+        "items_before": items_before,
+        "items_after": items_after,
+        "dropped_items_count": dropped_items_count,
+        "dropped_sections": sorted([key for key, value in items_before.items() if value > 0 and items_after.get(key, 0) == 0]),
+    }
+    return pack
+
+
+def _compact_investor_panel_value(
+    value: Any,
+    *,
+    policy: Dict[str, Any],
+    depth: int,
+    top_section: Optional[str],
+    parent_key: Optional[str],
+) -> Tuple[Any, Dict[str, Any]]:
+    stats = {
+        "items_before": {},
+        "items_after": {},
+        "dropped_items_count": 0,
+    }
+    max_sections = int(policy.get("max_sections") or 8)
+    max_items_per_section = int(policy.get("max_items_per_section") or 3)
+    max_nested_items_per_item = int(policy.get("max_nested_items_per_item") or 5)
+    max_text_chars_per_value = int(policy.get("max_text_chars_per_value") or 500)
+    max_evidence_ids_per_item = int(policy.get("max_evidence_ids_per_item") or 5)
+    max_dict_keys_per_item = int(policy.get("max_dict_keys_per_item") or 8)
+    include_short_excerpts = bool(policy.get("include_short_excerpts", False))
+    drop_raw_evidence_references = bool(policy.get("drop_raw_evidence_references", True))
+
+    if value is None or isinstance(value, (bool, int, float)):
+        return value, stats
+
+    if isinstance(value, str):
+        return _truncate_text(value, max_text_chars_per_value), stats
+
+    if isinstance(value, list):
+        section_key = top_section or parent_key or "items"
+        limit = max_items_per_section if depth <= 2 or parent_key == "items" else max_nested_items_per_item
+        if parent_key == "evidence_ids":
+            trimmed = _normalize_string_list(value)[:max_evidence_ids_per_item]
+            stats["dropped_items_count"] += max(0, len(_normalize_string_list(value)) - len(trimmed))
+            return trimmed, stats
+        if parent_key == "evidence_references" and drop_raw_evidence_references:
+            if include_short_excerpts:
+                compacted_refs = []
+                for item in value[:max_nested_items_per_item]:
+                    compacted_refs.append(_compact_single_evidence_reference(item, max_excerpt_chars=min(300, max_text_chars_per_value)))
+                stats["dropped_items_count"] += max(0, len(value) - len(compacted_refs))
+                return compacted_refs, stats
+            stats["dropped_items_count"] += len(value)
+            return [], stats
+
+        stats["items_before"][section_key] = stats["items_before"].get(section_key, 0) + len(value)
+        compacted_list = []
+        for item in value[:limit]:
+            compacted_item, child_stats = _compact_investor_panel_value(
+                item,
+                policy=policy,
+                depth=depth + 1,
+                top_section=top_section,
+                parent_key=parent_key,
+            )
+            if compacted_item not in (None, "", [], {}):
+                compacted_list.append(compacted_item)
+            _merge_panel_compaction_stats(stats, child_stats)
+        stats["items_after"][section_key] = stats["items_after"].get(section_key, 0) + len(compacted_list)
+        stats["dropped_items_count"] += max(0, len(value) - len(compacted_list))
+        return compacted_list, stats
+
+    if isinstance(value, dict):
+        if depth == 0 and "selected_pcim" in value and isinstance(value["selected_pcim"], dict):
+            selected = value["selected_pcim"]
+            compacted_selected = {}
+            section_names = list(selected.keys())[:max_sections]
+            stats["dropped_items_count"] += max(0, len(selected) - len(section_names))
+            for section_name in section_names:
+                compacted_item, child_stats = _compact_investor_panel_value(
+                    selected.get(section_name),
+                    policy=policy,
+                    depth=1,
+                    top_section=section_name,
+                    parent_key=section_name,
+                )
+                if compacted_item not in (None, "", [], {}):
+                    compacted_selected[section_name] = compacted_item
+                _merge_panel_compaction_stats(stats, child_stats)
+            return {"selected_pcim": compacted_selected}, stats
+
+        compacted_dict: Dict[str, Any] = {}
+        candidate_keys = [key for key in value.keys() if key not in _INVESTOR_PANEL_DROP_FIELDS]
+        if depth >= 1:
+            preferred_keys = [key for key in _INVESTOR_PANEL_PREFERRED_KEYS if key in candidate_keys]
+            other_keys = [key for key in candidate_keys if key not in preferred_keys]
+            key_limit = max_dict_keys_per_item if depth == 1 else max(4, max_dict_keys_per_item - 2)
+            ordered_keys = (preferred_keys + other_keys)[:key_limit]
+            stats["dropped_items_count"] += max(0, len(candidate_keys) - len(ordered_keys))
+        else:
+            ordered_keys = candidate_keys
+
+        for key in ordered_keys:
+            nested = value.get(key)
+            if key == "evidence_ids":
+                compacted_dict[key] = _normalize_string_list(nested)[:max_evidence_ids_per_item]
+                if isinstance(nested, list):
+                    stats["dropped_items_count"] += max(0, len(nested) - len(compacted_dict[key]))
+                continue
+            if key == "evidence_references":
+                if include_short_excerpts:
+                    compacted_refs = [
+                        _compact_single_evidence_reference(item, max_excerpt_chars=min(300, max_text_chars_per_value))
+                        for item in list(nested or [])[:max_nested_items_per_item]
+                    ]
+                    compacted_dict[key] = compacted_refs
+                else:
+                    stats["dropped_items_count"] += len(list(nested or []))
+                continue
+            if key == "evidence_map" and isinstance(nested, dict):
+                compacted_map: Dict[str, Any] = {}
+                for evidence_section, evidence_ids in list(nested.items())[:max_sections]:
+                    ids = _normalize_string_list(evidence_ids)[:max_evidence_ids_per_item]
+                    compacted_map[evidence_section] = ids
+                    if isinstance(evidence_ids, list):
+                        stats["dropped_items_count"] += max(0, len(evidence_ids) - len(ids))
+                compacted_dict[key] = compacted_map
+                stats["dropped_items_count"] += max(0, len(nested) - len(compacted_map))
+                continue
+
+            compacted_item, child_stats = _compact_investor_panel_value(
+                nested,
+                policy=policy,
+                depth=depth + 1,
+                top_section=top_section,
+                parent_key=key,
+            )
+            if compacted_item in (None, "", [], {}):
+                continue
+            compacted_dict[key] = compacted_item
+            _merge_panel_compaction_stats(stats, child_stats)
+        return compacted_dict, stats
+
+    return _truncate_text(str(value), max_text_chars_per_value), stats
+
+
+def _merge_panel_compaction_stats(target: Dict[str, Any], source: Dict[str, Any]) -> None:
+    for bucket in ("items_before", "items_after"):
+        target_bucket = target.setdefault(bucket, {})
+        for key, value in (source.get(bucket) or {}).items():
+            target_bucket[key] = target_bucket.get(key, 0) + value
+    target["dropped_items_count"] = int(target.get("dropped_items_count") or 0) + int(source.get("dropped_items_count") or 0)
+
+
+def _compact_business_intelligence_pack(pack: Dict[str, Any]) -> Dict[str, Any]:
+    policy = pack.get("input_policy") or {}
+    metadata = pack.setdefault("metadata", {})
+    truncation = metadata.setdefault(
+        "truncation_details",
+        {
+            "chunks_before": 0,
+            "chunks_after": 0,
+            "estimated_tokens_before": 0,
+            "estimated_tokens_after": 0,
+            "dropped_chunk_count": 0,
+        },
+    )
+
+    max_chunks_per_question = int(policy.get("max_chunks_per_question") or 8)
+    max_chars_per_chunk = int(policy.get("max_chars_per_chunk") or 900)
+    max_total_chunks = int(policy.get("max_total_chunks") or 20)
+    stage_budget = resolve_stage_token_budget(pack["stage"])
+
+    observations = list(pack.get("observations") or [])
+    if not observations:
+        payload_text = json.dumps(pack, ensure_ascii=False)
+        metadata["chars"] = len(payload_text)
+        metadata["tokens_estimated"] = estimate_tokens(payload_text)
+        truncation["estimated_tokens_before"] = metadata["tokens_estimated"]
+        truncation["estimated_tokens_after"] = metadata["tokens_estimated"]
+        return pack
+
+    chunks_before = 0
+    for observation in observations:
+        if isinstance(observation, dict):
+            chunks_before += len(observation.get("chunks") or [])
+
+    raw_text = json.dumps(pack, ensure_ascii=False)
+    truncation["chunks_before"] = chunks_before
+    truncation["estimated_tokens_before"] = estimate_tokens(raw_text)
+
+    compacted_observations = []
+    dropped_chunk_count = 0
+    warnings = metadata.setdefault("warnings", [])
+    for observation in observations:
+        if not isinstance(observation, dict):
+            compacted_observations.append(observation)
+            continue
+        compacted, dropped = _compact_business_intelligence_observation(
+            observation,
+            max_chunks_per_question=max_chunks_per_question,
+            max_chars_per_chunk=max_chars_per_chunk,
+            max_total_chunks=max_total_chunks,
+            stage_budget=stage_budget,
+        )
+        dropped_chunk_count += dropped
+        compacted_observations.append(compacted)
+
+    pack["observations"] = compacted_observations
+    chunks_after = sum(
+        len(item.get("chunks") or [])
+        for item in compacted_observations
+        if isinstance(item, dict)
+    )
+    truncation["chunks_after"] = chunks_after
+    truncation["dropped_chunk_count"] = dropped_chunk_count
+    if dropped_chunk_count > 0:
+        metadata["truncation_applied"] = True
+        warning = "Business intelligence chunks were compacted to respect the stage token budget."
+        if warning not in warnings:
+            warnings.append(warning)
+
+    _finalize_business_intelligence_budget(pack, stage_budget=stage_budget)
+
+    payload_text = json.dumps(pack, ensure_ascii=False)
+    metadata["chars"] = len(payload_text)
+    metadata["tokens_estimated"] = estimate_tokens(payload_text)
+    truncation["estimated_tokens_after"] = metadata["tokens_estimated"]
+    return pack
+
+
+def _finalize_business_intelligence_budget(pack: Dict[str, Any], *, stage_budget: int) -> None:
+    observations = [
+        item for item in (pack.get("observations") or [])
+        if isinstance(item, dict)
+    ]
+    if not observations:
+        return
+
+    metadata = pack.setdefault("metadata", {})
+    truncation = metadata.setdefault("truncation_details", {})
+
+    def total_tokens() -> int:
+        return estimate_tokens(json.dumps(pack, ensure_ascii=False))
+
+    def chunk_refs() -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        refs: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+        for observation in observations:
+            for chunk in observation.get("chunks") or []:
+                if isinstance(chunk, dict):
+                    refs.append((observation, chunk))
+        refs.sort(key=lambda item: _score_bi_chunk(item[1], original_text=item[1].get("text", "")))
+        return refs
+
+    while total_tokens() > stage_budget:
+        refs = chunk_refs()
+        if not refs:
+            break
+        changed = False
+        for _, chunk in refs:
+            text = str(chunk.get("text") or "")
+            if len(text) > 240:
+                chunk["text"] = _truncate_text(text, max(180, len(text) - 180))
+                changed = True
+                metadata["truncation_applied"] = True
+                break
+            if "evidence_quality" in chunk and chunk["evidence_quality"]:
+                chunk.pop("evidence_quality", None)
+                changed = True
+                metadata["truncation_applied"] = True
+                break
+            if chunk.get("page") not in (None, ""):
+                chunk.pop("page", None)
+                changed = True
+                metadata["truncation_applied"] = True
+                break
+            if chunk.get("year") not in (None, ""):
+                chunk.pop("year", None)
+                changed = True
+                metadata["truncation_applied"] = True
+                break
+            if "retrieval_score" in chunk:
+                chunk.pop("retrieval_score", None)
+                changed = True
+                metadata["truncation_applied"] = True
+                break
+        if changed:
+            continue
+
+        # Last resort: drop the lowest-ranked chunk, but keep at least one chunk per observation.
+        dropped = False
+        for observation, chunk in refs:
+            chunks = observation.get("chunks") or []
+            if len(chunks) <= 1:
+                continue
+            observation["chunks"] = [item for item in chunks if item is not chunk]
+            truncation["dropped_chunk_count"] = int(truncation.get("dropped_chunk_count") or 0) + 1
+            metadata["truncation_applied"] = True
+            dropped = True
+            break
+        if not dropped:
+            break
+
+    truncation["chunks_after"] = sum(
+        len(item.get("chunks") or [])
+        for item in observations
+    )
+
+
+def _compact_business_intelligence_observation(
+    observation: Dict[str, Any],
+    *,
+    max_chunks_per_question: int,
+    max_chars_per_chunk: int,
+    max_total_chunks: int,
+    stage_budget: int,
+) -> Tuple[Dict[str, Any], int]:
+    compacted = deepcopy(observation)
+    questions = compacted.get("questions") or []
+    chunks = list(compacted.get("chunks") or [])
+    if not isinstance(chunks, list):
+        return compacted, 0
+
+    ranked = [_normalize_bi_chunk(chunk, max_chars_per_chunk=max_chars_per_chunk) for chunk in chunks]
+    ranked.sort(key=lambda item: item["_rank"], reverse=True)
+
+    capped_limit = max_total_chunks
+    if questions:
+        capped_limit = min(max_total_chunks, max(1, len(questions)) * max(1, max_chunks_per_question))
+    selected = ranked[:capped_limit]
+    dropped = max(0, len(ranked) - len(selected))
+    compacted["chunks"] = [_strip_bi_rank_fields(item) for item in selected]
+
+    temp_pack = {
+        "stage": "business_intelligence",
+        "observations": [compacted],
+        "facts": [],
+        "limitations": [],
+        "evidence_ids": _collect_evidence_ids(compacted),
+        "input_policy": {"include_source_chunks": True},
+        "metadata": {},
+    }
+    while estimate_tokens(json.dumps(temp_pack, ensure_ascii=False)) > stage_budget and len(compacted["chunks"]) > 1:
+        compacted["chunks"] = compacted["chunks"][:-1]
+        dropped += 1
+        temp_pack["observations"] = [compacted]
+
+    if estimate_tokens(json.dumps(temp_pack, ensure_ascii=False)) > stage_budget:
+        for chunk in compacted["chunks"]:
+            text = str(chunk.get("text") or "")
+            chunk["text"] = _truncate_text(text, max(180, max_chars_per_chunk // 2))
+        temp_pack["observations"] = [compacted]
+        while estimate_tokens(json.dumps(temp_pack, ensure_ascii=False)) > stage_budget and len(compacted["chunks"]) > 1:
+            compacted["chunks"] = compacted["chunks"][:-1]
+            dropped += 1
+            temp_pack["observations"] = [compacted]
+
+    return compacted, dropped
+
+
+def _normalize_bi_chunk(chunk: Any, *, max_chars_per_chunk: int) -> Dict[str, Any]:
+    if isinstance(chunk, dict):
+        metadata = deepcopy(chunk.get("metadata") or {})
+        text = str(chunk.get("text") or "")
+        retrieval_score = float(chunk.get("retrieval_score") or metadata.get("retrieval_score") or 0.0)
+        chunk_id = chunk.get("chunk_id")
+        page = chunk.get("page", metadata.get("page"))
+        year = chunk.get("year", metadata.get("year"))
+        evidence_ids = _normalize_string_list(chunk.get("evidence_ids") or metadata.get("evidence_ids") or [])
+        evidence_quality = deepcopy(chunk.get("evidence_quality") or metadata.get("evidence_quality") or {})
+    else:
+        metadata = deepcopy(getattr(chunk, "metadata", {}) or {})
+        text = str(getattr(chunk, "text", "") or "")
+        retrieval_score = float(getattr(chunk, "retrieval_score", 0.0) or metadata.get("retrieval_score") or 0.0)
+        chunk_id = getattr(chunk, "chunk_id", None)
+        page = metadata.get("page")
+        year = metadata.get("year")
+        evidence_ids = _normalize_string_list(metadata.get("evidence_ids") or [])
+        evidence_quality = deepcopy(metadata.get("evidence_quality") or {})
+
+    normalized = {
+        "chunk_id": chunk_id,
+        "text": _truncate_text(text, max_chars_per_chunk),
+        "retrieval_score": retrieval_score,
+        "page": page,
+        "year": year,
+        "evidence_ids": evidence_ids,
+        "evidence_quality": evidence_quality,
+    }
+    normalized["_rank"] = _score_bi_chunk(normalized, original_text=text)
+    return normalized
+
+
+def _score_bi_chunk(chunk: Dict[str, Any], *, original_text: str) -> float:
+    text = str(original_text or chunk.get("text") or "")
+    lowered = text.lower()
+    score = float(chunk.get("retrieval_score") or 0.0) * 10.0
+    evidence_quality = chunk.get("evidence_quality") or {}
+    company_specificity = str(evidence_quality.get("company_specificity") or "").lower()
+    actor_type = str(evidence_quality.get("actor_type") or "").lower()
+
+    if company_specificity == "high":
+        score += 8.0
+    elif company_specificity == "medium":
+        score += 4.0
+    elif company_specificity == "low":
+        score -= 3.0
+
+    if actor_type in {"company", "management"}:
+        score += 4.0
+    elif actor_type in {"government", "industry", "auditor"}:
+        score -= 4.0
+
+    if chunk.get("evidence_ids"):
+        score += 3.0
+    if chunk.get("page") not in (None, ""):
+        score += 1.5
+    if chunk.get("year"):
+        score += 1.5
+    if any(char.isdigit() for char in text):
+        score += 2.0
+    if any(token in lowered for token in ("commissioned", "launched", "signed", "approved", "acquired", "invested", "expanded", "implemented", "deployed")):
+        score += 2.5
+    if any(token in lowered for token in ("macro", "industry outlook", "global economy", "table of contents", "corporate governance report")):
+        score -= 4.0
+    score -= min(len(text) / 2500.0, 2.0)
+    return score
+
+
+def _strip_bi_rank_fields(chunk: Dict[str, Any]) -> Dict[str, Any]:
+    cleaned = dict(chunk)
+    cleaned.pop("_rank", None)
+    return cleaned
 
 
 def _resolve_policy(stage: str, policy: Optional[Dict[str, Any]]) -> Dict[str, Any]:

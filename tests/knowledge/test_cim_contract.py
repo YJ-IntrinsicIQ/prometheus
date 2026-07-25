@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from knowledge.cim_contract import CIMContractBuilder
 from pipelines import run_company_pipeline
 
@@ -534,6 +536,19 @@ def test_pcim_includes_compact_multi_year_inputs_when_available(tmp_path, monkey
     assert multi_year["strategy_evolution"]["possible_strategy_shifts"][0]["note"].startswith("Removed themes indicate")
     assert "source_chunk" not in json.dumps(multi_year)
     assert "ev_fy24_company_intelligence_risk_1" in multi_year["evidence_map"]
+
+
+def test_pcim_validator_rejects_source_chunk_anywhere_in_pcim(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_year_artifacts(tmp_path, "acme", "fy24")
+    _write_year_artifacts(tmp_path, "acme", "fy25")
+
+    builder = CIMContractBuilder(company="acme")
+    pcim = json.loads(builder.build()["pcim_v1.json"].read_text())
+    pcim["management_quality_inputs"]["management_focus_by_year"][0]["items"][0]["source_chunk"] = "raw excerpt should never survive"
+
+    with pytest.raises(ValueError, match="PCIM output must not contain source_chunk"):
+        builder._validate_pcim_v1(pcim)
 
 
 def test_pcim_handles_missing_multi_year_artifacts(tmp_path, monkeypatch):

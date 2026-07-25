@@ -134,7 +134,11 @@ class DiscoveryRuntime:
                 raise RuntimeError("extractor is required")
             if not retrieved:
                 print(f"[WARNING] No chunks retrieved for module: {module.module_name}")
-            result = self.extractor.extract(module, retrieved)
+            result = self.extractor.extract(
+                module,
+                retrieved,
+                business_context=business_classification or {},
+            )
             module_results.append(result)
             questions_answered += len(result.answers)
             questions_not_found += sum(1 for answer in result.answers if answer.status == "NOT_FOUND")

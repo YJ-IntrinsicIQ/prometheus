@@ -180,6 +180,7 @@ def create_cleaner():
     return ProjectCleaner(
         INPUT_FILE,
         OUTPUT_FILE,
+        module_name="projects",
     )
 
 

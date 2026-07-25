@@ -5,12 +5,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from pipelines.pipeline_context import get_context
 from .forbidden_language import find_forbidden_recommendation_language
 
 ALLOWED_ANALYSTS = {"Graham", "Buffett", "Fisher", "Munger", "Lynch"}
 REQUIRED_SECTIONS = [
     "# Investment Committee Brief — ",
     "## Committee View",
+    "## Financial View",
     "## Where the Analysts Agree",
     "## Where the Analysts Differ",
     "## Strongest Positive Signals",
@@ -160,6 +162,61 @@ class CommitteeBriefQAGate:
             analyst_line = f"**Analysts:** {', '.join(_normalize_analyst_names(item.get('analysts')))}"
             if not _contains_substantial_text(brief, analyst_line):
                 mismatched_items.append(f"areas_of_agreement.analysts:{item.get('theme', '')}")
+
+        financial = synthesis.get("financial_committee_view", {}) or {}
+        if not _contains_substantial_text(brief, "## Financial View"):
+            missing_items.append("financial_committee_view.section")
+        if not _contains_substantial_text(
+            brief, f"**Financials Used:** {'Yes' if financial.get('financials_used') else 'No'}"
+        ):
+            mismatched_items.append("financial_committee_view.financials_used")
+        if not _contains_substantial_text(
+            brief, f"**Basis Used:** {financial.get('basis_used', '')}"
+        ):
+            mismatched_items.append("financial_committee_view.basis_used")
+        for item in financial.get("financial_consensus", []) or []:
+            if not _contains_substantial_text(brief, item):
+                missing_items.append(f"financial_committee_view.financial_consensus:{item}")
+        for item in financial.get("financial_strengths", []) or []:
+            if not _contains_substantial_text(brief, item):
+                missing_items.append(f"financial_committee_view.financial_strengths:{item}")
+        for item in financial.get("financial_concerns", []) or []:
+            if not _contains_substantial_text(brief, item):
+                missing_items.append(f"financial_committee_view.financial_concerns:{item}")
+        for item in financial.get("financial_red_flags", []) or []:
+            if not _contains_substantial_text(brief, item):
+                missing_items.append(f"financial_committee_view.financial_red_flags:{item}")
+        missing_financial_data = financial.get("missing_financial_data", []) or []
+        if missing_financial_data:
+            for item in missing_financial_data:
+                if not _contains_substantial_text(brief, item):
+                    missing_items.append(f"financial_committee_view.missing_financial_data:{item}")
+        else:
+            default_missing = "No material missing financial data was recorded."
+            if not _contains_substantial_text(brief, default_missing):
+                mismatched_items.append("financial_committee_view.missing_financial_data.default_message")
+        for item in financial.get("financial_interpretation_limits", []) or []:
+            if not _contains_substantial_text(brief, item):
+                missing_items.append(
+                    f"financial_committee_view.financial_interpretation_limits:{item}"
+                )
+        for item in financial.get("investor_questions_from_financials", []) or []:
+            if not _contains_substantial_text(brief, item):
+                missing_items.append(
+                    f"financial_committee_view.investor_questions_from_financials:{item}"
+                )
+        for item in financial.get("financial_disagreements", []) or []:
+            disagreement = str(item.get("what_they_disagree_on", "")).strip()
+            if disagreement and not _contains_substantial_text(brief, disagreement):
+                missing_items.append(
+                    f"financial_committee_view.financial_disagreements.what_they_disagree_on:{disagreement}"
+                )
+            for field in ("disagreement_type", "why_it_matters", "uncertainty"):
+                value = str(item.get(field, "")).strip()
+                if value and not _contains_substantial_text(brief, value):
+                    missing_items.append(
+                        f"financial_committee_view.financial_disagreements.{field}:{disagreement or value}"
+                    )
 
         for item in synthesis.get("areas_of_disagreement", []) or []:
             if not _contains_substantial_text(brief, f"### {item.get('theme', '')}"):

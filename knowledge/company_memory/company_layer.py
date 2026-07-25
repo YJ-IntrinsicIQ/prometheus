@@ -303,12 +303,46 @@ def _risk_items(cim: Dict[str, Any], year: str) -> List[Dict[str, Any]]:
 
 def _capital_items(cim: Dict[str, Any], summary: Dict[str, Any], year: str) -> List[Dict[str, Any]]:
     source_items = (((cim.get("financial") or {}).get("capital_allocation") or {}).get("items") or [])
-    return _all_items(
-        source_items,
-        ("action",),
-        year,
-        "company_intelligence.json",
-    )
+    items = []
+    seen: set[Tuple[str, str]] = set()
+
+    for item in source_items:
+        value = _field_value(item, ("action",))
+        if not value:
+            continue
+        item_id = str(item.get("id") or value)
+        key = (year, item_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        entry = {
+            "value": value,
+            "source_year": year,
+            "source_artifact": "company_intelligence.json",
+            "source_item_id": item.get("id"),
+            "evidence_references": _evidence_refs(item),
+            "status": item.get("status"),
+            "category": item.get("category"),
+            "canonical_category": item.get("canonical_category"),
+            "capital_allocation_group": item.get("capital_allocation_group"),
+            "cash_flow_effect": item.get("cash_flow_effect"),
+            "balance_sheet_effect": item.get("balance_sheet_effect"),
+            "is_true_capital_deployment": item.get("is_true_capital_deployment"),
+            "is_shareholder_return": item.get("is_shareholder_return"),
+            "is_financing_action": item.get("is_financing_action"),
+            "is_corporate_action": item.get("is_corporate_action"),
+            "is_related_party": item.get("is_related_party"),
+            "amount": item.get("amount"),
+            "currency": item.get("currency"),
+            "purpose": item.get("purpose"),
+            "counterparty": item.get("counterparty"),
+            "relationship": item.get("relationship"),
+            "reasoning": item.get("reasoning"),
+            "confidence": item.get("confidence"),
+        }
+        items.append(entry)
+
+    return items
 
 
 def _project_items(cim: Dict[str, Any], summary: Dict[str, Any], year: str) -> List[Dict[str, Any]]:
@@ -365,12 +399,69 @@ def _initiative_items(cim: Dict[str, Any], summary: Dict[str, Any], year: str) -
 def _focus_area_items(cim: Dict[str, Any], summary: Dict[str, Any], year: str) -> List[Dict[str, Any]]:
     initiatives = (((cim.get("operations") or {}).get("initiatives") or {}).get("items") or [])
     selected_categories = list(summary.get("management_focus_areas", []) or [])
-    return _selected_focus_areas(
+    selected = _selected_focus_areas(
         initiatives,
         selected_categories,
         year,
         "management_summary.json",
     )
+    existing_keys = {(item.get("source_year"), item.get("value")) for item in selected}
+    for group_name in (
+        "company_management_actions",
+        "company_promises",
+        "company_capabilities",
+        "company_results",
+        "risk_responses",
+    ):
+        for item in summary.get(group_name, []) or []:
+            value = item.get("category") or item.get("value")
+            if not value:
+                continue
+            key = (year, value)
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            selected.append(
+                {
+                    "value": value,
+                    "source_year": year,
+                    "source_artifact": "management_summary.json",
+                    "source_item_id": item.get("source_item_id"),
+                    "evidence_references": {
+                        "context_type": item.get("context_type"),
+                        "agency": item.get("agency"),
+                        "reasoning": item.get("reasoning"),
+                        "confidence": item.get("confidence"),
+                    },
+                    "status": item.get("status"),
+                    "evidence_ids": list(item.get("evidence_ids", [])),
+                }
+            )
+    return selected
+
+def _summary_group_items(summary: Dict[str, Any], group_name: str, year: str) -> List[Dict[str, Any]]:
+    items = []
+    for item in summary.get(group_name, []) or []:
+        value = item.get("value")
+        if not value:
+            continue
+        entry = {
+            "value": value,
+            "source_year": year,
+            "source_artifact": "management_summary.json",
+            "source_item_id": item.get("source_item_id"),
+            "context_type": item.get("context_type"),
+            "agency": item.get("agency"),
+            "should_feed_management_consistency": item.get("should_feed_management_consistency"),
+            "should_feed_company_strategy": item.get("should_feed_company_strategy"),
+            "should_feed_external_context": item.get("should_feed_external_context"),
+            "reasoning": item.get("reasoning"),
+            "confidence": item.get("confidence"),
+            "category": item.get("category"),
+            "evidence_ids": list(item.get("evidence_ids", [])),
+        }
+        items.append(entry)
+    return items
 
 
 def _text_candidates(snapshot: Dict[str, Any]) -> List[Tuple[str, str]]:
@@ -523,6 +614,10 @@ class CompanyMemoryAggregateBuilder:
             "major_projects": _project_items(cim, summary, year),
             "major_promises": _promise_items(cim, summary, year),
             "key_initiatives": _initiative_items(cim, summary, year),
+            "external_context_items": _summary_group_items(summary, "external_context", year),
+            "accounting_disclosures": _summary_group_items(summary, "accounting_disclosures", year),
+            "governance_disclosures": _summary_group_items(summary, "governance_disclosures", year),
+            "uncertain_management_items": _summary_group_items(summary, "uncertain_items", year),
             "risks": _risk_items(cim, year),
             "capital_allocation_actions": _capital_items(cim, summary, year),
             "all_promises": _all_promise_items(cim, year),
@@ -678,6 +773,10 @@ class CompanyMemoryAggregateBuilder:
                     "major_projects": snapshot["major_projects"],
                     "major_promises": snapshot["major_promises"],
                     "key_initiatives": snapshot["key_initiatives"],
+                    "external_context_items": snapshot["external_context_items"],
+                    "accounting_disclosures": snapshot["accounting_disclosures"],
+                    "governance_disclosures": snapshot["governance_disclosures"],
+                    "uncertain_management_items": snapshot["uncertain_management_items"],
                     "risks": snapshot["risks"],
                     "capital_allocation_actions": snapshot["capital_allocation_actions"],
                     "important_entities": snapshot["important_entities"],
@@ -695,6 +794,7 @@ class CompanyMemoryAggregateBuilder:
                     "management_focus_areas": snapshot["management_focus_areas"],
                     "major_projects": snapshot["major_projects"],
                     "key_initiatives": snapshot["key_initiatives"],
+                    "external_context_items": snapshot["external_context_items"],
                 }
                 for snapshot in snapshots
             ],

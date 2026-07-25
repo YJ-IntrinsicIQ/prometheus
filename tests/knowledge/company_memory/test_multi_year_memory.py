@@ -420,9 +420,10 @@ def test_multi_year_memory_capital_taxonomy_classifies_share_split_treasury_and_
 
     assert row["share_splits"][0]["category"] == "share_split"
     assert row["share_splits"][0]["value"].startswith("Share subdivision")
-    assert row["treasury_investments"][0]["category"] == "treasury_investment"
+    assert row["treasury_investments"][0]["category"] == "mutual_fund_investment"
     assert row["cwip"][0]["category"] == "cwip"
-    assert row["capex"][0]["category"] == "capex"
+    assert row["true_capital_deployment"][0]["category"] == "cwip"
+    assert row["corporate_actions_non_cash_or_admin"][0]["category"] == "share_split"
     assert row["debt_borrowings"] == []
 
 

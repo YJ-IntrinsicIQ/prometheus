@@ -106,6 +106,7 @@ def create_cleaner():
     return RiskCleaner(
         INPUT_FILE,
         OUTPUT_FILE,
+        module_name="risks",
     )
 
 

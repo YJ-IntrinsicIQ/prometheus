@@ -149,6 +149,7 @@ class BusinessBlueprint:
     characteristics: List[BusinessCharacteristic] = field(default_factory=list)
     candidate_dna_signals: List[CandidateDNASignal] = field(default_factory=list)
     dnas: List[BusinessDNA] = field(default_factory=list)
+    dnas_status: str = "deprecated_not_authoritative"
     dnas_source: Optional[str] = None
     reasoning: List[ReasoningStatement] = field(default_factory=list)
 
@@ -159,6 +160,7 @@ class BusinessBlueprint:
             "characteristics": [item.to_dict() for item in self.characteristics],
             "candidate_dna_signals": [item.to_dict() for item in self.candidate_dna_signals],
             "dnas": [item.to_dict() for item in self.dnas],
+            "dnas_status": self.dnas_status,
             "dnas_source": self.dnas_source,
             "reasoning": [item.to_dict() for item in self.reasoning],
         }
@@ -174,6 +176,7 @@ class BusinessBlueprint:
                 for item in payload.get("candidate_dna_signals", [])
             ],
             dnas=[BusinessDNA.from_dict(item) for item in payload.get("dnas", [])],
+            dnas_status=payload.get("dnas_status") or "deprecated_not_authoritative",
             dnas_source=payload.get("dnas_source"),
             reasoning=[_normalize_reasoning_item(item) for item in payload.get("reasoning", [])],
         )

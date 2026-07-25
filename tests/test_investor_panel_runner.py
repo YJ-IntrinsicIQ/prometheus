@@ -3,9 +3,12 @@ from pathlib import Path
 
 import pytest
 
+from core.company_context import CompanyContext
+from intelligence.investor_panel.evidence_router import split_clean_and_diagnostics
 from intelligence.investor_panel import runner as panel_runner
 from intelligence.investor_panel.runner import InvestorPanelRunner
 from pipelines import run_company_pipeline
+from pipelines.pipeline_context import set_context
 
 
 BRIEF_TITLES = {
@@ -15,6 +18,14 @@ BRIEF_TITLES = {
     "munger": "Munger School of Thought: Incentives, Governance & Avoidable Mistakes",
     "lynch": "Lynch School of Thought: Simple Story, Growth Runway & Hype Check",
 }
+
+
+def _read_saved_outputs(written: dict[str, Path], analyst: str):
+    clean = json.loads(written[f"{analyst}_analysis.json"].read_text(encoding="utf-8"))
+    diagnostics = json.loads(
+        written[f"{analyst}_analysis_diagnostics.json"].read_text(encoding="utf-8")
+    )
+    return clean, diagnostics
 
 
 def _write_pcim(base_dir: Path, company: str, missing_sections=None):
@@ -52,6 +63,130 @@ def _write_pcim(base_dir: Path, company: str, missing_sections=None):
             "projects_by_year": [{"year": "fy25", "items": [{"value": "Scale platform", "evidence_ids": ["ev_proj_1"]}]}],
             "initiatives_by_year": [{"year": "fy25", "items": [{"value": "Improve automation", "evidence_ids": ["ev_init_1"]}]}],
             "strategy_timeline": [{"year": "fy25", "business_dnas": []}],
+            "financial_growth_summary": {
+                "quality_status": "pass",
+                "summary": "Growth remains healthy.",
+                "signals": ["Revenue and EPS both improved."],
+                "by_year": [{"year": "fy25", "growth_metrics": [{"metric": "revenue", "growth_percent": 18.0}, {"metric": "eps_basic", "growth_percent": 14.0}]}],
+                "source_artifact": "financial_quality_summary.json",
+            },
+        },
+        "financial_fundamentals_inputs": {
+            "basis_used": "consolidated",
+            "by_year": [
+                {
+                    "year": "fy25",
+                    "key_metrics": [
+                        {"field": "revenue", "value_crore": 120.0, "source_year": "fy25", "source_artifact": "normalized_fundamentals.json"},
+                        {"field": "pat", "value_crore": 18.0, "source_year": "fy25", "source_artifact": "normalized_fundamentals.json"},
+                        {"field": "net_worth", "value_crore": 70.0, "source_year": "fy25", "source_artifact": "normalized_fundamentals.json"},
+                        {"field": "total_debt", "value_crore": 9.0, "source_year": "fy25", "source_artifact": "normalized_fundamentals.json"},
+                    ],
+                    "warnings": [],
+                }
+            ],
+            "warnings": [],
+        },
+        "financial_trend_inputs": {
+            "years_covered": ["fy24", "fy25"],
+            "basis": "consolidated",
+            "metric_trends": [
+                {"metric": "revenue", "series": [{"year": "fy25", "value": 120.0, "source_artifact": "financial_trends.json"}]},
+                {"metric": "pat", "series": [{"year": "fy25", "value": 18.0, "source_artifact": "financial_trends.json"}]},
+            ],
+            "warnings": [],
+            "limitations": [],
+            "source_artifact": "financial_trends.json",
+        },
+        "cash_conversion_inputs": {
+            "status": "pass",
+            "summary": "Cash conversion is healthy.",
+            "signals": ["CFO exceeds PAT."],
+            "basis": "consolidated",
+            "warnings": [],
+            "metrics": [
+                {"metric": "cfo", "series": [{"year": "fy25", "value": 22.0, "source_artifact": "financial_trends.json"}]},
+                {"metric": "capex", "series": [{"year": "fy25", "value": -7.0, "source_artifact": "financial_trends.json"}]},
+                {"metric": "fcf", "series": [{"year": "fy25", "value": 15.0, "source_artifact": "financial_trends.json"}]},
+                {"metric": "cfo_to_pat", "series": [{"year": "fy25", "value": 1.22, "source_artifact": "financial_trends.json"}]},
+            ],
+            "source_artifact": "financial_quality_summary.json",
+        },
+        "return_on_capital_inputs": {
+            "status": "pass",
+            "summary": "Returns remain solid.",
+            "signals": ["ROCE remains above 15%."],
+            "basis": "consolidated",
+            "warnings": [],
+            "metrics": [
+                {"metric": "roe", "series": [{"year": "fy25", "value": 19.0, "source_artifact": "financial_trends.json"}]},
+                {"metric": "roce", "series": [{"year": "fy25", "value": 17.0, "source_artifact": "financial_trends.json"}]},
+            ],
+            "source_artifact": "financial_quality_summary.json",
+        },
+        "balance_sheet_strength_inputs": {
+            "status": "pass",
+            "summary": "Leverage remains controlled.",
+            "signals": ["Debt to equity remains modest."],
+            "basis": "consolidated",
+            "warnings": [],
+            "metrics": [
+                {"metric": "total_debt", "series": [{"year": "fy25", "value": 9.0, "source_artifact": "financial_trends.json"}]},
+                {"metric": "debt_to_equity", "series": [{"year": "fy25", "value": 0.13, "source_artifact": "financial_trends.json"}]},
+            ],
+            "source_artifact": "financial_quality_summary.json",
+        },
+        "working_capital_inputs": {
+            "basis": "consolidated",
+            "metrics": [
+                {"metric": "payable_days", "series": [{"year": "fy25", "value": 28.0, "source_artifact": "financial_ratios.json"}]},
+                {"metric": "cash_conversion_cycle", "series": [{"year": "fy25", "value": 18.0, "source_artifact": "financial_ratios.json"}]},
+            ],
+            "by_year": [
+                {
+                    "year": "fy25",
+                    "metrics": [
+                        {"metric": "payable_days", "value": 28.0, "unit": "days", "period": "fy25", "basis": "consolidated", "confidence": "medium", "source_artifacts": ["financial_ratios.json"]},
+                        {"metric": "cash_conversion_cycle", "value": 18.0, "unit": "days", "period": "fy25", "basis": "consolidated", "confidence": "medium", "source_artifacts": ["financial_ratios.json"]},
+                    ],
+                    "warnings": [],
+                    "limitations": [],
+                }
+            ],
+            "warnings": [],
+            "source_artifact": "financial_ratios.json",
+        },
+        "per_share_inputs": {
+            "basis": "consolidated",
+            "metrics": [
+                {"metric": "eps_basic", "series": [{"year": "fy25", "value": 12.0, "source_artifact": "financial_trends.json"}]},
+                {"metric": "book_value_per_share", "series": [{"year": "fy25", "value": 55.0, "source_artifact": "financial_trends.json"}]},
+                {"metric": "shares_outstanding", "series": [{"year": "fy25", "value": 1.6, "source_artifact": "financial_trends.json"}]},
+                {"metric": "weighted_avg_shares", "series": [{"year": "fy25", "value": 1.4, "source_artifact": "financial_trends.json"}]},
+                {"metric": "diluted_shares", "series": [{"year": "fy25", "value": 1.45, "source_artifact": "financial_trends.json"}]},
+            ],
+            "warnings": [],
+            "source_artifact": "financial_trends.json",
+        },
+        "corporate_action_inputs": {
+            "by_year": [{"year": "fy25", "actions": [{"action_type": "qip", "impact_on_share_count": "increase", "impact_on_eps_comparability": "yes"}], "per_share_comparability_warnings": ["QIP affects comparability."]}],
+            "warnings": ["QIP affects comparability."],
+            "source_artifact": "corporate_actions.json",
+        },
+        "ownership_inputs": {
+            "by_year": [{"year": "fy25", "items": [{"holder_category": "promoter_holding_percent", "holding_percent": 52.0, "source_artifact": "shareholding_pattern.json"}], "warnings": []}],
+            "summary_status": "warning",
+            "summary": "Ownership is stable.",
+            "warnings": [],
+            "source_artifact": "shareholding_pattern.json",
+        },
+        "financial_driver_inputs": {
+            "status": "warning",
+            "years_covered": ["fy24", "fy25"],
+            "attributions": [{"metric": "revenue", "movement": "improved", "possible_driver": "Customer additions", "source_artifacts": ["financial_driver_attribution.json"], "evidence_ids": ["ev_fin_driver_1"]}],
+            "warnings": [],
+            "limitations": [],
+            "source_artifact": "financial_driver_attribution.json",
         },
         "moat_inputs": {
             "business_dna_by_year": [{"year": "fy25", "items": [{"value": "Enterprise Platform", "evidence_ids": ["ev_moat_1"]}]}],
@@ -199,6 +334,15 @@ def _write_pcim(base_dir: Path, company: str, missing_sections=None):
             "business_economics_inputs": ["ev_be_1", "ev_risk_1"],
             "growth_execution_inputs": ["ev_proj_1", "ev_init_1", "ev_prom_1", "ev_growth_1"],
             "story_vs_numbers_inputs": ["ev_story_2", "ev_story_3"],
+            "financial_fundamentals_inputs": ["ev_fin_1"],
+            "financial_trend_inputs": ["ev_fin_1"],
+            "cash_conversion_inputs": ["ev_fin_1"],
+            "return_on_capital_inputs": ["ev_fin_1"],
+            "balance_sheet_strength_inputs": ["ev_fin_1"],
+            "per_share_inputs": ["ev_fin_1"],
+            "corporate_action_inputs": ["ev_fin_1"],
+            "ownership_inputs": ["ev_fin_1"],
+            "financial_driver_inputs": ["ev_fin_driver_1"],
             "multi_year_inputs": ["ev_my_dna_1", "ev_my_mgmt_1", "ev_my_promise_1", "ev_my_risk_1", "ev_my_cap_1"],
         },
         "uncertainty_missing_data": {"incomplete_years": [], "missing_sections": [], "missing_items": []},
@@ -235,12 +379,12 @@ def _write_large_pcim(base_dir: Path, company: str):
                 "status": "Open",
                 "confidence": "low",
                 "page": 50 + idx,
-                "source_chunk": long_chunk,
+                "raw_text": long_chunk,
                 "evidence_ids": [f"ev_risk_{idx}"],
                 "evidence_references": [
                     {
                         "page": 50 + idx,
-                        "source_chunk": long_chunk,
+                        "content": long_chunk,
                         "source_artifact": "management_summary.json",
                         "evidence_ids": [f"ev_risk_{idx}"],
                     }
@@ -265,6 +409,33 @@ def _write_large_pcim(base_dir: Path, company: str):
         "governance_and_incentive_inputs": {
             "related_party_and_control_items_by_year": [{"year": "fy25", "items": large_items}],
         },
+        "cash_conversion_inputs": {
+            "metrics": [
+                {"metric": "cfo", "series": [{"year": "fy25", "value": 18.0, "source_artifact": "financial_trends.json"}]},
+                {"metric": "capex", "series": [{"year": "fy25", "value": -6.0, "source_artifact": "financial_trends.json"}]},
+                {"metric": "fcf", "series": [{"year": "fy25", "value": 12.0, "source_artifact": "financial_trends.json"}]},
+            ],
+            "warnings": [],
+            "source_artifact": "financial_quality_summary.json",
+        },
+        "balance_sheet_strength_inputs": {
+            "metrics": [
+                {"metric": "debt_to_equity", "series": [{"year": "fy25", "value": 0.2, "source_artifact": "financial_trends.json"}]},
+            ],
+            "warnings": [],
+            "source_artifact": "financial_quality_summary.json",
+        },
+        "corporate_action_inputs": {
+            "by_year": [{"year": "fy25", "actions": [{"action_type": "qip_issue", "impact_on_share_count": "increase", "impact_on_eps_comparability": "yes"}]}],
+            "warnings": ["QIP affects comparability."],
+            "source_artifact": "corporate_actions.json",
+        },
+        "financial_driver_inputs": {
+            "attributions": [{"metric": "revenue", "possible_driver": "Platform expansion", "source_artifacts": ["financial_driver_attribution.json"], "evidence_ids": ["ev_fd_1"]}],
+            "warnings": [],
+            "limitations": [],
+            "source_artifact": "financial_driver_attribution.json",
+        },
         "business_economics_inputs": {
             "customer_and_scale_signals_by_year": [{"year": "fy25", "items": large_items}],
         },
@@ -283,6 +454,10 @@ def _write_large_pcim(base_dir: Path, company: str):
             "capital_allocation_inputs": [f"ev_cap_{idx}" for idx in range(40)],
             "incentive_inputs": [f"ev_inc_{idx}" for idx in range(40)],
             "governance_and_incentive_inputs": [f"ev_gov_{idx}" for idx in range(40)],
+            "cash_conversion_inputs": ["ev_fd_1"],
+            "balance_sheet_strength_inputs": ["ev_fd_1"],
+            "corporate_action_inputs": ["ev_fd_1"],
+            "financial_driver_inputs": ["ev_fd_1"],
             "business_economics_inputs": [f"ev_be_{idx}" for idx in range(40)],
             "growth_execution_inputs": [f"ev_growth_{idx}" for idx in range(40)],
         },
@@ -325,6 +500,82 @@ class FakeLLM:
         )()
 
 
+class SequencedFakeLLM:
+    def __init__(self, response_texts):
+        self.response_texts = list(response_texts)
+        self.calls = []
+
+    def generate(
+        self,
+        prompt,
+        response_schema=None,
+        temperature=0.0,
+        max_tokens=None,
+        system_prompt=None,
+    ):
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "response_schema": response_schema,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "system_prompt": system_prompt,
+            }
+        )
+        if not self.response_texts:
+            raise AssertionError("SequencedFakeLLM ran out of responses")
+        response_text = self.response_texts.pop(0)
+        return type(
+            "AIResponse",
+            (),
+            {
+                "text": response_text,
+                "provider": "mock",
+                "model": "mock-panel-model",
+            },
+        )()
+
+
+class PromptRoutingFakeLLM:
+    def __init__(self, response_map):
+        self.response_map = dict(response_map)
+        self.calls = []
+
+    def generate(
+        self,
+        prompt,
+        response_schema=None,
+        temperature=0.0,
+        max_tokens=None,
+        system_prompt=None,
+    ):
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "response_schema": response_schema,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "system_prompt": system_prompt,
+            }
+        )
+        doctrine_id = None
+        for candidate in self.response_map:
+            if f"Doctrine ID: {candidate}" in prompt:
+                doctrine_id = candidate
+                break
+        if doctrine_id is None:
+            raise AssertionError("PromptRoutingFakeLLM could not determine doctrine from prompt")
+        return type(
+            "AIResponse",
+            (),
+            {
+                "text": self.response_map[doctrine_id],
+                "provider": "mock",
+                "model": "mock-panel-model",
+            },
+        )()
+
+
 def _llm_output(doctrine_id="graham", rating="mixed", evidence_ids=None):
     if evidence_ids is None:
         evidence_ids = ["ev_cap_1", "ev_risk_1"]
@@ -338,6 +589,11 @@ def _llm_output(doctrine_id="graham", rating="mixed", evidence_ids=None):
         }
         supporting_pcim_sections = [
             "financial_strength_inputs",
+            "financial_fundamentals_inputs",
+            "cash_conversion_inputs",
+            "balance_sheet_strength_inputs",
+            "per_share_inputs",
+            "financial_driver_inputs",
             "governance_and_incentive_inputs",
             "risk_inputs",
             "capital_allocation_inputs",
@@ -356,6 +612,11 @@ def _llm_output(doctrine_id="graham", rating="mixed", evidence_ids=None):
             "business_understanding",
             "business_economics_inputs",
             "moat_inputs",
+            "financial_fundamentals_inputs",
+            "cash_conversion_inputs",
+            "return_on_capital_inputs",
+            "per_share_inputs",
+            "financial_driver_inputs",
             "capital_allocation_inputs",
             "management_quality_inputs",
             "governance_and_incentive_inputs",
@@ -374,6 +635,10 @@ def _llm_output(doctrine_id="graham", rating="mixed", evidence_ids=None):
             "governance_and_incentive_inputs",
             "risk_inputs",
             "management_quality_inputs",
+            "cash_conversion_inputs",
+            "balance_sheet_strength_inputs",
+            "corporate_action_inputs",
+            "financial_driver_inputs",
             "capital_allocation_inputs",
             "multi_year_inputs",
             "evidence_map",
@@ -389,7 +654,10 @@ def _llm_output(doctrine_id="graham", rating="mixed", evidence_ids=None):
         supporting_pcim_sections = [
             "business_understanding",
             "management_quality_inputs",
+            "financial_trend_inputs",
+            "financial_driver_inputs",
             "growth_execution_inputs",
+            "growth_quality_inputs",
             "moat_inputs",
             "multi_year_inputs",
             "evidence_map",
@@ -405,6 +673,11 @@ def _llm_output(doctrine_id="graham", rating="mixed", evidence_ids=None):
         supporting_pcim_sections = [
             "business_understanding",
             "management_quality_inputs",
+            "financial_trend_inputs",
+            "growth_quality_inputs",
+            "per_share_inputs",
+            "corporate_action_inputs",
+            "financial_driver_inputs",
             "growth_execution_inputs",
             "simplicity_and_story_inputs",
             "multi_year_inputs",
@@ -436,6 +709,16 @@ def _llm_output(doctrine_id="graham", rating="mixed", evidence_ids=None):
                     "evidence_ids": [],
                 }
             ],
+            **_financial_payload(
+                doctrine_id,
+                metrics={
+                    "graham": ["net_worth", "total_debt", "cfo", "capex", "fcf", "book_value_per_share", "weighted_avg_shares"],
+                    "buffett": ["revenue", "cfo", "capex", "fcf", "roce", "roe", "eps_basic", "book_value_per_share", "weighted_avg_shares"],
+                    "fisher": ["revenue", "eps_basic"],
+                    "munger": ["cfo", "capex", "debt_to_equity"],
+                    "lynch": ["revenue", "eps_basic", "book_value_per_share", "weighted_avg_shares"],
+                }[doctrine_id],
+            ),
             "evidence_ids": evidence_ids,
             "historical_context_used": True,
             "years_considered": ["fy24", "fy25"],
@@ -447,6 +730,7 @@ def _llm_output(doctrine_id="graham", rating="mixed", evidence_ids=None):
             "user_facing_brief": {
                 "title": BRIEF_TITLES[doctrine_id],
                 "lens": "This lens focuses on the most decision-useful strengths, cautions, and missing context.",
+                "financial_lens": "The financial lens focuses on only the supplied numbers, their limitations, and what they imply without inventing new math.",
                 "what_looks_good": [
                     "The business shows some evidence-backed strengths."
                 ],
@@ -466,10 +750,77 @@ def _brief_payload(doctrine_id="graham"):
     return {
         "title": BRIEF_TITLES[doctrine_id],
         "lens": "This lens focuses on the most decision-useful strengths, cautions, and missing context.",
+        "financial_lens": "The financial lens focuses on only the supplied numbers, their limitations, and what they imply without inventing new math.",
         "what_looks_good": ["The business shows some evidence-backed strengths."],
         "what_needs_caution": ["Important risks still need close monitoring."],
         "what_is_missing": ["Some multi-year context is still missing."],
         "bottom_line": "The current picture is useful but still incomplete, so confidence should stay measured.",
+    }
+
+
+def _financial_payload(doctrine_id="graham", *, concerns=None, red_flags=None, metrics=None):
+    default_metrics = {
+        "graham": ["net_worth", "total_debt", "cfo", "capex", "fcf", "book_value_per_share", "weighted_avg_shares"],
+        "buffett": ["revenue", "cfo", "capex", "fcf", "roce", "roe", "eps_basic", "book_value_per_share", "weighted_avg_shares"],
+        "fisher": ["revenue", "eps_basic"],
+        "munger": ["cfo", "capex", "debt_to_equity"],
+        "lynch": ["revenue", "eps_basic", "book_value_per_share", "weighted_avg_shares"],
+    }
+    financial_sections = {
+        "graham": ["financial_strength_inputs", "cash_conversion_inputs", "balance_sheet_strength_inputs", "per_share_inputs"],
+        "buffett": ["financial_fundamentals_inputs", "cash_conversion_inputs", "return_on_capital_inputs", "per_share_inputs"],
+        "fisher": ["financial_trend_inputs", "financial_driver_inputs"],
+        "munger": ["cash_conversion_inputs", "balance_sheet_strength_inputs", "corporate_action_inputs", "financial_driver_inputs"],
+        "lynch": ["financial_trend_inputs", "per_share_inputs", "corporate_action_inputs"],
+    }
+    key_strengths = {
+        "graham": ["Cash conversion remains better than PAT."],
+        "buffett": ["Cash conversion remains better than PAT."],
+        "fisher": ["Revenue and EPS both improved in the supplied evidence."],
+        "munger": ["Debt discipline remains visible in the supplied evidence."],
+        "lynch": ["Per-share growth remains directionally supportive in the supplied evidence."],
+    }
+    missing_data = {
+        "graham": [],
+        "buffett": [],
+        "fisher": [
+            "Free cash flow is unavailable in the supplied financial sections.",
+            "Capex is unavailable in the supplied financial sections.",
+        ],
+        "munger": [],
+        "lynch": [
+            "Free cash flow is unavailable in the supplied financial sections.",
+            "Capex is unavailable in the supplied financial sections.",
+        ],
+    }
+    financial_red_flags = red_flags if red_flags is not None else ["Comparability remains affected by share-count events."]
+    key_concerns = concerns if concerns is not None else [
+        "Evidence is not complete enough for maximum confidence.",
+        "Financial basis still needs to be interpreted conservatively from the supplied sections.",
+    ]
+    return {
+        "financial_metrics_used": metrics if metrics is not None else default_metrics[doctrine_id],
+        "financial_red_flags": financial_red_flags,
+        "financial_positive_signals": key_strengths[doctrine_id],
+        "financial_missing_data": missing_data[doctrine_id],
+        "financial_interpretation_limits": [
+            "Only supplied PCIM metrics were used; no new ratios were calculated.",
+            "Financial basis was interpreted conservatively from the supplied sections.",
+        ],
+        "financial_assessment": {
+            "financials_used": True,
+            "basis_used": "consolidated",
+            "key_financial_strengths": key_strengths[doctrine_id],
+            "key_financial_concerns": key_concerns,
+            "financial_red_flags": financial_red_flags,
+            "missing_financial_data": missing_data[doctrine_id],
+            "financial_interpretation_limits": [
+                "Only supplied PCIM metrics were used; no new ratios were calculated.",
+                "Financial basis was interpreted conservatively from the supplied sections.",
+            ],
+        },
+        "financial_sections_consumed": financial_sections[doctrine_id],
+        "financial_warnings_carried_forward": [],
     }
 
 
@@ -541,7 +892,7 @@ def test_declared_analysts_receive_multi_year_inputs_in_prompt(tmp_path, monkeyp
 def test_compact_prompt_pack_removes_source_chunk_and_preserves_evidence_ids(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_large_pcim(tmp_path, "acme")
-    fake_llm = FakeLLM(_llm_output(doctrine_id="munger", rating="mixed", evidence_ids=["ev_risk_0", "ev_gov_0"]))
+    fake_llm = FakeLLM(_llm_output(doctrine_id="munger", rating="mixed", evidence_ids=["ev_risk_0", "ev_risk_1"]))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
     runner = InvestorPanelRunner(company="acme")
@@ -550,9 +901,9 @@ def test_compact_prompt_pack_removes_source_chunk_and_preserves_evidence_ids(tmp
     prompt = fake_llm.calls[0]["prompt"]
 
     assert "source_chunk" not in prompt
-    assert "short_excerpt" in prompt
+    assert "evidence_references" not in prompt
     assert "ev_risk_0" in prompt
-    assert payload["evidence_ids"] == ["ev_risk_0", "ev_gov_0"]
+    assert payload["evidence_ids"] == ["ev_risk_0", "ev_risk_1"]
     assert panel_runner.COMPACTION_REASONING_LIMIT in payload["reasoning_limits"]
 
 
@@ -561,7 +912,7 @@ def test_multi_year_prompt_pack_preserves_evidence_ids_and_has_no_source_chunk(t
     _write_pcim(tmp_path, "acme")
     pcim = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "pcim_v1.json").read_text())
 
-    prompt, compact_pcim, _stats, _limits, _compacted = panel_runner._build_compact_prompt(
+    prompt, compact_pcim, _stats, _limits, _compacted, _budget_report = panel_runner._build_compact_prompt(
         doctrine=panel_runner.InvestorDoctrineRegistry(Path(panel_runner.__file__).resolve().parent / "doctrines").get("graham"),
         company="acme",
         pcim_path=tmp_path / "companies" / "acme" / "company_memory" / "pcim_v1.json",
@@ -584,7 +935,21 @@ def test_large_pcim_prompt_stays_under_budget_and_uses_compact_view(tmp_path, mo
     runner.run(analyst="munger")
 
     prompt = fake_llm.calls[0]["prompt"]
+    manifest = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "investor_panel" / "investor_panel_llm_call_manifest.json").read_text(encoding="utf-8"))
+    entry = manifest["entries"][0]
+
     assert len(prompt) <= panel_runner.DEFAULT_MAX_TOTAL_PROMPT_CHARS
+    assert entry["analyst"] == "munger"
+    assert entry["truncation_applied"] is True
+    assert entry["estimated_prompt_tokens"] <= 7000
+    assert entry["prompt_tokens_after"] <= entry["token_budget"]
+    assert entry["pack_tokens_after"] <= entry["token_budget"]
+    assert entry["budget_status"] in {"pass", "pass_with_warning"}
+    assert entry["raw_largest_sections"]
+    assert entry["compacted_largest_sections"]
+    assert entry["sections_requested"]
+    assert entry["sections_included"]
+    assert entry["dropped_items_count"] >= 0
     assert "Selected compact PCIM sections:" in prompt
 
 
@@ -606,6 +971,19 @@ def test_panel_runner_never_accesses_raw_documents(tmp_path, monkeypatch):
     assert "annual_report.txt" not in fake_llm.calls[0]["prompt"]
 
 
+def test_panel_runner_fails_fast_if_pcim_contains_source_chunk(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    pcim_path = tmp_path / "companies" / "acme" / "company_memory" / "pcim_v1.json"
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    pcim["risk_inputs"]["risk_by_year"][0]["items"][0]["source_chunk"] = "raw leaked chunk"
+    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+
+    runner = InvestorPanelRunner(company="acme")
+    with pytest.raises(ValueError, match="PCIM must not contain source_chunk"):
+        runner.run(analyst="graham")
+
+
 def test_missing_pcim_sections_are_reflected_as_uncertainty(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_pcim(tmp_path, "acme", missing_sections=["risk_inputs", "financial_strength_inputs"])
@@ -620,7 +998,7 @@ def test_missing_pcim_sections_are_reflected_as_uncertainty(tmp_path, monkeypatc
     prompt = fake_llm.calls[0]["prompt"]
     assert "risk_inputs" in prompt
     assert "financial_strength_inputs" in prompt
-    assert "Missing for test" in prompt
+    assert '"uncertainty_missing_data"' in prompt
 
 
 def test_prompt_includes_missing_evidence_discipline_for_graham(tmp_path, monkeypatch):
@@ -650,6 +1028,45 @@ def test_rating_is_taken_from_llm_output_not_section_availability(tmp_path, monk
     assert payload["rating"] == "weak"
 
 
+@pytest.mark.parametrize(
+    ("rating", "expected"),
+    [
+        ("insufficient evidence", "insufficient_evidence"),
+        ("insufficient-evidence", "insufficient_evidence"),
+        ("not enough evidence", "insufficient_evidence"),
+        ("inconclusive", "insufficient_evidence"),
+        ("neutral", "mixed"),
+        ("cautious", "mixed"),
+        ("positive", "strong"),
+        ("negative", "weak"),
+    ],
+)
+def test_rating_variants_are_normalized(tmp_path, monkeypatch, rating, expected):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    fake_llm = FakeLLM(_llm_output(doctrine_id="graham", rating=rating))
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    runner = InvestorPanelRunner(company="acme")
+    written = runner.run(analyst="graham")
+    payload = json.loads(written["graham_analysis.json"].read_text())
+    diagnostics = json.loads(written["graham_analysis_diagnostics.json"].read_text())
+
+    assert payload["rating"] == expected
+    assert any("rating was normalized" in warning for warning in diagnostics.get("schema_warnings", []))
+
+
+def test_invalid_rating_still_fails_after_normalization_attempt(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    fake_llm = FakeLLM(_llm_output(doctrine_id="graham", rating="maybe"))
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    runner = InvestorPanelRunner(company="acme")
+    with pytest.raises(ValueError, match="rating must be one of strong, mixed, weak, insufficient_evidence"):
+        runner.run(analyst="graham")
+
+
 def test_evidence_ids_are_preserved_and_filtered_to_allowed_ids(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_pcim(tmp_path, "acme")
@@ -666,6 +1083,7 @@ def test_evidence_ids_are_preserved_and_filtered_to_allowed_ids(tmp_path, monkey
                 "key_findings": [{"finding": "Useful evidence exists.", "evidence_ids": ["ev_cap_1", "not_allowed"]}],
                 "red_flags": [{"flag": "Concentration risk", "severity": "medium", "evidence_ids": ["ev_risk_1"]}],
                 "open_uncertainties": [{"uncertainty": "Multi-year data is limited.", "evidence_ids": ["not_allowed_2"]}],
+                **_financial_payload("graham"),
                 "evidence_ids": ["ev_cap_1", "ev_risk_1", "not_allowed"],
                 "supporting_pcim_sections": [
                     "financial_strength_inputs",
@@ -683,11 +1101,167 @@ def test_evidence_ids_are_preserved_and_filtered_to_allowed_ids(tmp_path, monkey
 
     runner = InvestorPanelRunner(company="acme")
     written = runner.run(analyst="graham")
-    payload = json.loads(written["graham_analysis.json"].read_text())
+    payload, diagnostics = _read_saved_outputs(written, "graham")
 
-    assert payload["evidence_ids"] == ["ev_cap_1", "ev_risk_1", "not_allowed", "not_allowed_2"]
-    assert payload["evidence_id_normalization"]["applied"] is False
-    assert payload["evidence_id_normalization"]["unresolved_ids"] == ["not_allowed", "not_allowed_2"]
+    assert "ev_cap_1" in payload["evidence_ids"]
+    assert "ev_risk_1" in payload["evidence_ids"]
+    assert diagnostics["evidence_id_normalization"]["applied"] is True
+    assert diagnostics["evidence_id_normalization"]["unresolved_ids"] == [
+        "not_allowed",
+        "not_allowed_2",
+    ]
+    removed = diagnostics["evidence_id_normalization"]["removed_invalid_ids"]
+    assert {"invalid_id": "not_allowed", "path": "$.evidence_ids", "reason": "unknown_evidence_id"} in removed
+    assert "not_allowed" not in payload["evidence_ids"]
+    assert all(
+        "not_allowed" not in (item.get("evidence_ids", []) if isinstance(item, dict) else [])
+        for item in payload["key_findings"]
+    )
+    assert all(
+        "not_allowed" not in (item.get("evidence_ids", []) if isinstance(item, dict) else [])
+        for item in payload["open_uncertainties"]
+    )
+    assert payload["evidence_grounding_status"] == "warning"
+
+
+def test_section_name_evidence_ids_are_removed_before_save(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    fake_llm = FakeLLM(
+        json.dumps(
+            {
+                "assessment": {
+                    "financial_strength_assessment": "Adequate evidence.",
+                    "integrity_assessment": "No obvious integrity issue.",
+                    "downside_protection_assessment": "Concentration remains a risk.",
+                    "key_red_flags": "Evidence quality is still limited.",
+                },
+                "rating": "mixed",
+                "key_findings": [{"finding": "Useful evidence exists.", "evidence_ids": ["working_capital_inputs", "ev_cap_1"]}],
+                "red_flags": [{"flag": "Concentration risk", "severity": "medium", "evidence_ids": ["risk_inputs", "ev_risk_1"]}],
+                "open_uncertainties": [{"uncertainty": "Multi-year data is limited.", "evidence_ids": ["multi_year_inputs"]}],
+                **_financial_payload("graham"),
+                "evidence_ids": ["working_capital_inputs", "ev_cap_1", "risk_inputs"],
+                "supporting_pcim_sections": [
+                    "financial_strength_inputs",
+                    "risk_inputs",
+                    "capital_allocation_inputs",
+                    "evidence_map",
+                    "uncertainty_missing_data",
+                ],
+                "reasoning_limits": ["PCIM-only judgment."],
+                "user_facing_brief": _brief_payload("graham"),
+            }
+        )
+    )
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    runner = InvestorPanelRunner(company="acme")
+    written = runner.run(analyst="graham")
+    payload, diagnostics = _read_saved_outputs(written, "graham")
+
+    assert "working_capital_inputs" not in payload["evidence_ids"]
+    assert "risk_inputs" not in payload["evidence_ids"]
+    assert "multi_year_inputs" not in json.dumps(payload["evidence_ids"])
+    removed = diagnostics["evidence_id_normalization"]["removed_invalid_ids"]
+    assert any(item["invalid_id"] == "working_capital_inputs" for item in removed)
+    assert any(
+        "section-name references instead of evidence IDs" in item
+        for item in diagnostics["schema_warnings"]
+    )
+
+
+def test_buffett_style_section_name_evidence_ids_are_removed_before_save(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    fake_llm = FakeLLM(
+        json.dumps(
+            {
+                "assessment": {
+                    "business_quality_assessment": "Adequate evidence.",
+                    "moat_assessment": "Some durability evidence exists.",
+                    "capital_allocation_assessment": "Capital allocation needs more history.",
+                    "management_rationality_assessment": "Management rationality needs more evidence.",
+                    "key_red_flags": "Evidence quality is still limited.",
+                },
+                "rating": "mixed",
+                "key_findings": [
+                    {
+                        "finding": "Governance and financial evidence are relevant.",
+                        "evidence_ids": ["governance_and_incentive_inputs", "ev_cap_1"],
+                    }
+                ],
+                "red_flags": [
+                    {
+                        "flag": "Cash conversion evidence is incomplete.",
+                        "severity": "medium",
+                        "evidence_ids": ["cash_conversion_inputs", "ev_risk_1"],
+                    }
+                ],
+                "open_uncertainties": [
+                    {
+                        "uncertainty": "Financial fundamentals remain incomplete.",
+                        "evidence_ids": ["financial_fundamentals_inputs", "per_share_inputs"],
+                    }
+                ],
+                **_financial_payload("buffett"),
+                "evidence_ids": [
+                    "governance_and_incentive_inputs",
+                    "financial_fundamentals_inputs",
+                    "cash_conversion_inputs",
+                    "return_on_capital_inputs",
+                    "per_share_inputs",
+                    "ev_cap_1",
+                    "ev_risk_1",
+                ],
+                "supporting_pcim_sections": [
+                    "business_understanding",
+                    "moat_inputs",
+                    "capital_allocation_inputs",
+                    "governance_and_incentive_inputs",
+                    "financial_fundamentals_inputs",
+                    "cash_conversion_inputs",
+                    "return_on_capital_inputs",
+                    "per_share_inputs",
+                    "uncertainty_missing_data",
+                ],
+                "reasoning_limits": ["PCIM-only judgment."],
+                "user_facing_brief": {
+                    **_brief_payload("buffett"),
+                    "evidence_ids": ["governance_and_incentive_inputs"],
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    runner = InvestorPanelRunner(company="acme")
+    written = runner.run(analyst="buffett")
+    payload, diagnostics = _read_saved_outputs(written, "buffett")
+    serialized_active_ids = json.dumps(
+        {
+            "top_level": payload["evidence_ids"],
+            "key_findings": payload["key_findings"],
+            "red_flags": payload["red_flags"],
+            "open_uncertainties": payload["open_uncertainties"],
+            "user_facing_brief": payload["user_facing_brief"],
+        },
+        ensure_ascii=False,
+    )
+
+    for section_name in (
+        "governance_and_incentive_inputs",
+        "financial_fundamentals_inputs",
+        "cash_conversion_inputs",
+        "return_on_capital_inputs",
+        "per_share_inputs",
+    ):
+        assert section_name not in serialized_active_ids
+    assert "ev_cap_1" in payload["evidence_ids"]
+    assert "ev_risk_1" in payload["evidence_ids"]
+    assert payload["evidence_grounding_status"] == "warning"
+    removed = diagnostics["evidence_id_normalization"]["removed_invalid_ids"]
+    assert any(item["invalid_id"] == "governance_and_incentive_inputs" for item in removed)
 
 
 def test_alias_evidence_ids_are_normalized_to_canonical_ids(tmp_path, monkeypatch):
@@ -720,6 +1294,7 @@ def test_alias_evidence_ids_are_normalized_to_canonical_ids(tmp_path, monkeypatc
                 ],
                 "red_flags": [],
                 "open_uncertainties": [],
+                **_financial_payload("graham", concerns=["Liquidity remains the main red flag."], red_flags=["Liquidity remains the main red flag."], metrics=["total_debt"]),
                 "evidence_ids": ["ev_fy25_company_intelligence_risk_00001"],
                 "supporting_pcim_sections": [
                     "financial_strength_inputs",
@@ -737,18 +1312,23 @@ def test_alias_evidence_ids_are_normalized_to_canonical_ids(tmp_path, monkeypatc
 
     runner = InvestorPanelRunner(company="acme")
     written = runner.run(analyst="graham")
-    payload = json.loads(written["graham_analysis.json"].read_text())
+    payload, diagnostics = _read_saved_outputs(written, "graham")
 
-    assert payload["evidence_ids"] == ["ev_fy25_company_intelligence_json_risk_00001"]
-    assert payload["evidence_id_normalization"]["applied"] is True
-    assert payload["evidence_id_normalization"]["replacements"] == [
+    assert "ev_fy25_company_intelligence_json_risk_00001" in payload["evidence_ids"]
+    assert "ev_fy25_company_intelligence_risk_00001" not in payload["evidence_ids"]
+    assert diagnostics["evidence_id_normalization"]["applied"] is True
+    assert diagnostics["evidence_id_normalization"]["replacements"] == [
         {
             "original_id": "ev_fy25_company_intelligence_risk_00001",
             "canonical_id": "ev_fy25_company_intelligence_json_risk_00001",
         }
     ]
     assert payload["evidence_grounding_status"] == "pass"
-    assert payload["evidence_grounding_warnings"] == []
+    assert not any(
+        warning.get("evidence_id") == "ev_fy25_company_intelligence_capalloc_00002"
+        for warning in diagnostics["evidence_grounding_warnings"]
+        if isinstance(warning, dict)
+    )
 
 
 def test_noncanonical_capalloc_ids_are_normalized_before_save(tmp_path, monkeypatch):
@@ -781,6 +1361,7 @@ def test_noncanonical_capalloc_ids_are_normalized_before_save(tmp_path, monkeypa
                 ],
                 "red_flags": [],
                 "open_uncertainties": [],
+                **_financial_payload("graham", concerns=["Capex intensity remains a watch item."], red_flags=["Capex intensity remains a watch item."], metrics=["capex"]),
                 "evidence_ids": ["ev_fy25_company_intelligence_capalloc_00002"],
                 "supporting_pcim_sections": [
                     "financial_strength_inputs",
@@ -798,13 +1379,17 @@ def test_noncanonical_capalloc_ids_are_normalized_before_save(tmp_path, monkeypa
 
     runner = InvestorPanelRunner(company="acme")
     written = runner.run(analyst="graham")
-    payload = json.loads(written["graham_analysis.json"].read_text())
+    payload, diagnostics = _read_saved_outputs(written, "graham")
 
-    assert payload["evidence_ids"] == ["ev_fy25_company_intelligence_json_capalloc_00002"]
+    assert "ev_fy25_company_intelligence_json_capalloc_00002" in payload["evidence_ids"]
     assert payload["assessment"]["financial_strength_assessment"].endswith(
         "ev_fy25_company_intelligence_json_capalloc_00002."
     )
-    assert payload["evidence_grounding_warnings"] == []
+    assert not any(
+        warning.get("evidence_id") == "ev_fy25_company_intelligence_capalloc_00002"
+        for warning in diagnostics["evidence_grounding_warnings"]
+        if isinstance(warning, dict)
+    )
 
 
 def test_unresolved_ids_are_preserved_and_reported(tmp_path, monkeypatch):
@@ -823,6 +1408,7 @@ def test_unresolved_ids_are_preserved_and_reported(tmp_path, monkeypatch):
                 "key_findings": [{"finding": "Useful evidence exists.", "evidence_ids": ["ev_missing_alias"]}],
                 "red_flags": [],
                 "open_uncertainties": [],
+                **_financial_payload("graham"),
                 "evidence_ids": ["ev_missing_alias"],
                 "supporting_pcim_sections": [
                     "financial_strength_inputs",
@@ -840,11 +1426,23 @@ def test_unresolved_ids_are_preserved_and_reported(tmp_path, monkeypatch):
 
     runner = InvestorPanelRunner(company="acme")
     written = runner.run(analyst="graham")
-    payload = json.loads(written["graham_analysis.json"].read_text())
+    payload, diagnostics = _read_saved_outputs(written, "graham")
 
-    assert payload["evidence_ids"] == ["ev_missing_alias"]
-    assert payload["evidence_id_normalization"]["unresolved_ids"] == ["ev_missing_alias"]
-    assert payload["evidence_grounding_status"] == "fail"
+    assert "ev_missing_alias" not in payload["evidence_ids"]
+    assert diagnostics["evidence_id_normalization"]["unresolved_ids"] == ["ev_missing_alias"]
+    assert diagnostics["evidence_id_normalization"]["removed_invalid_ids"] == [
+        {
+            "path": "$.key_findings.evidence_ids",
+            "invalid_id": "ev_missing_alias",
+            "reason": "unknown_evidence_id",
+        },
+        {
+            "path": "$.evidence_ids",
+            "invalid_id": "ev_missing_alias",
+            "reason": "unknown_evidence_id",
+        },
+    ]
+    assert payload["evidence_grounding_status"] == "warning"
 
 
 def test_unresolved_ids_cannot_coexist_with_pass_status(tmp_path, monkeypatch):
@@ -863,6 +1461,7 @@ def test_unresolved_ids_cannot_coexist_with_pass_status(tmp_path, monkeypatch):
                 "key_findings": [{"finding": "Useful evidence exists.", "evidence_ids": ["ev_missing_alias"]}],
                 "red_flags": [],
                 "open_uncertainties": [],
+                **_financial_payload("lynch", metrics=["revenue", "eps_basic"]),
                 "evidence_ids": ["ev_missing_alias"],
                 "historical_context_used": True,
                 "years_considered": ["fy24", "fy25"],
@@ -885,9 +1484,9 @@ def test_unresolved_ids_cannot_coexist_with_pass_status(tmp_path, monkeypatch):
 
     runner = InvestorPanelRunner(company="acme")
     written = runner.run(analyst="lynch")
-    payload = json.loads(written["lynch_analysis.json"].read_text())
+    payload, diagnostics = _read_saved_outputs(written, "lynch")
 
-    assert payload["evidence_id_normalization"]["unresolved_ids"] == ["ev_missing_alias"]
+    assert diagnostics["evidence_id_normalization"]["unresolved_ids"] == ["ev_missing_alias"]
     assert payload["evidence_grounding_status"] in {"warning", "fail"}
 
 
@@ -907,6 +1506,7 @@ def test_invalid_supporting_sections_are_safely_repaired(tmp_path, monkeypatch):
                 "key_findings": [{"finding": "Useful evidence exists.", "evidence_ids": ["ev_inc_1"]}],
                 "red_flags": [{"flag": "Some risk remains.", "severity": "medium", "evidence_ids": ["ev_risk_1"]}],
                 "open_uncertainties": [{"uncertainty": "Multi-year data is limited.", "evidence_ids": []}],
+                **_financial_payload("munger"),
                 "evidence_ids": ["ev_inc_1", "ev_risk_1"],
                 "supporting_pcim_sections": [
                     "governance_and_incentive_inputs",
@@ -928,6 +1528,132 @@ def test_invalid_supporting_sections_are_safely_repaired(tmp_path, monkeypatch):
     assert any("promise_tracker" in item for item in payload["reasoning_limits"])
 
 
+def test_munger_governance_routing_failure_is_repaired_deterministically_before_retry(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    pcim_path = tmp_path / "companies" / "acme" / "company_memory" / "pcim_v1.json"
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    pcim["risk_inputs"]["risk_by_year"][0]["items"][0]["value"] = "Foreign exchange market risk"
+    pcim["risk_inputs"]["risk_by_year"][0]["items"][0]["category"] = "Foreign exchange exposure"
+    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+
+    bad_payload = json.loads(_llm_output(doctrine_id="munger", evidence_ids=["ev_risk_1"]))
+    bad_payload["assessment"]["governance_sanity_assessment"] = (
+        "Governance quality looks sound because market-risk disclosure is present."
+    )
+    bad_payload["key_findings"] = [
+        {
+            "finding": "Governance quality looks sound because market-risk disclosure is present.",
+            "evidence_ids": ["ev_risk_1"],
+        }
+    ]
+    bad_payload["evidence_ids"] = ["ev_risk_1"]
+
+    fake_llm = SequencedFakeLLM([json.dumps(bad_payload)])
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    written = InvestorPanelRunner(company="acme").run(analyst="munger")
+    saved, diagnostics = _read_saved_outputs(written, "munger")
+
+    assert len(fake_llm.calls) == 1
+    assert saved["evidence_grounding_status"] in {"pass", "warning"}
+    assert diagnostics["evidence_routing_diagnostics"]["removed_misrouted_evidence"]
+    assert "ev_risk_1" not in json.dumps(saved["key_findings"], ensure_ascii=False)
+    assert not any(
+        "market-risk evidence should not support governance/incentive claim" in str(warning)
+        for warning in diagnostics["evidence_grounding_warnings"]
+    )
+
+
+def test_munger_governance_routing_diagnostics_records_converted_limitation(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    pcim_path = tmp_path / "companies" / "acme" / "company_memory" / "pcim_v1.json"
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    pcim["risk_inputs"]["risk_by_year"][0]["items"][0]["value"] = "Foreign exchange market risk"
+    pcim["risk_inputs"]["risk_by_year"][0]["items"][0]["category"] = "Foreign exchange exposure"
+    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+
+    bad_payload = json.loads(_llm_output(doctrine_id="munger", evidence_ids=["ev_risk_1"]))
+    bad_payload["assessment"]["governance_sanity_assessment"] = (
+        "Governance quality looks sound because market-risk disclosure is present."
+    )
+    bad_payload["key_findings"] = [
+        {
+            "finding": "Governance quality looks sound because market-risk disclosure is present.",
+            "evidence_ids": ["ev_risk_1"],
+        }
+    ]
+    bad_payload["evidence_ids"] = ["ev_risk_1"]
+
+    pcim["governance_and_incentive_inputs"] = {}
+    pcim["ownership_inputs"] = {}
+    pcim["capital_allocation_inputs"] = {}
+    pcim["management_quality_inputs"] = {}
+    pcim["corporate_action_inputs"] = {}
+    for section in (
+        "governance_and_incentive_inputs",
+        "ownership_inputs",
+        "capital_allocation_inputs",
+        "management_quality_inputs",
+        "corporate_action_inputs",
+    ):
+        pcim["evidence_map"][section] = []
+    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+
+    fake_llm = SequencedFakeLLM([json.dumps(bad_payload)])
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    written = InvestorPanelRunner(company="acme").run(analyst="munger")
+    saved, diagnostics = _read_saved_outputs(written, "munger")
+
+    assert len(fake_llm.calls) == 1
+    assert diagnostics["evidence_routing_diagnostics"]["removed_misrouted_evidence"]
+    assert "governance" in saved["assessment"]["governance_sanity_assessment"].lower()
+    assert "incomplete" in saved["assessment"]["governance_sanity_assessment"].lower()
+    assert not any(
+        "market-risk evidence should not support governance/incentive claim" in str(warning)
+        for warning in diagnostics["evidence_grounding_warnings"]
+    )
+
+
+def test_market_risk_routing_diagnostics_record_accepted_market_risk_evidence(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    pcim_path = tmp_path / "companies" / "acme" / "company_memory" / "pcim_v1.json"
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    pcim["risk_inputs"]["risk_by_year"][0]["items"][0]["category"] = "Market risk"
+    pcim["risk_inputs"]["risk_by_year"][0]["items"][0]["value"] = (
+        "Sensitivity to market-price movements remains visible."
+    )
+    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+
+    payload = json.loads(_llm_output(doctrine_id="graham", evidence_ids=["ev_risk_1"]))
+    payload["key_findings"] = [
+        {
+            "finding": (
+                "Risk disclosures explicitly note market risk (FX/interest) exposure in FY22, "
+                "highlighting sensitivity to market-price movements."
+            ),
+            "evidence_ids": ["ev_risk_1"],
+        }
+    ]
+    payload["red_flags"] = []
+    payload["evidence_ids"] = ["ev_risk_1"]
+    fake_llm = FakeLLM(json.dumps(payload))
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    written = InvestorPanelRunner(company="acme").run(analyst="graham")
+    saved, diagnostics = _read_saved_outputs(written, "graham")
+
+    assert saved["evidence_grounding_status"] in {"pass", "warning"}
+    accepted = diagnostics["evidence_routing_diagnostics"]["accepted_market_risk_evidence"]
+    assert accepted
+    assert accepted[0]["claim_type"] == "market_risk"
+    assert accepted[0]["evidence_id"] == "ev_risk_1"
+    assert accepted[0]["routing_decision"] == "accepted_market_risk_evidence"
+
+
 def test_supporting_sections_must_not_be_only_undeclared_sections(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_pcim(tmp_path, "acme")
@@ -944,6 +1670,7 @@ def test_supporting_sections_must_not_be_only_undeclared_sections(tmp_path, monk
                 "key_findings": [{"finding": "Useful evidence exists.", "evidence_ids": ["ev_inc_1"]}],
                 "red_flags": [{"flag": "Some risk remains.", "severity": "medium", "evidence_ids": ["ev_risk_1"]}],
                 "open_uncertainties": [{"uncertainty": "Multi-year data is limited.", "evidence_ids": []}],
+                **_financial_payload("munger"),
                 "evidence_ids": ["ev_inc_1", "ev_risk_1"],
                 "supporting_pcim_sections": ["promise_tracker"],
                 "reasoning_limits": ["PCIM-only judgment."],
@@ -971,21 +1698,25 @@ def test_invalid_llm_json_fails_safely(tmp_path, monkeypatch):
         runner.run(analyst="graham")
 
 
-def test_user_facing_brief_with_internal_jargon_is_rejected(tmp_path, monkeypatch):
+def test_user_facing_brief_with_internal_jargon_is_repaired(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_pcim(tmp_path, "acme")
     payload = json.loads(_llm_output(doctrine_id="graham"))
+    original_assessment = dict(payload["assessment"])
     payload["user_facing_brief"]["bottom_line"] = "This PCIM view looks promising."
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
     runner = InvestorPanelRunner(company="acme")
+    written = runner.run(analyst="graham")
+    saved = json.loads(written["graham_analysis.json"].read_text())
 
-    with pytest.raises(ValueError, match='Invalid user_facing_brief for analyst graham: field "bottom_line" contains forbidden term "PCIM"'):
-        runner.run(analyst="graham")
+    assert saved["assessment"] == original_assessment
+    assert "PCIM" not in saved["user_facing_brief"]["bottom_line"]
+    assert "available evidence" in saved["user_facing_brief"]["bottom_line"].lower()
 
 
-def test_user_facing_brief_with_evidence_ids_is_rejected(tmp_path, monkeypatch):
+def test_user_facing_brief_with_evidence_ids_is_repaired(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_pcim(tmp_path, "acme")
     payload = json.loads(_llm_output(doctrine_id="graham"))
@@ -994,9 +1725,54 @@ def test_user_facing_brief_with_evidence_ids_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
     runner = InvestorPanelRunner(company="acme")
+    written = runner.run(analyst="graham")
+    saved = json.loads(written["graham_analysis.json"].read_text())
 
-    with pytest.raises(ValueError, match='Invalid user_facing_brief for analyst graham: field "what_looks_good" contains forbidden term "ev_"'):
-        runner.run(analyst="graham")
+    assert "ev_" not in saved["user_facing_brief"]["what_looks_good"][0]
+    assert "supporting evidence" in saved["user_facing_brief"]["what_looks_good"][0].lower()
+
+
+def test_user_facing_brief_shape_is_normalized_before_validation(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    payload = json.loads(_llm_output(doctrine_id="buffett"))
+    payload["user_facing_brief"]["what_looks_good"] = "The PCIM shows resilient demand."
+    payload["user_facing_brief"]["what_needs_caution"] = None
+    payload["user_facing_brief"].pop("what_is_missing")
+    fake_llm = FakeLLM(json.dumps(payload))
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    runner = InvestorPanelRunner(company="acme")
+    written = runner.run(analyst="buffett")
+    saved = json.loads(written["buffett_analysis.json"].read_text())
+
+    assert saved["user_facing_brief"]["what_looks_good"] == ["The available evidence shows resilient demand."]
+    assert saved["user_facing_brief"]["what_needs_caution"] == []
+    assert saved["user_facing_brief"]["what_is_missing"] == []
+
+
+def test_user_facing_brief_lengths_are_normalized_before_validation(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    payload = json.loads(_llm_output(doctrine_id="fisher"))
+    original_assessment = dict(payload["assessment"])
+    payload["user_facing_brief"]["what_looks_good"] = [
+        "Growth looks credible. " + ("Additional detail that should be shortened safely " * 25)
+    ]
+    payload["user_facing_brief"]["bottom_line"] = (
+        "Execution is promising but evidence remains partial. "
+        + ("More disclosed proof would improve confidence " * 40)
+    )
+    fake_llm = FakeLLM(json.dumps(payload))
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    runner = InvestorPanelRunner(company="acme")
+    written = runner.run(analyst="fisher")
+    saved = json.loads(written["fisher_analysis.json"].read_text())
+
+    assert saved["assessment"] == original_assessment
+    assert len(saved["user_facing_brief"]["what_looks_good"][0]) <= 350
+    assert len(saved["user_facing_brief"]["bottom_line"]) <= 900
 
 
 def test_missing_user_facing_brief_fails(tmp_path, monkeypatch):
@@ -1023,7 +1799,7 @@ def test_missing_required_brief_key_fails(tmp_path, monkeypatch):
 
     runner = InvestorPanelRunner(company="acme")
 
-    with pytest.raises(ValueError, match="user_facing_brief missing required keys"):
+    with pytest.raises(ValueError, match='Invalid user_facing_brief for analyst graham: field "bottom_line" is required'):
         runner.run(analyst="graham")
 
 
@@ -1041,7 +1817,7 @@ def test_user_facing_brief_with_recommendation_language_is_rejected(tmp_path, mo
         runner.run(analyst="graham")
 
 
-def test_user_facing_brief_with_too_many_items_fails(tmp_path, monkeypatch):
+def test_user_facing_brief_with_too_many_items_is_capped(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_pcim(tmp_path, "acme")
     payload = json.loads(_llm_output(doctrine_id="graham"))
@@ -1053,8 +1829,11 @@ def test_user_facing_brief_with_too_many_items_fails(tmp_path, monkeypatch):
 
     runner = InvestorPanelRunner(company="acme")
 
-    with pytest.raises(ValueError, match='Invalid user_facing_brief for analyst graham: field "what_looks_good" contains more than 5 items'):
-        runner.run(analyst="graham")
+    written = runner.run(analyst="graham")
+    saved = json.loads(written["graham_analysis.json"].read_text())
+
+    assert len(saved["user_facing_brief"]["what_looks_good"]) == 5
+    assert saved["user_facing_brief"]["what_looks_good"] == ["one.", "two.", "three.", "four.", "five."]
 
 
 def test_dry_run_uses_deterministic_scaffold_and_does_not_overwrite_llm_output(tmp_path, monkeypatch):
@@ -1087,9 +1866,9 @@ def test_output_schema_is_valid_for_llm_mode(tmp_path, monkeypatch):
 
     runner = InvestorPanelRunner(company="acme")
     written = runner.run(analyst="munger")
-    payload = json.loads(written["munger_analysis.json"].read_text())
+    payload, diagnostics = _read_saved_outputs(written, "munger")
 
-    expected_keys = {
+    expected_clean_keys = {
         "doctrine_id",
         "company",
         "pcim_version",
@@ -1101,18 +1880,124 @@ def test_output_schema_is_valid_for_llm_mode(tmp_path, monkeypatch):
         "key_findings",
         "red_flags",
         "open_uncertainties",
+        "financial_metrics_used",
+        "financial_red_flags",
+        "financial_positive_signals",
+        "financial_missing_data",
+        "financial_interpretation_limits",
+        "financial_assessment",
+        "financial_sections_consumed",
+        "financial_warnings_carried_forward",
         "evidence_ids",
         "historical_context_used",
         "years_considered",
         "supporting_pcim_sections",
-        "evidence_id_normalization",
         "evidence_grounding_status",
-        "evidence_grounding_warnings",
         "reasoning_limits",
         "user_facing_brief",
         "generated_at",
     }
-    assert set(payload.keys()) == expected_keys
+    assert set(payload.keys()) == expected_clean_keys
+    assert {
+        "doctrine_id",
+        "company",
+        "analysis_mode",
+        "generated_at",
+        "evidence_id_normalization",
+        "evidence_grounding_warnings",
+        "schema_warnings",
+        "evidence_routing_diagnostics",
+    }.issubset(set(diagnostics.keys()))
+
+
+def test_user_facing_brief_can_render_financial_lens_when_present(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    fake_llm = FakeLLM(_llm_output(doctrine_id="buffett", rating="strong"))
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    runner = InvestorPanelRunner(company="acme")
+    written = runner.run(analyst="buffett")
+    payload = json.loads(written["buffett_analysis.json"].read_text())
+
+    assert payload["user_facing_brief"]["financial_lens"]
+
+
+def test_reasoning_limits_string_is_normalized_with_schema_warning(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    payload = json.loads(_llm_output(doctrine_id="buffett"))
+    payload["reasoning_limits"] = "No valuation was performed."
+    fake_llm = FakeLLM(json.dumps(payload))
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    written = InvestorPanelRunner(company="acme").run(analyst="buffett")
+    saved, diagnostics = _read_saved_outputs(written, "buffett")
+
+    assert "No valuation was performed." in saved["reasoning_limits"]
+    assert any(
+        "reasoning_limits was returned as string" in item
+        for item in diagnostics["schema_warnings"]
+    )
+
+
+def test_reasoning_limits_null_becomes_empty_list_with_schema_warning(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    payload = json.loads(_llm_output(doctrine_id="buffett"))
+    payload["reasoning_limits"] = None
+    fake_llm = FakeLLM(json.dumps(payload))
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    written = InvestorPanelRunner(company="acme").run(analyst="buffett")
+    _saved, diagnostics = _read_saved_outputs(written, "buffett")
+
+    assert any(
+        "reasoning_limits was null or missing" in item
+        for item in diagnostics["schema_warnings"]
+    )
+
+
+def test_financial_assessment_list_fields_normalize_safely(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    payload = json.loads(_llm_output(doctrine_id="buffett"))
+    payload["financial_missing_data"] = "Free cash flow is unavailable in the supplied financial sections."
+    payload["financial_interpretation_limits"] = None
+    payload["financial_warnings_carried_forward"] = {"message": "Basis remains conservative."}
+    payload["financial_assessment"]["key_financial_strengths"] = [{"summary": "Cash conversion remains better than PAT."}]
+    payload["financial_assessment"]["key_financial_concerns"] = "Evidence is not complete enough for maximum confidence."
+    fake_llm = FakeLLM(json.dumps(payload))
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    written = InvestorPanelRunner(company="acme").run(analyst="buffett")
+    saved, diagnostics = _read_saved_outputs(written, "buffett")
+
+    assert saved["financial_missing_data"] == ["Free cash flow is unavailable in the supplied financial sections."]
+    assert saved["financial_interpretation_limits"] == []
+    assert saved["financial_warnings_carried_forward"] == ["Basis remains conservative."]
+    assert saved["financial_assessment"]["key_financial_strengths"] == ["Cash conversion remains better than PAT."]
+    assert saved["financial_assessment"]["key_financial_concerns"] == ["Evidence is not complete enough for maximum confidence."]
+    assert any(
+        "financial_missing_data was returned as string" in item
+        for item in diagnostics["schema_warnings"]
+    )
+    assert any(
+        "financial_assessment.key_financial_strengths contained non-string items" in item
+        for item in diagnostics["schema_warnings"]
+    )
+
+
+def test_source_chunk_in_normalized_list_field_still_fails(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    payload = json.loads(_llm_output(doctrine_id="buffett"))
+    payload["reasoning_limits"] = [{"source_chunk": "forbidden raw text"}]
+    fake_llm = FakeLLM(json.dumps(payload))
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    with pytest.raises(ValueError, match="source_chunk is not allowed in analyst output"):
+        InvestorPanelRunner(company="acme").run(analyst="buffett")
 
 
 def test_output_can_legitimately_reference_multi_year_inputs(tmp_path, monkeypatch):
@@ -1130,6 +2015,66 @@ def test_output_can_legitimately_reference_multi_year_inputs(tmp_path, monkeypat
     assert "multi_year_inputs" in saved["supporting_pcim_sections"]
     assert saved["historical_context_used"] is True
     assert saved["years_considered"] == ["fy24", "fy25"]
+
+
+def test_runner_all_analysts_auto_carry_fcf_missing_consistently(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    pcim_path = tmp_path / "companies" / "acme" / "company_memory" / "pcim_v1.json"
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    pcim["cash_conversion_inputs"]["metrics"] = [
+        metric for metric in pcim["cash_conversion_inputs"]["metrics"]
+        if metric["metric"] != "fcf"
+    ]
+    pcim["cash_conversion_inputs"]["warnings"] = ["free cash flow missing"]
+    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+
+    responses = {}
+    doctrine_metrics = {
+        "graham": ["net_worth", "total_debt", "cfo", "capex", "book_value_per_share", "weighted_avg_shares"],
+        "buffett": ["revenue", "cfo", "capex", "roce", "roe", "eps_basic", "book_value_per_share", "weighted_avg_shares"],
+        "fisher": ["revenue", "eps_basic"],
+        "munger": ["cfo", "capex", "debt_to_equity"],
+        "lynch": ["revenue", "eps_basic", "book_value_per_share", "weighted_avg_shares"],
+    }
+    for doctrine_id in ("graham", "buffett", "fisher", "munger", "lynch"):
+        payload = json.loads(_llm_output(doctrine_id=doctrine_id))
+        payload["financial_metrics_used"] = doctrine_metrics[doctrine_id]
+        payload["financial_missing_data"] = []
+        payload["financial_interpretation_limits"] = ["Only supplied PCIM metrics were used; no new ratios were calculated."]
+        payload["financial_warnings_carried_forward"] = []
+        payload["financial_assessment"]["missing_financial_data"] = []
+        payload["financial_assessment"]["financial_interpretation_limits"] = ["Only supplied PCIM metrics were used; no new ratios were calculated."]
+        payload["financial_assessment"]["financial_warnings_carried_forward"] = []
+        responses[doctrine_id] = json.dumps(payload)
+
+    fake_llm = PromptRoutingFakeLLM(responses)
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+    written = InvestorPanelRunner(company="acme").run()
+
+    for doctrine_id in ("graham", "buffett", "fisher", "munger", "lynch"):
+        saved = json.loads(written[f"{doctrine_id}_analysis.json"].read_text())
+        assert any(
+            "free cash flow is missing; fcf-based conclusions cannot be assessed." in item.lower()
+            for item in saved["financial_warnings_carried_forward"]
+        )
+        assert any(
+            "free cash flow is missing, so owner earnings, fcf margin, and fcf-supported dividend sustainability cannot be assessed."
+            in item.lower()
+            for item in saved["financial_interpretation_limits"]
+        )
+        if doctrine_id == "graham":
+            assert any(
+                "margin-of-safety judgment is limited because free cash flow is unavailable." in item.lower()
+                for item in saved["financial_interpretation_limits"]
+            )
+        if doctrine_id == "buffett":
+            assert any(
+                "owner earnings cannot be assessed because free cash flow/capex data is missing or incomplete."
+                in item.lower()
+                for item in saved["financial_interpretation_limits"]
+            )
 
 
 def test_runner_only_loads_pcim_not_raw_multi_year_json(tmp_path, monkeypatch):
@@ -1187,6 +2132,231 @@ def test_main_runs_investor_panel_without_year(monkeypatch):
     run_company_pipeline.main()
 
     assert calls == [("run_investor_panel_stage", "tips", "graham", None)]
+
+
+def test_runner_keeps_company_memory_panel_dir_when_context_is_active(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = CompanyContext(company="acme", year="fy25")
+    context.create_directories()
+    set_context(context)
+    try:
+        _write_pcim(tmp_path, "acme")
+        fake_llm = FakeLLM(_llm_output(doctrine_id="graham"))
+        monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+
+        written = InvestorPanelRunner(company="acme").run(analyst="graham")
+
+        assert written["graham_analysis.json"].resolve() == (
+            tmp_path / "companies" / "acme" / "company_memory" / "investor_panel" / "graham_analysis.json"
+        ).resolve()
+        assert written["graham_analysis_diagnostics.json"].resolve() == (
+            tmp_path
+            / "companies"
+            / "acme"
+            / "company_memory"
+            / "investor_panel"
+            / "graham_analysis_diagnostics.json"
+        ).resolve()
+        assert not (
+            tmp_path / "companies" / "acme" / "fy25" / "intelligence" / "investor_panel" / "graham_analysis.json"
+        ).exists()
+    finally:
+        set_context(None)
+
+
+def test_dirty_financial_warning_text_is_sanitized_out_of_clean_payload():
+    payload = json.loads(_llm_output(doctrine_id="graham"))
+    payload["financial_warnings_carried_forward"] = [
+        "Financial artifacts do not cover all company years: fy22, fy23",
+        "normalized_fundamentals.json: Artifact missing.",
+        "financial_audit_report.json is stale relative to newer outputs",
+        "weighted_avg_shares: field has no populated normalized value",
+        "standalone/consolidated basis unclear",
+        "FCF missing",
+    ]
+    payload["financial_assessment"]["financial_warnings_carried_forward"] = list(
+        payload["financial_warnings_carried_forward"]
+    )
+
+    clean, diagnostics = split_clean_and_diagnostics(payload)
+    panel_runner.assert_clean_analysis_payload(clean)
+
+    clean_blob = json.dumps(clean, ensure_ascii=False).lower()
+    assert "artifact" not in clean_blob
+    assert ".json" not in clean_blob
+    assert "financial artifacts do not cover all company years" not in clean_blob
+    assert "normalized_fundamentals.json" not in clean_blob
+    assert "financial_audit_report.json" not in clean_blob
+    assert "Financial data does not cover all company years." in clean["financial_warnings_carried_forward"]
+    assert "Weighted average shares are missing; per-share interpretation remains limited." in clean["financial_warnings_carried_forward"]
+    assert "Standalone/consolidated basis is unclear; financial comparability remains limited." in clean["financial_warnings_carried_forward"]
+    assert "Free cash flow is missing; FCF-based conclusions cannot be assessed." in clean["financial_warnings_carried_forward"]
+    warning_diagnostics = diagnostics["financial_warning_diagnostics"]
+    assert "normalized_fundamentals.json: Artifact missing." in warning_diagnostics["removed_internal_financial_warnings"]
+    assert "financial_audit_report.json is stale relative to newer outputs" in warning_diagnostics["removed_internal_financial_warnings"]
+    assert "normalized_fundamentals.json: Artifact missing." in warning_diagnostics["raw_financial_warnings_carried_forward"]
+
+
+def test_clean_string_sanitizer_rewrites_artifact_prose():
+    diagnostics = {}
+    sanitized = panel_runner.sanitize_clean_string(
+        "Assessment relies on provided artifacts and source artifacts.",
+        "$.assessment.management_rationality_assessment",
+        diagnostics,
+    )
+
+    assert sanitized == "Assessment relies on provided materials and source materials."
+    assert diagnostics["rewritten_strings"]
+
+
+def test_clean_assertion_allows_artifact_term_after_sanitizer():
+    payload = json.loads(_llm_output(doctrine_id="graham"))
+    payload["assessment"]["management_rationality_assessment"] = "The provided artifacts suggest discipline."
+
+    diagnostics = {}
+    clean = panel_runner._sanitize_clean_payload(payload, "$", diagnostics)
+    panel_runner.assert_clean_analysis_payload(clean)
+
+    assert clean["assessment"]["management_rationality_assessment"] == "The provided materials suggest discipline."
+
+
+def test_clean_assertion_still_fails_for_source_chunk_string():
+    payload = json.loads(_llm_output(doctrine_id="graham"))
+    payload["assessment"]["management_rationality_assessment"] = "This references source_chunk directly."
+
+    with pytest.raises(ValueError, match="forbidden internal string"):
+        panel_runner.assert_clean_analysis_payload(payload)
+
+
+def test_write_clean_artifacts_writes_diagnostics_even_on_clean_failure(tmp_path):
+    output_dir = tmp_path / "out"
+    payload = json.loads(_llm_output(doctrine_id="graham"))
+    payload["assessment"]["management_rationality_assessment"] = "This leaks source_chunk in prose."
+
+    with pytest.raises(ValueError, match="clean analyst payload failed validation"):
+        panel_runner.write_clean_analyst_artifacts(
+            payload=payload,
+            output_dir=output_dir,
+            doctrine_id="graham",
+            analysis_mode="llm_reasoning_v1",
+        )
+
+    diagnostics_path = output_dir / "graham_analysis_diagnostics.json"
+    failed_candidate_path = output_dir / "graham_analysis_failed_clean_candidate.json"
+    assert diagnostics_path.exists()
+    assert failed_candidate_path.exists()
+
+    diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+    assert diagnostics["clean_writer_status"] == "fail"
+    assert diagnostics["failed_clean_candidate_path"].endswith("graham_analysis_failed_clean_candidate.json")
+    assert diagnostics["remaining_forbidden_strings"]
+
+
+def test_full_panel_stage_uses_same_global_fcf_warning_carry_forward(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, "acme")
+    pcim_path = tmp_path / "companies" / "acme" / "company_memory" / "pcim_v1.json"
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    pcim["cash_conversion_inputs"]["metrics"] = [
+        metric for metric in pcim["cash_conversion_inputs"]["metrics"]
+        if metric["metric"] != "fcf"
+    ]
+    pcim["cash_conversion_inputs"]["warnings"] = ["free cash flow missing"]
+    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+
+    responses = {}
+    doctrine_metrics = {
+        "graham": ["net_worth", "total_debt", "cfo", "capex", "book_value_per_share", "weighted_avg_shares"],
+        "buffett": ["revenue", "cfo", "capex", "roce", "roe", "eps_basic", "book_value_per_share", "weighted_avg_shares"],
+        "fisher": ["revenue", "eps_basic"],
+        "munger": ["cfo", "capex", "debt_to_equity"],
+        "lynch": ["revenue", "eps_basic", "book_value_per_share", "weighted_avg_shares"],
+    }
+    for doctrine_id in ("graham", "buffett", "fisher", "munger", "lynch"):
+        payload = json.loads(_llm_output(doctrine_id=doctrine_id))
+        payload["financial_metrics_used"] = doctrine_metrics[doctrine_id]
+        payload["financial_missing_data"] = []
+        payload["financial_interpretation_limits"] = ["Only supplied PCIM metrics were used; no new ratios were calculated."]
+        payload["financial_warnings_carried_forward"] = []
+        payload["financial_assessment"]["missing_financial_data"] = []
+        payload["financial_assessment"]["financial_interpretation_limits"] = ["Only supplied PCIM metrics were used; no new ratios were calculated."]
+        payload["financial_assessment"]["financial_warnings_carried_forward"] = []
+        responses[doctrine_id] = json.dumps(payload)
+
+    fake_llm = PromptRoutingFakeLLM(responses)
+    monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "_assess_pcim_freshness",
+        lambda company, payload: {"status": "pass", "warnings": [], "failures": []},
+    )
+
+    panel_dir = tmp_path / "companies" / "acme" / "company_memory" / "investor_panel"
+
+    def fake_committee_synthesis(company, context=None, cleanup_only=False):
+        panel_dir.mkdir(parents=True, exist_ok=True)
+        path = panel_dir / "committee_synthesis.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "evidence_id_normalization": {"applied": True, "replacements": [], "unresolved_ids": []},
+                    "areas_of_disagreement": [{"disagreement_type": "different_emphasis"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {"committee_synthesis.json": path}
+
+    def fake_committee_brief(company, context=None, include_evidence_ids=False):
+        panel_dir.mkdir(parents=True, exist_ok=True)
+        brief = panel_dir / "committee_brief.md"
+        brief.write_text("brief", encoding="utf-8")
+        qa = panel_dir / "committee_brief_qa.json"
+        qa.write_text(json.dumps({"status": "pass", "warnings": [], "failures": []}), encoding="utf-8")
+        return {"committee_brief.md": brief, "committee_brief_qa.json": qa}
+
+    def fake_committee_brief_qa(company, context=None, include_evidence_ids=False):
+        panel_dir.mkdir(parents=True, exist_ok=True)
+        qa = panel_dir / "committee_brief_qa.json"
+        qa.write_text(json.dumps({"status": "pass", "warnings": [], "failures": []}), encoding="utf-8")
+        return {"committee_brief_qa.json": qa}
+
+    monkeypatch.setattr(run_company_pipeline, "run_committee_synthesis_stage", fake_committee_synthesis)
+    monkeypatch.setattr(run_company_pipeline, "run_committee_brief_stage", fake_committee_brief)
+    monkeypatch.setattr(run_company_pipeline, "run_committee_brief_qa_stage", fake_committee_brief_qa)
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "_validate_analyst_output",
+        lambda company, analyst, context=None: {
+            "status": "pass",
+            "evidence_grounding_status": "warning",
+            "warning_count": 1,
+            "output": str(panel_dir / f"{analyst}_analysis.json"),
+            "payload": json.loads((panel_dir / f"{analyst}_analysis.json").read_text(encoding="utf-8")),
+            "warnings": [],
+            "failures": [],
+        },
+    )
+
+    result = run_company_pipeline.run_panel_stage(company="acme", regenerate_analysts=True)
+    summary = json.loads(
+        (tmp_path / "companies" / "acme" / "company_memory" / "investor_panel" / "panel_run_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    graham = json.loads((panel_dir / "graham_analysis.json").read_text(encoding="utf-8"))
+
+    assert result["panel_run_summary.json"].name == "panel_run_summary.json"
+    assert summary["status"] in {"pass", "warning"}
+    assert summary["analysts"]["graham"]["status"] in {"pass", "warning"}
+    assert any(
+        "free cash flow is missing; fcf-based conclusions cannot be assessed." in item.lower()
+        for item in graham["financial_warnings_carried_forward"]
+    )
+    assert any(
+        "margin-of-safety judgment is limited because free cash flow is unavailable." in item.lower()
+        for item in graham["financial_interpretation_limits"]
+    )
 
 
 def test_main_runs_pcim_stage_without_year(monkeypatch):

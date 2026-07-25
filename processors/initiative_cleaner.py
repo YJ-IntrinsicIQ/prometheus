@@ -54,6 +54,7 @@ def create_cleaner():
     return InitiativeCleaner(
         INPUT_FILE,
         OUTPUT_FILE,
+        module_name="initiatives",
     )
 
 

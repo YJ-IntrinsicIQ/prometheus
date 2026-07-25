@@ -65,12 +65,12 @@ def test_run_all_executes_stages_in_dependency_order(tmp_path, monkeypatch):
         "_require_company_level_intelligence",
         lambda company, stage_name: (["fy25"], []),
     )
-    monkeypatch.setattr(run_company_pipeline, "run_cim_stage", lambda company, context=None: calls.append("cim") or {})
     monkeypatch.setattr(
         run_company_pipeline,
         "run_multi_year_memory_stage",
         lambda company, context=None: calls.append("multi_year_memory") or {},
     )
+    monkeypatch.setattr(run_company_pipeline, "run_cim_stage", lambda company, context=None: calls.append("cim") or {})
 
     run_company_pipeline.run_all(context=context)
 
@@ -82,8 +82,8 @@ def test_run_all_executes_stages_in_dependency_order(tmp_path, monkeypatch):
         "business_understanding",
         "business_intelligence",
         "intelligence",
-        "cim",
         "multi_year_memory",
+        "cim",
     ]
     summary = json.loads((context.year_root / "run_summary.json").read_text(encoding="utf-8"))
     assert [stage["stage"] for stage in summary["stages"]] == [
@@ -94,9 +94,9 @@ def test_run_all_executes_stages_in_dependency_order(tmp_path, monkeypatch):
         "business_understanding",
         "business_intelligence",
         "intelligence",
+        "multi_year_memory",
         "cim",
         "pcim",
-        "multi_year_memory",
     ]
     assert summary["status"] == "pass"
 
@@ -166,6 +166,32 @@ def test_cleaning_requires_nonempty_extraction_outputs(tmp_path, monkeypatch):
         run_company_pipeline.run_cleaning(context=context)
 
 
+def test_cleaning_writes_evidence_layer_summary(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+    for filename in run_company_pipeline.EXTRACTION_OUTPUT_FILES:
+        _write_json(context.extracted_dir / filename, [{"value": "x"}])
+    for filename in run_company_pipeline.CLEANING_OUTPUT_FILES:
+        _write_json(context.extracted_dir / filename, [{"value": "x"}])
+
+    calls = []
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_steps",
+        lambda stage_label, steps: calls.append(stage_label),
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "write_evidence_layer_summary",
+        lambda ctx: calls.append(f"summary:{ctx.company}:{ctx.year}"),
+    )
+
+    counts = run_company_pipeline.run_cleaning(context=context)
+
+    assert calls == ["CLEANING", "summary:acme:fy25"]
+    assert counts["clean_projects.json"] == 1
+
+
 def test_intelligence_requires_business_outputs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = _context(tmp_path)
@@ -181,14 +207,259 @@ def test_list_stages_prints_catalog(monkeypatch, capsys):
     run_company_pipeline.main()
     output = capsys.readouterr().out
     assert "discovery" in output
+    assert "audit" in output
     assert "Requires:" in output
     assert "LLM calls:" in output
 
 
-def test_company_level_stage_rejects_year(monkeypatch):
+def test_audit_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "--stage", "audit"])
+    assert args.stage == "audit"
+
+
+def test_financial_pcim_validation_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "financial_pcim_validation"])
+    assert args.stage == "financial_pcim_validation"
+
+
+def test_audit_stage_writes_financial_quality_scorecard(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_company_artifact_audit",
+        lambda company, fix_safe=False: calls.append(("artifact_audit", company, fix_safe))
+        or {"company_artifact_audit.json": Path("companies") / company / "audit" / "company_artifact_audit.json"},
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "write_financial_quality_scorecard",
+        lambda company, companies_root=Path("companies"): calls.append(("financial_scorecard", company, companies_root))
+        or {"financial_quality_scorecard.json": Path("companies") / company / "audit" / "financial_quality_scorecard.json"},
+    )
+
+    outputs = run_company_pipeline.run_audit_stage(company="acme", fix_safe=True)
+
+    assert calls[0] == ("artifact_audit", "acme", True)
+    assert calls[1] == ("financial_scorecard", "acme", Path("companies"))
+    assert "financial_quality_scorecard.json" in outputs
+
+
+def test_financial_discovery_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "financial_discovery"])
+    assert args.stage == "financial_discovery"
+
+
+def test_financial_extraction_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "financial_extraction"])
+    assert args.stage == "financial_extraction"
+
+
+def test_financial_normalization_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "financial_normalization"])
+    assert args.stage == "financial_normalization"
+
+
+def test_financial_validation_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "financial_validation"])
+    assert args.stage == "financial_validation"
+
+
+def test_financial_reconciliation_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "financial_reconciliation"])
+    assert args.stage == "financial_reconciliation"
+
+
+def test_financial_ratios_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "financial_ratios"])
+    assert args.stage == "financial_ratios"
+
+
+def test_financial_growth_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "financial_growth"])
+    assert args.stage == "financial_growth"
+
+
+def test_corporate_actions_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "corporate_actions"])
+    assert args.stage == "corporate_actions"
+
+
+def test_shareholding_pattern_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "shareholding_pattern"])
+    assert args.stage == "shareholding_pattern"
+
+
+def test_financial_trends_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "--stage", "financial_trends"])
+    assert args.stage == "financial_trends"
+
+
+def test_financial_quality_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "--stage", "financial_quality"])
+    assert args.stage == "financial_quality"
+
+
+def test_financial_attribution_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "--stage", "financial_attribution"])
+    assert args.stage == "financial_attribution"
+
+
+def test_financials_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "financials"])
+    assert args.stage == "financials"
+
+
+def test_financial_memory_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "--stage", "financial_memory"])
+    assert args.stage == "financial_memory"
+
+
+def test_financial_discovery_fails_without_sources(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+
+    with pytest.raises(RuntimeError, match="financial_discovery requires raw or extracted sources"):
+        run_company_pipeline.run_financial_discovery(context=context)
+
+
+def test_financial_extraction_requires_discovery_artifact(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+
+    with pytest.raises(RuntimeError, match="financial_extraction requires financial_discovery.json"):
+        run_company_pipeline.run_financial_extraction(context=context)
+
+
+def test_financial_normalization_requires_raw_tables(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+
+    with pytest.raises(RuntimeError, match="financial_normalization requires raw_financial_tables.json"):
+        run_company_pipeline.run_financial_normalization(context=context)
+
+
+def test_financial_validation_requires_normalized_fundamentals(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+
+    with pytest.raises(RuntimeError, match="financial_validation requires normalized_fundamentals.json"):
+        run_company_pipeline.run_financial_validation(context=context)
+
+
+def test_financial_ratios_requires_reconciliation_report(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+    _write_json(context.financials_dir / "normalized_fundamentals.json", {"company": "acme"})
+
+    with pytest.raises(RuntimeError, match="financial_ratios requires financial_reconciliation_report.json"):
+        run_company_pipeline.run_financial_ratios(context=context)
+
+
+def test_financial_growth_requires_normalized_fundamentals(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+
+    with pytest.raises(RuntimeError, match="financial_growth requires normalized_fundamentals.json"):
+        run_company_pipeline.run_financial_growth(context=context)
+
+
+def test_corporate_actions_requires_normalized_fundamentals(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+
+    with pytest.raises(RuntimeError, match="corporate_actions requires normalized_fundamentals.json"):
+        run_company_pipeline.run_corporate_actions(context=context)
+
+
+def test_shareholding_pattern_requires_normalized_fundamentals(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+
+    with pytest.raises(RuntimeError, match="shareholding_pattern requires normalized_fundamentals.json"):
+        run_company_pipeline.run_shareholding_pattern(context=context)
+
+
+def test_financial_trends_requires_at_least_one_financial_year(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(RuntimeError, match="financial_trends requires at least one valid financial year"):
+        run_company_pipeline.run_financial_trends_stage(company="acme")
+
+
+def test_financial_quality_requires_financial_trends(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(RuntimeError, match="financial_quality requires financial_trends.json"):
+        run_company_pipeline.run_financial_quality_stage(company="acme")
+
+
+def test_financial_quality_stage_writes_year_level_summary_when_context_present(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+
+    class _Report:
+        status = "warning"
+        basis_used = "consolidated"
+        warnings = ["capex missing"]
+
+    calls = {}
+
+    def _write_financial_quality_summary(**kwargs):
+        calls.update(kwargs)
+        output_path = kwargs["output_path"]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("{}", encoding="utf-8")
+        return _Report()
+
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "write_financial_quality_summary",
+        _write_financial_quality_summary,
+    )
+
+    written = run_company_pipeline.run_financial_quality_stage(company="acme", context=context)
+
+    assert calls["year"] == "fy25"
+    assert calls["financial_root"] == context.financials_dir
+    assert written["financial_quality_summary.json"] == context.financials_dir / "financial_quality_summary.json"
+
+
+def test_financial_attribution_requires_financial_trends(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(RuntimeError, match="financial_attribution requires financial_trends.json"):
+        run_company_pipeline.run_financial_attribution_stage(company="acme")
+
+
+def test_panel_stage_accepts_year(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_panel_stage",
+        lambda company, context=None, include_evidence_ids=False: calls.append(
+            (company, getattr(context, "year", None), include_evidence_ids)
+        ) or {},
+    )
     monkeypatch.setattr(sys, "argv", ["run_company_pipeline.py", "acme", "fy25", "--stage", "panel"])
-    with pytest.raises(SystemExit):
-        run_company_pipeline.main()
+
+    run_company_pipeline.main()
+
+    assert calls == [("acme", "fy25", False)]
 
 
 def test_multi_year_warning_when_only_one_valid_year(tmp_path, monkeypatch):

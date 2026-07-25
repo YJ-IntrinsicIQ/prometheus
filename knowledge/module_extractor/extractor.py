@@ -15,7 +15,13 @@ class ModuleExtractor:
         self.llm_client = llm_client
         self.manifest_path = manifest_path
 
-    def extract(self, module: QuestionModule, chunks: List[dict]) -> ModuleExtractionResult:
+    def extract(
+        self,
+        module: QuestionModule,
+        chunks: List[dict],
+        *,
+        business_context: Optional[dict] = None,
+    ) -> ModuleExtractionResult:
         if not isinstance(module, QuestionModule):
             raise TypeError("module must be a QuestionModule")
         if not isinstance(chunks, list):
@@ -23,7 +29,7 @@ class ModuleExtractor:
         if not self.llm_client:
             raise RuntimeError("llm_client is required")
 
-        llm_input_pack = build_input_pack(module, chunks)
+        llm_input_pack = build_input_pack(module, chunks, business_context=business_context)
         prompt = build_prompt(module, chunks, llm_input_pack=llm_input_pack)
         try:
             response = self.llm_client(prompt, llm_input_pack=llm_input_pack)

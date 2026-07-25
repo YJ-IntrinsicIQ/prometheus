@@ -468,6 +468,7 @@ class PCIMMultiYearBuilder:
             "themes_active_across_years": _limit(payload.get("repeated_focus_areas", [])),
             "changed_focus_areas": _limit(payload.get("changed_focus_areas", [])),
             "unclear_themes": _limit(payload.get("changed_focus_areas", [])),
+            "external_context_recurring_themes": _limit(payload.get("external_context_recurring_themes", [])),
             "consistency_observations": _limit(observations),
             "evidence_gaps": list(payload.get("evidence_gaps", [])),
         }
@@ -698,6 +699,15 @@ class PCIMMultiYearBuilder:
         ]
         return {
             "recurring_capital_allocation_categories": _limit(recurring_categories),
+            "true_capital_deployment": self._timeline_entries(timeline, "true_capital_deployment"),
+            "shareholder_returns": self._timeline_entries(timeline, "shareholder_returns"),
+            "financing_actions": self._timeline_entries(timeline, "financing_actions"),
+            "treasury_actions": self._timeline_entries(timeline, "treasury_actions"),
+            "related_party_capital_flows": self._timeline_entries(timeline, "related_party_capital_flows"),
+            "corporate_actions_non_cash_or_admin": self._timeline_entries(timeline, "corporate_actions_non_cash_or_admin"),
+            "ownership_transfer_non_company_cashflow": self._timeline_entries(timeline, "ownership_transfer_non_company_cashflow"),
+            "accounting_or_disclosure_only": self._timeline_entries(timeline, "accounting_or_disclosure_only"),
+            "uncertain_items": self._timeline_entries(timeline, "uncertain"),
             "dividends": self._timeline_entries(timeline, "dividends"),
             "buybacks": self._timeline_entries(timeline, "buybacks"),
             "capex_or_cwip_activity": _limit(
@@ -708,6 +718,131 @@ class PCIMMultiYearBuilder:
             "treasury_investments": self._timeline_entries(timeline, "treasury_investments"),
             "debt_borrowing_signals": self._timeline_entries(timeline, "debt_borrowings"),
             "related_party_transactions": self._timeline_entries(timeline, "related_party_transactions"),
-            "loans_and_advances": self._timeline_entries(timeline, "loans_and_advances"),
+            "debt_repayment_signals": self._timeline_entries(timeline, "debt_repayments"),
+            "ownership_transfer_items": self._timeline_entries(timeline, "ownership_transfers"),
+            "corporate_action_items": self._timeline_entries(timeline, "corporate_actions"),
+            "accounting_disclosure_items": self._timeline_entries(timeline, "accounting_disclosures"),
             "missing_financial_evidence": list(payload.get("missing_financial_evidence", [])),
         }
+
+
+def audit_saved_pcim_manifest(
+    company_root: Path | str,
+    saved_manifest: Dict[str, Any],
+    *,
+    saved_multi_year_inputs: Optional[Dict[str, Any]] = None,
+    expected_years: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    builder = PCIMMultiYearBuilder(company_root, expected_years=expected_years)
+    current_multi_year_inputs = builder.build()
+    current_manifest = builder.source_manifest
+
+    failures: List[str] = []
+    warnings: List[str] = []
+
+    if not isinstance(saved_manifest, dict) or not saved_manifest:
+        failures.append("PCIM source manifest missing or malformed.")
+        return {
+            "status": "fail",
+            "failures": failures,
+            "warnings": warnings,
+            "current_manifest": current_manifest,
+            "current_multi_year_inputs": current_multi_year_inputs,
+        }
+
+    saved_status = str(saved_manifest.get("status") or "").lower()
+    if saved_status == "fail":
+        failures.append("Saved PCIM source manifest status is fail.")
+
+    saved_manifest_warnings = list(saved_manifest.get("stale_source_warnings", []) or [])
+
+    saved_source_files = {
+        str(item.get("name")): item
+        for item in (saved_manifest.get("source_files") or [])
+        if isinstance(item, dict) and item.get("name")
+    }
+    current_source_files = {
+        str(item.get("name")): item
+        for item in (current_manifest.get("source_files") or [])
+        if isinstance(item, dict) and item.get("name")
+    }
+    has_current_loaded_files = any(item.get("loaded") for item in current_source_files.values())
+
+    if not has_current_loaded_files:
+        warnings.extend(saved_manifest_warnings)
+        status = "fail" if failures else ("warning" if saved_status == "warning" or warnings else "pass")
+        return {
+            "status": status,
+            "failures": _dedupe_preserve(failures),
+            "warnings": _dedupe_preserve(warnings),
+            "current_manifest": current_manifest,
+            "current_multi_year_inputs": current_multi_year_inputs,
+        }
+
+    for name, saved_entry in saved_source_files.items():
+        current_entry = current_source_files.get(name)
+        if current_entry is None:
+            failures.append(f"Saved PCIM references missing source file entry: {name}")
+            continue
+        if saved_entry.get("loaded") and not current_entry.get("loaded"):
+            failures.append(f"PCIM source file was previously loaded but is no longer readable: {name}")
+            continue
+        if bool(saved_entry.get("loaded")) != bool(current_entry.get("loaded")):
+            warnings.append(f"PCIM source file load state changed since last PCIM build: {name}")
+        if saved_entry.get("content_hash") and current_entry.get("content_hash"):
+            if saved_entry.get("content_hash") != current_entry.get("content_hash"):
+                failures.append(f"PCIM source file changed after the last PCIM build: {name}")
+
+    for name, current_entry in current_source_files.items():
+        if current_entry.get("loaded") and name not in saved_source_files:
+            failures.append(
+                f"PCIM source state is stale: new multi-year source file exists but was not included in saved PCIM: {name}"
+            )
+
+    saved_years_available, _ = sort_fiscal_year_labels(saved_manifest.get("years_available", []))
+    current_years_available, _ = sort_fiscal_year_labels(current_manifest.get("years_available", []))
+    if saved_years_available != current_years_available:
+        failures.append(
+            "PCIM years_available is stale relative to current multi-year sources: "
+            f"saved={saved_years_available}, current={current_years_available}"
+        )
+
+    saved_years_covered, _ = sort_fiscal_year_labels(
+        saved_manifest.get("years_covered_in_multi_year_inputs", [])
+    )
+    current_years_covered, _ = sort_fiscal_year_labels(
+        current_manifest.get("years_covered_in_multi_year_inputs", [])
+    )
+    if saved_years_covered != current_years_covered:
+        failures.append(
+            "PCIM years_covered_in_multi_year_inputs is stale relative to current multi-year sources: "
+            f"saved={saved_years_covered}, current={current_years_covered}"
+        )
+
+    saved_missing_years, _ = sort_fiscal_year_labels(saved_manifest.get("missing_years", []))
+    current_missing_years, _ = sort_fiscal_year_labels(current_manifest.get("missing_years", []))
+    if saved_missing_years != current_missing_years:
+        warnings.append(
+            "PCIM missing_years differs from the current multi-year source state: "
+            f"saved={saved_missing_years}, current={current_missing_years}"
+        )
+
+    if saved_multi_year_inputs is not None:
+        saved_multi_year_covered, _ = sort_fiscal_year_labels(saved_multi_year_inputs.get("years_covered", []))
+        current_multi_year_covered, _ = sort_fiscal_year_labels(current_multi_year_inputs.get("years_covered", []))
+        if saved_multi_year_covered != current_multi_year_covered:
+            failures.append(
+                "Saved PCIM multi_year_inputs.years_covered does not match the current rebuilt multi-year inputs: "
+                f"saved={saved_multi_year_covered}, current={current_multi_year_covered}"
+            )
+
+    warnings.extend(saved_manifest_warnings)
+    warnings.extend(current_manifest.get("stale_source_warnings", []))
+    status = "fail" if failures else ("warning" if current_manifest.get("status") == "warning" or warnings else "pass")
+    return {
+        "status": status,
+        "failures": _dedupe_preserve(failures),
+        "warnings": _dedupe_preserve(warnings),
+        "current_manifest": current_manifest,
+        "current_multi_year_inputs": current_multi_year_inputs,
+    }

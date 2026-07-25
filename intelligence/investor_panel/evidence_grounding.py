@@ -4,6 +4,35 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
+PCIM_SECTION_NAME_DENYLIST = {
+    "business_understanding",
+    "business_economics_inputs",
+    "moat_inputs",
+    "financial_fundamentals_inputs",
+    "financial_growth_inputs",
+    "profitability_inputs",
+    "cash_conversion_inputs",
+    "return_on_capital_inputs",
+    "balance_sheet_strength_inputs",
+    "financial_quality_inputs",
+    "per_share_inputs",
+    "financial_driver_inputs",
+    "multi_year_financial_inputs",
+    "capital_allocation_inputs",
+    "management_quality_inputs",
+    "governance_and_incentive_inputs",
+    "working_capital_inputs",
+    "growth_execution_inputs",
+    "growth_quality_inputs",
+    "risk_inputs",
+    "ownership_inputs",
+    "corporate_action_inputs",
+    "multi_year_inputs",
+    "evidence_map",
+    "uncertainty_missing_data",
+}
+
+
 EVIDENCE_VALUE_KEYS = (
     "value",
     "business_summary",
@@ -74,16 +103,39 @@ HR_CONDUCT_KEYWORDS = (
 
 RISK_EVIDENCE_TERMS = (
     "market risk",
+    "market-price movement",
+    "market price movement",
     "liquidity risk",
     "interest rate",
     "foreign exchange",
     "foreign exchange exposure",
+    "currency exposure",
     "credit risk",
     "derivative",
     "hedging",
 )
 
 CLAIM_RULES = [
+    {
+        "name": "market_risk",
+        "keywords": [
+            "market risk",
+            "market-price movement",
+            "market price movement",
+            "sensitivity to market-price movements",
+            "sensitivity to market price movements",
+            "currency exposure",
+        ],
+        "allowed": [
+            "market risk",
+            "market-price movement",
+            "market price movement",
+            "foreign exchange exposure",
+            "interest rate risk",
+            "currency risk",
+            "currency exposure",
+        ],
+    },
     {
         "name": "liquidity",
         "keywords": ["liquidity", "refinancing", "borrowings", "maturity concentration", "maturity profile"],
@@ -715,8 +767,8 @@ def _classification_for_claim(claim_text: str, entry: Dict[str, Any]) -> str:
         if _claim_mentions_hr_or_conduct(claim_text) and _entry_is_human_capital_support(entry):
             return "pass"
         if _entry_is_risk_evidence(entry):
-            if "oversight" in claim_lower or "risk governance" in claim_lower:
-                return "weak_routing"
+            if "risk oversight" in claim_lower or "risk governance" in claim_lower:
+                return "pass"
             return "governance_routing"
 
     if not matched_names:
@@ -932,7 +984,7 @@ def _validate_claim_unit(
                 normalized_id=routing_warnings[0][1],
             )
         )
-        return "fail" if _is_material_group(group_name) else "warning"
+        return "fail"
 
     if weak_metadata:
         custom_issue = (
@@ -1059,8 +1111,10 @@ def validate_analyst_evidence_grounding(
 
             claim_units = split_claim_text(cleaned_claim_text)
             unit_statuses = []
+            hard_routing_failure = False
             for idx, claim_unit in enumerate(claim_units):
                 claim_location = base_location if len(claim_units) == 1 else f"{base_location}#{idx + 1}"
+                warnings_before = len(warnings)
                 unit_status = _validate_claim_unit(
                     claim_location=claim_location,
                     claim_text=claim_unit,
@@ -1069,10 +1123,15 @@ def validate_analyst_evidence_grounding(
                     warnings=warnings,
                     supporting_pcim_sections=supporting_pcim_sections,
                 )
+                hard_routing_failure = hard_routing_failure or any(
+                    "market-risk evidence should not support governance/incentive claim"
+                    in str(warning.get("issue") or "")
+                    for warning in warnings[warnings_before:]
+                )
                 unit_statuses.append(unit_status)
 
             if "fail" in unit_statuses:
-                status = "fail" if _is_material_group(group_name) or status == "fail" else "warning"
+                status = "fail" if _is_material_group(group_name) or hard_routing_failure or status == "fail" else "warning"
             elif "warning" in unit_statuses and status == "pass":
                 status = "warning"
 

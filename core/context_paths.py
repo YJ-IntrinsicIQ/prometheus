@@ -50,3 +50,7 @@ def intelligence_path(path, context_dir=None):
         path,
         context_dir or "intelligence_dir",
     )
+
+
+def investor_panel_dir(company, *, prefer_company_memory=False):
+    return Path("companies") / company / "company_memory" / "investor_panel"

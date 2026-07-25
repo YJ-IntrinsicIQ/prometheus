@@ -799,8 +799,71 @@ def test_governance_claim_rejects_market_risk_evidence():
         evidence_lookup=build_evidence_lookup(_sample_pcim()),
     )
 
-    assert result["evidence_grounding_status"] == "warning"
-    assert any("Weak but acceptable support" in warning["issue"] for warning in result["evidence_grounding_warnings"])
+    assert result["evidence_grounding_status"] == "fail"
+    assert any("market-risk evidence should not support governance/incentive claim" in warning["issue"] for warning in result["evidence_grounding_warnings"])
+
+
+def test_market_risk_claim_accepts_market_risk_evidence():
+    result = validate_analyst_evidence_grounding(
+        assessment={"avoidable_risk_assessment": "Foreign exchange risk remains a real exposure."},
+        key_findings=[],
+        red_flags=[],
+        open_uncertainties=[],
+        claim_evidence_map={"assessment.avoidable_risk_assessment": ["ev_fx"]},
+        supporting_pcim_sections=["risk_inputs"],
+        consumed_sections=["risk_inputs"],
+        supplied_evidence_ids=["ev_fx"],
+        evidence_lookup=build_evidence_lookup(_sample_pcim()),
+    )
+
+    assert result["evidence_grounding_status"] == "pass"
+    assert result["evidence_grounding_warnings"] == []
+
+
+def test_generic_market_risk_claim_accepts_generic_market_risk_evidence():
+    pcim = _sample_pcim()
+    pcim["risk_inputs"]["risk_by_year"][0]["items"][1]["category"] = "Market risk"
+    pcim["risk_inputs"]["risk_by_year"][0]["items"][1]["value"] = (
+        "Sensitivity to market-price movements remains visible."
+    )
+    result = validate_analyst_evidence_grounding(
+        assessment={"avoidable_risk_assessment": "Risk disclosures explicitly note market risk exposure."},
+        key_findings=[],
+        red_flags=[],
+        open_uncertainties=[],
+        claim_evidence_map={"assessment.avoidable_risk_assessment": ["ev_fx"]},
+        supporting_pcim_sections=["risk_inputs"],
+        consumed_sections=["risk_inputs"],
+        supplied_evidence_ids=["ev_fx"],
+        evidence_lookup=build_evidence_lookup(pcim),
+    )
+
+    assert result["evidence_grounding_status"] == "pass"
+    assert result["evidence_grounding_warnings"] == []
+
+
+def test_market_price_movement_claim_accepts_market_risk_evidence():
+    pcim = _sample_pcim()
+    pcim["risk_inputs"]["risk_by_year"][0]["items"][1]["category"] = "Market risk"
+    pcim["risk_inputs"]["risk_by_year"][0]["items"][1]["value"] = (
+        "Sensitivity to market-price movements remains visible."
+    )
+    result = validate_analyst_evidence_grounding(
+        assessment={},
+        key_findings=[
+            "Risk disclosures explicitly note sensitivity to market-price movements."
+        ],
+        red_flags=[],
+        open_uncertainties=[],
+        claim_evidence_map={"key_findings.0": ["ev_fx"]},
+        supporting_pcim_sections=["risk_inputs"],
+        consumed_sections=["risk_inputs"],
+        supplied_evidence_ids=["ev_fx"],
+        evidence_lookup=build_evidence_lookup(pcim),
+    )
+
+    assert result["evidence_grounding_status"] == "pass"
+    assert result["evidence_grounding_warnings"] == []
 
 
 def test_governance_missing_data_claim_accepts_uncertainty_support():
@@ -817,6 +880,41 @@ def test_governance_missing_data_claim_accepts_uncertainty_support():
     )
 
     assert result["evidence_grounding_status"] == "pass"
+
+
+def test_related_party_governance_claim_accepts_governance_evidence():
+    pcim = _sample_pcim()
+    pcim["governance_and_incentive_inputs"] = {
+        "related_party_and_control_items_by_year": [
+            {
+                "year": "fy25",
+                "items": [
+                    {
+                        "value": "Related-party advance requires governance monitoring.",
+                        "signal_type": "related_party_exposure",
+                        "source_year": "fy25",
+                        "source_artifact": "company_intelligence.json",
+                        "source_item_id": "GOV_1",
+                        "evidence_ids": ["ev_related_party"],
+                    }
+                ],
+            }
+        ]
+    }
+    result = validate_analyst_evidence_grounding(
+        assessment={"governance_sanity_assessment": "Related-party exposure is a governance monitoring signal."},
+        key_findings=[],
+        red_flags=[],
+        open_uncertainties=[],
+        claim_evidence_map={"assessment.governance_sanity_assessment": ["ev_related_party"]},
+        supporting_pcim_sections=["governance_and_incentive_inputs"],
+        consumed_sections=["governance_and_incentive_inputs"],
+        supplied_evidence_ids=["ev_related_party"],
+        evidence_lookup=build_evidence_lookup(pcim),
+    )
+
+    assert result["evidence_grounding_status"] == "pass"
+    assert result["evidence_grounding_warnings"] == []
 
 
 def test_business_model_evidence_supports_business_quality_claim_without_warning():

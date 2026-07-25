@@ -7,7 +7,7 @@ import re
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from core.context_paths import intelligence_path  # noqa: E402
+from core.context_paths import extraction_path, intelligence_path  # noqa: E402
 from knowledge.cim import load_cim  # noqa: E402
 
 INPUT_FILE = "company_intelligence.json"
@@ -20,6 +20,18 @@ SECTION_MAP = {
     "initiatives": "operations.initiatives",
     "risks": "risk.identified",
 }
+
+COMMENTARY_GROUP_KEYS = (
+    "company_management_actions",
+    "company_promises",
+    "company_capabilities",
+    "company_results",
+    "risk_responses",
+    "external_context",
+    "accounting_disclosures",
+    "governance_disclosures",
+    "uncertain_items",
+)
 
 ARCHETYPE_DNA_IP_PLATFORM = {
     "IP Library",
@@ -336,7 +348,23 @@ def load_profile():
             section_path,
         )
 
+    profile["commentary"] = load_clean_commentary()
+
     return profile
+
+
+def load_clean_commentary():
+    commentary_path = extraction_path("clean_commentary.json")
+    if not commentary_path.exists():
+        return {key: [] for key in COMMENTARY_GROUP_KEYS}
+    with open(commentary_path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    if not isinstance(payload, dict):
+        return {key: [] for key in COMMENTARY_GROUP_KEYS}
+    normalized = {key: list(payload.get(key, []) or []) for key in COMMENTARY_GROUP_KEYS}
+    if "validation" in payload:
+        normalized["validation"] = payload["validation"]
+    return normalized
 
 
 def load_business_context():
@@ -581,6 +609,151 @@ from core.schemas import (
 )
 
 
+CONTEXT_TYPE_COMPANY_ACTION = "company_action"
+CONTEXT_TYPE_COMPANY_PROMISE = "company_promise"
+CONTEXT_TYPE_COMPANY_CAPABILITY = "company_capability"
+CONTEXT_TYPE_COMPANY_RESULT = "company_result"
+CONTEXT_TYPE_COMPANY_RISK_RESPONSE = "company_risk_response"
+CONTEXT_TYPE_EXTERNAL_CONTEXT = "external_context"
+CONTEXT_TYPE_EXTERNAL_TAILWIND = "external_tailwind"
+CONTEXT_TYPE_EXTERNAL_HEADWIND = "external_headwind"
+CONTEXT_TYPE_ACCOUNTING_DISCLOSURE = "accounting_disclosure"
+CONTEXT_TYPE_GOVERNANCE_DISCLOSURE = "governance_disclosure"
+CONTEXT_TYPE_UNCERTAIN = "uncertain"
+
+EXTERNAL_CONTEXT_TERMS = (
+    "government",
+    "policy",
+    "budget",
+    "fdi",
+    "incentive",
+    "regulation",
+    "regulatory",
+    "sector growth",
+    "industry growth",
+    "market demand",
+    "macro",
+    "macroeconomic",
+    "gdp",
+    "inflation",
+    "interest rate",
+    "industry licensing",
+    "national target",
+    "fiscal support",
+    "public spending",
+)
+
+EXTERNAL_TAILWIND_TERMS = (
+    "benefit from",
+    "tailwind",
+    "supportive",
+    "favorable",
+    "strong demand",
+    "incentive",
+    "policy support",
+)
+
+EXTERNAL_HEADWIND_TERMS = (
+    "headwind",
+    "slowdown",
+    "pressure",
+    "tightening",
+    "volatility",
+    "uncertainty",
+    "adverse",
+)
+
+COMPANY_ACTION_TERMS = (
+    "commissioned",
+    "launched",
+    "expanded",
+    "installed",
+    "implemented",
+    "established",
+    "built",
+    "invested",
+    "deployed",
+    "opened",
+    "introduced",
+    "developed",
+    "upgraded",
+)
+
+PROMISE_TERMS = (
+    "plans to",
+    "aims to",
+    "will",
+    "target",
+    "intends to",
+    "expects to",
+    "exploring",
+    "roadmap",
+    "commit",
+)
+
+RESULT_TERMS = (
+    "achieved",
+    "improved",
+    "grew",
+    "reached",
+    "delivered",
+    "completed",
+    "commissioned",
+    "order inflow",
+    "shipment",
+    "exported",
+)
+
+CAPABILITY_TERMS = (
+    "capability",
+    "certified",
+    "certification",
+    "facility",
+    "platform",
+    "system",
+    "process",
+    "workforce",
+    "team",
+    "infrastructure",
+)
+
+RISK_RESPONSE_TERMS = (
+    "mitigate",
+    "hedge",
+    "monitor",
+    "control",
+    "reduce risk",
+    "response plan",
+    "risk management",
+    "business continuity",
+    "resilience",
+)
+
+ACCOUNTING_DISCLOSURE_TERMS = (
+    "depreciation",
+    "useful life",
+    "impairment",
+    "fair value",
+    "actuarial",
+    "accounting policy",
+    "significant accounting policies",
+    "accounting estimate",
+)
+
+GOVERNANCE_DISCLOSURE_TERMS = (
+    "board",
+    "audit committee",
+    "committee",
+    "section 177",
+    "section 185",
+    "section 186",
+    "shareholder approval",
+    "code of conduct",
+    "internal controls",
+    "compliance with provisions",
+)
+
+
 # ==========================================================
 # Summary Builders
 # ==========================================================
@@ -749,6 +922,91 @@ def _rank_items(
     ])
 
 
+def _group_management_context(profile):
+    grouped = {key: [] for key in COMMENTARY_GROUP_KEYS}
+
+    commentary_groups = profile.get("commentary")
+    if isinstance(commentary_groups, dict):
+        for key in COMMENTARY_GROUP_KEYS:
+            for item in commentary_groups.get(key, []) or []:
+                if isinstance(item, dict) and item.get("value"):
+                    grouped[key].append(dict(item))
+
+    source_map = {
+        "project": (profile.get("projects", []), PROJECT_NAME_FIELDS),
+        "promise": (profile.get("promises", []), PROMISE_FIELDS),
+        "initiative": (profile.get("initiatives", []), INITIATIVE_FIELDS),
+        "capital_allocation": (profile.get("capital_allocation", []), CAPITAL_ACTION_FIELDS),
+    }
+
+    for item_type, (items, fields) in source_map.items():
+        for item in items:
+            value = first_non_empty(item, fields)
+            if not value:
+                continue
+            classified = _classify_management_item(item, item_type, value)
+            context_type = classified["context_type"]
+            if context_type == CONTEXT_TYPE_COMPANY_ACTION:
+                grouped["company_management_actions"].append(classified)
+            elif context_type == CONTEXT_TYPE_COMPANY_PROMISE:
+                grouped["company_promises"].append(classified)
+            elif context_type == CONTEXT_TYPE_COMPANY_CAPABILITY:
+                grouped["company_capabilities"].append(classified)
+            elif context_type == CONTEXT_TYPE_COMPANY_RESULT:
+                grouped["company_results"].append(classified)
+            elif context_type == CONTEXT_TYPE_COMPANY_RISK_RESPONSE:
+                grouped["risk_responses"].append(classified)
+            elif context_type in {
+                CONTEXT_TYPE_EXTERNAL_CONTEXT,
+                CONTEXT_TYPE_EXTERNAL_TAILWIND,
+                CONTEXT_TYPE_EXTERNAL_HEADWIND,
+            }:
+                grouped["external_context"].append(classified)
+            elif context_type == CONTEXT_TYPE_ACCOUNTING_DISCLOSURE:
+                grouped["accounting_disclosures"].append(classified)
+            elif context_type == CONTEXT_TYPE_GOVERNANCE_DISCLOSURE:
+                grouped["governance_disclosures"].append(classified)
+            else:
+                grouped["uncertain_items"].append(classified)
+
+            shadow = _external_shadow_item(classified)
+            if shadow is not None:
+                grouped["external_context"].append(shadow)
+
+    for key in COMMENTARY_GROUP_KEYS:
+        grouped[key] = _dedupe_grouped_items(grouped[key])
+
+    return grouped
+
+
+def _dedupe_grouped_items(items):
+    deduped = []
+    seen = set()
+    for item in items:
+        key = (
+            item.get("context_type"),
+            _canonical_text_key(item.get("value")),
+            _canonical_text_key(item.get("category")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _filter_items_by_values(items, fields, allowed_values):
+    allowed = {_canonical_text_key(value) for value in allowed_values}
+    if not allowed:
+        return []
+    filtered = []
+    for item in items:
+        text = first_non_empty(item, fields)
+        if text and _canonical_text_key(text) in allowed:
+            filtered.append(item)
+    return filtered
+
+
 def _extract_ranked_focus_areas(
     initiatives,
     business_dnas,
@@ -799,6 +1057,22 @@ def _extract_ranked_focus_areas(
     ])
 
 
+def _commentary_focus_areas(grouped_context):
+    categories = []
+    for section in (
+        "company_management_actions",
+        "company_promises",
+        "company_capabilities",
+        "company_results",
+        "risk_responses",
+    ):
+        for item in grouped_context.get(section, []):
+            category = item.get("category")
+            if category:
+                categories.append(category)
+    return _dedupe_ranked_texts(categories)
+
+
 def _canonical_text_key(text):
     normalized = _normalize_text(text)
     tokens = [
@@ -841,6 +1115,301 @@ def _dedupe_ranked_texts(values):
     return deduped
 
 
+def _contains_any(text, terms):
+    return any(term in text for term in terms)
+
+
+def _extract_evidence_ids(item):
+    existing = list(item.get("evidence_ids", []) or [])
+    if existing:
+        return list(dict.fromkeys(existing))
+    evidence_ids = []
+    for observation in item.get("observations", []) or []:
+        for evidence in observation.get("evidence", []) or []:
+            evidence_id = evidence.get("id")
+            if evidence_id:
+                evidence_ids.append(evidence_id)
+    return list(dict.fromkeys(evidence_ids))
+
+
+def _item_confidence(item):
+    return str(item.get("confidence") or "").lower() or "unknown"
+
+
+def _summary_item(
+    item,
+    *,
+    value,
+    item_type,
+    context_type,
+    agency,
+    reasoning,
+    should_feed_management_consistency,
+    should_feed_company_strategy,
+    should_feed_external_context,
+):
+    return {
+        "value": value,
+        "item_type": item_type,
+        "category": item.get("category"),
+        "context_type": context_type,
+        "agency": agency,
+        "should_feed_management_consistency": should_feed_management_consistency,
+        "should_feed_company_strategy": should_feed_company_strategy,
+        "should_feed_external_context": should_feed_external_context,
+        "reasoning": reasoning,
+        "evidence_ids": _extract_evidence_ids(item),
+        "confidence": _item_confidence(item),
+        "source_item_id": item.get("id"),
+        "status": item.get("status"),
+        "actor": item.get("actor"),
+        "time_reference": item.get("time_reference"),
+        "amount": item.get("amount"),
+        "currency": item.get("currency"),
+        "evidence_quality": item.get("evidence_quality"),
+        "uncertainty_reason": item.get("uncertainty_reason"),
+    }
+
+
+def _classify_management_item(item, item_type, value):
+    normalized = _normalize_text(
+        " ".join(
+            [
+                str(value or ""),
+                str(item.get("category", "")),
+                str(item.get("benefit", "")),
+                str(item.get("description", "")),
+                str(item.get("purpose", "")),
+                str(item.get("timeline", "")),
+                str(item.get("source_chunk", "")),
+            ]
+        )
+    )
+
+    has_external = _contains_any(normalized, EXTERNAL_CONTEXT_TERMS)
+    has_tailwind = _contains_any(normalized, EXTERNAL_TAILWIND_TERMS)
+    has_headwind = _contains_any(normalized, EXTERNAL_HEADWIND_TERMS)
+    has_action = _contains_any(normalized, COMPANY_ACTION_TERMS)
+    has_promise = item_type == "promise" or _contains_any(normalized, PROMISE_TERMS)
+    has_result = _contains_any(normalized, RESULT_TERMS)
+    has_capability = _contains_any(normalized, CAPABILITY_TERMS)
+    has_risk_response = _contains_any(normalized, RISK_RESPONSE_TERMS)
+    has_accounting = _contains_any(normalized, ACCOUNTING_DISCLOSURE_TERMS)
+    has_governance = _contains_any(normalized, GOVERNANCE_DISCLOSURE_TERMS)
+
+    if has_accounting:
+        return _summary_item(
+            item,
+            value=value,
+            item_type=item_type,
+            context_type=CONTEXT_TYPE_ACCOUNTING_DISCLOSURE,
+            agency="company_controlled",
+            reasoning="Detected accounting-policy or disclosure language rather than management execution.",
+            should_feed_management_consistency=False,
+            should_feed_company_strategy=False,
+            should_feed_external_context=False,
+        )
+
+    if has_governance and not _contains_any(
+        normalized,
+        ("commissioned", "launched", "expanded", "implemented", "built", "deployed", "invested"),
+    ):
+        return _summary_item(
+            item,
+            value=value,
+            item_type=item_type,
+            context_type=CONTEXT_TYPE_GOVERNANCE_DISCLOSURE,
+            agency="company_controlled",
+            reasoning="Detected governance or compliance disclosure without a clear execution theme.",
+            should_feed_management_consistency=False,
+            should_feed_company_strategy=False,
+            should_feed_external_context=False,
+        )
+
+    if has_external and not (has_action or has_promise or has_capability or has_risk_response):
+        context_type = CONTEXT_TYPE_EXTERNAL_CONTEXT
+        if has_tailwind:
+            context_type = CONTEXT_TYPE_EXTERNAL_TAILWIND
+        elif has_headwind:
+            context_type = CONTEXT_TYPE_EXTERNAL_HEADWIND
+        return _summary_item(
+            item,
+            value=value,
+            item_type=item_type,
+            context_type=context_type,
+            agency="external_not_controlled",
+            reasoning="Detected macro, policy, regulatory, or industry backdrop without a company-controlled action.",
+            should_feed_management_consistency=False,
+            should_feed_company_strategy=False,
+            should_feed_external_context=True,
+        )
+
+    if has_external and has_result and not _contains_any(normalized, ("company", "management")):
+        return _summary_item(
+            item,
+            value=value,
+            item_type=item_type,
+            context_type=CONTEXT_TYPE_EXTERNAL_CONTEXT,
+            agency="external_not_controlled",
+            reasoning="Detected macro or policy outcome language without a company actor.",
+            should_feed_management_consistency=False,
+            should_feed_company_strategy=False,
+            should_feed_external_context=True,
+        )
+
+    if has_promise:
+        return _summary_item(
+            item,
+            value=value,
+            item_type=item_type,
+            context_type=CONTEXT_TYPE_COMPANY_PROMISE,
+            agency="management_committed" if not has_external else "mixed",
+            reasoning="Detected forward-looking management commitment or stated intent.",
+            should_feed_management_consistency=True,
+            should_feed_company_strategy=True,
+            should_feed_external_context=has_external,
+        )
+
+    if has_risk_response:
+        return _summary_item(
+            item,
+            value=value,
+            item_type=item_type,
+            context_type=CONTEXT_TYPE_COMPANY_RISK_RESPONSE,
+            agency="company_controlled" if not has_external else "mixed",
+            reasoning="Detected company-controlled mitigation, monitoring, or resilience action.",
+            should_feed_management_consistency=True,
+            should_feed_company_strategy=True,
+            should_feed_external_context=has_external,
+        )
+
+    if has_result:
+        return _summary_item(
+            item,
+            value=value,
+            item_type=item_type,
+            context_type=CONTEXT_TYPE_COMPANY_RESULT,
+            agency="company_controlled" if not has_external else "mixed",
+            reasoning="Detected delivered outcome, achieved result, or completed company milestone.",
+            should_feed_management_consistency=True,
+            should_feed_company_strategy=True,
+            should_feed_external_context=has_external,
+        )
+
+    if has_action or item_type in {"project", "capital_allocation"}:
+        return _summary_item(
+            item,
+            value=value,
+            item_type=item_type,
+            context_type=CONTEXT_TYPE_COMPANY_ACTION,
+            agency="company_controlled" if not has_external else "mixed",
+            reasoning="Detected company-controlled action, buildout, deployment, or capital decision.",
+            should_feed_management_consistency=True,
+            should_feed_company_strategy=True,
+            should_feed_external_context=has_external,
+        )
+
+    if has_capability or item_type == "initiative":
+        return _summary_item(
+            item,
+            value=value,
+            item_type=item_type,
+            context_type=CONTEXT_TYPE_COMPANY_CAPABILITY,
+            agency="company_controlled" if not has_external else "mixed",
+            reasoning="Detected company capability, process, facility, or operating-system attribute.",
+            should_feed_management_consistency=True,
+            should_feed_company_strategy=True,
+            should_feed_external_context=has_external,
+        )
+
+    return _summary_item(
+        item,
+        value=value,
+        item_type=item_type,
+        context_type=CONTEXT_TYPE_UNCERTAIN,
+        agency="uncertain",
+        reasoning="Could not determine whether the item is company-controlled action or external backdrop.",
+        should_feed_management_consistency=False,
+        should_feed_company_strategy=False,
+        should_feed_external_context=False,
+    )
+
+
+def _external_shadow_item(classified_item):
+    if not classified_item.get("should_feed_external_context"):
+        return None
+    if classified_item.get("context_type") in {
+        CONTEXT_TYPE_EXTERNAL_CONTEXT,
+        CONTEXT_TYPE_EXTERNAL_TAILWIND,
+        CONTEXT_TYPE_EXTERNAL_HEADWIND,
+    }:
+        return None
+    context_type = CONTEXT_TYPE_EXTERNAL_CONTEXT
+    reasoning = "Preserved external backdrop separately from the primary company-controlled item because the text mixes company action with outside context."
+    normalized = _normalize_text(classified_item.get("value"))
+    if _contains_any(normalized, EXTERNAL_TAILWIND_TERMS):
+        context_type = CONTEXT_TYPE_EXTERNAL_TAILWIND
+    elif _contains_any(normalized, EXTERNAL_HEADWIND_TERMS):
+        context_type = CONTEXT_TYPE_EXTERNAL_HEADWIND
+    shadow = dict(classified_item)
+    shadow["context_type"] = context_type
+    shadow["agency"] = "mixed"
+    shadow["should_feed_management_consistency"] = False
+    shadow["should_feed_company_strategy"] = False
+    shadow["should_feed_external_context"] = True
+    shadow["reasoning"] = reasoning
+    return shadow
+
+
+def _validate_grouped_summary(summary):
+    errors = []
+    warnings = []
+    grouped_sections = (
+        "company_management_actions",
+        "company_promises",
+        "company_capabilities",
+        "company_results",
+        "risk_responses",
+        "external_context",
+        "accounting_disclosures",
+        "governance_disclosures",
+        "uncertain_items",
+    )
+
+    for section in grouped_sections:
+        for item in summary.get(section, []):
+            value = item.get("value") or "unknown item"
+            if not item.get("context_type"):
+                errors.append(f"{value}: missing context_type")
+            if not item.get("agency"):
+                errors.append(f"{value}: missing agency")
+            if item.get("context_type", "").startswith("external_") and item.get("should_feed_management_consistency"):
+                if item.get("agency") != "mixed" or "mixed" not in str(item.get("reasoning", "")).lower():
+                    errors.append(f"{value}: external context cannot feed management consistency without explicit mixed-agency reason")
+            if item.get("context_type") == CONTEXT_TYPE_ACCOUNTING_DISCLOSURE and item.get("should_feed_company_strategy"):
+                errors.append(f"{value}: accounting disclosure cannot feed company strategy")
+            if item.get("source_chunk"):
+                errors.append(f"{value}: source_chunk must not appear in management_summary grouped output")
+            if item.get("context_type") == CONTEXT_TYPE_UNCERTAIN:
+                warnings.append(f"{value}: context_type uncertain")
+            if item.get("agency") == "uncertain":
+                warnings.append(f"{value}: agency uncertain")
+            if str(item.get("confidence") or "").lower() in {"", "low"}:
+                warnings.append(f"{value}: low confidence")
+            if item.get("value") and "budget allocation" in _normalize_text(item.get("value")) and item.get("agency") == "uncertain":
+                warnings.append(f"{value}: vague budget allocation label without company actor")
+
+    summary["routing_validation"] = {
+        "status": "pass" if not errors else "fail",
+        "errors": list(dict.fromkeys(errors)),
+        "warnings": list(dict.fromkeys(warnings)),
+    }
+    if errors:
+        raise ValueError("Management summary context validation failed: " + "; ".join(summary["routing_validation"]["errors"]))
+
+    return summary
+
+
 # ==========================================================
 # Main Summary
 # ==========================================================
@@ -851,41 +1420,72 @@ def build_summary(profile, business_context=None):
     business_dnas = set(
         business_context.get("business_dnas", [])
     )
+    grouped_context = _group_management_context(profile)
+
+    company_project_items = _filter_items_by_values(
+        profile.get("projects", []),
+        PROJECT_NAME_FIELDS,
+        [item["value"] for item in grouped_context["company_management_actions"] + grouped_context["company_results"]],
+    )
+    company_promise_items = _filter_items_by_values(
+        profile.get("promises", []),
+        PROMISE_FIELDS,
+        [item["value"] for item in grouped_context["company_promises"]],
+    )
+    company_initiative_items = _filter_items_by_values(
+        profile.get("initiatives", []),
+        INITIATIVE_FIELDS,
+        [
+            item["value"]
+            for item in grouped_context["company_management_actions"]
+            + grouped_context["company_capabilities"]
+            + grouped_context["company_results"]
+            + grouped_context["risk_responses"]
+        ],
+    )
+    company_capital_items = _filter_items_by_values(
+        profile.get("capital_allocation", []),
+        CAPITAL_ACTION_FIELDS,
+        [item["value"] for item in grouped_context["company_management_actions"] + grouped_context["company_results"]],
+    )
 
     projects = _rank_items(
-        profile.get("projects", []),
+        company_project_items,
         PROJECT_NAME_FIELDS,
         business_dnas,
         "project",
     )
 
     promises = _rank_items(
-        profile.get("promises", []),
+        company_promise_items,
         PROMISE_FIELDS,
         business_dnas,
         "promise",
     )
 
     initiatives = _rank_items(
-        profile.get("initiatives", []),
+        company_initiative_items,
         INITIATIVE_FIELDS,
         business_dnas,
         "initiative",
     )
 
     capital_actions = _rank_items(
-        profile.get("capital_allocation", []),
+        company_capital_items,
         CAPITAL_ACTION_FIELDS,
         business_dnas,
         "capital_allocation",
     )
 
     focus_areas = _extract_ranked_focus_areas(
-        profile.get("initiatives", []),
+        company_initiative_items,
         business_dnas,
     )
+    focus_areas = _dedupe_ranked_texts(
+        focus_areas + _commentary_focus_areas(grouped_context)
+    )
 
-    return {
+    summary = {
 
         "management_focus_areas":
             focus_areas,
@@ -917,6 +1517,10 @@ def build_summary(profile, business_context=None):
                 len(capital_actions)
         }
     }
+
+    summary.update(grouped_context)
+
+    return _validate_grouped_summary(summary)
 
 
 def print_summary(summary):

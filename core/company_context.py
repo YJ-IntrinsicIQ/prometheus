@@ -48,6 +48,14 @@ class CompanyContext:
         )
 
     @property
+    def financials_dir(self):
+
+        return (
+            self.year_root
+            / "financials"
+        )
+
+    @property
     def discovery_dir(self):
 
         return self.raw_dir
@@ -77,6 +85,11 @@ class CompanyContext:
         )
 
         self.intelligence_dir.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        self.financials_dir.mkdir(
             parents=True,
             exist_ok=True
         )

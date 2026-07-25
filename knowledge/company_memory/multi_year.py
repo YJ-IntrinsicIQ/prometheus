@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from knowledge.archetypes import ArchetypeRegistry
+from knowledge.capital_allocation_taxonomy import normalize_capital_allocation_item
 from .company_layer import (
     CompanyMemoryAggregateBuilder,
     _normalize_text,
@@ -40,19 +41,65 @@ SEVERITY_RANK = {
 }
 
 CAPITAL_TIMELINE_FIELDS = {
-    "dividend": "dividends",
+    "true_capital_deployment": "true_capital_deployment",
+    "shareholder_returns": "shareholder_returns",
+    "financing_actions": "financing_actions",
+    "treasury_actions": "treasury_actions",
+    "corporate_actions_non_cash_or_admin": "corporate_actions_non_cash_or_admin",
+    "ownership_transfer_non_company_cashflow": "ownership_transfer_non_company_cashflow",
+    "related_party_capital_flows": "related_party_capital_flows",
+    "accounting_or_disclosure_only": "accounting_or_disclosure_only",
+    "uncertain": "uncertain",
+}
+
+CAPITAL_CATEGORY_TIMELINE_FIELDS = {
+    "dividend_paid": "dividends",
+    "dividend_declared": "dividends",
     "buyback": "buybacks",
     "capex": "capex",
+    "capacity_expansion": "capex",
+    "technology_investment": "capex",
+    "r_and_d_investment": "capex",
+    "strategic_investments": "capex",
+    "working_capital_investment": "capex",
     "cwip": "cwip",
-    "acquisition": "acquisitions",
+    "acquisitions": "acquisitions",
     "share_split": "share_splits",
     "equity_issuance": "equity_issuance",
-    "treasury_investment": "treasury_investments",
-    "esop_rsu": "esop_rsu",
-    "debt_borrowing": "debt_borrowings",
-    "related_party_transaction": "related_party_transactions",
-    "loan_or_advance": "loans_and_advances",
+    "qualified_institutional_placement": "equity_issuance",
+    "preferential_allotment": "equity_issuance",
+    "rights_issue": "equity_issuance",
+    "mutual_fund_investment": "treasury_investments",
+    "temporary_investment": "treasury_investments",
+    "bank_deposit": "treasury_investments",
+    "cash_management": "treasury_investments",
+    "security_margin_deposit": "treasury_investments",
+    "debt_raised": "debt_borrowings",
+    "debt_repaid": "debt_repayments",
+    "lease_liability_payment": "debt_repayments",
+    "related_party_loan_given": "related_party_transactions",
+    "related_party_loan_received": "related_party_transactions",
+    "related_party_investment": "related_party_transactions",
+    "related_party_guarantee": "related_party_transactions",
+    "related_party_dividend": "related_party_transactions",
+    "related_party_repayment": "related_party_transactions",
     "auditor_observation": "auditor_observations",
+    "offer_for_sale": "ownership_transfers",
+    "promoter_sale": "ownership_transfers",
+    "secondary_sale": "ownership_transfers",
+    "stake_sale_by_existing_shareholders": "ownership_transfers",
+    "authorised_capital_change": "corporate_actions",
+    "bonus_issue": "corporate_actions",
+    "face_value_change": "corporate_actions",
+    "listing": "corporate_actions",
+    "name_change": "corporate_actions",
+    "share_split": "share_splits",
+    "accounting_policy": "accounting_disclosures",
+    "depreciation_policy": "accounting_disclosures",
+    "impairment_policy": "accounting_disclosures",
+    "fair_value_measurement": "accounting_disclosures",
+    "actuarial_assumption": "accounting_disclosures",
+    "contingent_liability_disclosure": "accounting_disclosures",
 }
 
 BORROWINGS_RE = re.compile(r"Borrowings\s+([0-9][0-9,]*\.?[0-9]*)", re.IGNORECASE)
@@ -265,7 +312,9 @@ def _bucket_payload(item: Dict[str, Any], *, category: Optional[str] = None) -> 
     compact = _first_compact_evidence(item.get("evidence_references"))
     payload = {
         "value": item.get("value"),
-        "category": category,
+        "category": category or item.get("canonical_category"),
+        "canonical_category": item.get("canonical_category") or category,
+        "capital_allocation_group": item.get("capital_allocation_group"),
         "source_year": item.get("source_year"),
         "source_artifact": item.get("source_artifact"),
         "source_item_id": item.get("source_item_id"),
@@ -274,6 +323,14 @@ def _bucket_payload(item: Dict[str, Any], *, category: Optional[str] = None) -> 
         "confidence": item.get("confidence") or compact.get("confidence"),
         "source_page": item.get("page") or compact.get("source_page"),
         "short_excerpt": compact.get("short_excerpt"),
+        "cash_flow_effect": item.get("cash_flow_effect"),
+        "balance_sheet_effect": item.get("balance_sheet_effect"),
+        "is_true_capital_deployment": item.get("is_true_capital_deployment"),
+        "is_shareholder_return": item.get("is_shareholder_return"),
+        "is_financing_action": item.get("is_financing_action"),
+        "is_corporate_action": item.get("is_corporate_action"),
+        "is_related_party": item.get("is_related_party"),
+        "reasoning": item.get("reasoning"),
     }
     for field in (
         "amount",
@@ -336,9 +393,21 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
                     "approval_oversight_detail",
                     "auditor_observation",
                     "purpose",
+                    "canonical_category",
+                    "capital_allocation_group",
+                    "cash_flow_effect",
+                    "balance_sheet_effect",
+                    "is_true_capital_deployment",
+                    "is_shareholder_return",
+                    "is_financing_action",
+                    "is_corporate_action",
+                    "is_related_party",
+                    "reasoning",
+                    "currency",
                 )
                 if item.get(key) not in (None, "", [], {})
             }
+            normalized = normalize_capital_allocation_item(item)
             enriched_capital_actions.append(
                 {
                     "value": action,
@@ -348,13 +417,24 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
                     "evidence_references": evidence_references,
                     "status": item.get("status"),
                     "category": item.get("category"),
+                    "canonical_category": normalized.get("canonical_category"),
+                    "capital_allocation_group": normalized.get("capital_allocation_group"),
+                    "cash_flow_effect": normalized.get("cash_flow_effect"),
+                    "balance_sheet_effect": normalized.get("balance_sheet_effect"),
+                    "is_true_capital_deployment": normalized.get("is_true_capital_deployment"),
+                    "is_shareholder_return": normalized.get("is_shareholder_return"),
+                    "is_financing_action": normalized.get("is_financing_action"),
+                    "is_corporate_action": normalized.get("is_corporate_action"),
+                    "is_related_party": normalized.get("is_related_party"),
                     "amount": item.get("amount"),
+                    "currency": normalized.get("currency"),
                     "counterparty": item.get("counterparty"),
                     "relationship": item.get("relationship"),
                     "repayment_terms": item.get("repayment_terms"),
                     "approval_oversight_detail": item.get("approval_oversight_detail"),
                     "auditor_observation": item.get("auditor_observation"),
                     "purpose": item.get("purpose"),
+                    "reasoning": normalized.get("reasoning"),
                 }
             )
         if enriched_capital_actions:
@@ -552,6 +632,7 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
             management_focus = self._enrich_theme_items(snapshot["management_focus_areas"])
             major_projects = self._enrich_theme_items(snapshot["major_projects"])
             major_initiatives = self._enrich_theme_items(snapshot["key_initiatives"])
+            external_context = self._enrich_theme_items(snapshot.get("external_context_items", []))
             strategic_themes = sorted(
                 {
                     item["canonical_theme"]
@@ -567,11 +648,12 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
                     "management_focus": management_focus,
                     "major_projects": major_projects,
                     "major_initiatives": major_initiatives,
+                    "external_context": external_context,
                     "strategic_themes": strategic_themes,
                     "evidence_ids": sorted(
                         {
                             evidence_id
-                            for bucket in (management_focus, major_projects, major_initiatives)
+                            for bucket in (management_focus, major_projects, major_initiatives, external_context)
                             for item in bucket
                             for evidence_id in item.get("evidence_ids", [])
                         }
@@ -580,7 +662,9 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
             )
 
         continuity: Dict[str, List[str]] = {}
+        external_continuity: Dict[str, List[str]] = {}
         raw_labels_by_theme: Dict[str, List[str]] = {}
+        external_raw_labels_by_theme: Dict[str, List[str]] = {}
         for entry in timeline:
             year = entry["year"]
             for item in entry["management_focus"] + entry["major_projects"]:
@@ -590,6 +674,13 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
                 raw_labels_by_theme.setdefault(item["canonical_theme"], [])
                 if item["raw_label"] and item["raw_label"] not in raw_labels_by_theme[item["canonical_theme"]]:
                     raw_labels_by_theme[item["canonical_theme"]].append(item["raw_label"])
+            for item in entry.get("external_context", []):
+                external_continuity.setdefault(item["canonical_theme"], [])
+                if year not in external_continuity[item["canonical_theme"]]:
+                    external_continuity[item["canonical_theme"]].append(year)
+                external_raw_labels_by_theme.setdefault(item["canonical_theme"], [])
+                if item["raw_label"] and item["raw_label"] not in external_raw_labels_by_theme[item["canonical_theme"]]:
+                    external_raw_labels_by_theme[item["canonical_theme"]].append(item["raw_label"])
 
         repeated_focus = sorted([theme for theme, years in continuity.items() if len(years) > 1])
         shifts = []
@@ -620,6 +711,10 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
             "unresolved_strategy_questions": unresolved,
             "theme_mentions_by_year": {theme: years for theme, years in sorted(continuity.items())},
             "raw_labels_by_canonical_theme": {theme: labels for theme, labels in sorted(raw_labels_by_theme.items())},
+            "external_context_theme_mentions_by_year": {theme: years for theme, years in sorted(external_continuity.items())},
+            "external_context_raw_labels_by_canonical_theme": {
+                theme: labels for theme, labels in sorted(external_raw_labels_by_theme.items())
+            },
             "repeated_focus_areas": repeated_focus,
             "changed_focus_areas": sorted({theme for shift in shifts for theme in shift["added_themes"] + shift["removed_themes"]}),
         }
@@ -855,7 +950,7 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
 
     def _build_capital_allocation_timeline(self, year_records: Sequence[Dict[str, Any]], snapshots: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         timeline: List[Dict[str, Any]] = []
-        category_years: Dict[str, List[str]] = {category: [] for category in CAPITAL_TIMELINE_FIELDS}
+        category_years: Dict[str, List[str]] = {}
         missing_evidence: List[Dict[str, Any]] = []
 
         for record in year_records:
@@ -863,28 +958,58 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
                 missing_evidence.append({"year": record["year"], "reason": record["reason"] or "No usable intelligence artifacts found"})
 
         for snapshot in snapshots:
-            bucket_payload = {field: [] for field in CAPITAL_TIMELINE_FIELDS.values()}
+            bucket_payload = {
+                field: []
+                for field in (
+                    list(CAPITAL_TIMELINE_FIELDS.values())
+                    + list(dict.fromkeys(CAPITAL_CATEGORY_TIMELINE_FIELDS.values()))
+                )
+            }
             evidence_ids: List[str] = []
             for item in snapshot["capital_allocation_actions"]:
-                evidence_category = _first_compact_evidence(item.get("evidence_references")).get("category")
-                categories = _capital_category_order(
-                    self.taxonomy.classify_capital_allocation(
-                        item.get("value"),
-                        category=item.get("category"),
-                        status=item.get("status"),
-                        purpose=item.get("purpose"),
-                        amount=item.get("amount"),
-                        counterparty=item.get("counterparty"),
-                        relationship=item.get("relationship"),
-                        evidence_category=evidence_category,
+                normalized = dict(item)
+                if not normalized.get("canonical_category") or not normalized.get("capital_allocation_group"):
+                    fallback = normalize_capital_allocation_item(
+                        {
+                            "action": item.get("value"),
+                            "category": item.get("category"),
+                            "purpose": item.get("purpose"),
+                            "status": item.get("status"),
+                            "counterparty": item.get("counterparty"),
+                            "relationship": item.get("relationship"),
+                        }
                     )
+                    normalized.update(
+                        {
+                            "canonical_category": fallback.get("canonical_category"),
+                            "capital_allocation_group": fallback.get("capital_allocation_group"),
+                            "cash_flow_effect": fallback.get("cash_flow_effect"),
+                            "balance_sheet_effect": fallback.get("balance_sheet_effect"),
+                            "is_true_capital_deployment": fallback.get("is_true_capital_deployment"),
+                            "is_shareholder_return": fallback.get("is_shareholder_return"),
+                            "is_financing_action": fallback.get("is_financing_action"),
+                            "is_corporate_action": fallback.get("is_corporate_action"),
+                            "is_related_party": fallback.get("is_related_party"),
+                            "reasoning": fallback.get("reasoning"),
+                        }
+                    )
+
+                detail = _bucket_payload(
+                    normalized,
+                    category=normalized.get("canonical_category"),
                 )
-                for category in categories:
-                    detail = _bucket_payload(item, category=category)
-                    evidence_ids.extend(detail["evidence_ids"])
-                    bucket_payload[CAPITAL_TIMELINE_FIELDS[category]].append(detail)
-                    if snapshot["year"] not in category_years[category]:
-                        category_years[category].append(snapshot["year"])
+                evidence_ids.extend(detail["evidence_ids"])
+
+                group = str(normalized.get("capital_allocation_group") or "uncertain")
+                group_field = CAPITAL_TIMELINE_FIELDS.get(group, "uncertain")
+                bucket_payload[group_field].append(detail)
+                if snapshot["year"] not in category_years.setdefault(group, []):
+                    category_years[group].append(snapshot["year"])
+
+                category = str(normalized.get("canonical_category") or "uncertain")
+                category_field = CAPITAL_CATEGORY_TIMELINE_FIELDS.get(category)
+                if category_field:
+                    bucket_payload[category_field].append(detail)
 
             if not snapshot["capital_allocation_actions"]:
                 missing_evidence.append({"year": snapshot["year"], "reason": "No capital allocation actions found in available yearly intelligence."})
@@ -898,7 +1023,16 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
             )
 
         patterns = [{"category": category, "years_active": years} for category, years in category_years.items() if years]
-        recurring_concerns = [category for category in ("related_party_transaction", "loan_or_advance", "auditor_observation", "debt_borrowing") if len(category_years.get(category, [])) > 1]
+        recurring_concerns = [
+            category
+            for category in (
+                "related_party_capital_flows",
+                "accounting_or_disclosure_only",
+                "financing_actions",
+                "ownership_transfer_non_company_cashflow",
+            )
+            if len(category_years.get(category, [])) > 1
+        ]
 
         return {
             "company": self.company,
@@ -911,6 +1045,7 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
     def _build_management_consistency(self, strategy_timeline: Dict[str, Any], promise_tracker: Dict[str, Any]) -> Dict[str, Any]:
         theme_mentions = strategy_timeline.get("theme_mentions_by_year", {})
         raw_labels = strategy_timeline.get("raw_labels_by_canonical_theme", {})
+        external_theme_mentions = strategy_timeline.get("external_context_theme_mentions_by_year", {})
         observations: List[Dict[str, Any]] = []
         for theme, years in sorted(theme_mentions.items()):
             status = "consistent" if len(years) > 1 else "unclear"
@@ -953,6 +1088,10 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
             "changed_focus_areas": strategy_timeline.get("changed_focus_areas", []),
             "theme_mentions_by_year": theme_mentions,
             "raw_labels_by_canonical_theme": raw_labels,
+            "external_context_recurring_themes": sorted(
+                [theme for theme, years in external_theme_mentions.items() if len(years) > 1]
+            ),
+            "external_context_theme_mentions_by_year": external_theme_mentions,
             "promise_follow_through_summary": {
                 "fulfilled_promises": promise_tracker.get("fulfilled_promises", []),
                 "repeated_unresolved_promises": promise_tracker.get("repeated_unresolved_promises", []),

@@ -51,6 +51,7 @@ def create_cleaner():
     return CapacityCleaner(
         INPUT_FILE,
         OUTPUT_FILE,
+        module_name="capacity_expansions",
     )
 
 

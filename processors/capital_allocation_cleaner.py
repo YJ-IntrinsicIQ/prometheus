@@ -6,6 +6,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from core.base_cleaner import BaseCleaner  # noqa: E402
+from knowledge.capital_allocation_taxonomy import (  # noqa: E402
+    normalize_capital_allocation_item,
+    validate_capital_allocation_items,
+)
 
 
 INPUT_FILE = "extracted_capital_allocations.json"
@@ -20,6 +24,9 @@ def normalize(text):
 
 
 class CapitalAllocationCleaner(BaseCleaner):
+    def clean_item(self, item):
+        return normalize_capital_allocation_item(item)
+
     def is_valid(self, item):
         action = normalize(
             item.get(
@@ -60,8 +67,11 @@ class CapitalAllocationCleaner(BaseCleaner):
         seen = {}
 
         for item in items:
-            key = normalize(
-                item["action"]
+            key = (
+                normalize(item["action"]),
+                normalize(item.get("canonical_category", "")),
+                normalize(item.get("amount", "")),
+                str(item.get("page", "")),
             )
 
             if key not in seen:
@@ -70,6 +80,18 @@ class CapitalAllocationCleaner(BaseCleaner):
         return list(
             seen.values()
         )
+
+    def run(self):
+        cleaned = super().run()
+        validation = validate_capital_allocation_items(cleaned)
+        for warning in validation["warnings"]:
+            print(f"WARNING: {warning}")
+        if validation["errors"]:
+            raise ValueError(
+                "Capital allocation validation failed: "
+                + "; ".join(validation["errors"])
+            )
+        return cleaned
 
 
 def is_valid(item):
@@ -88,6 +110,7 @@ def create_cleaner():
     return CapitalAllocationCleaner(
         INPUT_FILE,
         OUTPUT_FILE,
+        module_name="capital_allocations",
     )
 
 

@@ -1,6 +1,10 @@
 import json
 
 from core.context_paths import extraction_path
+from knowledge.evidence_layer import (
+    finalize_cleaned_item,
+    validate_cleaned_item,
+)
 
 
 class BaseCleaner:
@@ -10,9 +14,11 @@ class BaseCleaner:
         self,
         input_file,
         output_file,
+        module_name=None,
     ):
         self.input_file = extraction_path(input_file)
         self.output_file = extraction_path(output_file)
+        self.module_name = module_name or output_file
 
     def is_valid(self, item):
         return True
@@ -45,6 +51,7 @@ class BaseCleaner:
 
         cleaned = []
         removed = []
+        validation_warnings = []
 
         for item in items:
             if not self.is_valid(item):
@@ -64,6 +71,26 @@ class BaseCleaner:
             cleaned
         )
 
+        finalized = []
+        for index, item in enumerate(cleaned, start=1):
+            item = finalize_cleaned_item(
+                item,
+                module_name=self.module_name,
+                item_index=index,
+            )
+            validation = validate_cleaned_item(
+                item,
+                module_name=self.module_name,
+            )
+            if validation["errors"]:
+                raise ValueError(
+                    f"Invalid cleaned {self.module_name} item: "
+                    + "; ".join(validation["errors"])
+                )
+            validation_warnings.extend(validation["warnings"])
+            finalized.append(item)
+        cleaned = finalized
+
         with open(
             self.output_file,
             "w",
@@ -81,5 +108,10 @@ class BaseCleaner:
             cleaned,
             removed,
         )
+
+        for warning in dict.fromkeys(validation_warnings):
+            print(
+                f"WARNING: {warning}"
+            )
 
         return cleaned

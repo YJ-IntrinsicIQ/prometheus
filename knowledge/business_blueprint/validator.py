@@ -42,6 +42,8 @@ def validate_blueprint(blueprint: BusinessBlueprint) -> List[str]:
             errors.append(f"candidate_dna_signals[{index}].supporting_reason is required")
 
     if blueprint.dnas:
+        if blueprint.dnas_status != "deprecated_not_authoritative":
+            errors.append("dnas_status must be deprecated_not_authoritative when blueprint.dnas is present")
         seen = set()
         for index, item in enumerate(blueprint.dnas):
             if not item.name:

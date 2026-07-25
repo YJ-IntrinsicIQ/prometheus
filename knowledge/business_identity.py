@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Dict, List, Optional
 
-from knowledge.business_blueprint import BusinessBlueprint, BusinessDNA
+from knowledge.business_blueprint import BusinessBlueprint
 from knowledge.business_classifier import Registry
 from knowledge.question_engine import QuestionRegistry
 
 
 LOW_CONFIDENCE_WARNING_THRESHOLD = 0.45
+DEPRECATED_BLUEPRINT_DNAS_STATUS = "deprecated_not_authoritative"
 
 
 def _coerce_blueprint(blueprint: BusinessBlueprint | Dict[str, Any] | None) -> Optional[BusinessBlueprint]:
@@ -31,39 +32,32 @@ def align_blueprint_with_classification(
     blueprint: BusinessBlueprint,
     classification: Dict[str, Any],
 ) -> BusinessBlueprint:
-    official_dnas = [
-        str(dna).strip()
-        for dna in classification.get("business_dnas", [])
-        if str(dna).strip()
-    ]
-    confidence = classification.get("confidence")
-    try:
-        dna_confidence = float(confidence) if confidence is not None else blueprint.metadata.confidence
-    except (TypeError, ValueError):
-        dna_confidence = blueprint.metadata.confidence
-
     return replace(
         blueprint,
-        dnas=[
-            BusinessDNA(name=dna, confidence=dna_confidence)
-            for dna in official_dnas
-        ],
-        dnas_source="business_classification",
+        dnas=list(blueprint.dnas),
+        dnas_status=DEPRECATED_BLUEPRINT_DNAS_STATUS,
+        dnas_source=blueprint.dnas_source,
     )
 
 
-def build_business_identity_manifest(
+def validate_business_identity(
     blueprint: BusinessBlueprint | Dict[str, Any] | None,
     classification: Dict[str, Any] | None,
     *,
     blueprint_source: str = "business_blueprint.json",
     official_source: str = "business_classification.json",
     require_classification: bool = True,
+    authoritative_dna_source: str = "business_classification.json",
 ) -> Dict[str, Any]:
     blueprint_obj = _coerce_blueprint(blueprint)
     classification = classification if isinstance(classification, dict) else {}
     warnings: List[str] = []
     failures: List[str] = []
+
+    if authoritative_dna_source != official_source:
+        failures.append(
+            "Downstream must use business_classification.business_dnas as the authoritative Business DNA source."
+        )
 
     business_dnas = classification.get("business_dnas", [])
     if require_classification and not classification:
@@ -91,6 +85,11 @@ def build_business_identity_manifest(
         failures.append("Selected Business DNAs require non-empty classification.rationale.")
     if official_dnas and not evidence_used:
         failures.append("Selected Business DNAs require non-empty classification.evidence_used.")
+    if not official_dnas and classification:
+        if not rationale:
+            failures.append("Empty business_classification.business_dnas requires explicit classification.rationale.")
+        if not rejected_dnas:
+            failures.append("Empty business_classification.business_dnas requires non-empty classification.rejected_dnas.")
 
     registry = QuestionRegistry()
     expected_modules = [module.module_id for module in registry.modules_for_dnas(official_dnas)]
@@ -105,10 +104,15 @@ def build_business_identity_manifest(
 
     blueprint_dnas = _blueprint_dna_names(blueprint_obj)
     blueprint_dnas_source = getattr(blueprint_obj, "dnas_source", None) if blueprint_obj is not None else None
+    blueprint_dnas_status = getattr(blueprint_obj, "dnas_status", None) if blueprint_obj is not None else None
     if blueprint_dnas:
-        if blueprint_dnas_source != "business_classification" and blueprint_dnas != official_dnas:
+        if blueprint_dnas_status != DEPRECATED_BLUEPRINT_DNAS_STATUS and blueprint_dnas != official_dnas:
             failures.append(
                 "business_blueprint.dnas conflicts with business_classification.business_dnas."
+            )
+        elif blueprint_dnas_status != DEPRECATED_BLUEPRINT_DNAS_STATUS:
+            warnings.append(
+                "business_blueprint.dnas is present but not marked deprecated_not_authoritative."
             )
         elif blueprint_dnas_source == "business_classification" and blueprint_dnas != official_dnas:
             failures.append(
@@ -147,11 +151,30 @@ def build_business_identity_manifest(
         "blueprint_source": blueprint_source,
         "official_business_dnas": official_dnas,
         "blueprint_candidate_dna_signals": candidate_signals,
+        "blueprint_dnas_status": blueprint_dnas_status or DEPRECATED_BLUEPRINT_DNAS_STATUS,
         "classification_confidence": confidence_value,
         "conflict_status": status,
         "warnings": warnings,
         "failures": failures,
     }
+
+
+def build_business_identity_manifest(
+    blueprint: BusinessBlueprint | Dict[str, Any] | None,
+    classification: Dict[str, Any] | None,
+    *,
+    blueprint_source: str = "business_blueprint.json",
+    official_source: str = "business_classification.json",
+    require_classification: bool = True,
+) -> Dict[str, Any]:
+    return validate_business_identity(
+        blueprint,
+        classification,
+        blueprint_source=blueprint_source,
+        official_source=official_source,
+        require_classification=require_classification,
+        authoritative_dna_source=official_source,
+    )
 
 
 def ensure_business_identity_contract(
@@ -162,12 +185,13 @@ def ensure_business_identity_contract(
     official_source: str = "business_classification.json",
     require_classification: bool = True,
 ) -> Dict[str, Any]:
-    manifest = build_business_identity_manifest(
+    manifest = validate_business_identity(
         blueprint,
         classification,
         blueprint_source=blueprint_source,
         official_source=official_source,
         require_classification=require_classification,
+        authoritative_dna_source=official_source,
     )
     if manifest["failures"]:
         raise ValueError("; ".join(manifest["failures"]))
