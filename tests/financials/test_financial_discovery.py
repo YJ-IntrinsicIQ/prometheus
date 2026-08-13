@@ -65,6 +65,69 @@ def test_balance_sheet_discovery(tmp_path):
     assert result.sections["primary_balance_sheet_statement"]
 
 
+def test_balance_sheet_discovery_from_structural_signature_when_title_is_on_prior_page(tmp_path):
+    chunk_path = _write_chunks(
+        tmp_path / "clean_chunks.json",
+        [
+            _chunk(
+                "CHK-STRUCTURAL-BS",
+                132,
+                "Particulars Notes No As at March 31, 2025 As at March 31, 2024 "
+                "ASSETS Property Plant and Equipment 120.00 100.00 Current assets 880.00 700.00 "
+                "TOTAL 1,000.00 800.00 EQUITY AND LIABILITIES Equity Share capital 10.00 10.00 "
+                "Other Equity 590.00 490.00 Borrowings 5.00 8.00 Current liabilities 395.00 292.00 "
+                "Summary of Significant Accounting Policies follows on the same extracted page.",
+            )
+        ],
+    )
+
+    result = discover_financial_sections(company="syntheticco", year="fy25", chunk_path=chunk_path)
+
+    items = result.sections["primary_balance_sheet_statement"]
+    assert items
+    assert "structural:assets_equity_liabilities" in items[0].signals
+
+
+def test_titleless_ifrs_statement_of_financial_position_structure_is_discovered(tmp_path):
+    chunk_path = _write_chunks(
+        tmp_path / "clean_chunks.json",
+        [
+            _chunk(
+                "CHK-IFRS-BS",
+                80,
+                "Note 31 December 2025 31 December 2024 Non-current assets 600.00 550.00 "
+                "Current assets 400.00 350.00 Total assets 1,000.00 900.00 Equity 650.00 600.00 "
+                "Non-current liabilities 150.00 140.00 Current liabilities 200.00 160.00",
+            )
+        ],
+    )
+
+    result = discover_financial_sections(company="syntheticco", year="fy25", chunk_path=chunk_path)
+
+    assert result.sections["primary_balance_sheet_statement"]
+
+
+def test_cash_flow_with_working_capital_and_equity_rows_is_not_stolen_by_balance_sheet_structure(tmp_path):
+    chunk_path = _write_chunks(
+        tmp_path / "clean_chunks.json",
+        [
+            _chunk(
+                "CHK-CF-STRUCTURE",
+                90,
+                "Particulars For the year ended March 31, 2025 For the year ended March 31, 2024 "
+                "A. Cash Flow From Operating Activities Increase in current assets (20.00) (10.00) "
+                "Increase in current liabilities 12.00 8.00 Net Cash Flow From Operating Activities 80.00 70.00 "
+                "Cash Flow From Financing Activities Proceeds from issue of equity shares 50.00 0.00",
+            )
+        ],
+    )
+
+    result = discover_financial_sections(company="syntheticco", year="fy25", chunk_path=chunk_path)
+
+    assert result.sections["primary_cash_flow_statement"]
+    assert not result.sections["primary_balance_sheet_statement"]
+
+
 def test_cash_flow_discovery(tmp_path):
     chunk_path = _write_chunks(
         tmp_path / "clean_chunks.json",

@@ -9,6 +9,7 @@ import httpx
 
 from .base import BaseAIProvider
 from .exceptions import AIRateLimitError, AIResponseError, AITimeoutError, AIProviderError
+from .retry import is_retryable_empty_response_error
 from .schema import AIResponse
 
 from pathlib import Path
@@ -70,36 +71,49 @@ class GroqProvider(BaseAIProvider):
             system_prompt=system_prompt,
         )
         start = time.perf_counter()
-        try:
-            with httpx.Client(timeout=httpx.Timeout(self.timeout_seconds)) as client:
-                response = client.post(
-                    self.api_url,
-                    json=payload,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
-                response.raise_for_status()
-                response_payload = response.json()
-        except httpx.TimeoutException as exc:
-            raise AITimeoutError("Groq request timed out") from exc
-        except httpx.HTTPStatusError as exc:
-            status_code = exc.response.status_code
-            if status_code == 429:
-                raise AIRateLimitError("Groq rate limit exceeded") from exc
-            raise AIProviderError(
-                f"Groq request failed with HTTP {status_code}: {exc.response.text}"
-            ) from exc
-        except json.JSONDecodeError as exc:
-            raise AIResponseError("Groq returned malformed JSON") from exc
-        except ValueError as exc:
-            raise AIResponseError("Groq returned malformed JSON") from exc
-        except httpx.RequestError as exc:
-            raise AIProviderError(f"Groq request failed: {exc}") from exc
+        attempts = 2
+        last_error: Optional[Exception] = None
+        for attempt in range(1, attempts + 1):
+            try:
+                with httpx.Client(timeout=httpx.Timeout(self.timeout_seconds)) as client:
+                    response = client.post(
+                        self.api_url,
+                        json=payload,
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                    response.raise_for_status()
+                    response_payload = response.json()
 
-        latency_ms = (time.perf_counter() - start) * 1000
-        return self._parse_response(response_payload, latency_ms)
+                latency_ms = (time.perf_counter() - start) * 1000
+                return self._parse_response(response_payload, latency_ms)
+            except AIResponseError as exc:
+                last_error = exc
+                if is_retryable_empty_response_error(exc) and attempt < attempts:
+                    continue
+                raise
+            except httpx.TimeoutException as exc:
+                raise AITimeoutError("Groq request timed out") from exc
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code
+                if status_code == 429:
+                    raise AIRateLimitError("Groq rate limit exceeded") from exc
+                raise AIProviderError(
+                    f"Groq request failed with HTTP {status_code}: {exc.response.text}"
+                ) from exc
+            except json.JSONDecodeError as exc:
+                raise AIResponseError("Groq returned malformed JSON") from exc
+            except ValueError as exc:
+                raise AIResponseError("Groq returned malformed JSON") from exc
+            except httpx.RequestError as exc:
+                last_error = exc
+                raise AIProviderError(f"Groq request failed: {exc}") from exc
+
+        if last_error is not None:
+            raise AIProviderError(f"Groq request failed before a response was returned: {last_error}") from last_error
+        raise AIProviderError("Groq request failed before a response was returned")
 
     def _build_payload(
         self,

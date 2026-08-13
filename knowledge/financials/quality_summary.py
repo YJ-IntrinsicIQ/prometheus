@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from .financial_memory_truth import build_financial_memory_manifest, build_financial_truth_pack
 from .quality_schema import (
     DeterministicFinancialQualitySection,
     FinancialQualitySummary,
@@ -603,9 +604,16 @@ def _build_legacy_financial_quality_summary(*, company: str, trends_path: Path) 
     dilution_quality, d_pos, d_red, d_missing = _build_dilution_quality(trends)
     ownership_quality, o_pos, o_red, o_missing = _build_ownership_quality(trends)
 
+    company_root = trends_path.parents[2]
+    manifest = build_financial_memory_manifest(company=company, company_root=company_root)
+    truth_pack = build_financial_truth_pack(company=company, company_root=company_root)
+
     positive_signals: List[str] = []
     red_flags: List[str] = []
     missing_data: List[str] = []
+    precise_missing_data: List[str] = []
+    unreliable_data: List[str] = []
+    invalid_or_quarantined_data: List[str] = []
     warnings: List[str] = [str(item) for item in trends.get("warnings", [])] if isinstance(trends.get("warnings"), list) else []
     limitations: List[str] = [str(item) for item in trends.get("limitations", [])] if isinstance(trends.get("limitations"), list) else []
 
@@ -619,6 +627,23 @@ def _build_legacy_financial_quality_summary(*, company: str, trends_path: Path) 
         for item in group:
             _append_unique(missing_data, item)
 
+    truth_by_group = {
+        "usable_current": truth_pack.get("usable_current_metrics", []),
+        "usable_derived": truth_pack.get("usable_derived_metrics", []),
+        "precise_missing": truth_pack.get("precise_missing_metrics", []),
+        "unreliable": truth_pack.get("unreliable_metrics", []),
+        "invalid": truth_pack.get("invalid_or_quarantined_metrics", []),
+    }
+    for item in truth_by_group["precise_missing"]:
+        if isinstance(item, dict):
+            _append_unique(precise_missing_data, str(item.get("metric_name") or item.get("metric_id") or "missing metric"))
+    for item in truth_by_group["unreliable"]:
+        if isinstance(item, dict):
+            _append_unique(unreliable_data, str(item.get("metric_name") or item.get("metric_id") or "unreliable metric"))
+    for item in truth_by_group["invalid"]:
+        if isinstance(item, dict):
+            _append_unique(invalid_or_quarantined_data, str(item.get("metric_name") or item.get("metric_id") or "invalid metric"))
+
     for section in (
         growth_quality,
         margin_quality,
@@ -631,6 +656,34 @@ def _build_legacy_financial_quality_summary(*, company: str, trends_path: Path) 
     ):
         for warning in section.warnings:
             _append_unique(warnings, warning)
+
+    for blocked in truth_pack.get("financial_warnings_blocked_downstream", []) if isinstance(truth_pack.get("financial_warnings_blocked_downstream"), list) else []:
+        if not isinstance(blocked, dict):
+            continue
+        original_warning = str(blocked.get("original_warning") or "")
+        normalized_warning = str(blocked.get("normalized_warning") or "")
+        metric = str(blocked.get("affected_metric") or "")
+        lowered = original_warning.lower()
+        if original_warning and original_warning in warnings:
+            warnings = [item for item in warnings if item != original_warning]
+        if normalized_warning:
+            _append_unique(warnings, normalized_warning)
+        if metric == "fcf":
+            missing_data = [item for item in missing_data if "fcf" not in item.lower()]
+        if metric == "cfo_to_pat":
+            missing_data = [item for item in missing_data if "cfo/pat" not in item.lower()]
+        if metric in {"payables", "payable_days"}:
+            missing_data = [item for item in missing_data if "payables" not in item.lower()]
+        if metric == "roe":
+            missing_data = [item for item in missing_data if "roe" not in item.lower()]
+        if metric == "roce":
+            missing_data = [item for item in missing_data if "roce" not in item.lower()]
+        if metric == "closing_shares":
+            missing_data = [item for item in missing_data if "share count missing" not in item.lower()]
+            _append_unique(warnings, "Closing shares exist, but weighted-average shares are missing." if any("weighted" in str(x).lower() for x in precise_missing_data) else "Share-count interpretation is partial.")
+        if "ownership" in lowered and invalid_or_quarantined_data:
+            missing_data = [item for item in missing_data if "ownership" not in item.lower()]
+            _append_unique(warnings, "Ownership data invalid/quarantined.")
 
     overall = _overall_quality(
         [
@@ -650,23 +703,61 @@ def _build_legacy_financial_quality_summary(*, company: str, trends_path: Path) 
     if not revenue_series and not pat_series:
         status = "fail"
 
+    current_year = str(years[-1]) if years else ""
+    current_year_snapshot = {
+        "year": current_year,
+        "single_year_snapshot": len(years) == 1,
+        "usable_metrics": [item.get("metric_id") for item in truth_by_group["usable_current"] if isinstance(item, dict) and item.get("fiscal_year") == current_year][:12],
+        "derived_metrics": [item.get("metric_id") for item in truth_by_group["usable_derived"] if isinstance(item, dict) and item.get("fiscal_year") == current_year][:12],
+    }
+    multi_year_trend_quality = {
+        "insufficient_comparable_periods": len(years) < 2,
+        "years_covered": [str(year) for year in years],
+        "status": "single_year_snapshot" if len(years) == 1 else "multi_year_available",
+    }
+    profitability_quality = margin_quality
+    debt_quality = _section(
+        "Debt quality is constrained by reconciliation and leverage context." if unreliable_data else "Debt quality reflects the available leverage evidence.",
+        "weak" if any("debt" in item.lower() for item in unreliable_data) else balance_quality.status,
+        signals=[],
+        warnings=[item for item in warnings if "debt" in item.lower()],
+        metrics={"unreliable_debt": any("debt" in item.lower() for item in unreliable_data)},
+    )
+    per_share_quality = dilution_quality
+    capital_allocation_quality = _section(
+        "Capital-allocation quality reflects capex, FCF, dividend, and comparability evidence.",
+        "mixed" if any("capex" in item.lower() or "fcf" in item.lower() for item in warnings + missing_data) else "adequate",
+        signals=[],
+        warnings=[item for item in warnings if any(token in item.lower() for token in ("capex", "fcf", "dividend", "share"))],
+        metrics={},
+    )
+
     report = FinancialQualitySummary(
         company=company,
         generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         years_covered=[str(year) for year in years],
         status=status,
         overall_financial_quality=overall,
+        current_year_snapshot=current_year_snapshot,
+        multi_year_trend_quality=multi_year_trend_quality,
         growth_quality=growth_quality,
+        profitability_quality=profitability_quality,
         margin_quality=margin_quality,
         return_on_capital_quality=return_quality,
         cash_conversion_quality=cash_quality,
         balance_sheet_strength=balance_quality,
+        debt_quality=debt_quality,
         working_capital_quality=working_quality,
+        per_share_quality=per_share_quality,
         dilution_and_corporate_action_quality=dilution_quality,
         ownership_quality=ownership_quality,
+        capital_allocation_quality=capital_allocation_quality,
         red_flags=red_flags,
         positive_signals=positive_signals,
         missing_data=missing_data,
+        precise_missing_data=precise_missing_data,
+        unreliable_data=unreliable_data,
+        invalid_or_quarantined_data=invalid_or_quarantined_data,
         warnings=warnings,
         limitations=limitations,
     )

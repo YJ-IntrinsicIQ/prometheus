@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+import intelligence.investor_panel.runner as runner_module
 from intelligence.investor_panel.briefs import LENS_CONFIG
 from intelligence.investor_panel.doctrine_registry import InvestorDoctrineRegistry
 from intelligence.investor_panel.runner import (
@@ -126,6 +127,7 @@ def _write_pcim(base_dir: Path, company: str, *, missing_sections=None) -> Path:
         "working_capital_inputs": {
             "metrics": [
                 {"metric": "receivable_days", "series": [{"year": "fy25", "value": 34.0, "source_artifact": "financial_ratios.json", "evidence_ids": ["ev_fin_1"]}]},
+                {"metric": "payable_days", "series": [{"year": "fy25", "value": 28.0, "source_artifact": "financial_ratios.json", "evidence_ids": ["ev_fin_1"]}]},
                 {"metric": "cash_conversion_cycle", "series": [{"year": "fy25", "value": 18.0, "source_artifact": "financial_ratios.json", "evidence_ids": ["ev_fin_1"]}]},
             ],
             "by_year": [
@@ -133,6 +135,7 @@ def _write_pcim(base_dir: Path, company: str, *, missing_sections=None) -> Path:
                     "year": "fy25",
                     "metrics": [
                         {"metric": "receivable_days", "value": 34.0, "unit": "days", "period": "fy25", "basis": "consolidated", "confidence": "medium", "source_artifacts": ["financial_ratios.json"], "warnings": [], "limitations": [], "evidence_ids": ["ev_fin_1"]},
+                        {"metric": "payable_days", "value": 28.0, "unit": "days", "period": "fy25", "basis": "consolidated", "confidence": "medium", "source_artifacts": ["financial_ratios.json"], "warnings": [], "limitations": [], "evidence_ids": ["ev_fin_1"]},
                         {"metric": "cash_conversion_cycle", "value": 18.0, "unit": "days", "period": "fy25", "basis": "consolidated", "confidence": "medium", "source_artifacts": ["financial_ratios.json"], "warnings": [], "limitations": [], "evidence_ids": ["ev_fin_1"]},
                     ],
                     "warnings": [],
@@ -172,6 +175,68 @@ def _write_pcim(base_dir: Path, company: str, *, missing_sections=None) -> Path:
             "warnings": [],
             "limitations": [],
             "source_artifact": "financial_driver_attribution.json",
+        },
+        "financial_truth_inputs": {
+            "usable_current_metrics": [
+                {"metric_id": "receivables", "value": 14.0, "basis": "consolidated", "confidence": "medium"},
+                {"metric_id": "inventory", "value": 11.0, "basis": "consolidated", "confidence": "medium"},
+                {"metric_id": "payables", "value": 9.0, "basis": "consolidated", "confidence": "medium"},
+                {"metric_id": "shares_outstanding", "value": 1.6, "basis": "consolidated", "confidence": "medium"},
+            ],
+            "usable_derived_metrics": [
+                {"metric_id": "owner_earnings_estimate", "value": 13.0, "basis": "consolidated", "confidence": "medium"},
+                {"metric_id": "conservative_fcf_after_total_capex", "value": 12.0, "basis": "consolidated", "confidence": "medium"},
+                {"metric_id": "total_identified_capex", "value": 7.0, "basis": "consolidated", "confidence": "medium"},
+                {"metric_id": "capex_deployed", "value": 7.0, "basis": "consolidated", "confidence": "medium"},
+            ],
+            "source_artifact": "financial_truth_pack.json",
+        },
+        "owner_earnings_readiness_inputs": {
+            "bridges": [
+                {
+                    "fiscal_year": "fy25",
+                    "total_identified_capex": 7.0,
+                    "conservative_fcf_after_total_capex": 12.0,
+                    "owner_earnings_estimate": 13.0,
+                    "owner_earnings_precision_status": "estimate_available",
+                }
+            ],
+            "source_artifact": "owner_earnings_bridge.json",
+        },
+        "working_capital_quality_inputs": {
+            "drilldown": [
+                {
+                    "metric_id": "receivables",
+                    "value": 14.0,
+                    "basis": "consolidated",
+                    "confidence": "medium",
+                },
+                {
+                    "metric_id": "inventory",
+                    "value": 11.0,
+                    "basis": "consolidated",
+                    "confidence": "medium",
+                },
+                {
+                    "metric_id": "payables",
+                    "value": 9.0,
+                    "basis": "consolidated",
+                    "confidence": "medium",
+                },
+            ],
+            "source_artifact": "working_capital_quality_drilldown.json",
+        },
+        "capital_allocation_financial_inputs": {
+            "entries": [
+                {"metric_id": "capex_deployed", "value": 7.0, "basis": "consolidated", "confidence": "medium"},
+            ],
+            "source_artifact": "capital_allocation_roi_ledger.json",
+        },
+        "per_share_compounding_inputs": {
+            "analysis": [
+                {"metric_id": "closing_shares", "value": 1.6, "basis": "consolidated", "confidence": "medium"},
+            ],
+            "source_artifact": "per_share_compounding_analysis.json",
         },
         "multi_year_financial_inputs": {
             "years_covered": ["fy24", "fy25"],
@@ -299,7 +364,7 @@ def test_analyst_prompt_includes_expected_financial_sections(tmp_path, analyst, 
     assert '"source_chunk"' not in prompt
 
 
-def test_invalid_financial_metric_is_rejected(tmp_path):
+def test_unknown_financial_metric_is_omitted_to_diagnostics(tmp_path):
     pcim_path = _write_pcim(tmp_path, "finpanel")
     pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
     doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
@@ -353,17 +418,74 @@ def test_invalid_financial_metric_is_rejected(tmp_path):
         }
     )
 
-    with pytest.raises(ValueError, match="financial_metrics_used contains metrics not present"):
-        _validate_llm_panel_output(
-            payload_text,
-            doctrine=doctrine,
-            company="finpanel",
-            pcim_path=pcim_path,
-            pcim_version="1.0",
-            pcim=pcim,
-            consumed_sections=consumed_sections,
-            allowed_evidence_ids=["ev_fin_1", "ev_fd_1"],
+    payload = _validate_llm_panel_output(
+        payload_text,
+        doctrine=doctrine,
+        company="finpanel",
+        pcim_path=pcim_path,
+        pcim_version="1.0",
+        pcim=pcim,
+        consumed_sections=consumed_sections,
+        allowed_evidence_ids=["ev_fin_1", "ev_fd_1"],
+    )
+
+    assert payload["financial_metrics_used"] == []
+    assert payload["unsupported_financial_metric_references"][0]["original_metric_label"] == "invented_ratio"
+    assert payload["unsupported_financial_metric_references"][0]["repair_status"] == "omitted"
+    assert any("unsupported metric reference omitted" in item.lower() for item in payload["schema_warnings"])
+
+
+@pytest.mark.parametrize(
+    ("raw_metric", "expected_metric"),
+    [
+        ("owner-earnings estimate (derived)", "owner_earnings_estimate"),
+        ("identified capex (total)", "total_identified_capex"),
+        ("capex deployed (capital allocation ledger)", "capex_deployed"),
+        ("closing shares", "shares_outstanding"),
+        ("receivables (value)", "receivables"),
+        ("inventory (value)", "inventory"),
+        ("payables (value)", "payables"),
+        ("payable days", "payable_days"),
+        ("receivable days", "receivable_days"),
+        ("cash conversion cycle", "cash_conversion_cycle"),
+        ("conservative fcf", "conservative_fcf_after_total_capex"),
+    ],
+)
+def test_financial_metric_aliases_normalize_to_truth_pack_metrics(tmp_path, raw_metric, expected_metric):
+    pcim_path = _write_pcim(tmp_path, "finpanel")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    consumed_sections = list(
+        dict.fromkeys(
+            list(doctrine["evidence_required_from_pcim"])
+            + [
+                "financial_trend_inputs",
+                "financial_truth_inputs",
+                "owner_earnings_readiness_inputs",
+                "working_capital_inputs",
+                "working_capital_quality_inputs",
+                "capital_allocation_financial_inputs",
+                "per_share_compounding_inputs",
+            ]
         )
+    )
+    payload_text = _valid_buffett_payload(consumed_sections, financial_metrics_used=[raw_metric])
+
+    payload = _validate_llm_panel_output(
+        payload_text,
+        doctrine=doctrine,
+        company="finpanel",
+        pcim_path=pcim_path,
+        pcim_version="1.0",
+        pcim=pcim,
+        consumed_sections=consumed_sections,
+        allowed_evidence_ids=["ev_fin_1", "ev_fd_1"],
+    )
+
+    assert payload["financial_metrics_used"][0]["metric"] == expected_metric
+    assert payload["financial_metrics_used"][0]["original_metric_label"] == raw_metric
+    assert payload["financial_metrics_used"][0]["canonical_metric_id"].startswith(expected_metric)
+    assert payload["financial_metric_normalizations_applied"][0]["canonical_metric_name"] == expected_metric
 
 
 def test_missing_financial_sections_flow_into_dry_run_missing_data(tmp_path):
@@ -448,6 +570,160 @@ def _valid_buffett_payload(
             },
         }
     )
+
+
+def test_raw_assessment_string_is_repaired_before_validation(tmp_path):
+    pcim_path = _write_pcim(tmp_path, "finpanel")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    consumed_sections = list(doctrine["evidence_required_from_pcim"])
+    payload = json.loads(_valid_buffett_payload(consumed_sections))
+    payload["assessment"] = "Business quality appears solid, but evidence remains incomplete."
+
+    parsed = _validate_llm_panel_output(
+        json.dumps(payload),
+        doctrine=doctrine,
+        company="finpanel",
+        pcim_path=pcim_path,
+        pcim_version="1.0",
+        pcim=pcim,
+        consumed_sections=consumed_sections,
+        allowed_evidence_ids=["ev_fin_1", "ev_fd_1"],
+    )
+
+    assert isinstance(parsed["assessment"], dict)
+    assert parsed["assessment"]["business_quality_assessment"] == payload["assessment"]
+    assert any(
+        "assessment was returned as string and normalized" in item
+        for item in parsed["schema_warnings"]
+    )
+
+
+def test_raw_assessment_list_is_repaired_before_validation(tmp_path):
+    pcim_path = _write_pcim(tmp_path, "finpanel")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    consumed_sections = list(doctrine["evidence_required_from_pcim"])
+    payload = json.loads(_valid_buffett_payload(consumed_sections))
+    payload["assessment"] = [
+        "Business quality appears solid.",
+        "Capital allocation still needs more evidence.",
+    ]
+
+    parsed = _validate_llm_panel_output(
+        json.dumps(payload),
+        doctrine=doctrine,
+        company="finpanel",
+        pcim_path=pcim_path,
+        pcim_version="1.0",
+        pcim=pcim,
+        consumed_sections=consumed_sections,
+        allowed_evidence_ids=["ev_fin_1", "ev_fd_1"],
+    )
+
+    assert isinstance(parsed["assessment"], dict)
+    assert "Business quality appears solid." in parsed["assessment"]["business_quality_assessment"]
+    assert any(
+        "assessment was returned as list and normalized" in item
+        for item in parsed["schema_warnings"]
+    )
+
+
+def test_missing_assessment_uses_skeleton_defaults(tmp_path):
+    pcim_path = _write_pcim(tmp_path, "finpanel")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    consumed_sections = list(doctrine["evidence_required_from_pcim"])
+    payload = json.loads(_valid_buffett_payload(consumed_sections))
+    payload.pop("assessment", None)
+
+    parsed = _validate_llm_panel_output(
+        json.dumps(payload),
+        doctrine=doctrine,
+        company="finpanel",
+        pcim_path=pcim_path,
+        pcim_version="1.0",
+        pcim=pcim,
+        consumed_sections=consumed_sections,
+        allowed_evidence_ids=["ev_fin_1", "ev_fd_1"],
+    )
+
+    assert isinstance(parsed["assessment"], dict)
+    assert parsed["assessment"]["business_quality_assessment"]
+    assert any(
+        "assessment was missing; deterministic skeleton defaults were retained." in item
+        for item in parsed["schema_warnings"]
+    )
+
+
+def test_unknown_top_level_fields_go_to_diagnostics_not_clean_payload(tmp_path):
+    pcim_path = _write_pcim(tmp_path, "finpanel")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    consumed_sections = list(doctrine["evidence_required_from_pcim"])
+    payload = json.loads(_valid_buffett_payload(consumed_sections))
+    payload["mystery_field"] = {"debug": "keep out of clean artifact"}
+
+    parsed = _validate_llm_panel_output(
+        json.dumps(payload),
+        doctrine=doctrine,
+        company="finpanel",
+        pcim_path=pcim_path,
+        pcim_version="1.0",
+        pcim=pcim,
+        consumed_sections=consumed_sections,
+        allowed_evidence_ids=["ev_fin_1", "ev_fd_1"],
+    )
+
+    assert "mystery_field" not in parsed
+    assert any(
+        "Unknown top-level fields were removed to diagnostics" in item
+        for item in parsed["schema_warnings"]
+    )
+
+
+def test_validate_wrapper_repairs_before_strict_validation(monkeypatch, tmp_path):
+    pcim_path = _write_pcim(tmp_path, "finpanel")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    consumed_sections = list(doctrine["evidence_required_from_pcim"])
+    payload = json.loads(_valid_buffett_payload(consumed_sections))
+    payload["assessment"] = "Raw draft assessment"
+    call_order = []
+
+    def fake_repair(parsed, **kwargs):
+        call_order.append(("repair", type(parsed.get("assessment")).__name__))
+        repaired = dict(parsed)
+        repaired["assessment"] = {
+            "business_quality_assessment": "Repaired assessment",
+            "moat_assessment": "Repaired moat",
+            "capital_allocation_assessment": "Repaired capital allocation",
+            "management_rationality_assessment": "Repaired rationality",
+        }
+        repaired["schema_warnings"] = ["repair happened first"]
+        return repaired, ["repair happened first"]
+
+    def fake_validate(parsed, **kwargs):
+        call_order.append(("validate", type(parsed.get("assessment")).__name__))
+        assert isinstance(parsed["assessment"], dict)
+        return parsed
+
+    monkeypatch.setattr(runner_module, "_repair_llm_panel_output_draft", fake_repair)
+    monkeypatch.setattr(runner_module, "_validate_repaired_llm_panel_output", fake_validate)
+
+    result = _validate_llm_panel_output(
+        json.dumps(payload),
+        doctrine=doctrine,
+        company="finpanel",
+        pcim_path=pcim_path,
+        pcim_version="1.0",
+        pcim=pcim,
+        consumed_sections=consumed_sections,
+        allowed_evidence_ids=["ev_fin_1", "ev_fd_1"],
+    )
+
+    assert call_order == [("repair", "str"), ("validate", "dict")]
+    assert result["assessment"]["business_quality_assessment"] == "Repaired assessment"
 
 
 def test_equivalent_per_share_limitation_satisfies_warning_carry_forward(tmp_path):
@@ -609,6 +885,14 @@ def test_missing_payables_warning_accepts_equivalent_wording(tmp_path):
         if metric["metric"] not in {"payable_days", "cash_conversion_cycle"}
     ]
     pcim["working_capital_inputs"]["warnings"] = ["payable days missing"]
+    pcim["financial_truth_inputs"]["usable_current_metrics"] = [
+        item for item in pcim["financial_truth_inputs"]["usable_current_metrics"]
+        if item.get("metric_id") != "payables"
+    ]
+    pcim["working_capital_quality_inputs"]["drilldown"] = [
+        item for item in pcim["working_capital_quality_inputs"]["drilldown"]
+        if item.get("metric_id") != "payables"
+    ]
     doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
     consumed_sections = list(dict.fromkeys(list(doctrine["evidence_required_from_pcim"]) + ["working_capital_inputs"]))
 
@@ -1032,3 +1316,33 @@ def test_imprecise_pcim_share_warning_becomes_warning_not_failure(tmp_path):
     )
     assert parsed["evidence_grounding_status"] == "warning"
     assert any("imprecise" in item.lower() for item in parsed["evidence_grounding_warnings"])
+
+
+def test_blocked_false_warning_is_rejected_when_truth_pack_has_metric(tmp_path):
+    pcim_path = _write_pcim(tmp_path, "finpanel")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    pcim["financial_warning_policy"] = {
+        "financial_warnings_blocked_downstream": ["free cash flow missing"],
+    }
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    consumed_sections = list(doctrine["evidence_required_from_pcim"])
+
+    payload = _valid_buffett_payload(
+        consumed_sections,
+        missing_data=[],
+        interpretation_limits=["No new ratios were calculated."],
+        carried_warnings=["free cash flow missing"],
+        financial_metrics_used=["roe", "roce", "cfo", "capex", "fcf", "eps_basic", "book_value_per_share", "weighted_avg_shares"],
+    )
+
+    with pytest.raises(ValueError, match="blocked financial warnings"):
+        _validate_llm_panel_output(
+            payload,
+            doctrine=doctrine,
+            company="finpanel",
+            pcim_path=pcim_path,
+            pcim_version="1.0",
+            pcim=pcim,
+            consumed_sections=consumed_sections,
+            allowed_evidence_ids=["ev_fin_1", "ev_fd_1"],
+        )

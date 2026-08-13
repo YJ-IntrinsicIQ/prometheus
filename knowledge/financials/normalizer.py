@@ -233,9 +233,16 @@ def _build_preferred_sections(
                 alternate_basis = "standalone" if preferred_basis == "consolidated" else "consolidated"
                 alternate_entry = basis_views.get(alternate_basis, {}).get(section_name, {}).get(field_name, _empty_entry(field_name))
                 if _entry_has_value(alternate_entry):
-                    basis_warnings.append(
-                        f"{section_name}.{field_name} is available only in {alternate_basis} basis and was not promoted into preferred {preferred_basis} view"
-                    )
+                    if section_name == "cash_flow":
+                        selected_entry = alternate_entry
+                        selected_basis = alternate_basis
+                        basis_warnings.append(
+                            f"{section_name}.{field_name} is available only in {alternate_basis} basis and was promoted into preferred {preferred_basis} view"
+                        )
+                    else:
+                        basis_warnings.append(
+                            f"{section_name}.{field_name} is available only in {alternate_basis} basis and was not promoted into preferred {preferred_basis} view"
+                        )
 
             preferred_sections[section_name][field_name] = selected_entry
             available_in = [
@@ -281,6 +288,8 @@ def _period_match_score(period: str, target_year: str) -> int:
     lowered = str(period or "").lower()
     if not lowered:
         return 0
+    if lowered.startswith("value_") or "period_column_unresolved" in lowered:
+        return 0
     score = 1
     if target_year and target_year in lowered:
         score += 5
@@ -292,24 +301,34 @@ def _period_match_score(period: str, target_year: str) -> int:
 
 
 def _select_value(values: List[Dict[str, Any]], target_year: str) -> Optional[Dict[str, Any]]:
-    if not values:
+    resolved_values = [
+        item
+        for item in values
+        if _period_match_score(str(item.get("period", "")), target_year) > 0
+    ]
+    if not resolved_values:
         return None
     ranked = sorted(
-        values,
+        resolved_values,
         key=lambda item: (
             -_period_match_score(str(item.get("period", "")), target_year),
-            values.index(item),
+            resolved_values.index(item),
         ),
     )
     return ranked[0]
 
 
 def _ranked_values(values: List[Dict[str, Any]], target_year: str) -> List[Dict[str, Any]]:
+    resolved_values = [
+        item
+        for item in values
+        if _period_match_score(str(item.get("period", "")), target_year) > 0
+    ]
     return sorted(
-        list(values),
+        resolved_values,
         key=lambda item: (
             -_period_match_score(str(item.get("period", "")), target_year),
-            values.index(item),
+            resolved_values.index(item),
         ),
     )
 
@@ -417,7 +436,13 @@ def _current_and_comparatives(values: List[Dict[str, Any]], target_year: str) ->
     return ranked[0], ranked[1:]
 
 
-def _filtered_values_for_field(field_name: str, values: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _filtered_values_for_field(
+    field_name: str,
+    values: List[Dict[str, Any]],
+    *,
+    line_item_raw: str = "",
+    table_type: str = "",
+) -> List[Dict[str, Any]]:
     if field_name in {"eps_basic", "eps_diluted", "face_value", "book_value_per_share", "tangible_book_value_per_share"}:
         filtered = [item for item in values if str(item.get("value_type", "") or "") == "per_share"]
         return filtered or values
@@ -431,7 +456,27 @@ def _filtered_values_for_field(field_name: str, values: List[Dict[str, Any]]) ->
         filtered = [item for item in values if str(item.get("value_type", "") or "") == "percentage"]
         return filtered or values
     monetary_values = [item for item in values if str(item.get("value_type", "") or "") == "monetary"]
-    return monetary_values or values
+    if monetary_values:
+        return monetary_values
+    if field_name == "revenue":
+        normalized_line_item = _normalize_label(line_item_raw)
+        if not any(
+            token in normalized_line_item
+            for token in ("revenue from operations", "revenue", "income from operations", "total operating revenue")
+        ):
+            return []
+        revenue_like_values = [
+            item
+            for item in values
+            if _parse_numeric(item.get("value_raw")) is not None
+            and (
+                str(item.get("currency_hint", "") or "").upper() in {"INR", "₹", "RS", "R", "INR."}
+                or not str(item.get("unit_hint", "") or "").strip()
+                or str(item.get("unit_hint", "") or "").strip().lower() in {"cr", "crore", "crores"}
+            )
+        ]
+        return revenue_like_values or values
+    return monetary_values
 
 
 def _safe_value_crore(
@@ -588,11 +633,32 @@ def _build_normalized_entry(
     return entry
 
 
-def _entry_rank(entry: Dict[str, Any], target_year: str) -> Tuple[int, int, int]:
+def _entry_rank(entry: Dict[str, Any], target_year: str) -> Tuple[int, int, int, int, int, int]:
+    tax_specificity = 0
+    if (
+        str(entry.get("canonical_field", "") or "") == "tax"
+        and str(entry.get("statement_type", "") or "") == "profit_and_loss"
+    ):
+        normalized_line_item = _normalize_label(entry.get("source_line_item", ""))
+        if any(
+            token in normalized_line_item
+            for token in (
+                "total tax expense",
+                "total income tax expense",
+                "tax expense recognised",
+                "tax expense recognized",
+            )
+        ):
+            tax_specificity = 3
+        elif "income tax expense" in normalized_line_item:
+            tax_specificity = 2
+        elif "current tax" in normalized_line_item:
+            tax_specificity = 1
     return (
         1 if entry.get("is_primary_statement") else 0,
         SOURCE_PRIORITY.get(str(entry.get("source_section_type", "")), 0),
         BASIS_ORDER.get(entry.get("basis", "unknown"), 0),
+        tax_specificity,
         _period_match_score(str(entry.get("period", "")), target_year),
         CONFIDENCE_ORDER.get(str(entry.get("table_confidence", entry.get("confidence", "low"))), 0),
     )
@@ -824,6 +890,7 @@ def _build_derived_comparatives(
 
 def _apply_derived_fallbacks(preferred_sections: Dict[str, Any]) -> None:
     pnl = preferred_sections["profit_and_loss"]
+    balance_sheet = preferred_sections["balance_sheet"]
     cash_flow = preferred_sections["cash_flow"]
     pbt_entry = pnl["pbt"]
     finance_entry = pnl["finance_cost"]
@@ -833,6 +900,62 @@ def _apply_derived_fallbacks(preferred_sections: Dict[str, Any]) -> None:
     cfo_entry = cash_flow["cfo"]
     capex_entry = cash_flow["capex"]
     fcf_entry = cash_flow["fcf"]
+
+    net_worth_entry = balance_sheet["net_worth"]
+    share_capital_entry = balance_sheet["equity_share_capital"]
+    reserves_entry = balance_sheet["reserves"]
+    if (
+        net_worth_entry.get("value_crore") is None
+        and isinstance(share_capital_entry.get("value_crore"), (int, float))
+        and isinstance(reserves_entry.get("value_crore"), (int, float))
+    ):
+        balance_sheet["net_worth"] = _derived_entry(
+            field_name="net_worth",
+            current_value=float(share_capital_entry["value_crore"]) + float(reserves_entry["value_crore"]),
+            period=str(share_capital_entry.get("period") or reserves_entry.get("period") or ""),
+            basis=str(share_capital_entry.get("basis") or reserves_entry.get("basis") or "unknown"),
+            source_page=share_capital_entry.get("source_page") or reserves_entry.get("source_page"),
+            source_artifact=str(share_capital_entry.get("source_artifact") or reserves_entry.get("source_artifact") or ""),
+            formula="equity_share_capital + reserves",
+            inputs_used={
+                "equity_share_capital": share_capital_entry.get("value_crore"),
+                "reserves": reserves_entry.get("value_crore"),
+            },
+            comparatives=_build_derived_comparatives(
+                left_entry=share_capital_entry,
+                right_entry=reserves_entry,
+                operator="+",
+            ),
+        )
+
+    total_assets_entry = balance_sheet["total_assets"]
+    total_liabilities_entry = balance_sheet["total_liabilities"]
+    net_worth_entry = balance_sheet["net_worth"]
+    if (
+        total_liabilities_entry.get("value_crore") is None
+        and isinstance(total_assets_entry.get("value_crore"), (int, float))
+        and isinstance(net_worth_entry.get("value_crore"), (int, float))
+        and float(total_assets_entry["value_crore"]) >= float(net_worth_entry["value_crore"])
+    ):
+        balance_sheet["total_liabilities"] = _derived_entry(
+            field_name="total_liabilities",
+            current_value=float(total_assets_entry["value_crore"]) - float(net_worth_entry["value_crore"]),
+            period=str(total_assets_entry.get("period") or net_worth_entry.get("period") or ""),
+            basis=str(total_assets_entry.get("basis") or net_worth_entry.get("basis") or "unknown"),
+            source_page=total_assets_entry.get("source_page") or net_worth_entry.get("source_page"),
+            source_artifact=str(total_assets_entry.get("source_artifact") or net_worth_entry.get("source_artifact") or ""),
+            formula="total_assets - net_worth",
+            inputs_used={
+                "total_assets": total_assets_entry.get("value_crore"),
+                "net_worth": net_worth_entry.get("value_crore"),
+            },
+            comparatives=_build_derived_comparatives(
+                left_entry=total_assets_entry,
+                right_entry=net_worth_entry,
+                operator="-",
+            ),
+            warnings=["total liabilities derived from the balance-sheet equation"],
+        )
 
     if ebit_entry.get("value_crore") is None and isinstance(pbt_entry.get("value_crore"), (int, float)) and isinstance(finance_entry.get("value_crore"), (int, float)):
         current_value = float(pbt_entry["value_crore"]) + float(finance_entry["value_crore"])
@@ -995,7 +1118,12 @@ def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path
                 )
                 continue
             for match in matches:
-                filtered_values = _filtered_values_for_field(match.canonical_field, row_values)
+                filtered_values = _filtered_values_for_field(
+                    match.canonical_field,
+                    row_values,
+                    line_item_raw=row.get("line_item_raw", ""),
+                    table_type=table_type,
+                )
                 selected_value, comparative_values = _current_and_comparatives(filtered_values, target_year)
                 if selected_value is None:
                     unmapped_rows.append(
@@ -1137,12 +1265,9 @@ def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path
         payload["balance_sheet"]["net_worth"]["value_original"]
         or payload["balance_sheet"]["equity_share_capital"]["value_original"]
     )
-    has_debt = bool(
-        payload["balance_sheet"]["total_debt"]["value_original"]
-        or payload["balance_sheet"]["total_liabilities"]["value_original"]
-    )
-    if not (has_assets and has_equity and has_debt):
-        raise RuntimeError("normalized fundamentals missing usable balance sheet assets/equity/debt data")
+    has_liabilities = bool(payload["balance_sheet"]["total_liabilities"]["value_original"])
+    if not (has_assets and has_equity and has_liabilities):
+        raise RuntimeError("normalized fundamentals missing usable balance sheet assets/equity/liabilities data")
 
     if not payload["cash_flow"]["cfo"]["value_original"]:
         _append_if_missing(payload["warnings"], "CFO missing")

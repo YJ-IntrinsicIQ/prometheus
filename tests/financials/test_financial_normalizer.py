@@ -5,7 +5,7 @@ import pytest
 
 from knowledge.financials.ratio_calculator import calculate_financial_ratios
 from knowledge.financials.reconciler import build_financial_reconciliation_report
-from knowledge.financials.normalizer import normalize_financial_tables, write_normalized_fundamentals
+from knowledge.financials.normalizer import _select_value, normalize_financial_tables, write_normalized_fundamentals
 
 
 def _write_json(path: Path, payload) -> None:
@@ -380,6 +380,123 @@ def test_shares_outstanding_stays_missing_when_source_line_item_is_unrelated(tmp
     assert payload["share_data"]["shares_outstanding"]["raw_number"] is None
 
 
+def test_opening_share_count_does_not_map_to_current_shares_outstanding(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["share_capital"] = [
+        _row(
+            "share_capital",
+            "Number of shares outstanding at the beginning of the period",
+            [("March 31, 2025", "1699790", None, "share_count", "shares")],
+            unit_hint="shares",
+            currency_hint="",
+        ),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["share_data"]["shares_outstanding"]["value_original"] == ""
+
+
+def test_percentage_value_does_not_populate_monetary_field(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"].append(
+        _row(
+            "profit_and_loss",
+            "Profit before tax",
+            [("March 31, 2025", "25.0%", None, "percentage", "%")],
+            unit_hint="%",
+        )
+    )
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["pbt"]["value_original"] == ""
+
+
+def test_income_tax_expense_maps_to_tax_not_total_income(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"].append(
+        _row(
+            "profit_and_loss",
+            "VI. Income tax expense/(credit): Current tax",
+            [("March 31, 2025", "(20.00)", -20.0)],
+        )
+    )
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["tax"]["value_crore"] == -20.0
+    assert payload["profit_and_loss"]["tax"]["source_line_item"] == "VI. Income tax expense/(credit): Current tax"
+    assert payload["profit_and_loss"]["total_income"]["source_line_item"] != "VI. Income tax expense/(credit): Current tax"
+
+
+def test_total_tax_expense_is_preferred_over_current_tax_component(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"].extend(
+        [
+            _row(
+                "profit_and_loss",
+                "X. Tax expense: Current tax",
+                [("March 31, 2025", "112.55", 112.55)],
+            ),
+            _row(
+                "profit_and_loss",
+                "Total tax Expense (X)",
+                [("March 31, 2025", "(260.80)", -260.8)],
+            ),
+        ]
+    )
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["tax"]["value_crore"] == -260.8
+    assert payload["profit_and_loss"]["tax"]["source_line_item"] == "Total tax Expense (X)"
+
+
+def test_deferred_tax_component_does_not_populate_total_tax(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"].append(
+        _row(
+            "profit_and_loss",
+            "Deferred Tax",
+            [("March 31, 2025", "(0.88)", -0.88)],
+        )
+    )
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["tax"]["value_original"] == ""
+
+
+def test_debt_free_company_uses_balance_sheet_equation_without_fabricating_debt(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "1000.00", 1000.0)]),
+        _row("balance_sheet", "Equity Share Capital", [("March 31, 2025", "100.00", 100.0)]),
+        _row("balance_sheet", "Other Equity", [("March 31, 2025", "700.00", 700.0)]),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["balance_sheet"]["net_worth"]["value_crore"] == 800.0
+    assert payload["balance_sheet"]["total_liabilities"]["value_crore"] == 200.0
+    assert payload["balance_sheet"]["total_liabilities"]["derived"] is True
+    assert payload["balance_sheet"]["total_liabilities"]["formula"] == "total_assets - net_worth"
+    assert payload["balance_sheet"]["total_debt"]["value_original"] == ""
+
+
 def test_authorised_equity_shares_do_not_map_to_shares_outstanding(tmp_path):
     path = tmp_path / "raw_financial_tables.json"
     sections = _minimum_required_sections()
@@ -471,6 +588,44 @@ def test_consolidated_preferred_over_standalone(tmp_path):
     assert payload["basis_confidence"] in {"medium", "high"}
     assert payload["basis_views"]["standalone"]["profit_and_loss"]["revenue"]["value_crore"] == 400.0
 
+
+def test_cash_flow_from_alternate_basis_is_promoted(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)], basis="consolidated"),
+        _row("profit_and_loss", "Profit for the year", [("March 31, 2025", "120.00", 120.0)], basis="consolidated"),
+    ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "1000.00", 1000.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Equity", [("March 31, 2025", "600.00", 600.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Liabilities", [("March 31, 2025", "400.00", 400.0)], basis="consolidated"),
+    ]
+    sections["cash_flow"] = [
+        _row(
+            "cash_flow",
+            "Net cash generated from operating activities",
+            [("March 31, 2025", "40.00", 40.0)],
+            basis="standalone",
+        ),
+        _row(
+            "cash_flow",
+            "Purchase of property, plant and equipment",
+            [("March 31, 2025", "(12.00)", -12.0)],
+            basis="standalone",
+        ),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["preferred_basis"] == "consolidated"
+    assert payload["cash_flow"]["cfo"]["value_crore"] == 40.0
+    assert payload["cash_flow"]["cfo"]["basis"] == "standalone"
+    assert any(
+        "cash_flow.cfo is available only in standalone basis and was promoted into preferred consolidated view" in warning
+        for warning in payload["warnings"]
+    )
 
 def test_preferred_basis_does_not_silently_borrow_other_explicit_basis(tmp_path):
     path = tmp_path / "raw_financial_tables.json"
@@ -710,3 +865,16 @@ def test_missing_required_revenue_fails(tmp_path):
 
     with pytest.raises(RuntimeError, match="missing required revenue"):
         normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+
+def test_placeholder_period_labels_are_ignored_in_value_selection():
+    values = [
+        {"period": "value_1", "value_raw": "500.00", "value_crore": 500.0},
+        {"period": "PERIOD_COLUMN_UNRESOLVED", "value_raw": "420.00", "value_crore": 420.0},
+        {"period": "March 31, 2025", "value_raw": "610.00", "value_crore": 610.0},
+    ]
+
+    selected = _select_value(values, "fy25")
+
+    assert selected is not None
+    assert selected["period"] == "March 31, 2025"

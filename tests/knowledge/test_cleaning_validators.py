@@ -49,12 +49,13 @@ def test_validator_fails_on_missing_evidence_ids():
     assert "missing evidence_ids" in validation["errors"]
 
 
-def test_validator_warns_but_keeps_uncertain_external_context():
+def test_validator_blocks_uncertain_external_context():
     item = finalize_cleaned_item(
         {
             "risk": "Government policy changes may affect the sector outlook.",
             "category": "Regulatory",
             "severity": "medium",
+            "source_year": "fy20",
             "page": 9,
         },
         module_name="risks",
@@ -63,5 +64,20 @@ def test_validator_warns_but_keeps_uncertain_external_context():
 
     validation = validate_cleaned_item(item, module_name="risks")
 
-    assert not validation["errors"]
-    assert "low company_specificity" in validation["warnings"] or "uncertain actor" in validation["warnings"]
+    assert "business relevance quarantined" in validation["errors"]
+
+
+def test_source_year_metadata_does_not_create_period_conflicts_for_risks():
+    item = finalize_cleaned_item(
+        {
+            "risk": "Dynamic and stringent regulatory/compliance environment requiring ongoing changes to platforms and processes.",
+            "category": "Regulatory risk",
+            "severity": "High",
+            "source_year": "fy20",
+            "page": 12,
+        },
+        module_name="risks",
+        item_index=3,
+    )
+
+    assert item["evidence_quality"]["period_resolution"]["status"] in {"RESOLVED", "HISTORICAL_CONTEXT"}

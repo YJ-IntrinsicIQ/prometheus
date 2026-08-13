@@ -96,6 +96,18 @@ def _write_analyst(panel_dir: Path, analyst: str) -> None:
         "historical_context_used": True,
         "years_considered": ["fy24", "fy25"],
         "supporting_pcim_sections": ["risk_inputs"],
+        "financial_assessment": {
+            "financials_used": True,
+            "basis_used": "consolidated",
+            "key_financial_strengths": ["Synthetic strength."],
+            "key_financial_concerns": ["Synthetic concern."],
+            "financial_red_flags": ["Synthetic flag."],
+            "missing_financial_data": ["Synthetic missing."],
+            "financial_interpretation_limits": ["Synthetic limit."],
+            "financial_warnings_carried_forward": ["Synthetic warning."],
+        },
+        "financial_sections_consumed": ["risk_inputs"],
+        "financial_warnings_carried_forward": ["Synthetic warning."],
         "evidence_id_normalization": {"applied": False, "replacements": [], "unresolved_ids": []},
         "evidence_grounding_status": "pass",
         "evidence_grounding_warnings": [],
@@ -268,6 +280,8 @@ def test_true_over_token_budget_still_fails(tmp_path, monkeypatch):
         ]
     }
     doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("graham")
+    monkeypatch.setenv("INVESTOR_PANEL_TOTAL_PROMPT_BUDGET_TOKENS", "100")
+    monkeypatch.setenv("INVESTOR_PANEL_HARD_MAX_PROMPT_TOKENS", "100")
     monkeypatch.setenv("PROMETHEUS_LLM_BUDGET_INVESTOR_PANEL_ANALYST", "100")
 
     try:

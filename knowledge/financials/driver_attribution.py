@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from .financial_memory_truth import build_financial_memory_manifest, build_financial_truth_pack
 from .attribution_schema import (
     FinancialDriverAttributionItem,
     FinancialDriverAttributionReport,
@@ -405,6 +406,8 @@ def build_financial_driver_attribution(*, company: str, company_root: Path) -> F
         raise RuntimeError("financial_attribution requires a valid financial_trends.json object")
 
     quality = _load_optional_json(financial_root / "financial_quality_summary.json")
+    manifest = build_financial_memory_manifest(company=company, company_root=company_root)
+    truth_pack = build_financial_truth_pack(company=company, company_root=company_root)
     events = _collect_events(company_root, trends)
     years_covered = [str(year) for year in trends.get("years_covered", [])] if isinstance(trends.get("years_covered"), list) else []
     latest_year = years_covered[-1] if years_covered else ""
@@ -415,6 +418,20 @@ def build_financial_driver_attribution(*, company: str, company_root: Path) -> F
     if isinstance(quality, dict) and isinstance(quality.get("limitations"), list):
         for item in quality.get("limitations", []):
             _append_unique(limitations, str(item))
+    attribution_readiness = {
+        "reason": "multi_year_available",
+        "current_year_drivers_visible": bool(years_covered),
+        "insufficient_comparable_periods": len(years_covered) < 2,
+        "unreliable_required_metrics": [item.get("metric_id") for item in truth_pack.get("unreliable_metrics", []) if isinstance(item, dict)],
+        "invalid_required_metrics": [item.get("metric_id") for item in truth_pack.get("invalid_or_quarantined_metrics", []) if isinstance(item, dict)],
+    }
+    if len(years_covered) < 2:
+        attribution_readiness["reason"] = "insufficient_comparable_periods"
+        _append_unique(warnings, "insufficient_comparable_periods")
+    elif attribution_readiness["invalid_required_metrics"]:
+        attribution_readiness["reason"] = "invalid_required_metrics"
+    elif attribution_readiness["unreliable_required_metrics"]:
+        attribution_readiness["reason"] = "unreliable_required_metrics"
 
     revenue_growth, revenue_year, revenue_abs = _latest_growth(_growth_points(trends, "revenue"))
     if revenue_growth is not None and abs(revenue_growth) >= 5:
@@ -749,7 +766,14 @@ def build_financial_driver_attribution(*, company: str, company_root: Path) -> F
         )
 
     if not items:
-        _append_unique(warnings, "no attribution found")
+        if attribution_readiness["reason"] == "insufficient_comparable_periods":
+            _append_unique(warnings, "Current-year drivers are visible, but multi-year attribution is not possible yet.")
+        elif attribution_readiness["invalid_required_metrics"]:
+            _append_unique(warnings, "invalid_required_metrics")
+        elif attribution_readiness["unreliable_required_metrics"]:
+            _append_unique(warnings, "unreliable_required_metrics")
+        else:
+            _append_unique(warnings, "missing_required_metrics")
     elif not any(item.causality_status in {"supported", "possible"} for item in items):
         _append_unique(warnings, "only weak drivers found")
     if any(not item.evidence_ids for item in items):
@@ -763,6 +787,7 @@ def build_financial_driver_attribution(*, company: str, company_root: Path) -> F
         generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         years_covered=years_covered,
         status=status,
+        attribution_readiness=attribution_readiness,
         attributions=items,
         warnings=warnings,
         limitations=limitations,

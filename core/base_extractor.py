@@ -12,6 +12,7 @@ from knowledge.evidence_layer import (
     select_discovery_chunks,
     write_json,
 )
+from pipelines.pipeline_context import get_context
 
 try:
     from dotenv import load_dotenv
@@ -226,6 +227,8 @@ class BaseExtractor:
         write_json(self.selection_metadata_path, selection_metadata)
 
         extracted_items = []
+        context = get_context()
+        source_year = getattr(context, "year", "") if context is not None else ""
         chunk_batches = []
         for item_index, item in enumerate(selected_chunks):
             item_batches = self._build_chunk_batches(
@@ -287,6 +290,8 @@ class BaseExtractor:
                 )
                 extracted_item["page"] = item.get("page")
                 extracted_item["distance"] = item.get("distance")
+                if source_year and not extracted_item.get("source_year"):
+                    extracted_item["source_year"] = source_year
                 enriched_item = enrich_extracted_item(
                     extracted_item,
                     module_name=self.module_name,

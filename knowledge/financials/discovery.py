@@ -188,7 +188,10 @@ def _table_like_signals(text: str) -> List[str]:
     numeric_hits = len(re.findall(r"\b\d[\d,]*(?:\.\d+)?%?\b", text))
     if numeric_hits >= 4:
         signals.append("numeric_density")
-    if re.search(r"\b(?:fy\s?\d{2,4}|20\d{2}-\d{2}|march\s+\d{1,2},\s+20\d{2})\b", lowered):
+    if re.search(
+        r"\b(?:fy\s?\d{2,4}|20\d{2}-\d{2}|(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+20\d{2}|\d{1,2}\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+20\d{2})\b",
+        lowered,
+    ):
         signals.append("period_columns")
     if re.search(r"\b(?:inr|rs\.?|₹|crores?|cr|lakhs?|lacs|million|mn|billion)\b", lowered):
         signals.append("unit_signal")
@@ -247,6 +250,58 @@ def _category_candidates(text: str) -> List[Tuple[str, List[str], int]]:
     for category in PRIMARY_SECTION_KEYS:
         add(category, PRIMARY_PATTERNS[category], 80)
 
+    balance_sheet_sections_present = (
+        "assets" in lowered
+        and (
+            "equity and liabilities" in lowered
+            or (
+                "liabilities" in lowered
+                and "equity" in lowered
+                and any(
+                    token in lowered
+                    for token in ("total assets", "non-current assets", "non current assets", "current assets")
+                )
+            )
+        )
+    )
+    cash_flow_structure_present = (
+        any(pattern in lowered for pattern in PRIMARY_PATTERNS["primary_cash_flow_statement"])
+        or "cash flow from operating activities" in lowered
+        or "cash flows from operating activities" in lowered
+        or "net cash flow from operating activities" in lowered
+    )
+    if (
+        cash_flow_structure_present
+        and ("particulars" in lowered or "note" in lowered)
+        and "period_columns" in common_signals
+        and not any(pattern in lowered for pattern in AUDITOR_PATTERNS + ACCOUNTING_POLICY_PATTERNS)
+    ):
+        candidates.append(
+            (
+                "primary_cash_flow_statement",
+                ["structural:operating_cash_flow", *common_signals],
+                130,
+            )
+        )
+    balance_sheet_structure = (
+        balance_sheet_sections_present
+        and not cash_flow_structure_present
+        and ("particulars" in lowered or "note" in lowered)
+        and "period_columns" in common_signals
+        and len(re.findall(r"\b\d[\d,]*(?:\.\d+)?\b", text)) >= 6
+    )
+    if balance_sheet_structure:
+        candidates.append(
+            (
+                "primary_balance_sheet_statement",
+                [
+                    "structural:assets_equity_liabilities",
+                    *common_signals,
+                ],
+                130,
+            )
+        )
+
     for category in ("share_capital_note", "eps_note", "dividend_note", "shareholding_note", "corporate_action_note"):
         add(category, SPECIFIC_NOTE_PATTERNS[category], 70)
 
@@ -258,6 +313,7 @@ def _category_candidates(text: str) -> List[Tuple[str, List[str], int]]:
 
     filtered: List[Tuple[str, List[str], int]] = []
     for category, signals, score in candidates:
+        has_primary_statement_structure = "structural:assets_equity_liabilities" in signals
         if category == "statement_of_changes_in_equity":
             if "statement of changes in equity" not in lowered and not (
                 "other equity" in lowered and any(token in lowered for token in ("balance at", "opening balance", "closing balance"))
@@ -266,7 +322,10 @@ def _category_candidates(text: str) -> List[Tuple[str, List[str], int]]:
         if category in PRIMARY_SECTION_KEYS:
             if "analysis of the balance sheet" in lowered or "analysis of the profit and loss statement" in lowered:
                 continue
-            if any(pattern in lowered for pattern in AUDITOR_PATTERNS + ACCOUNTING_POLICY_PATTERNS):
+            if (
+                any(pattern in lowered for pattern in AUDITOR_PATTERNS + ACCOUNTING_POLICY_PATTERNS)
+                and not has_primary_statement_structure
+            ):
                 continue
         if category == "financial_note" and any(pattern in lowered for pattern in AUDITOR_PATTERNS + ACCOUNTING_POLICY_PATTERNS):
             continue

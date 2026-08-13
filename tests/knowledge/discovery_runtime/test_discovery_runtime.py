@@ -21,7 +21,7 @@ class FakeRetriever:
 
 
 class FakeExtractor:
-    def extract(self, module, chunks):
+    def extract(self, module, chunks, business_context=None):
         return ModuleExtractionResult(
             module_id=module.module_id,
             module_name=module.module_name,
@@ -144,7 +144,7 @@ def test_runtime_caps_chunks_per_question_when_env_is_set(monkeypatch):
             return Response()
 
     class RecordingExtractor:
-        def extract(self, module, chunks):
+        def extract(self, module, chunks, business_context=None):
             seen["chunk_ids"] = [chunk.chunk_id for chunk in chunks]
             return ModuleExtractionResult(
                 module_id=module.module_id,

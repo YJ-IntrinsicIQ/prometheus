@@ -8,9 +8,34 @@ def test_revenue_mapping():
     assert matches[0].canonical_field == "revenue"
 
 
+def test_revenue_lookalikes_do_not_map_to_revenue():
+    phrases = [
+        "Revenue growth %",
+        "Energy Intensity per INR Cr Revenue",
+        "Revenue concentration",
+        "Revenue per employee",
+        "Revenue mix",
+        "GHG emissions / Revenue from operations INR in Cr) tCO2e / INR in Cr",
+    ]
+
+    for phrase in phrases:
+        matches = map_line_item(table_type="profit_and_loss", line_item_raw=phrase)
+        assert "revenue" not in {match.canonical_field for match in matches}
+
+
 def test_pat_mapping():
     matches = map_line_item(table_type="profit_and_loss", line_item_raw="Profit for the year")
     assert matches[0].canonical_field == "pat"
+
+
+def test_pat_mapping_handles_profit_loss_label_variants():
+    matches = map_line_item(table_type="profit_and_loss", line_item_raw="VII. Profit(Loss)for the period")
+    assert "pat" in {match.canonical_field for match in matches}
+
+
+def test_pat_lookalikes_do_not_map_to_pat():
+    matches = map_line_item(table_type="profit_and_loss", line_item_raw="For the year ended March")
+    assert "pat" not in {match.canonical_field for match in matches}
 
 
 def test_debt_mapping():

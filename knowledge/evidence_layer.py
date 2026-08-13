@@ -8,8 +8,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from knowledge.company_memory.guardrails import (
+    assess_progression_materiality,
+    classify_business_relevance,
+    normalize_period_label,
+    resolve_period_status,
+    semantic_validation,
+)
+
 
 _YEAR_RE = re.compile(r"\b(?:fy)?20\d{2}\b", re.IGNORECASE)
+_FY_YEAR_RE = re.compile(r"\bfy(?P<year>\d{2,4})\b", re.IGNORECASE)
 _DATE_RE = re.compile(
     r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s,-]+\d{4}\b",
     re.IGNORECASE,
@@ -63,6 +72,36 @@ _BOILERPLATE_TERMS = (
     "director profile",
     "notice of annual general meeting",
 )
+
+
+def _financial_year_value(value: Any) -> int | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text.startswith("fy") and text[2:].isdigit():
+        return 2000 + int(text[2:])
+    if text.isdigit() and len(text) == 4:
+        return int(text)
+    return None
+
+
+def _period_year_values(text: str) -> List[int]:
+    years: List[int] = []
+    for match in _FY_YEAR_RE.finditer(text):
+        raw = match.group("year")
+        if len(raw) == 4:
+            years.append(int(raw))
+        elif len(raw) == 2 and raw.isdigit():
+            years.append(2000 + int(raw))
+    for match in _YEAR_RE.finditer(text):
+        raw = match.group(0).lower()
+        if raw.startswith("fy"):
+            digits = raw[2:]
+            if digits.isdigit():
+                years.append(2000 + int(digits))
+        elif raw.isdigit():
+            years.append(int(raw))
+    return sorted(set(years))
 
 
 @dataclass(frozen=True)
@@ -529,10 +568,17 @@ def derive_confidence_from_quality(
 
 def build_evidence_quality(item: Dict[str, Any], *, module_name: str) -> Dict[str, Any]:
     text_parts = []
-    for value in item.values():
-        if isinstance(value, str):
+    period_text_parts = []
+    for key, value in item.items():
+        if isinstance(value, str) and key not in {"source_chunk", "source_artifact", "source_year"}:
             text_parts.append(value)
+    for key, value in item.items():
+        if isinstance(value, str) and key not in {"source_chunk", "source_artifact", "source_year"}:
+            if module_name in {"capital_allocations", "risks", "initiatives", "capacity_expansions"} and key == "year" and item.get("source_year"):
+                continue
+            period_text_parts.append(value)
     text = " ".join(text_parts)
+    period_text = " ".join(period_text_parts)
     actor_type = classify_actor_type(text)
     company_specificity = derive_company_specificity(text, actor_type=actor_type)
     actionability = derive_actionability(text)
@@ -540,6 +586,56 @@ def build_evidence_quality(item: Dict[str, Any], *, module_name: str) -> Dict[st
     numeric_support = bool(_NUMBER_RE.search(text) or _PERCENT_RE.search(text) or _CURRENCY_RE.search(text))
     source_proximity = derive_source_proximity(text, actor_type=actor_type)
     time_specificity = derive_time_specificity(text)
+    business_relevance = classify_business_relevance(text, module_name=module_name, actor_type=actor_type)
+    source_period = item.get("source_year") or item.get("year") or ""
+    explicit_year = item.get("year") or item.get("time_reference") or item.get("source_year") or ""
+    target_period = ""
+    temporal_role = ""
+    if module_name == "capacity_expansions":
+        if item.get("current_capacity") and item.get("target_capacity"):
+            temporal_role = "current_target"
+        if item.get("year"):
+            target_period = item.get("year") or ""
+    source_value = _financial_year_value(source_period)
+    period_years = _period_year_values(period_text)
+    project_cues = ("as at", "capitalised during the year", "capitalized during the year", "moved out of cwip", "completed", "commissioned", "in progress", "closing as at")
+    if module_name == "projects" and source_value is not None and len(period_years) == 2 and source_value in period_years and max(period_years) == source_value + 1 and any(cue in period_text.lower() for cue in project_cues):
+        target_period = str(max(period_years))
+    if module_name == "risks" and item.get("source_year"):
+        risk_cues = ("go-live", "deadline", "renewal", "expiry", "expires", "meeting the fy", "compliance date")
+        future_years = [year for year in period_years if source_value is not None and year > source_value]
+        if future_years and any(cue in period_text.lower() for cue in risk_cues):
+            explicit_year = source_period
+            target_period = str(max(future_years))
+    if module_name in {"promises", "initiatives"} and item.get("year"):
+        target_period = item.get("year") or ""
+    period_resolution = resolve_period_status(
+        source_year=source_period,
+        text=period_text,
+        explicit_year=explicit_year,
+        module_name=module_name,
+        target_period=target_period,
+        temporal_role=temporal_role,
+    )
+    progression_materiality = assess_progression_materiality(
+        text,
+        module_name=module_name,
+        relevance_status=str(business_relevance.get("status") or "ambiguous"),
+        period_status=str(period_resolution.get("status") or "AMBIGUOUS"),
+        evidence_quality={
+            "company_specificity": company_specificity,
+            "actionability": actionability,
+            "investor_relevance": investor_relevance,
+            "numeric_support": numeric_support,
+        },
+        status_text=str(item.get("status") or item.get("time_reference") or ""),
+    )
+    semantic_flags = semantic_validation(
+        module_name=module_name,
+        relevance=business_relevance,
+        period=period_resolution,
+        materiality=progression_materiality,
+    )
     confidence = derive_confidence_from_quality(
         company_specificity=company_specificity,
         actionability=actionability,
@@ -548,6 +644,10 @@ def build_evidence_quality(item: Dict[str, Any], *, module_name: str) -> Dict[st
         numeric_support=numeric_support,
     )
     warnings = derive_quality_warnings(text, actor_type=actor_type, module_name=module_name)
+    warnings.extend(business_relevance.get("limitations") or [])
+    warnings.extend(period_resolution.get("limitations") or [])
+    warnings.extend(progression_materiality.get("limitations") or [])
+    warnings.extend(semantic_flags.get("warnings") or [])
     return {
         "company_specificity": company_specificity,
         "actionability": actionability,
@@ -558,6 +658,10 @@ def build_evidence_quality(item: Dict[str, Any], *, module_name: str) -> Dict[st
         "numeric_support": numeric_support,
         "confidence": confidence,
         "warnings": warnings,
+        "business_relevance": business_relevance,
+        "period_resolution": period_resolution,
+        "progression_materiality": progression_materiality,
+        "semantic_validation": semantic_flags,
     }
 
 
@@ -686,6 +790,12 @@ def validate_cleaned_item(item: Dict[str, Any], *, module_name: str) -> Dict[str
         warnings.append("no amount for capital item")
     if quality.get("investor_relevance") == "low":
         warnings.append("weak investor relevance")
+    if quality.get("business_relevance", {}).get("quarantine"):
+        errors.append("business relevance quarantined")
+    if str((quality.get("period_resolution") or {}).get("status") or "").upper() in {"INVALID", "AMBIGUOUS", "OUTSIDE_ANALYSIS_WINDOW"}:
+        errors.append("invalid or unsupported period resolution")
+    if not (quality.get("progression_materiality") or {}).get("should_promote", True) and module_name in {"capital_allocations", "capacity_expansions", "projects", "commentary"}:
+        warnings.append("low progression materiality")
     return {"errors": _dedupe_preserve(errors), "warnings": _dedupe_preserve(warnings)}
 
 

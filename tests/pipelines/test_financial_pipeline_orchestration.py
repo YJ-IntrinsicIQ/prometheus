@@ -1,4 +1,7 @@
+import json
 from pathlib import Path
+
+import pytest
 
 from core.company_context import CompanyContext
 from pipelines import run_company_pipeline
@@ -74,6 +77,11 @@ def test_financial_memory_stage_runs_company_level_pipeline_in_canonical_order(t
     )
     monkeypatch.setattr(
         run_company_pipeline,
+        "_refresh_year_level_financial_quality",
+        lambda company: calls.append("year_financial_quality") or {},
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
         "run_financial_attribution_stage",
         lambda company, context=None: calls.append("financial_attribution") or {"financial_driver_attribution.json": Path("financial_driver_attribution.json")},
     )
@@ -98,12 +106,37 @@ def test_financial_memory_stage_runs_company_level_pipeline_in_canonical_order(t
 
     assert calls == [
         "financial_trends",
+        "year_financial_quality",
         "financial_quality",
         "financial_attribution",
         "financial_memory_artifacts",
         "financial_memory_audit",
     ]
     assert written["financial_memory_audit_report.json"] == Path("companies") / "acme" / "company_memory" / "financials" / "financial_memory_audit_report.json"
+
+
+def test_refresh_year_level_financial_quality_covers_every_discovered_financial_year(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    calls = []
+    for year in ("fy24", "fy25", "fy26"):
+        financial_root = tmp_path / "companies" / "acme" / year / "financials"
+        financial_root.mkdir(parents=True)
+        (financial_root / "normalized_fundamentals.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "write_financial_quality_summary",
+        lambda **kwargs: calls.append(kwargs["year"]),
+    )
+
+    written = run_company_pipeline._refresh_year_level_financial_quality("acme")
+
+    assert calls == ["fy24", "fy25", "fy26"]
+    assert set(written) == {
+        "fy24/financial_quality_summary.json",
+        "fy25/financial_quality_summary.json",
+        "fy26/financial_quality_summary.json",
+    }
 
 
 def test_financials_stage_writes_audit_before_reraising_downstream_failure(tmp_path, monkeypatch):
@@ -153,3 +186,80 @@ def test_financials_stage_writes_audit_before_reraising_downstream_failure(tmp_p
         "financial_ratios",
         "financial_audit",
     ]
+
+
+def test_financials_stage_blocks_downstream_when_final_audit_fails(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context()
+    for name in (
+        "run_financial_discovery",
+        "run_financial_extraction",
+        "run_financial_normalization",
+        "run_financial_validation",
+        "run_financial_reconciliation",
+        "run_financial_ratios",
+        "run_financial_growth",
+        "run_corporate_actions",
+        "run_shareholding_pattern",
+    ):
+        monkeypatch.setattr(run_company_pipeline, name, lambda context=None: Path("output.json"))
+
+    class _AuditReport:
+        status = "fail"
+        warnings = []
+        hard_failures = ["financial_validation_report.json status is fail."]
+
+    monkeypatch.setattr(run_company_pipeline, "write_financial_audit_report", lambda **kwargs: _AuditReport())
+
+    with pytest.raises(RuntimeError, match="financials audit failed for acme fy25"):
+        run_company_pipeline.run_financials_stage(context=context)
+
+
+def test_production_reuses_only_same_year_non_failing_financial_outputs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(year="fy25")
+    required = {
+        "normalized_fundamentals.json": {},
+        "financial_validation_report.json": {"status": "warning", "hard_failures": []},
+        "financial_reconciliation_report.json": {"status": "pass", "hard_failures": []},
+        "financial_ratios.json": {},
+        "financial_growth.json": {},
+        "corporate_actions.json": {},
+        "shareholding_pattern.json": {},
+        "financial_audit_report.json": {"status": "warning", "hard_failures": []},
+    }
+    for filename, extra in required.items():
+        payload = {"company": "acme", "year": "fy25", **extra}
+        (context.financials_dir / filename).write_text(json.dumps(payload), encoding="utf-8")
+
+    called = []
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_financials_stage",
+        lambda context=None: called.append("financials"),
+    )
+    outputs = run_company_pipeline._build_stage_output_map(context)
+    result = run_company_pipeline._run_stage_by_name(
+        "financials",
+        context,
+        stage_outputs=outputs,
+        options={"_profile_name": "production"},
+        state={},
+    )
+
+    assert called == []
+    assert result["status"] == "warning"
+    assert "no cross-period values" in result["warnings"][0]
+
+    required["normalized_fundamentals.json"]["year"] = "fy24"
+    (context.financials_dir / "normalized_fundamentals.json").write_text(
+        json.dumps({"company": "acme", "year": "fy24"}), encoding="utf-8"
+    )
+    run_company_pipeline._run_stage_by_name(
+        "financials",
+        context,
+        stage_outputs=outputs,
+        options={"_profile_name": "production"},
+        state={},
+    )
+    assert called == ["financials"]

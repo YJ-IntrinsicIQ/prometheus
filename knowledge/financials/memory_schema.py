@@ -217,3 +217,93 @@ def validate_financial_memory_summary_payload(payload: Dict[str, Any]) -> List[s
             if consistency and consistency not in ALLOWED_BASIS_CONSISTENCY:
                 errors.append(f"source_manifest.basis_policy.basis_consistency invalid: {consistency}")
     return errors
+
+
+def validate_financial_memory_manifest_payload(payload: Dict[str, Any]) -> List[str]:
+    errors: List[str] = []
+    if not isinstance(payload, dict):
+        return ["financial memory manifest payload must be an object"]
+    for key in (
+        "company",
+        "generated_at",
+        "years_scanned",
+        "years_with_financial_truth_registry",
+        "years_with_partial_financials",
+        "years_missing_financials",
+        "source_artifacts_used_by_year",
+        "source_artifacts_missing_by_year",
+        "quarantined_domains_by_year",
+        "unreliable_metrics_by_year",
+        "financial_memory_status",
+        "downstream_readiness",
+        "warnings",
+        "limitations",
+    ):
+        if key not in payload:
+            errors.append(f"missing required top-level field: {key}")
+    for key in (
+        "years_scanned",
+        "years_with_financial_truth_registry",
+        "years_with_partial_financials",
+        "years_missing_financials",
+        "warnings",
+        "limitations",
+    ):
+        _require_list(payload, key, errors)
+    for key in (
+        "source_artifacts_used_by_year",
+        "source_artifacts_missing_by_year",
+        "quarantined_domains_by_year",
+        "unreliable_metrics_by_year",
+        "downstream_readiness",
+    ):
+        _require_dict(payload, key, errors)
+    status = payload.get("financial_memory_status")
+    if status and status not in {"pass", "warning", "partial", "invalid"}:
+        errors.append(f"financial_memory_status invalid: {status}")
+    return errors
+
+
+def validate_financial_truth_pack_payload(payload: Dict[str, Any]) -> List[str]:
+    errors: List[str] = []
+    if not isinstance(payload, dict):
+        return ["financial truth pack payload must be an object"]
+    required_list_fields = (
+        "company",
+        "generated_at",
+        "years_covered",
+        "source_files_checked",
+        "source_files_used",
+        "source_files_missing",
+        "usable_current_metrics",
+        "usable_derived_metrics",
+        "partial_metrics",
+        "precise_missing_metrics",
+        "unreliable_metrics",
+        "invalid_or_quarantined_metrics",
+        "derived_not_explicitly_reported",
+        "trend_durability_limits",
+        "precision_limits",
+        "financial_warnings_allowed_downstream",
+        "financial_warnings_blocked_downstream",
+        "financial_warnings_rewritten",
+        "investor_relevant_questions",
+        "financial_panel_usable_domains",
+        "financial_panel_limited_domains",
+        "financial_panel_blocked_domains",
+        "source_provenance",
+        "unit_validation_warnings",
+        "unit_validation_failures",
+        "recomputed_metrics",
+    )
+    for key in required_list_fields:
+        if key not in payload:
+            errors.append(f"missing required top-level field: {key}")
+        elif key not in {"company", "generated_at"} and not isinstance(payload.get(key), list):
+            errors.append(f"{key} must be a list")
+    for key in ("financial_panel_status", "financial_panel_status_reason"):
+        if key not in payload:
+            errors.append(f"missing required top-level field: {key}")
+    if payload.get("financial_panel_status") not in {"pass", "warning", "partial", "invalid", "missing"}:
+        errors.append("financial_panel_status must be pass|warning|partial|invalid|missing")
+    return errors

@@ -41,17 +41,26 @@ class FinancialQualitySummary:
     years_covered: List[str]
     status: str
     overall_financial_quality: str
-    growth_quality: QualitySection
-    margin_quality: QualitySection
-    return_on_capital_quality: QualitySection
-    cash_conversion_quality: QualitySection
-    balance_sheet_strength: QualitySection
-    working_capital_quality: QualitySection
-    dilution_and_corporate_action_quality: QualitySection
-    ownership_quality: QualitySection
+    current_year_snapshot: Dict[str, Any] = field(default_factory=dict)
+    multi_year_trend_quality: Dict[str, Any] = field(default_factory=dict)
+    growth_quality: QualitySection = field(default_factory=lambda: QualitySection(status="insufficient_data", summary=""))
+    profitability_quality: QualitySection = field(default_factory=lambda: QualitySection(status="insufficient_data", summary=""))
+    margin_quality: QualitySection = field(default_factory=lambda: QualitySection(status="insufficient_data", summary=""))
+    return_on_capital_quality: QualitySection = field(default_factory=lambda: QualitySection(status="insufficient_data", summary=""))
+    cash_conversion_quality: QualitySection = field(default_factory=lambda: QualitySection(status="insufficient_data", summary=""))
+    balance_sheet_strength: QualitySection = field(default_factory=lambda: QualitySection(status="insufficient_data", summary=""))
+    debt_quality: QualitySection = field(default_factory=lambda: QualitySection(status="insufficient_data", summary=""))
+    working_capital_quality: QualitySection = field(default_factory=lambda: QualitySection(status="insufficient_data", summary=""))
+    per_share_quality: QualitySection = field(default_factory=lambda: QualitySection(status="insufficient_data", summary=""))
+    dilution_and_corporate_action_quality: QualitySection = field(default_factory=lambda: QualitySection(status="insufficient_data", summary=""))
+    ownership_quality: QualitySection = field(default_factory=lambda: QualitySection(status="insufficient_data", summary=""))
+    capital_allocation_quality: QualitySection = field(default_factory=lambda: QualitySection(status="insufficient_data", summary=""))
     red_flags: List[str] = field(default_factory=list)
     positive_signals: List[str] = field(default_factory=list)
     missing_data: List[str] = field(default_factory=list)
+    precise_missing_data: List[str] = field(default_factory=list)
+    unreliable_data: List[str] = field(default_factory=list)
+    invalid_or_quarantined_data: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     limitations: List[str] = field(default_factory=list)
 
@@ -62,17 +71,26 @@ class FinancialQualitySummary:
             "years_covered": list(self.years_covered),
             "status": self.status,
             "overall_financial_quality": self.overall_financial_quality,
+            "current_year_snapshot": dict(self.current_year_snapshot),
+            "multi_year_trend_quality": dict(self.multi_year_trend_quality),
             "growth_quality": self.growth_quality.to_dict(),
+            "profitability_quality": self.profitability_quality.to_dict(),
             "margin_quality": self.margin_quality.to_dict(),
             "return_on_capital_quality": self.return_on_capital_quality.to_dict(),
             "cash_conversion_quality": self.cash_conversion_quality.to_dict(),
             "balance_sheet_strength": self.balance_sheet_strength.to_dict(),
+            "debt_quality": self.debt_quality.to_dict(),
             "working_capital_quality": self.working_capital_quality.to_dict(),
+            "per_share_quality": self.per_share_quality.to_dict(),
             "dilution_and_corporate_action_quality": self.dilution_and_corporate_action_quality.to_dict(),
             "ownership_quality": self.ownership_quality.to_dict(),
+            "capital_allocation_quality": self.capital_allocation_quality.to_dict(),
             "red_flags": list(self.red_flags),
             "positive_signals": list(self.positive_signals),
             "missing_data": list(self.missing_data),
+            "precise_missing_data": list(self.precise_missing_data),
+            "unreliable_data": list(self.unreliable_data),
+            "invalid_or_quarantined_data": list(self.invalid_or_quarantined_data),
             "warnings": list(self.warnings),
             "limitations": list(self.limitations),
         }
@@ -146,17 +164,26 @@ def _validate_legacy_financial_quality_payload(payload: Dict[str, Any]) -> List[
         "years_covered",
         "status",
         "overall_financial_quality",
+        "current_year_snapshot",
+        "multi_year_trend_quality",
         "growth_quality",
+        "profitability_quality",
         "margin_quality",
         "return_on_capital_quality",
         "cash_conversion_quality",
         "balance_sheet_strength",
+        "debt_quality",
         "working_capital_quality",
+        "per_share_quality",
         "dilution_and_corporate_action_quality",
         "ownership_quality",
+        "capital_allocation_quality",
         "red_flags",
         "positive_signals",
         "missing_data",
+        "precise_missing_data",
+        "unreliable_data",
+        "invalid_or_quarantined_data",
         "warnings",
         "limitations",
     ):
@@ -173,19 +200,37 @@ def _validate_legacy_financial_quality_payload(payload: Dict[str, Any]) -> List[
             f"invalid overall_financial_quality: {payload.get('overall_financial_quality')}"
         )
 
-    for list_key in ("years_covered", "red_flags", "positive_signals", "missing_data", "warnings", "limitations"):
+    for list_key in (
+        "years_covered",
+        "red_flags",
+        "positive_signals",
+        "missing_data",
+        "precise_missing_data",
+        "unreliable_data",
+        "invalid_or_quarantined_data",
+        "warnings",
+        "limitations",
+    ):
         if list_key in payload and not isinstance(payload.get(list_key), list):
             errors.append(f"{list_key} must be a list")
 
+    for dict_key in ("current_year_snapshot", "multi_year_trend_quality"):
+        if dict_key in payload and not isinstance(payload.get(dict_key), dict):
+            errors.append(f"{dict_key} must be an object")
+
     for section_name in (
         "growth_quality",
+        "profitability_quality",
         "margin_quality",
         "return_on_capital_quality",
         "cash_conversion_quality",
         "balance_sheet_strength",
+        "debt_quality",
         "working_capital_quality",
+        "per_share_quality",
         "dilution_and_corporate_action_quality",
         "ownership_quality",
+        "capital_allocation_quality",
     ):
         section = payload.get(section_name)
         if not isinstance(section, dict):

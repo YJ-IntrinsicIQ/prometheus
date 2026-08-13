@@ -5,6 +5,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from .financial_memory_truth import (
+    ANALYTICAL_METRIC_GROUPS,
+    build_financial_memory_manifest,
+    load_financial_truth_by_year,
+)
 from .trend_schema import (
     FinancialTrendReport,
     GrowthSummaryPoint,
@@ -90,6 +95,47 @@ _ACTION_ORDER = {
     "buyback": 7,
     "rights_issue": 8,
     "preferential_issue": 9,
+}
+
+_CONTAINER_SPECS = {
+    "metric_trends": ("revenue", "ebitda", "ebit", "pat", "total_assets", "net_worth", "book_value_per_share"),
+    "margin_trends": ("gross_margin", "ebitda_margin", "ebit_margin", "opm", "npm"),
+    "return_trends": ("roe", "roce", "roa"),
+    "balance_sheet_trends": ("total_debt", "net_debt", "debt_to_equity", "net_debt_to_equity", "cash_and_equivalents", "reserves"),
+    "cash_conversion_trends": (
+        "cfo",
+        "capex",
+        "fcf",
+        "cfo_to_pat",
+        "fcf_to_pat",
+        "fcf_margin",
+        "receivables",
+        "inventory",
+        "payables",
+        "receivable_days",
+        "inventory_days",
+        "payable_days",
+        "cash_conversion_cycle",
+    ),
+    "per_share_trends": (
+        "eps_basic",
+        "eps_diluted",
+        "book_value_per_share",
+        "dividend_per_share",
+        "payout_ratio",
+        "closing_shares",
+        "share_count",
+        "weighted_avg_shares",
+        "weighted_average_diluted_shares",
+    ),
+    "ownership_trends": (
+        "promoter_holding",
+        "pledged_promoter_holding",
+        "fii_holding",
+        "dii_holding",
+        "mutual_fund_holding",
+        "public_holding",
+    ),
 }
 
 
@@ -475,7 +521,9 @@ def _apply_comparability_warnings(
                 warnings,
                 f"corporate actions affect per-share comparability in {action.get('year')}: {action.get('action_type')}",
             )
-            for metric in ("eps_basic", "eps_diluted", "book_value_per_share", "dividend_per_share", "payout_ratio", "share_count"):
+            for metric in ("eps_basic", "eps_diluted", "book_value_per_share", "dividend_per_share", "payout_ratio", "closing_shares"):
+                if metric not in per_share_trends:
+                    continue
                 _append_unique(
                     per_share_trends[metric].comparability_warnings,
                     f"{action.get('year')} {action.get('action_type')} may affect comparability",
@@ -484,25 +532,166 @@ def _apply_comparability_warnings(
         _append_unique(warnings, f"{year}: {warning}")
 
 
+def _fact_point(fact: Dict[str, Any]) -> TrendPoint:
+    return TrendPoint(
+        year=str(fact.get("fiscal_year") or ""),
+        value=_round(fact.get("value") if isinstance(fact.get("value"), (int, float)) else None),
+        basis=str(fact.get("basis") or "unknown"),
+        source_artifact=str(fact.get("source_artifact") or ""),
+        confidence=str(fact.get("confidence") or "missing"),
+        metric_name=str(fact.get("metric_name") or ""),
+        availability_status=str(fact.get("availability_status") or "missing"),
+        source_statement=str(fact.get("source_statement") or ""),
+        derived=bool(fact.get("derived")),
+        formula=str(fact.get("formula") or ""),
+        usable_downstream=bool(fact.get("usable_downstream")),
+        warnings=[str(item) for item in fact.get("warnings", [])] if isinstance(fact.get("warnings"), list) else [],
+    )
+
+
+def _build_series_from_truth(
+    *,
+    years: Sequence[str],
+    bundles: Dict[str, Dict[str, Any]],
+    metric_id: str,
+) -> TrendSeries:
+    points: List[TrendPoint] = []
+    unit = ""
+    for year in years:
+        facts = (bundles.get(year, {}).get("fact_map") or {}).get(metric_id, [])
+        if not facts:
+            shareholding = bundles.get(year, {}).get("shareholding") or {}
+            if metric_id in {
+                "promoter_holding",
+                "pledged_promoter_holding",
+                "fii_holding",
+                "dii_holding",
+                "mutual_fund_holding",
+                "public_holding",
+            } and isinstance(shareholding, dict):
+                holder_map = {
+                    "promoter_holding": "promoter_holding_percent",
+                    "pledged_promoter_holding": "pledged_promoter_holding_percent",
+                    "fii_holding": "fii_holding_percent",
+                    "dii_holding": "dii_holding_percent",
+                    "mutual_fund_holding": "mutual_fund_holding_percent",
+                    "public_holding": "public_holding_percent",
+                }
+                items = shareholding.get("items", []) if isinstance(shareholding.get("items"), list) else []
+                match = next((item for item in items if isinstance(item, dict) and item.get("holder_category") == holder_map[metric_id]), None)
+                if isinstance(match, dict):
+                    unit = "%"
+                    points.append(
+                        TrendPoint(
+                            year=year,
+                            value=_round(_parse_numeric(match.get("holding_percent"))),
+                            basis="unknown",
+                            source_artifact="shareholding_pattern.json",
+                            confidence=str(match.get("confidence") or "missing"),
+                            metric_name=metric_id.replace("_", " "),
+                            availability_status="present_direct",
+                            source_statement="shareholding",
+                            derived=False,
+                            formula="",
+                            usable_downstream=True,
+                            warnings=[str(item) for item in match.get("warnings", [])] if isinstance(match.get("warnings"), list) else [],
+                        )
+                    )
+            continue
+        fact = facts[0]
+        unit = unit or str(fact.get("unit") or "")
+        points.append(_fact_point(fact))
+    return TrendSeries(metric=metric_id, unit=unit, series=points, comparability_warnings=_series_warnings(points))
+
+
+def _build_container_from_truth(
+    *,
+    years: Sequence[str],
+    bundles: Dict[str, Dict[str, Any]],
+    metric_ids: Sequence[str],
+) -> Dict[str, TrendSeries]:
+    return {metric_id: _build_series_from_truth(years=years, bundles=bundles, metric_id=metric_id) for metric_id in metric_ids}
+
+
+def _build_growth_summary_from_truth(
+    *,
+    years: Sequence[str],
+    bundles: Dict[str, Dict[str, Any]],
+) -> Dict[str, List[GrowthSummaryPoint]]:
+    result: Dict[str, List[GrowthSummaryPoint]] = {}
+    for year in years:
+        payload = bundles.get(year, {}).get("growth")
+        if not isinstance(payload, dict):
+            continue
+        growth_metrics = payload.get("growth_metrics", {})
+        if not isinstance(growth_metrics, dict):
+            continue
+        for metric, item in growth_metrics.items():
+            if not isinstance(item, dict):
+                continue
+            result.setdefault(metric, []).append(
+                GrowthSummaryPoint(
+                    year=year,
+                    growth_percent=_round(item.get("growth_percent") if isinstance(item.get("growth_percent"), (int, float)) else None),
+                    cagr_percent=_round(item.get("cagr_percent") if isinstance(item.get("cagr_percent"), (int, float)) else None),
+                    absolute_change=_round(item.get("absolute_change") if isinstance(item.get("absolute_change"), (int, float)) else None),
+                    basis=str(item.get("basis") or payload.get("basis_used") or "unknown"),
+                    source_artifact="financial_growth.json",
+                    confidence=str(item.get("confidence") or "missing"),
+                    warnings=[str(w) for w in item.get("warnings", [])] if isinstance(item.get("warnings"), list) else [],
+                )
+            )
+    return result
+
+
+def _build_unreliable_lists(bundles: Dict[str, Dict[str, Any]], years: Sequence[str], field: str) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for year in years:
+        registry = bundles.get(year, {}).get("registry") or {}
+        for fact in registry.get(field, []) if isinstance(registry.get(field), list) else []:
+            if isinstance(fact, dict):
+                items.append(dict(fact))
+    return items
+
+
+def _trend_groups_from_containers(containers: Dict[str, Dict[str, TrendSeries]]) -> Dict[str, Dict[str, TrendSeries]]:
+    lookup: Dict[str, TrendSeries] = {}
+    for container in containers.values():
+        lookup.update(container)
+    groups: Dict[str, Dict[str, TrendSeries]] = {}
+    for group_name, metric_ids in ANALYTICAL_METRIC_GROUPS.items():
+        groups[group_name] = {metric_id: lookup.get(metric_id, TrendSeries(metric=metric_id, unit="", series=[], comparability_warnings=[])) for metric_id in metric_ids}
+    return groups
+
+
 def build_financial_trends(*, company: str, company_root: Path) -> FinancialTrendReport:
-    years = _collect_years(company_root)
+    manifest = build_financial_memory_manifest(company=company, company_root=company_root)
+    bundles = load_financial_truth_by_year(company_root=company_root)
+    years = list(manifest.get("years_with_financial_truth_registry") or manifest.get("years_with_partial_financials") or manifest.get("years_scanned") or [])
+    years = _sort_years(years)
     if not years:
         raise RuntimeError(f"financial_trends requires at least one valid financial year for {company}")
 
-    payloads = _year_payloads(company_root, years)
-    metric_trends = _build_trend_container(_SCALE_METRICS, years, payloads)
-    margin_trends = _build_trend_container(_MARGIN_METRICS, years, payloads)
-    return_trends = _build_trend_container(_RETURN_METRICS, years, payloads)
-    balance_sheet_trends = _build_trend_container(_BALANCE_METRICS, years, payloads)
-    cash_conversion_trends = _build_trend_container(_CASH_CONVERSION_METRICS, years, payloads)
-    working_capital_trends = _build_trend_container(_WORKING_CAPITAL_METRICS, years, payloads)
-    per_share_trends = _build_trend_container(_PER_SHARE_METRICS, years, payloads)
-    ownership_trends = _build_ownership_container(years, payloads)
-    growth_summary = _build_growth_summary(years, payloads)
-    corporate_actions_timeline = _build_corporate_actions_timeline(years, payloads)
+    metric_trends = _build_container_from_truth(years=years, bundles=bundles, metric_ids=_CONTAINER_SPECS["metric_trends"])
+    margin_trends = _build_container_from_truth(years=years, bundles=bundles, metric_ids=_CONTAINER_SPECS["margin_trends"])
+    return_trends = _build_container_from_truth(years=years, bundles=bundles, metric_ids=_CONTAINER_SPECS["return_trends"])
+    balance_sheet_trends = _build_container_from_truth(years=years, bundles=bundles, metric_ids=_CONTAINER_SPECS["balance_sheet_trends"])
+    cash_conversion_trends = _build_container_from_truth(years=years, bundles=bundles, metric_ids=_CONTAINER_SPECS["cash_conversion_trends"])
+    per_share_trends = _build_container_from_truth(years=years, bundles=bundles, metric_ids=_CONTAINER_SPECS["per_share_trends"])
+    if "share_count" in per_share_trends and not per_share_trends["share_count"].series and "closing_shares" in per_share_trends:
+        per_share_trends["share_count"] = TrendSeries(
+            metric="share_count",
+            unit=per_share_trends["closing_shares"].unit,
+            series=list(per_share_trends["closing_shares"].series),
+            comparability_warnings=list(per_share_trends["closing_shares"].comparability_warnings),
+        )
+    ownership_trends = _build_container_from_truth(years=years, bundles=bundles, metric_ids=_CONTAINER_SPECS["ownership_trends"])
+    growth_summary = _build_growth_summary_from_truth(years=years, bundles=bundles)
+    legacy_payloads = _year_payloads(company_root, years)
+    corporate_actions_timeline = _build_corporate_actions_timeline(years, legacy_payloads)
 
-    warnings: List[str] = []
-    limitations: List[str] = []
+    warnings: List[str] = list(manifest.get("warnings", []))
+    limitations: List[str] = list(manifest.get("limitations", []))
 
     revenue_points = metric_trends["revenue"].series
     pat_points = metric_trends["pat"].series
@@ -510,39 +699,60 @@ def build_financial_trends(*, company: str, company_root: Path) -> FinancialTren
         raise RuntimeError("financial_trends could not build revenue or PAT trend")
 
     if len(years) == 1:
+        _append_unique(warnings, "Trend history is insufficient because only one year is available; current-year snapshot metrics are preserved.")
         _append_unique(warnings, "only one financial year available")
 
-    basis = _determine_basis(payloads, years)
-    if basis == "mixed":
+    basis_values = {
+        point.basis
+        for container in (metric_trends, margin_trends, return_trends, balance_sheet_trends, cash_conversion_trends, per_share_trends)
+        for series in container.values()
+        for point in series.series
+        if point.basis and point.basis != "unknown"
+    }
+    basis = "unknown"
+    if len(basis_values) == 1:
+        basis = next(iter(basis_values))
+    elif len(basis_values) > 1:
+        basis = "mixed"
         _append_unique(warnings, "basis mismatch across years")
 
     if not cash_conversion_trends["cfo"].series:
-        _append_unique(warnings, "missing CFO")
-    if not cash_conversion_trends["fcf"].series:
-        _append_unique(warnings, "missing FCF")
+        _append_unique(warnings, "CFO missing.")
+    fcf_series = cash_conversion_trends["fcf"].series
+    if not fcf_series:
+        _append_unique(warnings, "FCF missing.")
+    elif any(point.derived for point in fcf_series):
+        _append_unique(warnings, "FCF derived, not explicitly disclosed.")
 
-    if not return_trends["roe"].series or all(point.value is None for point in return_trends["roe"].series):
-        _append_unique(warnings, "ROE unavailable")
-    if not return_trends["roce"].series or all(point.value is None for point in return_trends["roce"].series):
-        _append_unique(warnings, "ROCE unavailable")
+    if cash_conversion_trends["capex"].series and not any("maintenance" in warning.lower() or "growth" in warning.lower() for point in cash_conversion_trends["capex"].series for warning in point.warnings):
+        _append_unique(limitations, "maintenance/growth capex split unavailable")
 
-    if all(not series.series for series in ownership_trends.values()):
-        _append_unique(warnings, "shareholding data missing")
+    if return_trends["roe"].series and len(return_trends["roe"].series) == 1:
+        _append_unique(warnings, "Single-year ROE available; durability unproven.")
+    if return_trends["roce"].series and len(return_trends["roce"].series) == 1:
+        _append_unique(warnings, "Single-year ROCE available; durability unproven.")
 
-    for year in years:
-        shareholding_payload = payloads[year].get("shareholding")
-        if isinstance(shareholding_payload, dict):
-            for warning in shareholding_payload.get("warnings", []):
-                if isinstance(warning, str) and "shareholding" in warning.lower():
-                    _append_unique(warnings, f"{year}: {warning}")
-        normalized_payload = payloads[year].get("normalized")
-        if isinstance(normalized_payload, dict):
-            year_basis = _basis_from_normalized(normalized_payload)
-            if year_basis == "unknown":
-                _append_unique(limitations, f"{year}: preferred basis unknown")
+    ownership_missing = all(not series.series for series in ownership_trends.values())
+    if ownership_missing:
+        registry_years = manifest.get("years_with_financial_truth_registry", [])
+        invalid_ownership = any("shareholding_pattern.json" in (manifest.get("quarantined_domains_by_year", {}).get(year) or []) for year in registry_years)
+        _append_unique(warnings, "Ownership data invalid/quarantined." if invalid_ownership else "Shareholding data missing.")
 
-    cash_conversion_trends.update(working_capital_trends)
-    _apply_comparability_warnings(per_share_trends, corporate_actions_timeline, payloads, warnings)
+    _apply_comparability_warnings(per_share_trends, corporate_actions_timeline, legacy_payloads, warnings)
+    if "share_count" in per_share_trends and "closing_shares" in per_share_trends:
+        per_share_trends["share_count"].comparability_warnings = list(per_share_trends["closing_shares"].comparability_warnings)
+
+    trend_groups = _trend_groups_from_containers(
+        {
+            "metric_trends": metric_trends,
+            "margin_trends": margin_trends,
+            "return_trends": return_trends,
+            "balance_sheet_trends": balance_sheet_trends,
+            "cash_conversion_trends": cash_conversion_trends,
+            "per_share_trends": per_share_trends,
+            "ownership_trends": ownership_trends,
+        }
+    )
 
     report = FinancialTrendReport(
         company=company,
@@ -554,12 +764,12 @@ def build_financial_trends(*, company: str, company_root: Path) -> FinancialTren
             "basis_consistency": "mixed" if basis == "mixed" else ("unknown" if basis == "unknown" else "consistent"),
             "warnings": ["basis mismatch across years"] if basis == "mixed" else [],
         },
+        trend_groups=trend_groups,
         metric_trends=metric_trends,
         metric_series={
             key: _alias_points(value)
             for key, value in {
                 **metric_trends,
-                "net_debt": balance_sheet_trends["net_debt"],
                 "cfo": cash_conversion_trends["cfo"],
                 "capex": cash_conversion_trends["capex"],
                 "fcf": cash_conversion_trends["fcf"],
@@ -597,6 +807,9 @@ def build_financial_trends(*, company: str, company_root: Path) -> FinancialTren
         per_share_trends=per_share_trends,
         ownership_trends=ownership_trends,
         corporate_actions_timeline=corporate_actions_timeline,
+        unreliable_metrics=_build_unreliable_lists(bundles, years, "unreliable_facts"),
+        invalid_or_quarantined_metrics=_build_unreliable_lists(bundles, years, "invalid_facts")
+        + _build_unreliable_lists(bundles, years, "quarantined_facts"),
         warnings=warnings,
         limitations=limitations,
     )

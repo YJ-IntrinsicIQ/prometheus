@@ -4,6 +4,8 @@ import types
 
 import pytest
 
+from core.company_context import CompanyContext
+from pipelines.pipeline_context import set_context
 
 dotenv_stub = types.ModuleType("dotenv")
 dotenv_stub.load_dotenv = lambda *args, **kwargs: None
@@ -168,6 +170,34 @@ def test_base_extractor_caps_input_items_when_env_is_set(extractor_paths, monkey
     assert "total input items=3, capped to 2 for test run" in captured.out
     assert "total input items=3, items processed=2, total batches=2" in captured.out
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
+
+
+def test_base_extractor_stamps_context_year_as_source_year(extractor_paths):
+    input_path, _ = extractor_paths
+    input_path.write_text(
+        json.dumps(
+            [
+                {"chunk": "alpha", "page": 1, "distance": 0.1},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    context = CompanyContext(company="tanla", year="fy20")
+    set_context(context)
+    try:
+        extractor = RecordingExtractor(
+            input_file="input.json",
+            output_file="output.json",
+            prompt="prompt",
+            output_key="items",
+        )
+
+        result = extractor.run()
+
+        assert result[0]["source_year"] == "fy20"
+    finally:
+        set_context(None)
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "abc"])

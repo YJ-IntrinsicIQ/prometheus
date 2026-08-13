@@ -362,8 +362,15 @@ class CIMContractBuilder:
             "capital_allocation_financial_timeline": _load_json(self.output_dir / "financials" / "capital_allocation_financial_timeline.json"),
             "ownership_evolution": _load_json(self.output_dir / "financials" / "ownership_evolution.json"),
             "financial_memory_summary": _load_json(self.output_dir / "financials" / "financial_memory_summary.json"),
+            "financial_truth_pack": _load_json(self.output_dir / "financials" / "financial_truth_pack.json"),
             "financial_quality_summary": _load_json(self.output_dir / "financials" / "financial_quality_summary.json"),
             "financial_driver_attribution": _load_json(self.output_dir / "financials" / "financial_driver_attribution.json"),
+            "owner_earnings_bridge": _load_json(self.output_dir / "financials" / "investor_financial_modules" / "owner_earnings_bridge.json"),
+            "capital_allocation_roi_ledger": _load_json(self.output_dir / "financials" / "investor_financial_modules" / "capital_allocation_roi_ledger.json"),
+            "working_capital_quality_drilldown": _load_json(self.output_dir / "financials" / "investor_financial_modules" / "working_capital_quality_drilldown.json"),
+            "order_revenue_cash_conversion_tracker": _load_json(self.output_dir / "financials" / "investor_financial_modules" / "order_revenue_cash_conversion_tracker.json"),
+            "per_share_compounding_analysis": _load_json(self.output_dir / "financials" / "investor_financial_modules" / "per_share_compounding_analysis.json"),
+            "investor_financial_modules_manifest": _load_json(self.output_dir / "financials" / "investor_financial_modules" / "investor_financial_modules_manifest.json"),
         }
 
     def _year_artifact_paths(self, year: str) -> Dict[str, str]:
@@ -1112,6 +1119,13 @@ class CIMContractBuilder:
         quality = artifacts.get("financial_quality_summary") or {}
         attribution = artifacts.get("financial_driver_attribution") or {}
         memory_summary = artifacts.get("financial_memory_summary") or {}
+        truth_pack = artifacts.get("financial_truth_pack") or {}
+        owner_earnings_bridge = artifacts.get("owner_earnings_bridge") or {}
+        capital_allocation_roi_ledger = artifacts.get("capital_allocation_roi_ledger") or {}
+        working_capital_quality_drilldown = artifacts.get("working_capital_quality_drilldown") or {}
+        order_revenue_cash_conversion_tracker = artifacts.get("order_revenue_cash_conversion_tracker") or {}
+        per_share_compounding_analysis = artifacts.get("per_share_compounding_analysis") or {}
+        investor_financial_modules_manifest = artifacts.get("investor_financial_modules_manifest") or {}
         latest_year = available_years[-1] if available_years else ""
         latest_normalized = ((yearly_payloads.get(latest_year) or {}).get("normalized_fundamentals") or {}) if latest_year else {}
 
@@ -1471,13 +1485,96 @@ class CIMContractBuilder:
             "limitations": list(memory_summary.get("limitations", [])),
             "source_artifact": "financial_memory_summary.json",
         }
+        financial_truth_inputs = {
+            "years_covered": list(truth_pack.get("years_covered", [])),
+            "usable_current_metrics": list(truth_pack.get("usable_current_metrics", [])),
+            "usable_derived_metrics": list(truth_pack.get("usable_derived_metrics", [])),
+            "partial_metrics": list(truth_pack.get("partial_metrics", [])),
+            "derived_not_explicitly_reported": list(truth_pack.get("derived_not_explicitly_reported", [])),
+            "trend_durability_limits": list(truth_pack.get("trend_durability_limits", [])),
+            "precision_limits": list(truth_pack.get("precision_limits", [])),
+            "investor_financial_questions": list(truth_pack.get("investor_relevant_questions", [])),
+            "source_provenance": list(truth_pack.get("source_provenance", [])),
+            "source_artifact": "financial_truth_pack.json",
+        }
+        financial_snapshot_inputs = {
+            "years_covered": list(truth_pack.get("years_covered", [])),
+            "usable_current_metrics": list(truth_pack.get("usable_current_metrics", [])),
+            "trend_durability_limits": list(truth_pack.get("trend_durability_limits", [])),
+            "precision_limits": list(truth_pack.get("precision_limits", [])),
+            "source_artifact": "financial_truth_pack.json",
+        }
+        owner_earnings_readiness_inputs = {
+            "bridges": list(owner_earnings_bridge.get("bridges", []))[:5],
+            "usable_derived_metrics": [
+                item
+                for item in list(truth_pack.get("usable_derived_metrics", []))
+                if str(item.get("metric_id") or item.get("canonical_metric") or "").strip().lower()
+                in {"fcf", "owner_earnings_estimate", "fcf_after_ppe_cwip_capex"}
+            ],
+            "precision_limits": list(truth_pack.get("precision_limits", [])),
+            "warnings": list(owner_earnings_bridge.get("warnings", [])) if isinstance(owner_earnings_bridge.get("warnings"), list) else [],
+            "source_artifact": "owner_earnings_bridge.json",
+        }
+        working_capital_quality_inputs = {
+            "drilldown": list(working_capital_quality_drilldown.get("drilldown", []))[:5],
+            "order_to_cash_tracker": list(order_revenue_cash_conversion_tracker.get("tracker", []))[:5],
+            "trend_durability_limits": list(truth_pack.get("trend_durability_limits", [])),
+            "precision_limits": list(truth_pack.get("precision_limits", [])),
+            "warnings": list(working_capital_quality_drilldown.get("warnings", [])) if isinstance(working_capital_quality_drilldown.get("warnings"), list) else [],
+            "source_artifact": "working_capital_quality_drilldown.json",
+        }
+        capital_allocation_financial_inputs = {
+            "entries": list(capital_allocation_roi_ledger.get("entries", []))[:8],
+            "precision_limits": list(truth_pack.get("precision_limits", [])),
+            "warnings": list(capital_allocation_roi_ledger.get("warnings", [])) if isinstance(capital_allocation_roi_ledger.get("warnings"), list) else [],
+            "source_artifact": "capital_allocation_roi_ledger.json",
+        }
+        per_share_compounding_inputs = {
+            "analysis": list(per_share_compounding_analysis.get("analysis", []))[:5],
+            "trend_durability_limits": list(truth_pack.get("trend_durability_limits", [])),
+            "precision_limits": list(truth_pack.get("precision_limits", [])),
+            "warnings": list(per_share_compounding_analysis.get("warnings", [])) if isinstance(per_share_compounding_analysis.get("warnings"), list) else [],
+            "source_artifact": "per_share_compounding_analysis.json",
+        }
+        unreliable_financial_inputs = {
+            "metrics": list(truth_pack.get("unreliable_metrics", [])),
+            "source_artifact": "financial_truth_pack.json",
+        }
+        invalid_or_quarantined_financial_inputs = {
+            "metrics": list(truth_pack.get("invalid_or_quarantined_metrics", [])),
+            "source_artifact": "financial_truth_pack.json",
+        }
+        precise_missing_financial_inputs = {
+            "metrics": list(truth_pack.get("precise_missing_metrics", [])),
+            "investor_questions": list(truth_pack.get("investor_relevant_questions", [])),
+            "source_artifact": "financial_truth_pack.json",
+        }
         financial_panel_ready = bool(financial_quality_by_year) and financial_manifest.get("financial_status") in {"pass", "warning"}
+        if truth_pack.get("financial_panel_status") == "invalid":
+            financial_panel_ready = False
+        financial_warning_policy = {
+            "allowed_financial_warnings": list(truth_pack.get("financial_warnings_allowed_downstream", [])),
+            "financial_warnings_blocked_downstream": [
+                item.get("original_warning") if isinstance(item, dict) else item
+                for item in truth_pack.get("financial_warnings_blocked_downstream", [])
+            ],
+            "financial_warnings_rewritten": list(truth_pack.get("financial_warnings_rewritten", [])),
+            "source_artifact": "financial_truth_pack.json",
+        }
+        financial_panel_status = {
+            "status": truth_pack.get("financial_panel_status") or ("pass" if financial_panel_ready else "warning"),
+            "reason": truth_pack.get("financial_panel_status_reason") or "",
+            "source_artifact": "financial_truth_pack.json",
+        }
 
         sections = {
             "financial_fundamentals_inputs": {
                 "by_year": fundamentals_by_year,
                 "warnings": list(financial_manifest.get("financial_warnings", [])),
             },
+            "financial_truth_inputs": financial_truth_inputs,
+            "financial_snapshot_inputs": financial_snapshot_inputs,
             "financial_trend_inputs": financial_trend_inputs,
             "financial_growth_inputs": financial_growth_inputs,
             "cash_conversion_inputs": cash_conversion_inputs,
@@ -1493,6 +1590,19 @@ class CIMContractBuilder:
             "profitability_inputs": profitability_inputs,
             "per_share_inputs": per_share_inputs,
             "working_capital_inputs": working_capital_inputs,
+            "owner_earnings_readiness_inputs": owner_earnings_readiness_inputs,
+            "working_capital_quality_inputs": working_capital_quality_inputs,
+            "capital_allocation_financial_inputs": capital_allocation_financial_inputs,
+            "per_share_compounding_inputs": per_share_compounding_inputs,
+            "unreliable_financial_inputs": unreliable_financial_inputs,
+            "invalid_or_quarantined_financial_inputs": invalid_or_quarantined_financial_inputs,
+            "precise_missing_financial_inputs": precise_missing_financial_inputs,
+            "financial_warning_policy": financial_warning_policy,
+            "investor_financial_questions": list(truth_pack.get("investor_relevant_questions", [])),
+            "financial_panel_status": financial_panel_status,
+            "financial_panel_usable_domains": list(truth_pack.get("financial_panel_usable_domains", investor_financial_modules_manifest.get("usable_domains", []))),
+            "financial_panel_limited_domains": list(truth_pack.get("financial_panel_limited_domains", investor_financial_modules_manifest.get("limited_domains", []))),
+            "financial_panel_blocked_domains": list(truth_pack.get("financial_panel_blocked_domains", investor_financial_modules_manifest.get("blocked_domains", []))),
             "corporate_action_inputs": {
                 "by_year": corporate_action_inputs,
                 "warnings": list(financial_manifest.get("financial_warnings", [])),
@@ -2184,6 +2294,8 @@ class CIMContractBuilder:
             "growth_execution_inputs": growth_execution_inputs,
             "story_vs_numbers_inputs": story_vs_numbers_inputs,
             "financial_fundamentals_inputs": financial_sections.get("financial_fundamentals_inputs", {}),
+            "financial_truth_inputs": financial_sections.get("financial_truth_inputs", {}),
+            "financial_snapshot_inputs": financial_sections.get("financial_snapshot_inputs", {}),
             "financial_trend_inputs": financial_sections.get("financial_trend_inputs", {}),
             "financial_growth_inputs": financial_sections.get("financial_growth_inputs", {}),
             "profitability_inputs": financial_sections.get("profitability_inputs", {}),
@@ -2192,6 +2304,19 @@ class CIMContractBuilder:
             "balance_sheet_strength_inputs": financial_sections.get("balance_sheet_strength_inputs", {}),
             "working_capital_inputs": financial_sections.get("working_capital_inputs", {}),
             "per_share_inputs": financial_sections.get("per_share_inputs", {}),
+            "owner_earnings_readiness_inputs": financial_sections.get("owner_earnings_readiness_inputs", {}),
+            "working_capital_quality_inputs": financial_sections.get("working_capital_quality_inputs", {}),
+            "capital_allocation_financial_inputs": financial_sections.get("capital_allocation_financial_inputs", {}),
+            "per_share_compounding_inputs": financial_sections.get("per_share_compounding_inputs", {}),
+            "unreliable_financial_inputs": financial_sections.get("unreliable_financial_inputs", {}),
+            "invalid_or_quarantined_financial_inputs": financial_sections.get("invalid_or_quarantined_financial_inputs", {}),
+            "precise_missing_financial_inputs": financial_sections.get("precise_missing_financial_inputs", {}),
+            "financial_warning_policy": financial_sections.get("financial_warning_policy", {}),
+            "investor_financial_questions": financial_sections.get("investor_financial_questions", []),
+            "financial_panel_status": financial_sections.get("financial_panel_status", {}),
+            "financial_panel_usable_domains": financial_sections.get("financial_panel_usable_domains", []),
+            "financial_panel_limited_domains": financial_sections.get("financial_panel_limited_domains", []),
+            "financial_panel_blocked_domains": financial_sections.get("financial_panel_blocked_domains", []),
             "corporate_action_inputs": financial_sections.get("corporate_action_inputs", {}),
             "ownership_inputs": financial_sections.get("ownership_inputs", {}),
             "financial_quality_inputs": financial_sections.get("financial_quality_inputs", {}),

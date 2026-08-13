@@ -260,6 +260,32 @@ def test_reconciler_passes_for_paid_up_equity_shares_outstanding(tmp_path):
     assert not any("shares_outstanding" in failure for failure in report.hard_failures)
 
 
+def test_reconciler_passes_for_end_of_period_share_count(tmp_path):
+    normalized_path = tmp_path / "normalized_fundamentals.json"
+    payload = _normalized_payload()
+    payload["share_data"]["shares_outstanding"].update(
+        {
+            "value_original": "51886650",
+            "value_type": "share_count",
+            "value_shares": 51886650.0,
+            "raw_number": 51886650.0,
+            "value_crore": None,
+            "source_line_item": "Number of shares outstanding at the end of the period",
+            "source_section_type": "share_capital_note",
+            "statement_type": "share_capital_note",
+            "source_value_type": "share_count",
+        }
+    )
+    _write_json(normalized_path, payload)
+
+    report = build_financial_reconciliation_report(
+        company="acme", year="fy25", normalized_path=normalized_path
+    )
+
+    assert report.checks["shares_outstanding"].status == "pass"
+    assert not any("shares_outstanding" in failure for failure in report.hard_failures)
+
+
 def test_reconciler_passes_for_outstanding_equity_shares(tmp_path):
     normalized_path = tmp_path / "normalized_fundamentals.json"
     payload = _normalized_payload()

@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - optional dependency in some local envi
 
 from .base import BaseAIProvider
 from .exceptions import AIRateLimitError, AIResponseError, AITimeoutError, AIProviderError
+from .retry import is_retryable_empty_response_error
 from .schema import AIResponse
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -108,21 +109,38 @@ class OpenAIProvider(BaseAIProvider):
             system_prompt=system_prompt,
         )
         start = time.perf_counter()
-        if self.client is None:
-            return self._generate_via_httpx(payload, start)
-        try:
-            response = self.client.chat.completions.create(**payload)
-        except APITimeoutError as exc:
-            raise AITimeoutError("OpenAI request timed out") from exc
-        except RateLimitError as exc:
-            raise AIRateLimitError("OpenAI rate limit exceeded") from exc
-        except APIConnectionError as exc:
-            raise AIProviderError(f"OpenAI request failed: {exc}") from exc
-        except Exception as exc:
-            raise AIProviderError(f"OpenAI request failed: {exc}") from exc
+        attempts = self.max_retries + 1
+        last_error: Optional[Exception] = None
+        for attempt in range(1, attempts + 1):
+            try:
+                if self.client is None:
+                    return self._generate_via_httpx(payload, start)
+                response = self.client.chat.completions.create(**payload)
+                latency_ms = (time.perf_counter() - start) * 1000
+                return self._parse_response(response, latency_ms)
+            except AIResponseError as exc:
+                last_error = exc
+                if is_retryable_empty_response_error(exc) and attempt < attempts:
+                    continue
+                raise
+            except APITimeoutError as exc:
+                raise AITimeoutError("OpenAI request timed out") from exc
+            except RateLimitError as exc:
+                raise AIRateLimitError("OpenAI rate limit exceeded") from exc
+            except APIConnectionError as exc:
+                last_error = exc
+                if attempt < attempts:
+                    continue
+                raise AIProviderError(f"OpenAI request failed: {exc}") from exc
+            except Exception as exc:
+                last_error = exc
+                if attempt < attempts:
+                    continue
+                raise AIProviderError(f"OpenAI request failed: {exc}") from exc
 
-        latency_ms = (time.perf_counter() - start) * 1000
-        return self._parse_response(response, latency_ms)
+        if last_error is not None:
+            raise AIProviderError(f"OpenAI request failed before a response was returned: {last_error}") from last_error
+        raise AIProviderError("OpenAI request failed before a response was returned")
 
     def _generate_via_httpx(self, payload: Dict[str, Any], start: float) -> AIResponse:
         attempts = self.max_retries + 1
@@ -142,6 +160,11 @@ class OpenAIProvider(BaseAIProvider):
                     response_payload = response.json()
                     latency_ms = (time.perf_counter() - start) * 1000
                     return self._parse_response(response_payload, latency_ms)
+            except AIResponseError as exc:
+                last_error = exc
+                if is_retryable_empty_response_error(exc) and attempt < attempts:
+                    continue
+                raise
             except httpx.TimeoutException as exc:
                 last_error = exc
                 if attempt >= attempts:

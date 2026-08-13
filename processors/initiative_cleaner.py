@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+from pipelines.pipeline_context import get_context
+
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -32,6 +34,13 @@ INVALID_TERMS = [
 
 
 class InitiativeCleaner(BaseCleaner):
+    def clean_item(self, item):
+        cleaned = dict(item)
+        context = get_context()
+        if context is not None and not cleaned.get("source_year"):
+            cleaned["source_year"] = context.year
+        return cleaned
+
     def is_valid(self, item):
         initiative = item.get(
             "initiative",

@@ -116,6 +116,100 @@ INTERNAL_BRIEF_REPLACEMENTS = (
     (re.compile(r"\bsource_chunk\b", re.IGNORECASE), "source excerpt"),
 )
 
+EXTERNAL_READER_FIELD_LABELS = {
+    "business_understanding": "business evidence",
+    "business_economics_inputs": "business-economics evidence",
+    "moat_inputs": "competitive-position evidence",
+    "financial_fundamentals_inputs": "financial fundamentals evidence",
+    "financial_growth_inputs": "financial growth evidence",
+    "profitability_inputs": "profitability evidence",
+    "cash_conversion_inputs": "cash-conversion evidence",
+    "return_on_capital_inputs": "return-on-capital evidence",
+    "balance_sheet_strength_inputs": "balance-sheet evidence",
+    "financial_quality_inputs": "financial-quality evidence",
+    "per_share_inputs": "per-share evidence",
+    "financial_driver_inputs": "financial-driver evidence",
+    "multi_year_financial_inputs": "multi-year financial evidence",
+    "capital_allocation_inputs": "capital-allocation evidence",
+    "management_quality_inputs": "management-quality evidence",
+    "governance_and_incentive_inputs": "governance and incentive evidence",
+    "working_capital_inputs": "working-capital evidence",
+    "growth_execution_inputs": "growth-execution evidence",
+    "growth_quality_inputs": "growth-quality evidence",
+    "risk_inputs": "risk evidence",
+    "ownership_inputs": "ownership evidence",
+    "corporate_action_inputs": "corporate-action evidence",
+    "multi_year_inputs": "multi-year evidence",
+    "uncertainty_missing_data": "information gaps",
+    "evidence_map": "supporting evidence",
+}
+
+EXTERNAL_READER_REPLACEMENTS = (
+    (re.compile(r"\bPCIM\b", re.IGNORECASE), "available company evidence"),
+    (re.compile(r"\bCIM\b", re.IGNORECASE), "available company intelligence"),
+    (re.compile(r"\bLLM\b", re.IGNORECASE), "analysis"),
+    (re.compile(r"\bJSON\b", re.IGNORECASE), "structured analysis output"),
+    (re.compile(r"\.json\b", re.IGNORECASE), ""),
+    (re.compile(r"\bsource_artifact\b", re.IGNORECASE), "source material"),
+    (re.compile(r"\bsource_item_id\b", re.IGNORECASE), "source reference"),
+    (re.compile(r"\bevidence_map\b", re.IGNORECASE), "supporting evidence"),
+    (re.compile(r"\bevidence_ids?\b", re.IGNORECASE), "supporting evidence"),
+    (re.compile(r"\bnormalized_ids\b", re.IGNORECASE), "normalized supporting evidence"),
+    (re.compile(r"\boriginal_ids\b", re.IGNORECASE), "original supporting evidence references"),
+    (re.compile(r"\bdoctrine_id\b", re.IGNORECASE), "investment lens"),
+    (re.compile(r"\bschema_warnings\b", re.IGNORECASE), "review warnings"),
+    (re.compile(r"\bvalidation_status\b", re.IGNORECASE), "review status"),
+    (re.compile(r"\bevidence_grounding_status\b", re.IGNORECASE), "evidence-support status"),
+    (re.compile(r"\binput pack\b", re.IGNORECASE), "analysis materials"),
+    (re.compile(r"\bprompt\b", re.IGNORECASE), "analysis framing"),
+    (re.compile(r"\bsource chunk\b", re.IGNORECASE), "source excerpt"),
+    (re.compile(r"\braw artifact\b", re.IGNORECASE), "raw source material"),
+    (re.compile(r"\bgenerated artifact\b", re.IGNORECASE), "generated output"),
+    (re.compile(r"\bsource file\b", re.IGNORECASE), "source document"),
+    (re.compile(r"\bartifact(s)?\b", re.IGNORECASE), "available evidence"),
+    (re.compile(r"\bcompacted PCIM\b", re.IGNORECASE), "condensed company evidence"),
+)
+
+EXTERNAL_READER_FORBIDDEN_PATTERNS = (
+    (re.compile(r"\bpcim\b", re.IGNORECASE), "PCIM"),
+    (re.compile(r"\bcim\b", re.IGNORECASE), "CIM"),
+    (re.compile(r"\bartifacts?\b", re.IGNORECASE), "artifact"),
+    (re.compile(r"\.json\b", re.IGNORECASE), ".json"),
+    (re.compile(r"\bjson\b", re.IGNORECASE), "JSON"),
+    (re.compile(r"\bsource_artifact\b", re.IGNORECASE), "source_artifact"),
+    (re.compile(r"\bsource_item_id\b", re.IGNORECASE), "source_item_id"),
+    (re.compile(r"\bevidence_ids?\b", re.IGNORECASE), "evidence_id"),
+    (re.compile(r"\bevidence_map\b", re.IGNORECASE), "evidence_map"),
+    (re.compile(r"\buncertainty_missing_data\b", re.IGNORECASE), "uncertainty_missing_data"),
+    (re.compile(r"\bbusiness_understanding\b", re.IGNORECASE), "business_understanding"),
+    (re.compile(r"\bmanagement_quality_inputs\b", re.IGNORECASE), "management_quality_inputs"),
+    (re.compile(r"\bfinancial_growth_inputs\b", re.IGNORECASE), "financial_growth_inputs"),
+    (re.compile(r"\bprofitability_inputs\b", re.IGNORECASE), "profitability_inputs"),
+    (re.compile(r"\bworking_capital_inputs\b", re.IGNORECASE), "working_capital_inputs"),
+    (re.compile(r"\bfinancial_driver_inputs\b", re.IGNORECASE), "financial_driver_inputs"),
+    (re.compile(r"\bgrowth_execution_inputs\b", re.IGNORECASE), "growth_execution_inputs"),
+    (re.compile(r"\bfinancial_quality_inputs\b", re.IGNORECASE), "financial_quality_inputs"),
+    (re.compile(r"\bmulti_year_financial_inputs\b", re.IGNORECASE), "multi_year_financial_inputs"),
+    (re.compile(r"\bbalance_sheet_strength_inputs\b", re.IGNORECASE), "balance_sheet_strength_inputs"),
+    (re.compile(r"\bper_share_inputs\b", re.IGNORECASE), "per_share_inputs"),
+    (re.compile(r"\bcorporate_action_inputs\b", re.IGNORECASE), "corporate_action_inputs"),
+    (re.compile(r"\bmulti_year_inputs\b", re.IGNORECASE), "multi_year_inputs"),
+    (re.compile(r"\bdoctrine_id\b", re.IGNORECASE), "doctrine_id"),
+    (re.compile(r"\bschema_warnings\b", re.IGNORECASE), "schema_warnings"),
+    (re.compile(r"\bvalidation_status\b", re.IGNORECASE), "validation_status"),
+    (re.compile(r"\bevidence_grounding_status\b", re.IGNORECASE), "evidence_grounding_status"),
+    (re.compile(r"\bnormalized_ids\b", re.IGNORECASE), "normalized_ids"),
+    (re.compile(r"\boriginal_ids\b", re.IGNORECASE), "original_ids"),
+    (re.compile(r"\binput pack\b", re.IGNORECASE), "input pack"),
+    (re.compile(r"\bprompt\b", re.IGNORECASE), "prompt"),
+    (re.compile(r"\bllm\b", re.IGNORECASE), "LLM"),
+    (re.compile(r"\braw artifact\b", re.IGNORECASE), "raw artifact"),
+    (re.compile(r"\bgenerated artifact\b", re.IGNORECASE), "generated artifact"),
+    (re.compile(r"\bsource file\b", re.IGNORECASE), "source file"),
+    (re.compile(r"\bsource chunk\b", re.IGNORECASE), "source chunk"),
+    (re.compile(r"\bev_[A-Za-z0-9_\-]+\b", re.IGNORECASE), "evidence_id"),
+)
+
 
 def utc_now() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
@@ -157,6 +251,62 @@ def _normalize_brief_scalar(value: Any) -> str:
     if isinstance(value, (str, int, float, bool)):
         return str(value).strip()
     return ""
+
+
+def _rewrite_external_reader_labels(text: str) -> str:
+    rewritten = str(text or "")
+    for internal_label, human_label in EXTERNAL_READER_FIELD_LABELS.items():
+        rewritten = re.sub(rf"\b{re.escape(internal_label)}\b", human_label, rewritten, flags=re.IGNORECASE)
+    return rewritten
+
+
+def _rewrite_external_reader_boilerplate(text: str) -> str:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return ""
+    if (
+        "grounded in" in lowered
+        or "is grounded in" in lowered
+        or "is interpreted through the doctrine focus" in lowered
+        or "consumes sections" in lowered
+    ) and any(label in lowered for label in EXTERNAL_READER_FIELD_LABELS):
+        return (
+            "Insufficient direct evidence is available to make a confident doctrine-specific "
+            "assessment."
+        )
+    return str(text or "")
+
+
+def rewrite_text_for_external_reader(
+    text: Any,
+    *,
+    field_path: str = "",
+    diagnostics: Optional[Dict[str, Any]] = None,
+) -> str:
+    original = str(text or "").strip()
+    if not original:
+        return ""
+    rewritten = _rewrite_external_reader_boilerplate(original)
+    rewritten = _rewrite_external_reader_labels(rewritten)
+    for pattern, replacement in INTERNAL_BRIEF_REPLACEMENTS:
+        rewritten = pattern.sub(replacement, rewritten)
+    for pattern, replacement in EXTERNAL_READER_REPLACEMENTS:
+        rewritten = pattern.sub(replacement, rewritten)
+    rewritten = re.sub(r"\bev_[A-Za-z0-9_\-]+\b", "supporting evidence", rewritten, flags=re.IGNORECASE)
+    rewritten = re.sub(r"\s{2,}", " ", rewritten)
+    rewritten = re.sub(r"\s+([,.;:])", r"\1", rewritten)
+    rewritten = rewritten.replace("..", ".")
+    rewritten = rewritten.strip(" ,")
+    rewritten = _normalize_sanitized_text(rewritten)
+    if diagnostics is not None and rewritten != original:
+        diagnostics.setdefault("rewritten_fields", []).append(
+            {
+                "field": field_path,
+                "original_text": original,
+                "rewritten_text": rewritten,
+            }
+        )
+    return rewritten
 
 
 def _truncate_text_to_limit(text: str, max_chars: Optional[int]) -> str:
@@ -272,12 +422,186 @@ def normalize_user_facing_brief_lengths(value: Any) -> Dict[str, Any]:
     return normalized
 
 
+def collect_user_facing_brief_validation_issues(analyst: str, brief: Any) -> List[Dict[str, Any]]:
+    if not isinstance(brief, dict):
+        return [
+            {
+                "analyst": analyst,
+                "field": "user_facing_brief",
+                "forbidden_term": "",
+                "original_text": str(brief),
+                "suggested_rewrite": "Convert user_facing_brief into an object before validation.",
+                "reason": "user_facing_brief must be an object",
+            }
+        ]
+
+    issues: List[Dict[str, Any]] = []
+    for field in BRIEF_FIELD_ORDER + ("financial_lens",):
+        value = brief.get(field)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            matched_any = False
+            for pattern, label in EXTERNAL_READER_FORBIDDEN_PATTERNS:
+                if pattern.search(text):
+                    matched_any = True
+                    issues.append(
+                        {
+                            "analyst": analyst,
+                            "field": field,
+                            "forbidden_term": label,
+                            "original_text": text,
+                            "suggested_rewrite": rewrite_text_for_external_reader(
+                                text,
+                                field_path=f"user_facing_brief.{field}",
+                            ),
+                            "reason": f'contains forbidden term "{label}"',
+                        }
+                    )
+            if matched_any:
+                continue
+            if find_forbidden_recommendation_language(text):
+                issues.append(
+                    {
+                        "analyst": analyst,
+                        "field": field,
+                        "forbidden_term": "recommendation_language",
+                        "original_text": text,
+                        "suggested_rewrite": "",
+                        "reason": "contains recommendation language",
+                    }
+                )
+    return issues
+
+
+def finalize_user_facing_brief_for_external_reader(
+    analyst: str,
+    brief: Any,
+    doctrine: Optional[Dict[str, Any]] = None,
+    diagnostics: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    brief_diagnostics = diagnostics if diagnostics is not None else {}
+    normalized = normalize_user_facing_brief_shape(brief)
+    finalized = finalize_user_facing_brief(
+        analyst,
+        normalized,
+        brief_diagnostics.setdefault("brief_repair_diagnostics", []),
+    )
+
+    for field in BRIEF_FIELD_ORDER + ("financial_lens",):
+        current = finalized.get(field)
+        if isinstance(current, list):
+            finalized[field] = [
+                rewrite_text_for_external_reader(
+                    item,
+                    field_path=f"user_facing_brief.{field}",
+                    diagnostics=brief_diagnostics,
+                )
+                for item in current
+                if str(item or "").strip()
+            ]
+        else:
+            finalized[field] = rewrite_text_for_external_reader(
+                current,
+                field_path=f"user_facing_brief.{field}",
+                diagnostics=brief_diagnostics,
+            )
+
+    issues = collect_user_facing_brief_validation_issues(analyst, finalized)
+    if issues:
+        brief_diagnostics.setdefault("remaining_validation_issues", []).extend(issues)
+    return finalized
+
+
+def finalize_user_facing_brief(
+    analyst: str,
+    value: Any,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    repairs = diagnostics if diagnostics is not None else []
+    base: Dict[str, Any]
+    if isinstance(value, dict):
+        base = dict(value)
+    elif isinstance(value, str):
+        base = {"bottom_line": str(value).strip()}
+    elif isinstance(value, list):
+        base = {"what_needs_caution": value}
+    else:
+        base = {}
+
+    normalized = normalize_user_facing_brief_shape(base)
+    finalized = dict(normalized)
+    canonical = LENS_CONFIG.get(analyst, {})
+
+    canonical_title = str(canonical.get("title") or "").strip()
+    if canonical_title:
+        original_title = _normalize_brief_scalar(finalized.get("title"))
+        if original_title != canonical_title:
+            repairs.append(
+                {
+                    "field": "user_facing_brief.title",
+                    "original_value": original_title,
+                    "repaired_value": canonical_title,
+                    "repair_reason": "canonical_title_enforced",
+                    "repair_status": "repaired",
+                }
+            )
+        finalized["title"] = canonical_title
+
+    canonical_lens = str(canonical.get("lens_text") or "").strip()
+    if canonical_lens:
+        original_lens = _normalize_brief_scalar(finalized.get("lens"))
+        if original_lens != canonical_lens:
+            repairs.append(
+                {
+                    "field": "user_facing_brief.lens",
+                    "original_value": original_lens,
+                    "repaired_value": canonical_lens,
+                    "repair_reason": "canonical_lens_enforced",
+                    "repair_status": "repaired",
+                }
+            )
+        finalized["lens"] = canonical_lens
+    else:
+        finalized["lens"] = _normalize_brief_scalar(finalized.get("lens"))
+
+    for field in BRIEF_LIST_FIELDS:
+        raw_items = finalized.get(field)
+        if raw_items is None:
+            finalized[field] = []
+        elif isinstance(raw_items, str):
+            finalized[field] = [raw_items] if raw_items.strip() else []
+        elif not isinstance(raw_items, list):
+            scalar = _normalize_brief_scalar(raw_items)
+            finalized[field] = [scalar] if scalar else []
+
+    finalized["bottom_line"] = _normalize_brief_scalar(finalized.get("bottom_line"))
+    finalized["financial_lens"] = _normalize_brief_scalar(finalized.get("financial_lens"))
+
+    for key in REQUIRED_BRIEF_KEYS:
+        finalized.setdefault(key, [] if key in BRIEF_LIST_FIELDS else "")
+    for key in OPTIONAL_BRIEF_KEYS:
+        finalized.setdefault(key, "")
+
+    return finalized
+
+
 def validate_user_facing_brief(analyst: str, value: Any) -> Dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("user_facing_brief must be an object")
     missing = REQUIRED_BRIEF_KEYS - set(value.keys())
     if missing:
         raise ValueError(f"user_facing_brief missing required keys: {sorted(missing)}")
+
+    issues = collect_user_facing_brief_validation_issues(analyst, value)
+    if issues:
+        details = "; ".join(
+            f'field "{item["field"]}" {item["reason"]}'
+            for item in issues
+        )
+        raise ValueError(f"Invalid user_facing_brief for analyst {analyst}: {details}")
 
     title = _validate_no_internal_language(value.get("title"), analyst=analyst, field="title")
     lens = _validate_no_internal_language(
@@ -354,20 +678,17 @@ def sanitize_user_facing_brief(value: Any) -> Dict[str, Any]:
 
     sanitized: Dict[str, Any] = normalize_user_facing_brief_shape(value)
 
-    def sanitize_text(text: Any) -> str:
-        cleaned = str(text or "")
-        for pattern, replacement in INTERNAL_BRIEF_REPLACEMENTS:
-            cleaned = pattern.sub(replacement, cleaned)
-        cleaned = re.sub(r"\bev_[A-Za-z0-9_\-]+\b", "supporting evidence", cleaned, flags=re.IGNORECASE)
-        cleaned = _normalize_sanitized_text(cleaned)
-        return cleaned
-
     for key in BRIEF_FIELD_ORDER:
         current = sanitized.get(key)
         if isinstance(current, list):
-            sanitized[key] = [sanitize_text(item) for item in current]
+            sanitized[key] = [rewrite_text_for_external_reader(item, field_path=f"user_facing_brief.{key}") for item in current]
         elif isinstance(current, str):
-            sanitized[key] = sanitize_text(current)
+            sanitized[key] = rewrite_text_for_external_reader(current, field_path=f"user_facing_brief.{key}")
+    if isinstance(sanitized.get("financial_lens"), str):
+        sanitized["financial_lens"] = rewrite_text_for_external_reader(
+            sanitized.get("financial_lens"),
+            field_path="user_facing_brief.financial_lens",
+        )
     return sanitized
 
 
@@ -380,9 +701,10 @@ def _render_brief(analyst: str, payload: Dict[str, Any]) -> str:
     brief = validate_user_facing_brief(
         analyst,
         normalize_user_facing_brief_lengths(
-            normalize_user_facing_brief_shape(
-                sanitize_user_facing_brief(normalize_user_facing_brief_shape(brief))
-            )
+            finalize_user_facing_brief_for_external_reader(
+                analyst,
+                sanitize_user_facing_brief(normalize_user_facing_brief_shape(brief)),
+            ),
         ),
     )
 

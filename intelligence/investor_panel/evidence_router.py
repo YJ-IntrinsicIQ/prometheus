@@ -513,6 +513,7 @@ def split_clean_and_diagnostics(payload: Dict[str, Any]) -> Tuple[Dict[str, Any]
             "evidence_routing_diagnostics",
             payload.get("munger_evidence_routing_diagnostics", {}),
         ),
+        "finalization_diagnostics": payload.get("finalization_diagnostics", {}),
         "financial_warning_diagnostics": {
             "raw_financial_warnings_carried_forward": _unique_preserve(
                 raw_top_level_financial_warnings + raw_nested_financial_warnings
@@ -523,13 +524,41 @@ def split_clean_and_diagnostics(payload: Dict[str, Any]) -> Tuple[Dict[str, Any]
             "clean_financial_warnings": _unique_preserve(
                 clean_top_level_financial_warnings + clean_nested_financial_warnings
             ),
+            "blocked_stale_financial_warnings": payload.get("blocked_stale_financial_warnings", []),
+            "diagnostic_only_financial_warnings": payload.get("diagnostic_only_financial_warnings", []),
         },
+        "financial_truth_context": {
+            "derived_not_explicitly_reported": payload.get("derived_not_explicitly_reported", []),
+            "partial_financial_data": payload.get("partial_financial_data", []),
+            "unreliable_financial_data": payload.get("unreliable_financial_data", []),
+            "invalid_or_quarantined_financial_data": payload.get("invalid_or_quarantined_financial_data", []),
+            "precise_missing_financial_data": payload.get("precise_missing_financial_data", []),
+            "trend_durability_limits": payload.get("trend_durability_limits", []),
+            "financial_questions_for_investor": payload.get("financial_questions_for_investor", []),
+            "analyst_financial_truth_pack": payload.get("analyst_financial_truth_pack", {}),
+            "financial_metric_normalizations_applied": payload.get("financial_metric_normalizations_applied", []),
+            "unsupported_financial_metric_references": payload.get("unsupported_financial_metric_references", []),
+        },
+        "brief_repair_diagnostics": payload.get("brief_repair_diagnostics", []),
     }
     for key in (
         "schema_warnings",
         "evidence_grounding_warnings",
         "evidence_id_normalization",
         "evidence_routing_diagnostics",
+        "finalization_diagnostics",
+        "derived_not_explicitly_reported",
+        "partial_financial_data",
+        "unreliable_financial_data",
+        "invalid_or_quarantined_financial_data",
+        "precise_missing_financial_data",
+        "trend_durability_limits",
+        "financial_questions_for_investor",
+        "analyst_financial_truth_pack",
+        "financial_metric_normalizations_applied",
+        "unsupported_financial_metric_references",
+        "brief_repair_diagnostics",
+        "hard_failures",
         "munger_evidence_routing_diagnostics",
         "raw_validator_output",
         "prompt",

@@ -171,6 +171,36 @@ def test_business_intelligence_pack_preserves_highest_ranked_chunks(monkeypatch)
     assert all(len(chunk["text"]) <= 900 for chunk in chunks)
 
 
+def test_business_intelligence_budget_metadata_reaches_serialized_fixed_point(monkeypatch):
+    monkeypatch.setenv("PROMETHEUS_LLM_BUDGET_BUSINESS_INTELLIGENCE", "500")
+    pack = build_llm_input_pack(
+        stage="business_intelligence",
+        purpose="Answer business intelligence questions.",
+        company="boundaryco",
+        year="fy25",
+        selected_input={
+            "module": {"module_id": "operations", "module_name": "Operations"},
+            "questions": [{"question_id": "q1", "question": "What changed operationally?"}],
+            "chunks": [
+                {
+                    "chunk_id": f"chunk_{index}",
+                    "text": "Company-specific operating evidence with dated detail. " * 40,
+                    "retrieval_score": 1.0 - index / 100,
+                    "page": index + 1,
+                    "evidence_ids": [f"ev_{index}"],
+                }
+                for index in range(8)
+            ],
+        },
+        source_artifacts=["retrieval_chunks"],
+    )
+
+    serialized_tokens = (len(json.dumps(pack, ensure_ascii=False)) + 3) // 4
+    assert pack["metadata"]["tokens_estimated"] == serialized_tokens
+    assert serialized_tokens <= 500
+    validate_llm_input_pack(pack, require_source_artifacts=True)
+
+
 def test_investor_panel_pack_recursively_compacts_nested_payload(monkeypatch):
     monkeypatch.setenv("PROMETHEUS_LLM_BUDGET_INVESTOR_PANEL_ANALYST", "700")
     long_text = "Long nested value from selected PCIM. " * 60

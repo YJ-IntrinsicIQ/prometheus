@@ -175,6 +175,39 @@ def test_openai_parse_rejects_missing_message_content(monkeypatch):
         provider.generate(prompt="hello")
 
 
+def test_openai_generate_retries_empty_response_then_succeeds(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    calls = {"count": 0}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return SimpleNamespace(
+                    model=kwargs["model"],
+                    choices=[SimpleNamespace(message=SimpleNamespace(content=""))],
+                    usage=None,
+                )
+            return SimpleNamespace(
+                model=kwargs["model"],
+                choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'))],
+                usage=SimpleNamespace(prompt_tokens=2, completion_tokens=3, total_tokens=5),
+            )
+
+    class FakeOpenAI:
+        def __init__(self, api_key, timeout, max_retries):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr("knowledge.ai.openai.OpenAI", FakeOpenAI)
+    provider = OpenAIProvider(model="gpt-test", max_retries=1)
+
+    response = provider.generate(prompt="hello")
+
+    assert calls["count"] == 2
+    assert response.text == '{"ok": true}'
+    assert response.total_tokens == 5
+
+
 def test_openai_provider_uses_env_timeout_and_retries(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-test")

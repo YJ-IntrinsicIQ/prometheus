@@ -51,7 +51,7 @@ DEFAULT_STAGE_POLICIES: Dict[str, Dict[str, Any]] = {
         "max_total_chunks": 20,
     },
     "investor_panel_analyst": {
-        "allowed_sections": ["selected_pcim"],
+        "allowed_sections": ["selected_pcim", "company_memory_context"],
         "excluded_sections": ["raw_text_fields", "debug_metadata", "validation_metadata"],
         "max_items": 3,
         "max_chars": 28000,
@@ -457,11 +457,7 @@ def _enforce_pack_budget(pack: Dict[str, Any]) -> Dict[str, Any]:
     stage_budget = resolve_stage_token_budget(pack["stage"])
 
     while True:
-        payload_text = json.dumps(pack, ensure_ascii=False)
-        chars = len(payload_text)
-        tokens_estimated = estimate_tokens(payload_text)
-        pack["metadata"]["chars"] = chars
-        pack["metadata"]["tokens_estimated"] = tokens_estimated
+        chars, tokens_estimated = _refresh_pack_size_metadata(pack)
         if chars <= max_chars and tokens_estimated <= stage_budget:
             truncation = pack["metadata"].setdefault("truncation_details", {})
             if truncation.get("estimated_tokens_after", 0) <= 0:
@@ -493,6 +489,33 @@ def _enforce_pack_budget(pack: Dict[str, Any]) -> Dict[str, Any]:
         )
         if warning not in pack["metadata"]["warnings"]:
             pack["metadata"]["warnings"].append(warning)
+
+
+def _refresh_pack_size_metadata(pack: Dict[str, Any]) -> Tuple[int, int]:
+    """Measure the serialized pack until its self-referential size metadata is stable."""
+    metadata = pack.setdefault("metadata", {})
+    chars = 0
+    tokens_estimated = 0
+    for _ in range(12):
+        payload_text = json.dumps(pack, ensure_ascii=False)
+        measured_chars = len(payload_text)
+        measured_tokens = estimate_tokens(payload_text)
+        if (
+            metadata.get("chars") == measured_chars
+            and metadata.get("tokens_estimated") == measured_tokens
+        ):
+            return measured_chars, measured_tokens
+        metadata["chars"] = measured_chars
+        metadata["tokens_estimated"] = measured_tokens
+        chars = measured_chars
+        tokens_estimated = measured_tokens
+
+    payload_text = json.dumps(pack, ensure_ascii=False)
+    chars = len(payload_text)
+    tokens_estimated = estimate_tokens(payload_text)
+    metadata["chars"] = chars
+    metadata["tokens_estimated"] = tokens_estimated
+    return chars, tokens_estimated
 
 
 def _apply_stage_specific_compaction(pack: Dict[str, Any]) -> Dict[str, Any]:
@@ -797,12 +820,17 @@ def _compact_business_intelligence_pack(pack: Dict[str, Any]) -> Dict[str, Any]:
         if warning not in warnings:
             warnings.append(warning)
 
-    _finalize_business_intelligence_budget(pack, stage_budget=stage_budget)
+    # Leave room for final serialized size fields and truncation counters, whose
+    # digit widths can grow after content compaction has finished.
+    serialization_headroom = min(16, max(1, stage_budget // 20))
+    _finalize_business_intelligence_budget(
+        pack,
+        stage_budget=max(1, stage_budget - serialization_headroom),
+    )
 
-    payload_text = json.dumps(pack, ensure_ascii=False)
-    metadata["chars"] = len(payload_text)
-    metadata["tokens_estimated"] = estimate_tokens(payload_text)
+    _refresh_pack_size_metadata(pack)
     truncation["estimated_tokens_after"] = metadata["tokens_estimated"]
+    _refresh_pack_size_metadata(pack)
     return pack
 
 

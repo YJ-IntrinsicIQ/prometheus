@@ -11,6 +11,7 @@ from knowledge.business_understanding.pipeline import _load_document_payload
 from knowledge.discovery_runtime.schema import DiscoveryResult, ExecutionStatistics
 from knowledge.module_extractor.schema import ModuleAnswer, ModuleExtractionResult
 from knowledge.question_engine.schema import DiscoveryPlan, Question
+from knowledge.question_engine import QuestionRegistry
 
 
 def _write_minimal_clean_inputs(context):
@@ -220,6 +221,90 @@ def test_run_business_intelligence_stage_persists_artifacts(tmp_path, monkeypatc
     assert payload["business_classification"]["year"] == "fy24"
 
 
+def test_run_business_intelligence_stage_batches_multiple_modules_into_one_llm_call(tmp_path, monkeypatch):
+    context = CompanyContext(company="tips", year="fy24")
+    monkeypatch.chdir(tmp_path)
+    context.create_directories()
+    set_context(context)
+    _write_minimal_clean_inputs(context)
+
+    registry = QuestionRegistry()
+    capital_allocation = registry.get_module("capital_allocation")
+    technology = registry.get_module("technology")
+    plan = DiscoveryPlan(
+        business_dnas=["Manufacturing"],
+        loaded_modules=[capital_allocation.module_id, technology.module_id],
+        questions=[capital_allocation.questions[0], technology.questions[0]],
+    )
+    calls = {"extract": 0}
+
+    class FakePlanner:
+        def build_plan(self, classification):
+            return plan
+
+    class FakeRetriever:
+        def build_company_index(self, company, year):
+            return None
+
+        def retrieve(self, query, top_k=10):
+            class Chunk:
+                def __init__(self):
+                    self.chunk_id = "chunk-1"
+                    self.text = "evidence"
+
+            class Response:
+                def __init__(self):
+                    self.chunks = [Chunk()]
+
+            return Response()
+
+    class FakeExtractor:
+        def extract(self, module, chunks, business_context=None):
+            calls["extract"] += 1
+            answers = []
+            for question in module.questions:
+                answers.append(
+                    ModuleAnswer(
+                        question_id=question.id,
+                        question=question.question,
+                        direct_answer="Found",
+                        supporting_points=["Evidence present"],
+                        primary_evidence=["chunk-1"],
+                        secondary_evidence=[],
+                        confidence=0.8,
+                        status="FOUND",
+                    )
+                )
+            return ModuleExtractionResult(
+                module_id=module.module_id,
+                module_name=module.module_name,
+                answers=answers,
+            )
+
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "validate_business_understanding_bundle",
+        lambda bundle: {"business_dnas": ["Manufacturing"], "question_modules": ["capital_allocation", "technology"]},
+    )
+    monkeypatch.setattr(run_company_pipeline, "QuestionPlanner", lambda: FakePlanner())
+    monkeypatch.setattr(run_company_pipeline, "_build_runtime_retriever", lambda context: FakeRetriever())
+    monkeypatch.setattr(run_company_pipeline, "_build_runtime_extractor", lambda: FakeExtractor())
+
+    result = run_company_pipeline.run_business_intelligence_stage(
+        context,
+        bundle={"business_classification": {"business_dnas": ["Manufacturing"]}},
+    )
+
+    assert calls["extract"] == 1
+    assert result.statistics.llm_calls == 1
+    assert result.statistics.modules_executed == 2
+    assert [item.module_id for item in result.module_results] == ["capital_allocation", "technology"]
+    assert all(len(item.answers) == 1 for item in result.module_results)
+    payload = json.loads((context.intelligence_dir / "discovery_runtime.json").read_text())
+    assert payload["statistics"]["llm_calls"] == 1
+    assert payload["statistics"]["modules_executed"] == 2
+
+
 def test_run_business_intelligence_stage_uses_saved_classification_before_rerunning_bu(tmp_path, monkeypatch):
     context = CompanyContext(company="tanla", year="fy25")
     monkeypatch.chdir(tmp_path)
@@ -318,7 +403,11 @@ def test_run_business_intelligence_stage_uses_saved_classification_before_rerunn
 
     monkeypatch.setattr(run_company_pipeline, "run_business_understanding", fail_business_understanding)
     monkeypatch.setattr(run_company_pipeline, "QuestionPlanner", lambda: FakePlanner())
-    monkeypatch.setattr(run_company_pipeline, "DiscoveryRuntime", lambda retriever=None, extractor=None: FakeRuntime())
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "DiscoveryRuntime",
+        lambda retriever=None, extractor=None, module_definitions=None: FakeRuntime(),
+    )
     monkeypatch.setattr(run_company_pipeline, "_build_runtime_retriever", lambda context: None)
     monkeypatch.setattr(run_company_pipeline, "_build_runtime_extractor", lambda: None)
 

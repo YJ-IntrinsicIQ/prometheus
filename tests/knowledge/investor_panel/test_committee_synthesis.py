@@ -10,6 +10,7 @@ from intelligence.investor_panel.committee_synthesizer import (
     build_committee_synthesis_skeleton,
 )
 from intelligence.investor_panel.committee_brief_renderer import (
+    finalize_committee_brief_for_user,
     validate_committee_brief_source,
 )
 from intelligence.investor_panel.committee_validator import (
@@ -1293,7 +1294,7 @@ def test_committee_synthesis_owns_metadata_deterministically_before_validation(t
     output_path = synthesizer.run()
     saved = json.loads(output_path.read_text(encoding="utf-8"))
     assert saved["company"] == "polymatech"
-    assert saved["analysis_mode"] == "committee_synthesis_v1"
+    assert saved["analysis_mode"] == "committee_synthesis_v2"
     assert saved["analysts_considered"] == ["graham", "buffett", "fisher"]
     assert saved["missing_analysts"] == ["lynch"]
     assert saved["excluded_analysts"] == ["munger"]
@@ -2387,6 +2388,131 @@ def test_committee_validator_owner_earnings_failure_diagnostic_includes_path_and
     assert "capex_missing=True" in message
 
 
+def test_committee_validator_allows_derived_owner_earnings_with_precision_limit():
+    payload = json.loads(_committee_response())
+    payload["financial_committee_view"]["financial_strengths"] = [
+        "A derived owner-earnings / conservative FCF estimate is available, but precision is limited because maintenance versus growth capex split is unavailable."
+    ]
+    payload["financial_committee_view"]["financial_interpretation_limits"] = [
+        "Single-year owner-earnings estimate exists, but it should be treated as approximate."
+    ]
+    payload["financial_warning_manifest"] = {
+        "fcf_missing": False,
+        "capex_missing": False,
+        "payables_missing": False,
+        "weighted_avg_shares_missing": False,
+        "diluted_shares_missing": True,
+        "basis_unknown": False,
+        "committee_financial_truth": {
+            "cfo_available": True,
+            "capex_available": True,
+            "fcf_available": True,
+            "owner_earnings_estimate_available": True,
+            "conservative_fcf_available": True,
+            "maintenance_growth_split_available": False,
+            "maintenance_growth_split_missing": True,
+            "working_capital_metrics_available": True,
+            "payables_available": True,
+            "share_count_available": True,
+            "weighted_average_shares_available": False,
+            "basis_status": "consolidated",
+            "fcf_missing": False,
+            "capex_missing": False,
+            "owner_earnings_status": "available_derived_precision_limited",
+        },
+    }
+    graham = _analysis_payload("graham")
+    graham["analyst_financial_truth_pack"] = {
+        "usable_current_metrics": [{"metric_id": "cfo", "value": 12.0}, {"metric_id": "total_identified_capex", "value": 4.0}],
+        "usable_derived_metrics": [{"metric_id": "owner_earnings_estimate", "value": 8.0}, {"metric_id": "conservative_fcf_after_total_capex", "value": 7.0}],
+        "precision_limits": ["Maintenance versus growth capex split is unavailable."],
+    }
+
+    parsed = validate_committee_output(
+        json.dumps(payload),
+        company="polymatech",
+        included_analysts=["graham", "buffett", "fisher"],
+        missing_analysts=["lynch"],
+        excluded_analysts=["munger"],
+        allowed_evidence_ids=["ev_graham_1", "ev_buffett_1", "ev_fisher_1"],
+        analyst_uncertainties={
+            "graham": ["Need more cash flow evidence."],
+            "buffett": ["Need more cash flow evidence."],
+            "fisher": ["Need more cash flow evidence."],
+        },
+        included_analyst_payloads=[graham, _analysis_payload("buffett"), _analysis_payload("fisher")],
+        mode="final",
+    )
+
+    assert "derived owner-earnings / conservative fcf estimate is available" in parsed["financial_committee_view"]["financial_strengths"][0].lower()
+
+
+def test_committee_finalizer_blocks_stale_missing_flags_when_truth_exists(tmp_path, monkeypatch):
+    graham = _analysis_payload("graham")
+    graham["analyst_financial_truth_pack"] = {
+        "usable_current_metrics": [
+            {"metric_id": "cfo", "value": 12.0},
+            {"metric_id": "total_identified_capex", "value": 4.0},
+            {"metric_id": "payable_days", "value": 32.0},
+            {"metric_id": "shares_outstanding", "value": 1.2},
+        ],
+        "usable_derived_metrics": [
+            {"metric_id": "owner_earnings_estimate", "value": 8.0},
+            {"metric_id": "conservative_fcf_after_total_capex", "value": 7.0},
+        ],
+        "precision_limits": ["Maintenance versus growth capex split is unavailable."],
+    }
+    graham["financial_warnings_carried_forward"] = [
+        "Free cash flow is missing; FCF-based conclusions cannot be assessed.",
+        "Capex data is missing.",
+        "Payables evidence is missing.",
+        "Share count missing.",
+    ]
+    _write_analysis(tmp_path, "graham", graham)
+    _write_analysis(tmp_path, "buffett", _analysis_payload("buffett"))
+    _write_analysis(tmp_path, "fisher", _analysis_payload("fisher"))
+
+    fake_llm = _FakeLLM(_committee_response())
+    monkeypatch.setattr(
+        "intelligence.investor_panel.committee_synthesizer.get_llm",
+        lambda: fake_llm,
+    )
+    synthesizer = InvestmentCommitteeSynthesizer(
+        company="polymatech",
+        companies_root=tmp_path / "companies",
+    )
+    output_path = synthesizer.run()
+    saved = json.loads(output_path.read_text(encoding="utf-8"))
+    diagnostics = json.loads((tmp_path / "companies" / "polymatech" / "company_memory" / "investor_panel" / "committee_synthesis_diagnostics.json").read_text(encoding="utf-8"))
+
+    manifest = saved["financial_warning_manifest"]
+    assert manifest["fcf_missing"] is False
+    assert manifest["capex_missing"] is False
+    assert manifest["payables_missing"] is False
+    assert "blocked_stale_financial_warnings" in diagnostics
+    assert any("Free cash flow is missing" in item for item in diagnostics["blocked_stale_financial_warnings"])
+
+
+def test_committee_finalizer_rewrites_owner_earnings_strength_with_precision_limit():
+    from intelligence.investor_panel.committee_synthesizer import finalize_financial_committee_view
+
+    cleaned, blocked, repairs = finalize_financial_committee_view(
+        {
+            "financial_strengths": ["Owner earnings estimate exists."],
+            "financial_interpretation_limits": [],
+        },
+        {
+            "owner_earnings_status": "available_derived_precision_limited",
+            "fcf_missing": False,
+            "capex_missing": False,
+        },
+    )
+
+    assert blocked == []
+    assert any("precision-limited" in repair or "precision limitation" in repair for repair in repairs)
+    assert "maintenance versus growth capex split is unavailable" in " ".join(cleaned["financial_strengths"] + cleaned["financial_interpretation_limits"]).lower()
+
+
 def test_committee_synthesis_compacts_analyst_blocks_and_preserves_financial_warning_manifest(tmp_path):
     long_text = "Very long analyst detail that should be compacted before committee synthesis. " * 60
     payload = _analysis_payload(
@@ -2792,7 +2918,7 @@ def test_committee_finalize_rephrases_artifact_terms_for_brief_source(tmp_path):
     assert "Normalized financial fundamentals are missing." in missing_data
     assert "Financial validation output is missing." in missing_data
     assert "Financial reconciliation output is missing." in missing_data
-    assert "Financial data does not cover all company years" in missing_data
+    assert any("Financial data does not cover all company years" in item for item in missing_data)
     assert any("Financial audit output may be stale" in item for item in missing_data)
     validate_committee_brief_source(finalized)
 
@@ -2800,6 +2926,78 @@ def test_committee_finalize_rephrases_artifact_terms_for_brief_source(tmp_path):
     original_text = json.dumps(diagnostics["rewritten_strings"], ensure_ascii=False)
     assert "Artifact missing" in original_text
     assert "financial artifacts do not cover all company years" in original_text
+
+
+def test_committee_finalize_restores_supported_overall_committee_view_text(tmp_path, monkeypatch):
+    for analyst in ("graham", "buffett", "fisher", "munger", "lynch"):
+        _write_analysis(tmp_path, analyst, _analysis_payload(analyst))
+    synthesizer = InvestmentCommitteeSynthesizer(
+        company="polymatech",
+        companies_root=tmp_path / "companies",
+    )
+    included, missing, excluded, _warnings = synthesizer._load_inputs()
+    payload = _committee_payload_dict()
+    pre_summary = payload["overall_committee_view"]["summary"]
+    pre_tension = payload["overall_committee_view"]["dominant_tension"]
+
+    def _blank_required_texts(committee_synthesis, committee_financial_truth=None, *, enable_financial_enrichment=True):
+        mutated = json.loads(json.dumps(committee_synthesis, ensure_ascii=False))
+        mutated["overall_committee_view"]["summary"] = ""
+        mutated["overall_committee_view"]["dominant_tension"] = ""
+        return mutated
+
+    monkeypatch.setattr(
+        "intelligence.investor_panel.committee_synthesizer.finalize_committee_brief_for_user",
+        _blank_required_texts,
+    )
+
+    finalized = synthesizer._finalize_payload(
+        payload,
+        included=included,
+        missing=missing,
+        excluded=excluded,
+    )
+    diagnostics = json.loads(synthesizer.diagnostics_path.read_text(encoding="utf-8"))
+
+    assert finalized["overall_committee_view"]["summary"] == pre_summary
+    assert finalized["overall_committee_view"]["dominant_tension"] == pre_tension
+    repairs = diagnostics["finalization_contract_repairs"]
+    repaired_paths = {item["field_path"] for item in repairs}
+    assert "overall_committee_view.summary" in repaired_paths
+    assert "overall_committee_view.dominant_tension" in repaired_paths
+    assert all(item["failure_class"] == "COMMITTEE_FINALIZATION_CONTRACT_VIOLATION" for item in repairs)
+
+
+def test_committee_finalize_fails_when_overall_committee_view_text_is_missing(tmp_path, monkeypatch):
+    for analyst in ("graham", "buffett", "fisher", "munger", "lynch"):
+        _write_analysis(tmp_path, analyst, _analysis_payload(analyst))
+    synthesizer = InvestmentCommitteeSynthesizer(
+        company="polymatech",
+        companies_root=tmp_path / "companies",
+    )
+    included, missing, excluded, _warnings = synthesizer._load_inputs()
+    payload = _committee_payload_dict()
+    payload["overall_committee_view"]["summary"] = "   "
+    payload["overall_committee_view"]["dominant_tension"] = "   "
+
+    def _keep_empty_texts(committee_synthesis, committee_financial_truth=None, *, enable_financial_enrichment=True):
+        mutated = json.loads(json.dumps(committee_synthesis, ensure_ascii=False))
+        mutated["overall_committee_view"]["summary"] = ""
+        mutated["overall_committee_view"]["dominant_tension"] = ""
+        return mutated
+
+    monkeypatch.setattr(
+        "intelligence.investor_panel.committee_synthesizer.finalize_committee_brief_for_user",
+        _keep_empty_texts,
+    )
+
+    with pytest.raises(ValueError, match="COMMITTEE_FINALIZATION_CONTRACT_VIOLATION"):
+        synthesizer._finalize_payload(
+            payload,
+            included=included,
+            missing=missing,
+            excluded=excluded,
+        )
 
 
 def test_committee_validator_accepts_grounded_critical_unknown_with_source_ids():
@@ -2895,6 +3093,113 @@ def test_committee_validator_derives_critical_unknown_source_ids_from_raised_by(
     assert parsed["critical_unknowns"][0]["raised_by"] == ["buffett"]
     assert parsed["critical_unknowns"][0]["source_uncertainty_ids"] == ["buffett_u001"]
     assert parsed["critical_unknowns"][0]["evidence_limit"] == "Analyst uncertainty registry only."
+
+
+def test_committee_validator_accepts_aliases_for_critical_unknown_text():
+    payload = _committee_payload_dict()
+    payload["critical_unknowns"] = [
+        {
+            "unknown_text": "graham wants more cash flow evidence",
+            "raised_by": ["graham"],
+            "why_it_matters": "Needed for downside assessment.",
+            "source_uncertainty_ids": ["graham_u001"],
+        }
+    ]
+    parsed = validate_committee_output(
+        payload,
+        company="polymatech",
+        included_analysts=["graham", "buffett", "fisher"],
+        missing_analysts=["lynch"],
+        excluded_analysts=["munger"],
+        allowed_evidence_ids=["ev_graham_1", "ev_buffett_1", "ev_fisher_1"],
+        analyst_uncertainties={
+            "graham": ["Need more cash flow evidence."],
+            "buffett": ["Need more cash flow evidence."],
+            "fisher": ["Need more cash flow evidence."],
+        },
+        included_analyst_payloads=[
+            _analysis_payload("graham"),
+            _analysis_payload("buffett"),
+            _analysis_payload("fisher"),
+        ],
+        mode="final",
+    )
+    assert parsed["critical_unknowns"][0]["unknown"] == "graham wants more cash flow evidence"
+
+
+def test_committee_validator_rejects_empty_critical_unknown_aliases():
+    payload = _committee_payload_dict()
+    payload["critical_unknowns"] = [
+        {
+            "open_question": "   ",
+            "raised_by": ["graham"],
+            "source_uncertainty_ids": ["graham_u001"],
+        }
+    ]
+
+    with pytest.raises(ValueError, match="critical_unknowns\\.unknown is required"):
+        validate_committee_output(
+            payload,
+            company="polymatech",
+            included_analysts=["graham", "buffett", "fisher"],
+            missing_analysts=["lynch"],
+            excluded_analysts=["munger"],
+            allowed_evidence_ids=["ev_graham_1", "ev_buffett_1", "ev_fisher_1"],
+            analyst_uncertainties={
+                "graham": ["Need more cash flow evidence."],
+                "buffett": ["Need more cash flow evidence."],
+                "fisher": ["Need more cash flow evidence."],
+            },
+            included_analyst_payloads=[
+                _analysis_payload("graham"),
+                _analysis_payload("buffett"),
+                _analysis_payload("fisher"),
+            ],
+            mode="final",
+        )
+
+
+def test_committee_brief_finalizer_drops_truncated_critical_unknown():
+    payload = _committee_payload_dict()
+    payload["critical_unknowns"] = [
+        {
+            "unknown": "analysis strictly uses compacted available evidence sections supplied; filenames in th…",
+            "raised_by": ["buffett"],
+            "why_it_matters": "This directly limits financial judgment and the ability to assess durability or downside.",
+            "source_uncertainty_ids": ["buffett_u004"],
+            "evidence_limit": "Grounded in analyst uncertainty registry.",
+            "source_path": "buffett_analysis.json#reasoning_limits",
+            "grounding_status": "registry_grounded",
+        },
+        {
+            "unknown": "capex is missing or incomplete, so free cash flow and owner-earnings interpretation remain limited.",
+            "raised_by": ["buffett", "fisher"],
+            "why_it_matters": "This directly limits financial judgment and the ability to assess durability or downside.",
+            "source_uncertainty_ids": ["buffett_u047", "fisher_u029"],
+            "evidence_limit": "Grounded in analyst uncertainty registry.",
+            "source_path": "buffett_analysis.json#financial_interpretation_limits",
+            "grounding_status": "registry_grounded",
+        },
+    ]
+
+    finalized = finalize_committee_brief_for_user(
+        payload,
+        committee_financial_truth={},
+        enable_financial_enrichment=False,
+    )
+
+    assert all(item.get("unknown") for item in finalized["critical_unknowns"])
+    assert finalized["critical_unknowns"] == [
+        {
+            "unknown": "capex is missing or incomplete, so free cash flow and owner-earnings interpretation remain limited",
+            "raised_by": ["buffett", "fisher"],
+            "why_it_matters": "This directly limits financial judgment and the ability to assess durability or downside.",
+            "source_uncertainty_ids": ["buffett_u047", "fisher_u029"],
+            "evidence_limit": "Grounded in analyst uncertainty registry.",
+            "source_path": "buffett_analysis.json#financial_interpretation_limits",
+            "grounding_status": "registry_grounded",
+        }
+    ]
 
 
 def test_committee_validator_normalizes_string_critical_unknown_via_registry():
@@ -3341,6 +3646,64 @@ def test_committee_finalize_applies_canonical_normalization_boundary(tmp_path, m
     assert finalized["areas_of_disagreement"][0]["disagreement_type"] == "risk_weighting_difference"
 
 
+def test_committee_finalize_defaults_missing_disagreement_type_before_validation(tmp_path, monkeypatch):
+    for analyst in ("graham", "buffett", "fisher", "munger", "lynch"):
+        _write_analysis(tmp_path, analyst, _analysis_payload(analyst))
+    synthesizer = InvestmentCommitteeSynthesizer(
+        company="polymatech",
+        companies_root=tmp_path / "companies",
+    )
+    included, missing, excluded, _warnings = synthesizer._load_inputs()
+    payload = _committee_payload_dict()
+    payload["areas_of_disagreement"][0].pop("disagreement_type", None)
+
+    original_validate = validate_committee_output
+    calls = []
+
+    def _wrapped_validate(*args, **kwargs):
+        payload_arg = args[0]
+        if isinstance(payload_arg, dict):
+            calls.append(payload_arg["areas_of_disagreement"][0]["disagreement_type"])
+        return original_validate(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "intelligence.investor_panel.committee_synthesizer.validate_committee_output",
+        _wrapped_validate,
+    )
+
+    finalized = synthesizer._finalize_payload(
+        payload,
+        included=included,
+        missing=missing,
+        excluded=excluded,
+    )
+
+    assert calls
+    assert all(call == "risk_weighting_difference" for call in calls)
+    assert finalized["areas_of_disagreement"][0]["disagreement_type"] == "risk_weighting_difference"
+
+
+def test_committee_finalize_allows_empty_areas_of_disagreement(tmp_path):
+    for analyst in ("graham", "buffett", "fisher", "munger", "lynch"):
+        _write_analysis(tmp_path, analyst, _analysis_payload(analyst))
+    synthesizer = InvestmentCommitteeSynthesizer(
+        company="polymatech",
+        companies_root=tmp_path / "companies",
+    )
+    included, missing, excluded, _warnings = synthesizer._load_inputs()
+    payload = _committee_payload_dict()
+    payload["areas_of_disagreement"] = []
+
+    finalized = synthesizer._finalize_payload(
+        payload,
+        included=included,
+        missing=missing,
+        excluded=excluded,
+    )
+
+    assert finalized["areas_of_disagreement"] == []
+
+
 def test_committee_cleanup_fails_when_unresolved_management_summary_alias_remains(tmp_path, monkeypatch):
     _write_pcim_with_evidence_ids(tmp_path, "polymatech", [])
     _write_analysis(
@@ -3503,3 +3866,33 @@ def test_committee_synthesizer_adds_normalization_before_final_validation(tmp_pa
     assert "unresolved_ids" in saved["evidence_id_normalization"]
     if saved["areas_of_disagreement"]:
         assert "disagreement_type" in saved["areas_of_disagreement"][0]
+
+
+def test_committee_ignores_blocked_financial_warning_consensus(tmp_path, monkeypatch):
+    graham = _analysis_payload("graham")
+    buffett = _analysis_payload("buffett")
+    for payload in (graham, buffett):
+        payload["analyst_financial_truth_pack"] = {
+            "blocked_financial_warnings": ["free cash flow missing"],
+            "allowed_financial_warnings": [],
+            "rewritten_financial_warnings": ["FCF is derived from CFO and capex, but explicit FCF disclosure was not found."],
+        }
+        payload["financial_warnings_carried_forward"] = []
+        payload["financial_assessment"]["financial_warnings_carried_forward"] = []
+        payload["precise_missing_financial_data"] = ["FCF is derived from CFO and capex, but explicit FCF disclosure was not found."]
+    _write_analysis(tmp_path, "graham", graham)
+    _write_analysis(tmp_path, "buffett", buffett)
+
+    fake_llm = _FakeLLM(_committee_response())
+    monkeypatch.setattr(
+        "intelligence.investor_panel.committee_synthesizer.get_llm",
+        lambda: fake_llm,
+    )
+    synthesizer = InvestmentCommitteeSynthesizer(
+        company="polymatech",
+        companies_root=tmp_path / "companies",
+    )
+    output_path = synthesizer.run()
+    saved = json.loads(output_path.read_text(encoding="utf-8"))
+    agreement_blob = json.dumps(saved.get("areas_of_agreement", []), ensure_ascii=False).lower()
+    assert "free cash flow missing" not in agreement_blob

@@ -72,7 +72,37 @@ _FORBIDDEN_BY_FIELD = {
         "repayment",
         "cash flow",
     ),
+    "revenue": (
+        "growth %",
+        "growth percentage",
+        "intensity",
+        "energy intensity",
+        "emissions intensity",
+        "per employee",
+        "per head",
+        "concentration",
+        "mix %",
+        "mix percentage",
+        "revenue per employee",
+        "revenue intensity",
+        "revenue concentration",
+        "revenue mix",
+        "revenue growth",
+        "turnover ratio",
+    ),
 }
+
+_REVENUE_CONTAMINATION_TOKENS = (
+    "ghg",
+    "greenhouse",
+    "emission",
+    "emissions",
+    "tco2e",
+    "scope 1",
+    "scope 2",
+    "scope 3",
+    "carbon",
+)
 
 _CORPORATE_ACTION_EXPLICIT_TOKENS = {
     "dividend": ("dividend",),
@@ -152,6 +182,10 @@ _SHARE_COUNT_DISALLOWED_TOKENS = (
     "reserves",
     "face value",
     "nominal value",
+    "at the beginning",
+    "beginning of the period",
+    "beginning of the year",
+    "opening balance",
 )
 
 _FACE_VALUE_ROW_DISALLOWED_TOKENS = (
@@ -313,6 +347,46 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
 
     if canonical_field == "total_liabilities":
         if "total liabilities" not in normalized_label:
+            return False
+
+    if canonical_section == "profit_and_loss" and canonical_field == "total_income":
+        if any(token in normalized_label for token in ("tax", "income tax", "profit before tax", "profit after tax")):
+            return False
+        if "total income" not in normalized_label and "total operating revenue" not in normalized_label:
+            return False
+
+    if canonical_section == "profit_and_loss" and canonical_field == "tax":
+        if any(token in normalized_label for token in ("rate", "reconciliation", "estimated", "provision", "deferred tax", "other comprehensive income")):
+            return False
+        if not any(
+            token in normalized_label
+            for token in ("tax expense", "income tax expense", "total tax expense", "current tax")
+        ):
+            return False
+
+    if canonical_section == "profit_and_loss" and canonical_field == "revenue":
+        if _contains_any(normalized_label, _FORBIDDEN_BY_FIELD.get("revenue", ())):
+            return False
+        if _contains_any(normalized_label, _REVENUE_CONTAMINATION_TOKENS):
+            return False
+        if not any(
+            token in normalized_label
+            for token in ("revenue from operations", "revenue", "income from operations", "total operating revenue")
+        ):
+            return False
+
+    if canonical_section == "profit_and_loss" and canonical_field == "pat":
+        if not any(
+            token in normalized_label
+            for token in (
+                "profit after tax",
+                "profit for the year",
+                "profit for the period",
+                "profit loss for the period",
+                "profit loss for the year",
+                "pat",
+            )
+        ):
             return False
 
     if canonical_section == "corporate_actions":

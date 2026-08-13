@@ -9,11 +9,14 @@ from knowledge.company_memory import parse_financial_year
 
 from .memory_schema import (
     validate_capital_allocation_financial_timeline_payload,
+    validate_financial_memory_manifest_payload,
     validate_financial_memory_summary_payload,
+    validate_financial_truth_pack_payload,
     validate_financial_quality_evolution_payload,
     validate_financial_year_index_payload,
     validate_ownership_evolution_payload,
 )
+from .financial_memory_truth import build_financial_memory_manifest, build_financial_truth_pack
 
 
 YEAR_LEVEL_REQUIRED = (
@@ -553,8 +556,18 @@ def build_financial_memory_artifacts(*, company: str, company_root: Path) -> Dic
         ownership_payload=ownership,
         year_index_payload=year_index,
     )
+    manifest = build_financial_memory_manifest(company=company, company_root=company_root)
+    truth_pack = build_financial_truth_pack(company=company, company_root=company_root)
+    manifest_errors = validate_financial_memory_manifest_payload(manifest)
+    if manifest_errors:
+        raise ValueError("Invalid financial memory manifest payload: " + "; ".join(manifest_errors))
+    truth_pack_errors = validate_financial_truth_pack_payload(truth_pack)
+    if truth_pack_errors:
+        raise ValueError("Invalid financial truth pack payload: " + "; ".join(truth_pack_errors))
     return {
         "financial_year_index.json": year_index,
+        "financial_memory_manifest.json": manifest,
+        "financial_truth_pack.json": truth_pack,
         "financial_quality_evolution.json": quality_evolution,
         "capital_allocation_financial_timeline.json": capital_timeline,
         "ownership_evolution.json": ownership,

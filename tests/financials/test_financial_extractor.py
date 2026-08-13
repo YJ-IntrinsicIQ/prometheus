@@ -98,6 +98,82 @@ def test_profit_and_loss_table_extraction(tmp_path):
     assert revenue_row.is_primary_statement is True
 
 
+def test_profit_and_loss_table_extraction_recognizes_year_ended_periods(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    output_path = tmp_path / "raw_financial_tables.json"
+    text = (
+        "Tanla Annual Report 2021-22 Consolidated Financial Statements "
+        "Particulars Note Year ended March 31, 2022 Year ended March 31, 2021 "
+        "Revenue from operations 27 3,20,597.33 2,34,146.55 "
+        "Profit before tax 67,411.84 41,475.42 "
+        "Total tax expense (X) 13,483.93 5,861.67 "
+        "Profit for the year (IX - X) 53,927.91 35,613.75"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-002-ENDED", "page": 194, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={"primary_profit_and_loss_statement": [_candidate("primary_profit_and_loss_statement", "CHK-002-ENDED", 194, text)]}
+        ),
+    )
+
+    result = write_financial_extraction(
+        company="acme",
+        year="fy22",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+        output_path=output_path,
+    )
+
+    rows = result.tables["profit_and_loss"]
+    revenue_row = next(row for row in rows if row.line_item_raw == "Revenue from operations")
+    pat_row = next(row for row in rows if row.line_item_raw == "Profit for the year (IX - X)")
+    assert revenue_row.values[0].period == "March 31, 2022"
+    assert pat_row.values[0].period == "March 31, 2022"
+
+
+def test_mixed_unit_table_keeps_monetary_rows_in_declared_crores(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = (
+        "Reconciliation of estimated income tax Particulars For the Year ended 31st March 2022 "
+        "Profit before tax 127.38 74.52 Enacted income tax rate 25.168% 25.168% "
+        "Depreciation allowance under IT Act (0.26) 0.01 "
+        "(All figures are in INR Crores unless specifically stated otherwise)"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-MIXED", "page": 82, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={
+                "primary_profit_and_loss_statement": [
+                    _candidate("primary_profit_and_loss_statement", "CHK-MIXED", 82, text)
+                ]
+            }
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme", year="fy22", chunk_path=chunk_path, discovery_path=discovery_path
+    )
+
+    pbt = next(row for row in result.tables["profit_and_loss"] if row.line_item_raw == "Profit before tax")
+    tax_rate = next(row for row in result.tables["profit_and_loss"] if row.line_item_raw == "Enacted income tax rate")
+    depreciation = next(
+        row for row in result.tables["profit_and_loss"] if row.line_item_raw == "Depreciation allowance under IT Act"
+    )
+    assert (pbt.values[0].unit_hint, pbt.values[0].value_type, pbt.values[0].value_crore) == (
+        "crores", "monetary", 127.38
+    )
+    assert (tax_rate.values[0].unit_hint, tax_rate.values[0].value_type, tax_rate.values[0].value_crore) == (
+        "%", "percentage", None
+    )
+    assert (depreciation.values[0].unit_hint, depreciation.values[0].value_type, depreciation.values[0].value_crore) == (
+        "crores", "monetary", -0.26
+    )
+
+
 def test_balance_sheet_table_extraction(tmp_path):
     chunk_path = tmp_path / "clean_chunks.json"
     discovery_path = tmp_path / "financial_discovery.json"
@@ -125,6 +201,66 @@ def test_balance_sheet_table_extraction(tmp_path):
     rows = result.tables["balance_sheet"]
     assert any(row.line_item_raw == "Property, plant and equipment" for row in rows)
     assert all(row.basis == "standalone" for row in rows)
+
+
+def test_balance_sheet_generic_total_is_labeled_only_at_assets_equity_boundary(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = (
+        "Balance Sheet (All figures are in INR Crores) Particulars "
+        "Property, plant and equipment 44.16 29.21 Current assets 519.85 261.32 "
+        "TOTAL 706.67 328.60 EQUITY AND LIABILITIES Equity Share capital 10.38 1.70 "
+        "Other Equity 564.13 206.23"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-BS", "page": 59, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            company="acme",
+            year="fy22",
+            sections={
+                "primary_balance_sheet_statement": [
+                    _candidate("primary_balance_sheet_statement", "CHK-BS", 59, text)
+                ]
+            },
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme", year="fy22", chunk_path=chunk_path, discovery_path=discovery_path
+    )
+
+    total_assets = next(row for row in result.tables["balance_sheet"] if row.line_item_raw == "Total Assets")
+    assert total_assets.values[0].value_raw == "706.67"
+
+
+def test_balance_sheet_generic_subtotal_is_not_reclassified(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = (
+        "Balance Sheet (All figures are in INR Crores) Particulars "
+        "Non-current assets 100.00 90.00 TOTAL 100.00 90.00 "
+        "Current assets 200.00 180.00 Total Assets 300.00 270.00 "
+        "Equity Share capital 50.00 50.00 Total Liabilities 250.00 220.00"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-SUB", "page": 10, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={
+                "primary_balance_sheet_statement": [
+                    _candidate("primary_balance_sheet_statement", "CHK-SUB", 10, text)
+                ]
+            }
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme", year="fy25", chunk_path=chunk_path, discovery_path=discovery_path
+    )
+    labels = [row.line_item_raw for row in result.tables["balance_sheet"]]
+    assert labels.count("Total Assets") == 1
+    assert "TOTAL" in labels
 
 
 def test_cash_flow_table_extraction_with_negative_values(tmp_path):
@@ -445,13 +581,17 @@ def test_rejected_rows_are_written_to_rejection_audit(tmp_path):
         ),
     )
 
-    write_financial_extraction(
-        company="acme",
-        year="fy25",
-        chunk_path=chunk_path,
-        discovery_path=discovery_path,
-        output_path=output_path,
-    )
+    with pytest.raises(RuntimeError, match="FINANCIAL_EXTRACTION_NOT_READY"):
+        write_financial_extraction(
+            company="acme",
+            year="fy25",
+            chunk_path=chunk_path,
+            discovery_path=discovery_path,
+            output_path=output_path,
+        )
 
     rejection_payload = json.loads((tmp_path / "financial_extraction_rejections.json").read_text(encoding="utf-8"))
     assert rejection_payload["rejections"]
+    readiness_payload = json.loads((tmp_path / "financial_extraction_readiness.json").read_text(encoding="utf-8"))
+    assert readiness_payload["status"] == "BLOCKED"
+    assert "profit_and_loss.pat" in " ".join(readiness_payload["blocking_reasons"])

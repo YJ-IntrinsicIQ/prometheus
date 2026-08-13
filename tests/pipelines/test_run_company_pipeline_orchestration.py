@@ -116,6 +116,242 @@ def test_run_all_writes_fail_summary_on_preflight_error(tmp_path, monkeypatch):
     assert summary["stages"][0]["status"] == "fail"
 
 
+def test_production_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "production"])
+    assert args.stage == "production"
+
+
+def test_run_stage_sequence_supports_all_profile_without_changing_order(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+    calls = []
+
+    monkeypatch.setattr(run_company_pipeline, "_run_preflight", lambda ctx: calls.append("preflight") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_discovery", lambda context=None: calls.append("discovery") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_extraction", lambda context=None: calls.append("extraction") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_cleaning", lambda context=None: calls.append("cleaning") or {})
+
+    def fake_bu(context=None):
+        calls.append("business_understanding")
+        _write_json(context.intelligence_dir / "business_blueprint.json", {"business_understanding": {"business_summary": "x"}})
+        classification = {
+            "business_dnas": ["Manufacturing"],
+            "question_modules": ["capital_allocation"],
+            "rationale": ["Synthetic manufacturing evidence is present."],
+            "evidence_used": ["business_summary=x"],
+        }
+        _write_json(context.intelligence_dir / "business_classification.json", classification)
+        return {"business_classification": classification}
+
+    monkeypatch.setattr(run_company_pipeline, "run_business_understanding_stage", fake_bu)
+
+    def fake_bi(context=None, bundle=None):
+        calls.append("business_intelligence")
+        _write_json(context.intelligence_dir / "discovery_plan.json", {"questions": []})
+        _write_json(context.intelligence_dir / "module_results.json", {"module_results": [{"module": "x"}]})
+        _write_json(context.intelligence_dir / "discovery_runtime.json", {"statistics": {"questions_answered": 1}})
+        return {}
+
+    monkeypatch.setattr(run_company_pipeline, "run_business_intelligence_stage", fake_bi)
+    monkeypatch.setattr(run_company_pipeline, "run_intelligence", lambda context=None: calls.append("intelligence") or {})
+    monkeypatch.setattr(run_company_pipeline, "_require_company_level_intelligence", lambda company, stage_name: (["fy25"], []))
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_multi_year_memory_stage",
+        lambda company, context=None: calls.append("multi_year_memory") or {},
+    )
+    monkeypatch.setattr(run_company_pipeline, "run_cim_stage", lambda company, context=None: calls.append("cim") or {})
+
+    summary = run_company_pipeline.run_stage_sequence("acme", run_company_pipeline.ALL_STAGE_SEQUENCE, context=context, profile_name="all")
+
+    assert calls == [
+        "preflight",
+        "discovery",
+        "extraction",
+        "cleaning",
+        "business_understanding",
+        "business_intelligence",
+        "intelligence",
+        "multi_year_memory",
+        "cim",
+    ]
+    assert [stage["stage"] for stage in summary["stages"]] == run_company_pipeline.ALL_STAGE_SEQUENCE
+
+
+def test_production_sequence_is_deterministic_and_ask_intrinsiciq_runs_last():
+    assert run_company_pipeline.STAGE_SEQUENCE_PROFILES["production"] == [
+        "preflight",
+        "discovery",
+        "extraction",
+        "cleaning",
+        "business_understanding",
+        "business_intelligence",
+        "intelligence",
+        "financials",
+        "multi_year_memory",
+        "financial_memory",
+        "investor_financials",
+        "cim",
+        "pcim",
+        "financial_pcim_validation",
+        "audit",
+        "panel",
+        "ask_intrinsiciq",
+    ]
+    assert run_company_pipeline.PRODUCTION_STAGE_SEQUENCE[-1] == "ask_intrinsiciq"
+    assert run_company_pipeline.PRODUCTION_STAGE_SEQUENCE.index("financials") < run_company_pipeline.PRODUCTION_STAGE_SEQUENCE.index("pcim")
+    assert run_company_pipeline.PRODUCTION_STAGE_SEQUENCE.index("financial_memory") < run_company_pipeline.PRODUCTION_STAGE_SEQUENCE.index("cim")
+    assert run_company_pipeline.PRODUCTION_STAGE_SEQUENCE.index("investor_financials") < run_company_pipeline.PRODUCTION_STAGE_SEQUENCE.index("cim")
+    assert run_company_pipeline.PRODUCTION_STAGE_SEQUENCE.index("panel") > run_company_pipeline.PRODUCTION_STAGE_SEQUENCE.index("audit")
+    assert run_company_pipeline.PRODUCTION_STAGE_SEQUENCE.index("panel") > run_company_pipeline.PRODUCTION_STAGE_SEQUENCE.index("financial_pcim_validation")
+
+
+def test_production_stops_after_failed_stage_and_marks_skipped(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+    calls = []
+
+    monkeypatch.setattr(run_company_pipeline, "_run_preflight", lambda ctx: calls.append("preflight") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_discovery", lambda context=None: calls.append("discovery") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_extraction", lambda context=None: calls.append("extraction") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_cleaning", lambda context=None: calls.append("cleaning") or {})
+
+    def fake_bu(context=None):
+        calls.append("business_understanding")
+        _write_json(context.intelligence_dir / "business_blueprint.json", {"business_understanding": {"business_summary": "x"}})
+        classification = {
+            "business_dnas": ["Manufacturing"],
+            "question_modules": ["capital_allocation"],
+            "rationale": ["Synthetic manufacturing evidence is present."],
+            "evidence_used": ["business_summary=x"],
+        }
+        _write_json(context.intelligence_dir / "business_classification.json", classification)
+        return {"business_classification": classification}
+
+    monkeypatch.setattr(run_company_pipeline, "run_business_understanding_stage", fake_bu)
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_business_intelligence_stage",
+        lambda context=None, bundle=None: (
+            calls.append("business_intelligence"),
+            _write_json(context.intelligence_dir / "discovery_plan.json", {"questions": []}),
+            _write_json(context.intelligence_dir / "module_results.json", {"module_results": [{"module": "x"}]}),
+            _write_json(context.intelligence_dir / "discovery_runtime.json", {"statistics": {"questions_answered": 1}}),
+        )[-1],
+    )
+    monkeypatch.setattr(run_company_pipeline, "run_intelligence", lambda context=None: calls.append("intelligence") or {})
+    monkeypatch.setattr(run_company_pipeline, "_require_company_level_intelligence", lambda company, stage_name: (["fy25"], []))
+    monkeypatch.setattr(run_company_pipeline, "run_multi_year_memory_stage", lambda company, context=None: calls.append("multi_year_memory") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_cim_stage", lambda company, context=None: calls.append("cim") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_financials_stage", lambda context=None: calls.append("financials") or {})
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_financial_memory_stage",
+        lambda company, context=None: (_ for _ in ()).throw(RuntimeError("financial memory failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="financial memory failed"):
+        run_company_pipeline.run_stage_sequence(
+            "acme",
+            run_company_pipeline.PRODUCTION_STAGE_SEQUENCE,
+            context=context,
+            profile_name="production",
+        )
+
+    output = capsys.readouterr().out
+    assert "Failed stage: financial_memory" in output
+    assert "Skipped stages: investor_financials, cim, pcim, financial_pcim_validation, audit, panel, ask_intrinsiciq" in output
+    summary = json.loads((context.year_root / "run_summary.json").read_text(encoding="utf-8"))
+    assert summary["failed_stage"] == "financial_memory"
+    assert summary["skipped_stages"] == [
+        "investor_financials",
+        "cim",
+        "pcim",
+        "financial_pcim_validation",
+        "audit",
+        "panel",
+        "ask_intrinsiciq",
+    ]
+
+
+def test_blocking_audit_failure_prevents_ask_intrinsiciq(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+    calls = []
+
+    monkeypatch.setattr(run_company_pipeline, "_run_preflight", lambda ctx: calls.append("preflight") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_discovery", lambda context=None: calls.append("discovery") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_extraction", lambda context=None: calls.append("extraction") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_cleaning", lambda context=None: calls.append("cleaning") or {})
+
+    def fake_bu(context=None):
+        calls.append("business_understanding")
+        _write_json(context.intelligence_dir / "business_blueprint.json", {"business_understanding": {"business_summary": "x"}})
+        classification = {
+            "business_dnas": ["Manufacturing"],
+            "question_modules": ["capital_allocation"],
+            "rationale": ["Synthetic manufacturing evidence is present."],
+            "evidence_used": ["business_summary=x"],
+        }
+        _write_json(context.intelligence_dir / "business_classification.json", classification)
+        return {"business_classification": classification}
+
+    monkeypatch.setattr(run_company_pipeline, "run_business_understanding_stage", fake_bu)
+
+    def fake_bi(context=None, bundle=None):
+        calls.append("business_intelligence")
+        _write_json(context.intelligence_dir / "discovery_plan.json", {"questions": []})
+        _write_json(context.intelligence_dir / "module_results.json", {"module_results": [{"module": "x"}]})
+        _write_json(context.intelligence_dir / "discovery_runtime.json", {"statistics": {"questions_answered": 1}})
+        return {}
+
+    monkeypatch.setattr(run_company_pipeline, "run_business_intelligence_stage", fake_bi)
+    monkeypatch.setattr(run_company_pipeline, "run_intelligence", lambda context=None: calls.append("intelligence") or {})
+    monkeypatch.setattr(run_company_pipeline, "_require_company_level_intelligence", lambda company, stage_name: (["fy25"], []))
+    monkeypatch.setattr(run_company_pipeline, "run_multi_year_memory_stage", lambda company, context=None: calls.append("multi_year_memory") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_cim_stage", lambda company, context=None: calls.append("cim") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_financials_stage", lambda context=None: calls.append("financials") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_financial_memory_stage", lambda company, context=None: calls.append("financial_memory") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_investor_financials_stage", lambda company, context=None: calls.append("investor_financials") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_financial_pcim_validation_stage", lambda context=None: calls.append("financial_pcim_validation") or {})
+
+    def fake_audit(company, context=None, fix_safe=False):
+        calls.append("audit")
+        audit_dir = Path("companies") / company / "audit"
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        _write_json(
+            audit_dir / "company_artifact_audit.json",
+            {
+                "company": company,
+                "status": "fail",
+                "warnings": [],
+                "critical_failures": ["panel readiness blocked"],
+                "checks": [],
+            },
+        )
+        (audit_dir / "company_artifact_audit.md").write_text("fail", encoding="utf-8")
+        _write_json(audit_dir / "financial_quality_scorecard.json", {"status": "fail"})
+        (audit_dir / "financial_quality_scorecard.md").write_text("fail", encoding="utf-8")
+        return {}
+
+    monkeypatch.setattr(run_company_pipeline, "run_audit_stage", fake_audit)
+    monkeypatch.setattr(run_company_pipeline, "run_panel_stage", lambda **kwargs: calls.append("panel") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_ask_intrinsiciq_stage", lambda **kwargs: calls.append("ask_intrinsiciq") or {})
+
+    summary = run_company_pipeline.run_stage_sequence(
+        "acme",
+        run_company_pipeline.PRODUCTION_STAGE_SEQUENCE,
+        context=context,
+        profile_name="production",
+    )
+
+    assert "ask_intrinsiciq" not in calls
+    assert "panel" not in calls
+    assert summary["failed_stage"] == "audit"
+    assert summary["skipped_stages"] == ["panel", "ask_intrinsiciq"]
+
+
 def test_discovery_fails_without_raw_docs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = _context(tmp_path)
@@ -208,6 +444,7 @@ def test_list_stages_prints_catalog(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "discovery" in output
     assert "audit" in output
+    assert "management_commentary" in output
     assert "Requires:" in output
     assert "LLM calls:" in output
 
@@ -218,10 +455,114 @@ def test_audit_stage_exists_in_parser():
     assert args.stage == "audit"
 
 
+def test_management_commentary_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "--stage", "management_commentary"])
+    assert args.stage == "management_commentary"
+
+
+def test_management_commentary_is_company_level_stage():
+    assert "management_commentary" in run_company_pipeline.COMPANY_LEVEL_STAGES
+    assert "companies/<company>/company_memory/management_commentary/commentary_themes.json" in run_company_pipeline.STAGE_CATALOG["management_commentary"]["outputs"]
+
+
+def test_capital_allocation_outcomes_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "--stage", "capital_allocation_outcomes"])
+    assert args.stage == "capital_allocation_outcomes"
+
+
+def test_capital_allocation_outcomes_is_company_level_stage():
+    assert "capital_allocation_outcomes" in run_company_pipeline.COMPANY_LEVEL_STAGES
+    assert "companies/<company>/company_memory/capital_allocation_outcomes/capital_allocation_outcomes.json" in run_company_pipeline.STAGE_CATALOG["capital_allocation_outcomes"]["outputs"]
+
+
+def test_management_quality_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "--stage", "management_quality"])
+    assert args.stage == "management_quality"
+
+
+def test_management_quality_is_company_level_stage():
+    assert "management_quality" in run_company_pipeline.COMPANY_LEVEL_STAGES
+    assert "companies/<company>/company_memory/management_quality/management_quality_summary.json" in run_company_pipeline.STAGE_CATALOG["management_quality"]["outputs"]
+
+
 def test_financial_pcim_validation_stage_exists_in_parser():
     parser = run_company_pipeline.build_parser()
     args = parser.parse_args(["acme", "fy25", "--stage", "financial_pcim_validation"])
     assert args.stage == "financial_pcim_validation"
+
+
+def test_financial_truth_registry_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "financial_truth_registry"])
+    assert args.stage == "financial_truth_registry"
+
+
+def test_financial_basis_resolution_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "fy25", "--stage", "financial_basis_resolution"])
+    assert args.stage == "financial_basis_resolution"
+
+
+def test_financial_basis_resolution_stage_writes_output(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+    _write_json(context.financials_dir / "normalized_fundamentals.json", {"company": "acme", "year": "fy25"})
+    calls = []
+
+    class _Report:
+        resolved_basis = "standalone"
+        confidence = "medium"
+        field_resolutions = [object()]
+        warnings = []
+
+    def fake_write(**kwargs):
+        calls.append(kwargs)
+        return _Report()
+
+    monkeypatch.setattr(run_company_pipeline, "write_financial_basis_resolution", fake_write)
+
+    output = run_company_pipeline.run_financial_basis_resolution(context=context)
+
+    assert output == context.financials_dir / "financial_basis_resolution.json"
+    assert calls[0]["financial_root"] == context.financials_dir
+
+
+def test_financial_truth_registry_stage_writes_both_outputs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+    _write_json(context.financials_dir / "normalized_fundamentals.json", {"company": "acme", "year": "fy25"})
+    calls = []
+
+    class _Registry:
+        def __init__(self):
+            self.downstream_readiness = {"financial_truth_status": "warning"}
+            self.available_facts = [object()]
+            self.derived_facts = [object()]
+            self.partial_facts = []
+            self.unreliable_facts = []
+            self.invalid_facts = []
+
+    class _Report:
+        contradictions_found = ["fcf missing vs derived"]
+
+    class _Quarantine:
+        quarantined_facts = [{"metric_id": "shareholding_promoter_percent"}]
+
+    def fake_write(**kwargs):
+        calls.append(kwargs)
+        return _Registry(), _Report(), _Quarantine()
+
+    monkeypatch.setattr(run_company_pipeline, "write_financial_fact_registry", fake_write)
+
+    outputs = run_company_pipeline.run_financial_truth_registry(context=context)
+
+    assert outputs["financial_fact_registry.json"] == context.financials_dir / "financial_fact_registry.json"
+    assert outputs["financial_truth_reconciliation_report.json"] == context.financials_dir / "financial_truth_reconciliation_report.json"
+    assert outputs["financial_artifact_quarantine_report.json"] == context.financials_dir / "financial_artifact_quarantine_report.json"
+    assert calls[0]["financial_root"] == context.financials_dir
 
 
 def test_audit_stage_writes_financial_quality_scorecard(tmp_path, monkeypatch):
@@ -329,6 +670,12 @@ def test_financial_memory_stage_exists_in_parser():
     parser = run_company_pipeline.build_parser()
     args = parser.parse_args(["acme", "--stage", "financial_memory"])
     assert args.stage == "financial_memory"
+
+
+def test_investor_financials_stage_exists_in_parser():
+    parser = run_company_pipeline.build_parser()
+    args = parser.parse_args(["acme", "--stage", "investor_financials"])
+    assert args.stage == "investor_financials"
 
 
 def test_financial_discovery_fails_without_sources(tmp_path, monkeypatch):
@@ -445,21 +792,53 @@ def test_financial_attribution_requires_financial_trends(tmp_path, monkeypatch):
         run_company_pipeline.run_financial_attribution_stage(company="acme")
 
 
+def test_investor_financials_stage_writes_company_memory_modules(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    output_dir = Path("companies") / "acme" / "company_memory" / "financials" / "investor_financial_modules"
+
+    def fake_write(**kwargs):
+        assert kwargs["company"] == "acme"
+        assert kwargs["output_dir"] == output_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+        manifest = output_dir / "investor_financial_modules_manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "modules_run": ["owner_earnings_bridge"],
+                    "warnings": ["synthetic warning"],
+                    "limitations": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        written = {"investor_financial_modules_manifest.json": manifest}
+        owner = output_dir / "owner_earnings_bridge.json"
+        owner.write_text("{}", encoding="utf-8")
+        written["owner_earnings_bridge.json"] = owner
+        return written
+
+    monkeypatch.setattr(run_company_pipeline, "write_investor_financial_modules", fake_write)
+
+    written = run_company_pipeline.run_investor_financials_stage(company="acme")
+
+    assert written["investor_financial_modules_manifest.json"] == output_dir / "investor_financial_modules_manifest.json"
+
+
 def test_panel_stage_accepts_year(monkeypatch):
     calls = []
 
     monkeypatch.setattr(
         run_company_pipeline,
         "run_panel_stage",
-        lambda company, context=None, include_evidence_ids=False: calls.append(
-            (company, getattr(context, "year", None), include_evidence_ids)
+        lambda company, context=None, include_evidence_ids=False, regenerate_analysts=False: calls.append(
+            (company, getattr(context, "year", None), include_evidence_ids, regenerate_analysts)
         ) or {},
     )
     monkeypatch.setattr(sys, "argv", ["run_company_pipeline.py", "acme", "fy25", "--stage", "panel"])
 
     run_company_pipeline.main()
 
-    assert calls == [("acme", "fy25", False)]
+    assert calls == [("acme", "fy25", False, False)]
 
 
 def test_multi_year_warning_when_only_one_valid_year(tmp_path, monkeypatch):

@@ -25,6 +25,24 @@ def test_evidence_quality_classifies_company_action_vs_macro_context():
     assert "macro_context" in low["warnings"]
 
 
+def test_evidence_quality_ignores_source_chunk_year_noise_for_promises():
+    item = {
+        "item_id": "promises_00001",
+        "promise": "Expect the percentage of revenues derived outside India to grow as the company continues to expand internationally.",
+        "year": "2020",
+        "time_reference": "period_specific",
+        "source_chunk": (
+            "For the year ended March 31, 2020, majority of our revenues were generated in India. "
+            "Results of Operations FY 2019-20 FY 2018-19 Growth % INR in Crore."
+        ),
+        "value": "Expect the percentage of revenues derived outside India to grow.",
+    }
+
+    quality = build_evidence_quality(item, module_name="promises")
+
+    assert quality["period_resolution"]["status"] == "RESOLVED"
+
+
 def test_evidence_layer_summary_aggregates_counts(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = CompanyContext(company="syntheticco", year="fy25")

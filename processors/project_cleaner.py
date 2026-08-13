@@ -102,9 +102,15 @@ class ProjectCleaner(BaseCleaner):
         return True
 
     def clean_item(self, project):
+        project = dict(project)
         project["category"] = (
             classify_project(project)
         )
+
+        if not str(project.get("status") or "").strip():
+            project["status"] = "UNKNOWN"
+            if not str(project.get("uncertainty_reason") or "").strip():
+                project["uncertainty_reason"] = "Project status was not explicit in the source disclosure."
 
         return project
 

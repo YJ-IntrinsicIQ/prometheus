@@ -18,12 +18,17 @@ from knowledge.ai.input_packs import (
 )
 
 from .briefs import (
+    collect_user_facing_brief_validation_issues,
+    finalize_user_facing_brief,
+    finalize_user_facing_brief_for_external_reader,
     LENS_CONFIG,
     normalize_user_facing_brief_lengths,
     normalize_user_facing_brief_shape,
+    rewrite_text_for_external_reader,
     sanitize_user_facing_brief,
     validate_user_facing_brief,
 )
+from .company_memory_context import build_company_memory_context
 from .forbidden_language import find_forbidden_recommendation_language
 from .doctrine_registry import InvestorDoctrineRegistry
 from .evidence_router import (
@@ -49,7 +54,7 @@ DEFAULT_MAX_ITEMS_PER_SECTION = 25
 DEFAULT_MAX_RISKS = 20
 DEFAULT_MAX_CAPITAL_ALLOCATION_ITEMS = 20
 DEFAULT_MAX_EVIDENCE_EXCERPT_CHARS = 300
-DEFAULT_MAX_TOTAL_PROMPT_CHARS = 28_000
+DEFAULT_MAX_TOTAL_PROMPT_CHARS = 36_000
 DEFAULT_MAX_SECTIONS = 8
 DEFAULT_MAX_NESTED_ITEMS_PER_ITEM = 5
 DEFAULT_MAX_TEXT_CHARS_PER_VALUE = 500
@@ -61,6 +66,22 @@ MIN_MAX_CAPITAL_ALLOCATION_ITEMS = 1
 MIN_MAX_EVIDENCE_EXCERPT_CHARS = 80
 MIN_MAX_TOTAL_PROMPT_CHARS = 12_000
 MIN_MAX_TEXT_CHARS_PER_VALUE = 80
+MIN_TOTAL_PROMPT_BUDGET_TOKENS = 4000
+MIN_COMPACT_INPUT_PACK_BUDGET_TOKENS = 1200
+MIN_FINANCIAL_TRUTH_PACK_BUDGET_TOKENS = 250
+MIN_EVIDENCE_PACK_BUDGET_TOKENS = 120
+MIN_DOCTRINE_CONTEXT_BUDGET_TOKENS = 600
+DEFAULT_TOTAL_PROMPT_BUDGET_TOKENS = 9000
+DEFAULT_HARD_MAX_PROMPT_TOKENS = 10000
+DEFAULT_COMPACT_INPUT_PACK_BUDGET_TOKENS = 4200
+DEFAULT_FINANCIAL_TRUTH_PACK_BUDGET_TOKENS = 900
+DEFAULT_EVIDENCE_PACK_BUDGET_TOKENS = 500
+DEFAULT_DOCTRINE_CONTEXT_BUDGET_TOKENS = 2200
+DEFAULT_RESERVED_SYSTEM_TOKENS = 250
+DEFAULT_RESERVED_INSTRUCTION_TOKENS = 1000
+DEFAULT_RESERVED_OUTPUT_SCHEMA_TOKENS = 700
+DEFAULT_WARNING_POLICY_PACK_BUDGET_TOKENS = 400
+DEFAULT_FINANCIAL_TRUTH_TOKEN_SHARE = 0.25
 COMPACTION_REASONING_LIMIT = "Input PCIM was compacted for token budget; evidence_ids preserved."
 DEFAULT_SECTION_CHAR_CAP = 2500
 SECTION_CHAR_CAPS = {
@@ -76,6 +97,62 @@ SECTION_CHAR_CAPS = {
 SECTION_REPLACEMENT_LIMITATION = (
     "Detailed source context omitted due prompt budget; use PCIM/evidence artifacts for full trace."
 )
+DOCTRINE_SECTION_PRIORITIES = {
+    "graham": [
+        "financial_truth_inputs",
+        "balance_sheet_strength_inputs",
+        "cash_conversion_inputs",
+        "working_capital_inputs",
+        "financial_quality_inputs",
+        "per_share_inputs",
+        "governance_and_incentive_inputs",
+        "risk_inputs",
+    ],
+    "buffett": [
+        "financial_truth_inputs",
+        "business_understanding",
+        "moat_inputs",
+        "business_economics_inputs",
+        "return_on_capital_inputs",
+        "capital_allocation_inputs",
+        "management_quality_inputs",
+        "financial_quality_inputs",
+    ],
+    "fisher": [
+        "financial_truth_inputs",
+        "growth_quality_inputs",
+        "growth_execution_inputs",
+        "profitability_inputs",
+        "working_capital_inputs",
+        "management_quality_inputs",
+        "moat_inputs",
+    ],
+    "munger": [
+        "financial_truth_inputs",
+        "governance_and_incentive_inputs",
+        "risk_inputs",
+        "capital_allocation_inputs",
+        "working_capital_inputs",
+        "ownership_inputs",
+    ],
+    "lynch": [
+        "financial_truth_inputs",
+        "business_understanding",
+        "simplicity_and_story_inputs",
+        "story_vs_numbers_inputs",
+        "profitability_inputs",
+        "per_share_inputs",
+        "growth_quality_inputs",
+    ],
+}
+HEAVY_SECTION_KEYS = {
+    "multi_year_inputs",
+    "management_quality_inputs",
+    "capital_allocation_inputs",
+    "moat_inputs",
+    "business_economics_inputs",
+    "financial_truth_inputs",
+}
 DROP_KEYS = {
     "source_chunk",
     "raw_text",
@@ -132,8 +209,16 @@ REQUIRED_OUTPUT_KEYS = {
     "financial_metrics_used",
     "financial_red_flags",
     "financial_positive_signals",
+    "precise_missing_financial_data",
+    "derived_not_explicitly_reported",
+    "partial_financial_data",
+    "unreliable_financial_data",
+    "invalid_or_quarantined_financial_data",
+    "trend_durability_limits",
     "financial_missing_data",
     "financial_interpretation_limits",
+    "financial_questions_for_investor",
+    "analyst_financial_truth_pack",
     "financial_assessment",
     "financial_sections_consumed",
     "financial_warnings_carried_forward",
@@ -165,6 +250,33 @@ FINANCIAL_PCIM_SECTIONS = {
     "financial_quality_inputs",
     "financial_driver_inputs",
     "multi_year_financial_inputs",
+    "financial_truth_inputs",
+    "financial_snapshot_inputs",
+    "owner_earnings_readiness_inputs",
+    "working_capital_quality_inputs",
+    "capital_allocation_financial_inputs",
+    "per_share_compounding_inputs",
+    "unreliable_financial_inputs",
+    "invalid_or_quarantined_financial_inputs",
+    "precise_missing_financial_inputs",
+    "financial_warning_policy",
+    "financial_panel_status",
+    "financial_panel_usable_domains",
+    "financial_panel_limited_domains",
+    "financial_panel_blocked_domains",
+    "investor_financial_questions",
+}
+
+BLOCKED_FINANCIAL_WARNING_REWRITES = {
+    "fcf missing": "FCF is derived from CFO and capex, but explicit FCF disclosure was not found.",
+    "free cash flow missing": "FCF is derived from CFO and capex, but explicit FCF disclosure was not found.",
+    "capex missing": "Capex exists, but maintenance versus growth capex split is not disclosed.",
+    "payables missing": "Payables or payable-days are available, but cash-conversion interpretation remains limited by coverage or comparability.",
+    "roe unavailable": "ROE is available for limited periods, but durability is unproven without broader comparable history.",
+    "roce unavailable": "ROCE is available for limited periods, but durability is unproven without broader comparable history.",
+    "share count missing": "Closing shares exist, but weighted-average or diluted-share comparability remains limited.",
+    "ownership missing": "Ownership/shareholding data is invalid or quarantined and should not be used downstream.",
+    "cfo/pat missing": "CFO and PAT may be present, but cash-conversion durability remains limited by coverage or reconciliation quality.",
 }
 INVALID_SECTION_NAME_EVIDENCE_IDS = ROUTER_SECTION_NAME_DENYLIST
 FINANCIAL_LIMITATION_PATTERNS = (
@@ -346,23 +458,30 @@ FINANCIAL_METRIC_ALIASES = {
     "cfo": ("cfo", "cash flow from operations", "cash flow from operating activities"),
     "cfo_to_pat": ("cfo to pat", "cfo/pat", "cash conversion"),
     "capex": ("capex", "capital expenditure"),
+    "capex_deployed": ("capex deployed", "capex deployed capital allocation ledger", "capex deployed capital-allocation ledger"),
     "fcf": ("fcf", "free cash flow", "free cashflow"),
     "fcf_to_pat": ("fcf to pat", "fcf/pat"),
+    "conservative_fcf_after_total_capex": (
+        "conservative fcf",
+        "fcf estimate",
+        "conservative free cash flow",
+        "conservative fcf after total capex",
+    ),
     "total_debt": ("total debt", "debt", "borrowings"),
     "net_debt": ("net debt",),
     "cash_and_equivalents": ("cash and equivalents", "cash equivalents", "cash"),
     "net_worth": ("net worth", "equity", "net worth / reserves"),
     "reserves": ("reserves", "other equity"),
-    "receivables": ("receivables", "trade receivables"),
-    "inventory": ("inventory", "inventories"),
-    "payables": ("payables", "trade payables"),
+    "receivables": ("receivables", "trade receivables", "receivables value"),
+    "inventory": ("inventory", "inventories", "inventory value"),
+    "payables": ("payables", "trade payables", "payables value"),
     "receivable_days": ("receivable days", "debtor days"),
     "inventory_days": ("inventory days",),
     "payable_days": ("payable days",),
     "cash_conversion_cycle": ("cash conversion cycle", "ccc"),
     "eps_basic": ("eps basic", "basic eps", "basic earnings per share"),
     "eps_diluted": ("eps diluted", "diluted eps", "diluted earnings per share"),
-    "shares_outstanding": ("shares outstanding", "share count", "reported share count", "number of shares outstanding"),
+    "shares_outstanding": ("shares outstanding", "share count", "reported share count", "number of shares outstanding", "closing shares"),
     "weighted_avg_shares": ("weighted average shares", "weighted avg shares"),
     "diluted_shares": ("diluted shares",),
     "dividend_paid": ("dividend paid",),
@@ -371,6 +490,8 @@ FINANCIAL_METRIC_ALIASES = {
     "book_value_per_share": ("book value per share", "bvps"),
     "debt_to_equity": ("debt to equity", "debt/equity"),
     "tangible_book_value_per_share": ("tangible book value per share",),
+    "owner_earnings_estimate": ("owner earnings estimate", "owner-earnings estimate", "owner earnings estimate derived", "owner-earnings estimate derived", "owner earnings"),
+    "total_identified_capex": ("total identified capex", "identified capex total", "identified capex", "identified capex total derived"),
 }
 FINANCIAL_METRIC_PERIOD_RE = re.compile(r"\b(fy\d{2})\b", re.IGNORECASE)
 NORMALIZED_LIST_STRING_LIMIT = 350
@@ -389,6 +510,7 @@ SAFE_LIST_DICT_PREFERRED_KEYS = (
     "message",
     "title",
 )
+KNOWN_ANALYST_FINAL_STATUS = {"pass", "warning", "fail"}
 
 RATING_NORMALIZATION_MAP = {
     "insufficient evidence": "insufficient_evidence",
@@ -486,6 +608,11 @@ def _resolve_positive_int_env(name: str, default: int) -> int:
     return value
 
 
+def _resolve_budget_int_env(name: str, default: int, minimum: int) -> int:
+    value = _resolve_positive_int_env(name, default)
+    return max(minimum, value)
+
+
 def _normalize_rating_value(rating: Any, schema_warnings: List[str]) -> str:
     if not isinstance(rating, str) or not rating.strip():
         raise ValueError("rating must be one of strong, mixed, weak, insufficient_evidence")
@@ -509,6 +636,41 @@ def _prompt_compaction_limits() -> Dict[str, int]:
             raise ValueError("INVESTOR_PANEL_HARD_MAX_PROMPT_CHARS must be an integer when set") from exc
         if hard_prompt_chars <= 0:
             raise ValueError("INVESTOR_PANEL_HARD_MAX_PROMPT_CHARS must be greater than 0 when set")
+    total_prompt_budget_tokens = _resolve_budget_int_env(
+        "INVESTOR_PANEL_TOTAL_PROMPT_BUDGET_TOKENS",
+        DEFAULT_TOTAL_PROMPT_BUDGET_TOKENS,
+        MIN_TOTAL_PROMPT_BUDGET_TOKENS,
+    )
+    hard_max_prompt_tokens = _resolve_budget_int_env(
+        "INVESTOR_PANEL_HARD_MAX_PROMPT_TOKENS",
+        DEFAULT_HARD_MAX_PROMPT_TOKENS,
+        total_prompt_budget_tokens,
+    )
+    compact_input_pack_budget_tokens = _resolve_budget_int_env(
+        "INVESTOR_PANEL_COMPACT_INPUT_PACK_BUDGET_TOKENS",
+        DEFAULT_COMPACT_INPUT_PACK_BUDGET_TOKENS,
+        MIN_COMPACT_INPUT_PACK_BUDGET_TOKENS,
+    )
+    financial_truth_pack_budget_tokens = _resolve_budget_int_env(
+        "INVESTOR_PANEL_FINANCIAL_TRUTH_PACK_BUDGET_TOKENS",
+        DEFAULT_FINANCIAL_TRUTH_PACK_BUDGET_TOKENS,
+        MIN_FINANCIAL_TRUTH_PACK_BUDGET_TOKENS,
+    )
+    evidence_pack_budget_tokens = _resolve_budget_int_env(
+        "INVESTOR_PANEL_EVIDENCE_PACK_BUDGET_TOKENS",
+        DEFAULT_EVIDENCE_PACK_BUDGET_TOKENS,
+        MIN_EVIDENCE_PACK_BUDGET_TOKENS,
+    )
+    doctrine_context_budget_tokens = _resolve_budget_int_env(
+        "INVESTOR_PANEL_DOCTRINE_CONTEXT_BUDGET_TOKENS",
+        DEFAULT_DOCTRINE_CONTEXT_BUDGET_TOKENS,
+        MIN_DOCTRINE_CONTEXT_BUDGET_TOKENS,
+    )
+    warning_policy_pack_budget_tokens = _resolve_budget_int_env(
+        "INVESTOR_PANEL_WARNING_POLICY_PACK_BUDGET_TOKENS",
+        DEFAULT_WARNING_POLICY_PACK_BUDGET_TOKENS,
+        150,
+    )
     return {
         "max_items_per_section": _resolve_positive_int_env(
             "INVESTOR_PANEL_MAX_ITEMS_PER_SECTION",
@@ -528,11 +690,22 @@ def _prompt_compaction_limits() -> Dict[str, int]:
             DEFAULT_MAX_TOTAL_PROMPT_CHARS,
         ),
         "hard_max_prompt_chars": hard_prompt_chars,
+        "total_prompt_budget_tokens": total_prompt_budget_tokens,
+        "hard_max_prompt_tokens": hard_max_prompt_tokens,
+        "compact_input_pack_budget_tokens": compact_input_pack_budget_tokens,
+        "financial_truth_pack_budget_tokens": financial_truth_pack_budget_tokens,
+        "evidence_pack_budget_tokens": evidence_pack_budget_tokens,
+        "doctrine_context_budget_tokens": doctrine_context_budget_tokens,
+        "warning_policy_pack_budget_tokens": warning_policy_pack_budget_tokens,
         "max_sections": DEFAULT_MAX_SECTIONS,
         "max_nested_items_per_item": DEFAULT_MAX_NESTED_ITEMS_PER_ITEM,
         "max_text_chars_per_value": DEFAULT_MAX_TEXT_CHARS_PER_VALUE,
         "max_evidence_ids_per_item": DEFAULT_MAX_EVIDENCE_IDS_PER_ITEM,
         "max_dict_keys_per_item": DEFAULT_MAX_DICT_KEYS_PER_ITEM,
+        "reserved_system_tokens": DEFAULT_RESERVED_SYSTEM_TOKENS,
+        "reserved_instruction_tokens": DEFAULT_RESERVED_INSTRUCTION_TOKENS,
+        "reserved_output_schema_tokens": DEFAULT_RESERVED_OUTPUT_SCHEMA_TOKENS,
+        "financial_truth_token_share": DEFAULT_FINANCIAL_TRUTH_TOKEN_SHARE,
     }
 
 
@@ -556,7 +729,17 @@ def _collect_section_evidence_ids(pcim: Dict[str, Any], sections: List[str]) -> 
     evidence_map = pcim.get("evidence_map") or {}
     evidence_ids: List[str] = []
     for section in sections:
-        for evidence_id in evidence_map.get(section, []) or []:
+        section_value = evidence_map.get(section, []) or []
+        if isinstance(section_value, dict):
+            if isinstance(section_value.get("sample_evidence_ids"), list):
+                iter_ids = section_value.get("sample_evidence_ids", [])
+            elif isinstance(section_value.get("evidence_ids"), list):
+                iter_ids = section_value.get("evidence_ids", [])
+            else:
+                iter_ids = []
+        else:
+            iter_ids = section_value
+        for evidence_id in iter_ids:
             if evidence_id not in evidence_ids:
                 evidence_ids.append(evidence_id)
     return evidence_ids
@@ -599,6 +782,121 @@ def _metric_aliases(canonical_metric: str) -> List[str]:
     return _unique_preserve_order([_normalize_metric_label(alias) for alias in aliases if str(alias or "").strip()])
 
 
+def _financial_metric_id_from_entry(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    return str(
+        item.get("metric_id")
+        or item.get("canonical_metric")
+        or item.get("metric")
+        or item.get("metric_name")
+        or item.get("field")
+        or ""
+    ).strip()
+
+
+def _financial_metric_source_field(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    for key in ("source_field", "metric_id", "canonical_metric", "metric", "metric_name", "field"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return key
+    return ""
+
+
+def _build_registry_metric_entry(
+    canonical_metric: str,
+    *,
+    period: Any = None,
+    value: Any = None,
+    unit: str = "",
+    basis: Any = None,
+    confidence: Any = None,
+    source_section: str,
+    source_field: str = "",
+    source_file: str = "",
+) -> Dict[str, Any]:
+    period_value = str(period or "").strip().lower()
+    metric_id = canonical_metric if not period_value else f"{canonical_metric}:{period_value}"
+    return {
+        "metric_id": metric_id,
+        "canonical_metric": canonical_metric,
+        "display_name": canonical_metric.replace("_", " "),
+        "period": period_value or None,
+        "value": value,
+        "unit": unit or "",
+        "basis": str(basis or "").strip() or "unknown",
+        "confidence": str(confidence or "").strip() or "unknown",
+        "source_section": source_section,
+        "source_field": source_field or canonical_metric,
+        "source_file": source_file or "",
+        "aliases": _metric_aliases(canonical_metric),
+    }
+
+
+def _iter_truth_pack_metrics(payload: Dict[str, Any], source_section: str) -> Iterable[Tuple[Dict[str, Any], str]]:
+    for field in (
+        "usable_current_metrics",
+        "usable_derived_metrics",
+        "partial_metrics",
+        "unreliable_metrics",
+        "invalid_or_quarantined_metrics",
+        "precise_missing_metrics",
+        "derived_not_explicitly_reported",
+    ):
+        for item in payload.get(field, []) or []:
+            if isinstance(item, dict):
+                yield item, field
+
+
+def _collect_metric_entries_from_value(
+    value: Any,
+    *,
+    source_section: str,
+    source_file: str,
+    source_field: str,
+) -> List[Dict[str, Any]]:
+    entries: List[Dict[str, Any]] = []
+    if isinstance(value, dict):
+        candidate_metric = _financial_metric_id_from_entry(value)
+        if candidate_metric:
+            metric_value, metric_unit = _extract_metric_value(value)
+            entries.append(
+                _build_registry_metric_entry(
+                    candidate_metric,
+                    period=value.get("period") or value.get("year") or value.get("source_year"),
+                    value=metric_value,
+                    unit=metric_unit,
+                    basis=value.get("basis"),
+                    confidence=value.get("confidence"),
+                    source_section=source_section,
+                    source_field=source_field or _financial_metric_source_field(value),
+                    source_file=source_file,
+                )
+            )
+        for nested_key, nested_value in value.items():
+            entries.extend(
+                _collect_metric_entries_from_value(
+                    nested_value,
+                    source_section=source_section,
+                    source_file=source_file,
+                    source_field=source_field or str(nested_key),
+                )
+            )
+    elif isinstance(value, list):
+        for item in value:
+            entries.extend(
+                _collect_metric_entries_from_value(
+                    item,
+                    source_section=source_section,
+                    source_file=source_file,
+                    source_field=source_field,
+                )
+            )
+    return entries
+
+
 def _extract_metric_value(item: Dict[str, Any]) -> Tuple[Any, str]:
     for key, unit in (
         ("value_crore", "₹ crore"),
@@ -614,7 +912,11 @@ def _extract_metric_value(item: Dict[str, Any]) -> Tuple[Any, str]:
             return value, unit
     series = item.get("series")
     if isinstance(series, list) and series:
-        latest = series[0]
+        latest = max(
+            (point for point in series if isinstance(point, dict)),
+            key=lambda point: _financial_period_sort_key(point.get("year") or point.get("period")),
+            default={},
+        )
         if isinstance(latest, dict):
             for key, unit in (
                 ("value", str(item.get("unit") or "").strip()),
@@ -627,9 +929,28 @@ def _extract_metric_value(item: Dict[str, Any]) -> Tuple[Any, str]:
     return None, str(item.get("unit") or "").strip()
 
 
+def _financial_period_sort_key(value: Any) -> Tuple[int, str]:
+    text = str(value or "").strip().lower()
+    match = re.search(r"(?:fy)?\s*(\d{2,4})", text)
+    if not match:
+        return (-1, text)
+    year = int(match.group(1))
+    if year < 100:
+        year += 2000
+    return (year, text)
+
+
 def _build_financial_metric_registry(selected_pcim: Dict[str, Any], sections: List[str]) -> List[Dict[str, Any]]:
     registry: List[Dict[str, Any]] = []
     seen_metric_ids: set[str] = set()
+
+    def add_entry(entry: Dict[str, Any]) -> None:
+        metric_id = str(entry.get("metric_id") or "").strip()
+        canonical = str(entry.get("canonical_metric") or "").strip()
+        if not metric_id or not canonical or metric_id in seen_metric_ids:
+            return
+        seen_metric_ids.add(metric_id)
+        registry.append(entry)
 
     def add_metric(
         canonical_metric: Any,
@@ -640,28 +961,24 @@ def _build_financial_metric_registry(selected_pcim: Dict[str, Any], sections: Li
         basis: Any = None,
         confidence: Any = None,
         source_section: str,
+        source_field: str = "",
+        source_file: str = "",
     ) -> None:
         canonical = str(canonical_metric or "").strip()
         if not canonical:
             return
-        period_value = str(period or "").strip().lower()
-        metric_id = canonical if not period_value else f"{canonical}:{period_value}"
-        if metric_id in seen_metric_ids:
-            return
-        seen_metric_ids.add(metric_id)
-        registry.append(
-            {
-                "metric_id": metric_id,
-                "canonical_metric": canonical,
-                "display_name": canonical.replace("_", " "),
-                "period": period_value or None,
-                "value": value,
-                "unit": unit or "",
-                "basis": str(basis or "").strip() or "unknown",
-                "confidence": str(confidence or "").strip() or "unknown",
-                "source_section": source_section,
-                "aliases": _metric_aliases(canonical),
-            }
+        add_entry(
+            _build_registry_metric_entry(
+                canonical,
+                period=period,
+                value=value,
+                unit=unit,
+                basis=basis,
+                confidence=confidence,
+                source_section=source_section,
+                source_field=source_field,
+                source_file=source_file,
+            )
         )
 
     for section in _financial_sections_for_doctrine(sections):
@@ -684,6 +1001,8 @@ def _build_financial_metric_registry(selected_pcim: Dict[str, Any], sections: Li
                         basis=item.get("basis") or bucket.get("basis") or payload.get("basis_used"),
                         confidence=item.get("confidence"),
                         source_section=section,
+                        source_field="by_year.key_metrics.field",
+                        source_file=str(payload.get("source_artifact") or ""),
                     )
         elif section in {"financial_growth_inputs", "profitability_inputs", "working_capital_inputs"}:
             for bucket in payload.get("by_year", []) or []:
@@ -702,6 +1021,8 @@ def _build_financial_metric_registry(selected_pcim: Dict[str, Any], sections: Li
                         basis=item.get("basis") or bucket.get("basis") or payload.get("basis"),
                         confidence=item.get("confidence"),
                         source_section=section,
+                        source_field=f"by_year.{key}.metric",
+                        source_file=str(payload.get("source_artifact") or ""),
                     )
         elif section in {
             "financial_trend_inputs",
@@ -718,7 +1039,12 @@ def _build_financial_metric_registry(selected_pcim: Dict[str, Any], sections: Li
                 period = item.get("period")
                 series = item.get("series")
                 if not period and isinstance(series, list) and series and isinstance(series[0], dict):
-                    period = series[0].get("year")
+                    latest_point = max(
+                        (point for point in series if isinstance(point, dict)),
+                        key=lambda point: _financial_period_sort_key(point.get("year") or point.get("period")),
+                        default={},
+                    )
+                    period = latest_point.get("year") or latest_point.get("period")
                 add_metric(
                     item.get("metric"),
                     period=period,
@@ -727,6 +1053,8 @@ def _build_financial_metric_registry(selected_pcim: Dict[str, Any], sections: Li
                     basis=item.get("basis") or payload.get("basis") or payload.get("basis_used"),
                     confidence=item.get("confidence"),
                     source_section=section,
+                    source_field="metric_trends.metric" if section == "financial_trend_inputs" else "metrics.metric",
+                    source_file=str(payload.get("source_artifact") or ""),
                 )
         elif section == "financial_quality_inputs":
             for bucket in payload.get("by_year", []) or []:
@@ -744,6 +1072,8 @@ def _build_financial_metric_registry(selected_pcim: Dict[str, Any], sections: Li
                             basis=section_payload.get("basis") or bucket.get("basis_used") or payload.get("basis_used"),
                             confidence=section_payload.get("confidence"),
                             source_section=section,
+                            source_field="by_year.sections.evidence_metrics",
+                            source_file=str(payload.get("source_artifact") or ""),
                         )
         elif section == "financial_driver_inputs":
             for item in payload.get("attributions", []) or []:
@@ -757,6 +1087,8 @@ def _build_financial_metric_registry(selected_pcim: Dict[str, Any], sections: Li
                     basis=payload.get("basis_used"),
                     confidence=item.get("confidence"),
                     source_section=section,
+                    source_field="attributions.metric",
+                    source_file=str(payload.get("source_artifact") or ""),
                 )
 
     growth_quality = selected_pcim.get("growth_quality_inputs") or {}
@@ -778,7 +1110,94 @@ def _build_financial_metric_registry(selected_pcim: Dict[str, Any], sections: Li
                         basis=item.get("basis") or bucket.get("basis") or "unknown",
                         confidence=item.get("confidence"),
                         source_section="growth_quality_inputs",
+                        source_field="financial_growth_summary.by_year.growth_metrics.metric",
+                        source_file=str(growth_quality.get("source_artifact") or ""),
                     )
+
+    truth_pack_sections = (
+        "financial_truth_inputs",
+        "owner_earnings_readiness_inputs",
+        "working_capital_quality_inputs",
+        "capital_allocation_financial_inputs",
+        "per_share_compounding_inputs",
+    )
+    for section in truth_pack_sections:
+        payload = selected_pcim.get(section) or {}
+        if not isinstance(payload, dict):
+            continue
+        source_file = str(payload.get("source_artifact") or "")
+        if section == "financial_truth_inputs":
+            for item, field_name in _iter_truth_pack_metrics(payload, section):
+                metric_id = _financial_metric_id_from_entry(item)
+                if not metric_id:
+                    continue
+                metric_value, metric_unit = _extract_metric_value(item)
+                add_metric(
+                    metric_id,
+                    period=item.get("period") or item.get("year") or item.get("source_year"),
+                    value=metric_value,
+                    unit=metric_unit,
+                    basis=item.get("basis") or payload.get("basis_used"),
+                    confidence=item.get("confidence"),
+                    source_section=section,
+                    source_field=field_name,
+                    source_file=source_file,
+                )
+        elif section == "owner_earnings_readiness_inputs":
+            for item in payload.get("bridges", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                year = item.get("fiscal_year") or item.get("year")
+                for key in (
+                    "cfo",
+                    "reported_pat",
+                    "ppe_cwip_capex",
+                    "intangible_capex",
+                    "total_identified_capex",
+                    "estimated_maintenance_capex",
+                    "estimated_growth_capex",
+                    "fcf_after_ppe_cwip_capex",
+                    "conservative_fcf_after_total_capex",
+                    "owner_earnings_estimate",
+                ):
+                    if key not in item:
+                        continue
+                    add_metric(
+                        key,
+                        period=year,
+                        value=item.get(key),
+                        unit="₹ crore",
+                        basis=payload.get("basis_used"),
+                        confidence=item.get("owner_earnings_precision_status") or item.get("confidence"),
+                        source_section=section,
+                        source_field=f"bridges.{key}",
+                        source_file=source_file,
+                    )
+        elif section == "working_capital_quality_inputs":
+            for field_name in ("drilldown", "order_to_cash_tracker"):
+                for entry in _collect_metric_entries_from_value(
+                    payload.get(field_name),
+                    source_section=section,
+                    source_file=source_file,
+                    source_field=field_name,
+                ):
+                    add_entry(entry)
+        elif section == "capital_allocation_financial_inputs":
+            for entry in _collect_metric_entries_from_value(
+                payload.get("entries"),
+                source_section=section,
+                source_file=source_file,
+                source_field="entries",
+            ):
+                add_entry(entry)
+        elif section == "per_share_compounding_inputs":
+            for entry in _collect_metric_entries_from_value(
+                payload.get("analysis"),
+                source_section=section,
+                source_file=source_file,
+                source_field="analysis",
+            ):
+                add_entry(entry)
     canonical_groups: Dict[str, List[Dict[str, Any]]] = {}
     for entry in list(registry):
         canonical_groups.setdefault(entry["canonical_metric"], []).append(entry)
@@ -792,18 +1211,16 @@ def _build_financial_metric_registry(selected_pcim: Dict[str, Any], sections: Li
         )[0]
         seen_metric_ids.add(canonical_metric)
         registry.append(
-            {
-                "metric_id": canonical_metric,
-                "canonical_metric": canonical_metric,
-                "display_name": canonical_metric.replace("_", " "),
-                "period": None,
-                "value": preferred.get("value"),
-                "unit": preferred.get("unit"),
-                "basis": preferred.get("basis"),
-                "confidence": preferred.get("confidence"),
-                "source_section": preferred.get("source_section"),
-                "aliases": _metric_aliases(canonical_metric),
-            }
+            _build_registry_metric_entry(
+                canonical_metric,
+                value=preferred.get("value"),
+                unit=str(preferred.get("unit") or ""),
+                basis=preferred.get("basis"),
+                confidence=preferred.get("confidence"),
+                source_section=str(preferred.get("source_section") or ""),
+                source_field=str(preferred.get("source_field") or canonical_metric),
+                source_file=str(preferred.get("source_file") or ""),
+            )
         )
     return registry
 
@@ -871,12 +1288,172 @@ def _collect_financial_basis(selected_pcim: Dict[str, Any], sections: List[str])
     return "unknown"
 
 
+def _normalize_financial_truth_list(value: Any) -> List[str]:
+    return _unique_preserve_order(
+        [str(item).strip() for item in (value or []) if str(item).strip()]
+    )
+
+
+def _metric_present_in_registry(metric_registry: List[Dict[str, Any]], aliases: Sequence[str]) -> bool:
+    alias_set = {str(alias).strip().lower() for alias in aliases if str(alias).strip()}
+    for entry in metric_registry:
+        canonical = str(entry.get("canonical_metric") or "").strip().lower()
+        metric_id = str(entry.get("metric_id") or "").strip().lower()
+        if canonical in alias_set or metric_id in alias_set:
+            return True
+        for alias in entry.get("aliases", []) or []:
+            if str(alias).strip().lower() in alias_set:
+                return True
+    return False
+
+
+def _financial_warning_is_blocked(warning: str, metric_registry: List[Dict[str, Any]]) -> bool:
+    lowered = str(warning or "").strip().lower()
+    if not lowered:
+        return False
+    if "fcf missing" in lowered or "free cash flow missing" in lowered:
+        return _metric_present_in_registry(metric_registry, ("fcf",))
+    if "cfo/pat missing" in lowered:
+        return _metric_present_in_registry(metric_registry, ("cfo_to_pat", "cfo", "pat"))
+    if "capex missing" in lowered:
+        return _metric_present_in_registry(metric_registry, ("capex",))
+    if "payables missing" in lowered or "payable days missing" in lowered:
+        return _metric_present_in_registry(metric_registry, ("payables", "payable_days"))
+    if "roe unavailable" in lowered:
+        return _metric_present_in_registry(metric_registry, ("roe",))
+    if "roce unavailable" in lowered:
+        return _metric_present_in_registry(metric_registry, ("roce",))
+    if "share count missing" in lowered:
+        return _metric_present_in_registry(metric_registry, ("shares_outstanding", "share_count"))
+    return False
+
+
+def _rewrite_blocked_financial_warning(warning: str) -> str:
+    lowered = str(warning or "").strip().lower()
+    for key, replacement in BLOCKED_FINANCIAL_WARNING_REWRITES.items():
+        if key in lowered:
+            return replacement
+    return str(warning or "").strip()
+
+
+def _build_analyst_financial_truth_pack(selected_pcim: Dict[str, Any], sections: List[str]) -> Dict[str, Any]:
+    metric_registry = _build_financial_metric_registry(selected_pcim, sections)
+    warnings = _collect_financial_warnings(selected_pcim, sections)
+    basis_used = _collect_financial_basis(selected_pcim, sections)
+    financial_truth = selected_pcim.get("financial_truth_inputs") or {}
+    warning_policy = selected_pcim.get("financial_warning_policy") or {}
+    precise_missing_inputs = selected_pcim.get("precise_missing_financial_inputs") or {}
+    unreliable_inputs = selected_pcim.get("unreliable_financial_inputs") or {}
+    invalid_inputs = selected_pcim.get("invalid_or_quarantined_financial_inputs") or {}
+    panel_status = selected_pcim.get("financial_panel_status") or {}
+    financial_snapshot = selected_pcim.get("financial_snapshot_inputs") or {}
+    owner_earnings = selected_pcim.get("owner_earnings_readiness_inputs") or {}
+    working_capital_quality = selected_pcim.get("working_capital_quality_inputs") or {}
+    capital_allocation = selected_pcim.get("capital_allocation_financial_inputs") or {}
+    per_share_compounding = selected_pcim.get("per_share_compounding_inputs") or {}
+
+    usable_current = _normalize_financial_truth_list(
+        financial_truth.get("usable_current_metrics")
+        or financial_snapshot.get("usable_current_metrics")
+        or _registry_metric_names(metric_registry)
+    )
+    usable_derived = _normalize_financial_truth_list(
+        financial_truth.get("usable_derived_metrics")
+        or owner_earnings.get("usable_derived_metrics")
+    )
+    partial_metrics = _normalize_financial_truth_list(financial_truth.get("partial_metrics"))
+    unreliable_metrics = _normalize_financial_truth_list(
+        financial_truth.get("unreliable_metrics") or unreliable_inputs.get("metrics")
+    )
+    invalid_metrics = _normalize_financial_truth_list(
+        financial_truth.get("invalid_or_quarantined_metrics") or invalid_inputs.get("metrics")
+    )
+    precise_missing = _normalize_financial_truth_list(
+        financial_truth.get("precise_missing_metrics") or precise_missing_inputs.get("metrics")
+    )
+    trend_durability_limits = _normalize_financial_truth_list(
+        financial_truth.get("trend_durability_limits")
+        or financial_snapshot.get("trend_durability_limits")
+        or working_capital_quality.get("trend_durability_limits")
+        or per_share_compounding.get("trend_durability_limits")
+    )
+    precision_limits = _normalize_financial_truth_list(
+        financial_truth.get("precision_limits")
+        or financial_snapshot.get("precision_limits")
+        or owner_earnings.get("precision_limits")
+        or capital_allocation.get("precision_limits")
+    )
+    blocked_warning_inputs = _normalize_financial_truth_list(
+        warning_policy.get("financial_warnings_blocked_downstream")
+        or selected_pcim.get("financial_panel_blocked_domains")
+        or []
+    )
+    allowed_warning_inputs = _normalize_financial_truth_list(
+        warning_policy.get("allowed_financial_warnings")
+        or warnings
+    )
+    blocked_warning_inputs.extend(
+        warning for warning in warnings if _financial_warning_is_blocked(warning, metric_registry)
+    )
+    blocked_financial_warnings = _unique_preserve_order(blocked_warning_inputs)
+    rewritten_financial_warnings = _unique_preserve_order(
+        [_rewrite_blocked_financial_warning(warning) for warning in blocked_financial_warnings]
+    )
+    allowed_financial_warnings = [
+        warning
+        for warning in allowed_warning_inputs
+        if warning not in blocked_financial_warnings
+        and _rewrite_blocked_financial_warning(warning) == warning
+    ]
+    investor_questions = _normalize_financial_truth_list(
+        selected_pcim.get("investor_financial_questions")
+        or precise_missing_inputs.get("investor_questions")
+        or financial_truth.get("investor_financial_questions")
+    )
+    source_provenance = _unique_preserve_order(
+        [
+            str((selected_pcim.get(name) or {}).get("source_artifact") or "").strip()
+            for name in (
+                "financial_truth_inputs",
+                "financial_snapshot_inputs",
+                "financial_quality_inputs",
+                "owner_earnings_readiness_inputs",
+                "working_capital_quality_inputs",
+                "capital_allocation_financial_inputs",
+                "per_share_compounding_inputs",
+                "unreliable_financial_inputs",
+                "invalid_or_quarantined_financial_inputs",
+                "precise_missing_financial_inputs",
+            )
+            if str((selected_pcim.get(name) or {}).get("source_artifact") or "").strip()
+        ]
+    )
+    return {
+        "usable_current_metrics": usable_current,
+        "usable_derived_metrics": usable_derived,
+        "partial_metrics": partial_metrics,
+        "unreliable_metrics": unreliable_metrics,
+        "invalid_or_quarantined_metrics": invalid_metrics,
+        "precise_missing_metrics": precise_missing,
+        "trend_durability_limits": trend_durability_limits,
+        "precision_limits": precision_limits,
+        "allowed_financial_warnings": allowed_financial_warnings,
+        "blocked_financial_warnings": blocked_financial_warnings,
+        "rewritten_financial_warnings": rewritten_financial_warnings,
+        "investor_financial_questions": investor_questions,
+        "financial_panel_status": panel_status if isinstance(panel_status, dict) else {"status": str(panel_status or "").strip() or "unknown"},
+        "source_provenance": source_provenance,
+        "basis_used": basis_used,
+    }
+
+
 def _derive_financial_context(selected_pcim: Dict[str, Any], sections: List[str], missing_sections: List[str]) -> Dict[str, Any]:
     financial_sections = _financial_sections_for_doctrine(sections)
     metric_registry = _build_financial_metric_registry(selected_pcim, sections)
     metrics_used = _registry_metric_names(metric_registry)
     warnings = _collect_financial_warnings(selected_pcim, sections)
     basis_used = _collect_financial_basis(selected_pcim, sections)
+    truth_pack = _build_analyst_financial_truth_pack(selected_pcim, sections)
     missing_data: List[str] = []
     interpretation_limits: List[str] = []
     metric_flags = _financial_context_metric_flags({"metrics_used": metrics_used})
@@ -925,7 +1502,7 @@ def _derive_financial_context(selected_pcim: Dict[str, Any], sections: List[str]
     ):
         interpretation_limits.append("cash conversion cycle unavailable")
 
-    for warning in warnings:
+    for warning in truth_pack["allowed_financial_warnings"]:
         lowered = warning.lower()
         if "share count missing" in lowered and metric_flags["has_shares_outstanding"]:
             continue
@@ -936,11 +1513,14 @@ def _derive_financial_context(selected_pcim: Dict[str, Any], sections: List[str]
         "financials_used": bool(financial_sections),
         "basis_used": basis_used,
         "financial_sections_consumed": financial_sections,
-        "warnings": warnings,
+        "warnings": list(truth_pack["allowed_financial_warnings"]),
+        "blocked_warnings": list(truth_pack["blocked_financial_warnings"]),
+        "rewritten_warnings": list(truth_pack["rewritten_financial_warnings"]),
         "metrics_used": metrics_used,
         "metric_registry": metric_registry,
         "missing_data": list(dict.fromkeys(missing_data)),
         "interpretation_limits": list(dict.fromkeys(interpretation_limits)),
+        "truth_pack": truth_pack,
     }
 
 
@@ -960,11 +1540,14 @@ def _financial_instruction_block(doctrine_id: str) -> List[str]:
         "- Interpret only supplied ratios, growth metrics, quality signals, and warnings.",
         "- Mention missing financial data explicitly as limitations.",
         "- Never hide uncertainty, never give buy/sell/hold, and never use valuation language.",
+        "- Do not treat dividends, related-party advances, or governance ambiguity as automatic condemnation without context from supplied evidence.",
     ]
     doctrine_specific = {
         "graham": [
             "- Focus on balance-sheet strength, debt/equity, net cash or debt, cash conversion, dividend safety, working-capital risk, and reconciliation or audit warnings.",
             "- If share count, FCF, capex, basis, or debt mapping is missing or warning-heavy, say so explicitly.",
+            "- Do not treat dividends as a red flag by default.",
+            "- If dividend or distribution evidence lacks cash-flow and leverage context, describe the limitation rather than forcing a harsher conclusion.",
         ],
         "buffett": [
             "- Focus on ROE, ROCE, ROA, profitability durability, cash conversion quality, balance-sheet strength, FCF readiness, capital allocation, and per-share economics.",
@@ -977,6 +1560,7 @@ def _financial_instruction_block(doctrine_id: str) -> List[str]:
         "munger": [
             "- Focus on financial red flags, dilution and per-share comparability, QIP or proceeds usage, working-capital pressure, cash conversion weakness, debt mistakes, and ownership or incentive risk.",
             "- Stay skeptical but evidence-bound; do not infer dilution without actual issuance evidence.",
+            "- For related-party or governance ambiguity, use monitoring signals first and escalate only when evidence supports it.",
         ],
         "lynch": [
             "- Focus on whether the numbers support the business story, revenue growth versus EPS growth, margin direction, cash conversion, and whether the story is getting simpler or more complicated.",
@@ -1090,6 +1674,7 @@ def _deterministic_panel_output(
     evidence_ids = _collect_section_evidence_ids(pcim, consumed_sections)
     selected_pcim = _selected_pcim_view(pcim, consumed_sections)
     financial_context = _derive_financial_context(selected_pcim, consumed_sections, missing_sections)
+    truth_pack = financial_context["truth_pack"]
     financial_metrics_used = [
         {
             "metric_id": entry["metric_id"],
@@ -1135,6 +1720,12 @@ def _deterministic_panel_output(
             if any(token in warning.lower() for token in ("debt", "dilution", "fcf", "cfo", "comparability", "share count", "basis mismatch"))
         ],
         "financial_positive_signals": [],
+        "precise_missing_financial_data": list(truth_pack["precise_missing_metrics"]),
+        "derived_not_explicitly_reported": list(truth_pack["usable_derived_metrics"]),
+        "partial_financial_data": list(truth_pack["partial_metrics"]),
+        "unreliable_financial_data": list(truth_pack["unreliable_metrics"]),
+        "invalid_or_quarantined_financial_data": list(truth_pack["invalid_or_quarantined_metrics"]),
+        "trend_durability_limits": list(truth_pack["trend_durability_limits"]),
         "financial_missing_data": list(dict.fromkeys(
             [f"Missing financial section: {section}" for section in financial_missing_sections]
             + list(financial_context["missing_data"])
@@ -1148,6 +1739,8 @@ def _deterministic_panel_output(
                 else []
             )
         )),
+        "financial_questions_for_investor": list(truth_pack["investor_financial_questions"]),
+        "analyst_financial_truth_pack": truth_pack,
         "financial_assessment": {
             "financials_used": financial_context["financials_used"],
             "basis_used": financial_context["basis_used"],
@@ -1228,6 +1821,23 @@ def _filter_uncertainty_for_sections(pcim: Dict[str, Any], sections: List[str]) 
 
 def _selected_pcim_view(pcim: Dict[str, Any], sections: List[str]) -> Dict[str, Any]:
     selected: Dict[str, Any] = {}
+    always_include = {
+        "financial_truth_inputs",
+        "financial_snapshot_inputs",
+        "owner_earnings_readiness_inputs",
+        "working_capital_quality_inputs",
+        "capital_allocation_financial_inputs",
+        "per_share_compounding_inputs",
+        "unreliable_financial_inputs",
+        "invalid_or_quarantined_financial_inputs",
+        "precise_missing_financial_inputs",
+        "financial_warning_policy",
+        "financial_panel_status",
+        "financial_panel_usable_domains",
+        "financial_panel_limited_domains",
+        "financial_panel_blocked_domains",
+        "investor_financial_questions",
+    }
     for section in sections:
         if section == "evidence_map":
             evidence_map = pcim.get("evidence_map") or {}
@@ -1241,7 +1851,143 @@ def _selected_pcim_view(pcim: Dict[str, Any], sections: List[str]) -> Dict[str, 
             selected["uncertainty_missing_data"] = _filter_uncertainty_for_sections(pcim, sections)
             continue
         selected[section] = pcim.get(section)
+    for section in always_include:
+        if section not in selected and section in pcim:
+            selected[section] = pcim.get(section)
     return selected
+
+
+def _doctrine_priority_order(doctrine_id: str, sections: List[str]) -> List[str]:
+    preferred = DOCTRINE_SECTION_PRIORITIES.get(doctrine_id, [])
+    ordered: List[str] = []
+    for section in preferred:
+        if section in sections and section not in ordered:
+            ordered.append(section)
+    for section in sections:
+        if section not in ordered:
+            ordered.append(section)
+    return ordered
+
+
+def compact_financial_truth_for_analyst(
+    financial_truth_inputs: Any,
+    analyst: str,
+    *,
+    token_budget: int,
+) -> Dict[str, Any]:
+    if not isinstance(financial_truth_inputs, dict):
+        return {
+            "analyst": analyst,
+            "top_usable_metrics": [],
+            "top_derived_metrics": [],
+            "allowed_warnings": [],
+            "blocked_warnings": [],
+            "investor_questions": [],
+            "owner_earnings_status": "unknown",
+            "working_capital_status": "unknown",
+            "per_share_status": "unknown",
+            "basis_status": "unknown",
+            "debt_reliability_status": "unknown",
+            "source_provenance_summary": [],
+        }
+
+    metric_limit = 12
+    derived_limit = 6
+    warning_limit = 6
+    question_limit = 5
+    if token_budget < 350:
+        metric_limit = 8
+        derived_limit = 4
+        warning_limit = 4
+        question_limit = 3
+
+    def _compact_metric(item: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(item, dict):
+            return None
+        label = _truncate_text(
+            str(item.get("metric_name") or item.get("display_name") or item.get("metric_id") or item.get("canonical_metric") or "").strip(),
+            60,
+        )
+        if not label:
+            return None
+        compact: Dict[str, Any] = {
+            "metric": label,
+            "period": _truncate_text(str(item.get("fiscal_year") or item.get("period") or "").strip(), 20),
+            "basis": _truncate_text(str(item.get("basis") or "unknown").strip(), 20),
+            "confidence": _truncate_text(str(item.get("confidence") or "unknown").strip(), 20),
+        }
+        for key in ("value", "value_crore", "value_per_share", "raw_number"):
+            value = item.get(key)
+            if isinstance(value, (int, float)):
+                compact["value"] = value
+                break
+        note = ""
+        if isinstance(item.get("notes"), list) and item.get("notes"):
+            note = str(item["notes"][0])
+        elif isinstance(item.get("warnings"), list) and item.get("warnings"):
+            note = str(item["warnings"][0])
+        if note:
+            compact["note"] = _truncate_text(note, 160)
+        return compact
+
+    def _latest_first(values: Any, limit: int) -> List[Dict[str, Any]]:
+        compacted = [item for item in (_compact_metric(value) for value in values or []) if item]
+        compacted.sort(key=lambda item: _financial_period_sort_key(item.get("period")), reverse=True)
+        return compacted[:limit]
+
+    usable = _latest_first(financial_truth_inputs.get("usable_current_metrics", []), metric_limit)
+    derived = _latest_first(financial_truth_inputs.get("usable_derived_metrics", []), derived_limit)
+    partial = _latest_first(financial_truth_inputs.get("partial_metrics", []), 4)
+    derived_not_reported = _latest_first(
+        financial_truth_inputs.get("derived_not_explicitly_reported", []),
+        derived_limit,
+    )
+
+    metric_blob = json.dumps(usable + derived + partial + derived_not_reported, ensure_ascii=False).lower()
+    owner_earnings_status = "available" if "owner earnings" in metric_blob or "owner_earnings" in metric_blob else "unknown"
+    working_capital_status = "available" if any(token in metric_blob for token in ("receivable", "inventory", "payable", "cash conversion")) else "unknown"
+    per_share_status = "available" if any(token in metric_blob for token in ("eps", "book value", "share")) else "unknown"
+    debt_reliability_status = "available" if any(token in metric_blob for token in ("debt", "cash", "net worth")) else "unknown"
+
+    blocked_warning_summaries = []
+    for item in financial_truth_inputs.get("financial_warnings_blocked_downstream", []) or []:
+        if isinstance(item, dict):
+            blocked_warning_summaries.append(item.get("normalized_warning") or item.get("original_warning") or "")
+        else:
+            blocked_warning_summaries.append(str(item))
+
+    return {
+        "analyst": analyst,
+        "top_usable_metrics": usable,
+        "top_derived_metrics": derived,
+        "partial_metrics": partial,
+        "derived_not_explicitly_reported": derived_not_reported,
+        "allowed_warnings": _extract_summary_fragments(
+            financial_truth_inputs.get("financial_warnings_allowed_downstream", []),
+            max_items=warning_limit,
+            item_limit=160,
+        ),
+        "blocked_warnings": _extract_summary_fragments(
+            blocked_warning_summaries,
+            max_items=warning_limit,
+            item_limit=160,
+        ),
+        "investor_questions": _extract_summary_fragments(
+            financial_truth_inputs.get("investor_financial_questions") or financial_truth_inputs.get("investor_relevant_questions") or [],
+            max_items=question_limit,
+            item_limit=160,
+        ),
+        "owner_earnings_status": owner_earnings_status,
+        "working_capital_status": working_capital_status,
+        "per_share_status": per_share_status,
+        "basis_status": _truncate_text(str(financial_truth_inputs.get("financial_panel_status_reason") or financial_truth_inputs.get("financial_panel_status") or "unknown"), 120),
+        "debt_reliability_status": debt_reliability_status,
+        "source_provenance_summary": _extract_summary_fragments(
+            financial_truth_inputs.get("source_provenance", []),
+            max_items=4,
+            item_limit=120,
+        ),
+    }
 
 
 def _truncate_text(text: Any, limit: int) -> str:
@@ -1680,6 +2426,12 @@ def _section_specific_compaction(section_name: str, section_value: Any, analyst:
         return _compact_financial_quality_section(section_value, analyst)
     if section_name == "capital_allocation_inputs":
         return _compact_capital_allocation_section(section_value)
+    if section_name == "financial_truth_inputs":
+        return compact_financial_truth_for_analyst(
+            section_value,
+            analyst,
+            token_budget=DEFAULT_FINANCIAL_TRUTH_PACK_BUDGET_TOKENS,
+        )
     return section_value
 
 
@@ -1904,13 +2656,19 @@ def _build_compact_pcim_view(
     sections: List[str],
     limits: Dict[str, int],
     analyst: str,
+    *,
+    include_sections: Optional[List[str]] = None,
+    excluded_sections: Optional[List[str]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Dict[str, Any]], bool]:
-    selected_pcim = _selected_pcim_view(pcim, sections)
+    selected_pcim = _selected_pcim_view(pcim, include_sections or sections)
     compacted: Dict[str, Any] = {}
     stats: Dict[str, Dict[str, Any]] = {}
     truncated = False
+    excluded = list(excluded_sections or [])
 
     for section, value in selected_pcim.items():
+        if section in FINANCIAL_PCIM_SECTIONS:
+            value = _prioritize_recent_financial_items(value)
         before = _count_compactable_items(value)
         compacted_value, section_truncated = _compact_value_for_prompt(
             value,
@@ -1945,7 +2703,41 @@ def _build_compact_pcim_view(
         }
         truncated = truncated or section_truncated or hard_compacted or after < before
 
+    if excluded:
+        compacted["available_but_not_included_due_budget"] = {
+            "analyst": analyst,
+            "sections": excluded[:8],
+            "count": len(excluded),
+        }
+
     return compacted, stats, truncated
+
+
+def _prioritize_recent_financial_items(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _prioritize_recent_financial_items(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        prioritized = [_prioritize_recent_financial_items(item) for item in value]
+        dated_items = [
+            item
+            for item in prioritized
+            if isinstance(item, dict)
+            and _financial_period_sort_key(
+                item.get("fiscal_year") or item.get("year") or item.get("period") or item.get("source_year")
+            )[0] >= 0
+        ]
+        if dated_items and len(dated_items) == len(prioritized):
+            prioritized.sort(
+                key=lambda item: _financial_period_sort_key(
+                    item.get("fiscal_year") or item.get("year") or item.get("period") or item.get("source_year")
+                ),
+                reverse=True,
+            )
+        return prioritized
+    return value
 
 
 def _shrink_limits(limits: Dict[str, int]) -> Optional[Dict[str, int]]:
@@ -2005,21 +2797,203 @@ def _largest_offending_fields(compact_pcim: Dict[str, Any], *, limit: int = 5) -
     return [f"{name}={size}" for name, size in ordered[:limit]]
 
 
+def _token_usage_by_budget_class(
+    *,
+    system_instructions: str,
+    analyst_doctrine_instructions: str,
+    output_schema_or_contract: str,
+    compact_pcim_input_pack: Any,
+    compact_financial_truth_pack: Any,
+    compact_evidence_pack: Any,
+    warning_policy_pack: Any,
+) -> Dict[str, int]:
+    return {
+        "system_instructions": _estimate_prompt_tokens(system_instructions),
+        "analyst_doctrine_instructions": _estimate_prompt_tokens(analyst_doctrine_instructions),
+        "output_schema_or_contract": _estimate_prompt_tokens(output_schema_or_contract),
+        "compact_pcim_input_pack": _estimate_prompt_tokens(json.dumps(compact_pcim_input_pack, ensure_ascii=False)),
+        "compact_financial_truth_pack": _estimate_prompt_tokens(json.dumps(compact_financial_truth_pack, ensure_ascii=False)),
+        "compact_evidence_pack": _estimate_prompt_tokens(json.dumps(compact_evidence_pack, ensure_ascii=False)),
+        "warning_policy_pack": _estimate_prompt_tokens(json.dumps(warning_policy_pack, ensure_ascii=False)),
+    }
+
+
+def _compact_evidence_subset(
+    compact_pcim: Dict[str, Any],
+    *,
+    token_budget: int,
+) -> Dict[str, Any]:
+    evidence_map = compact_pcim.get("evidence_map") or {}
+    if not isinstance(evidence_map, dict):
+        return {}
+    subset: Dict[str, Any] = {}
+    for section, value in evidence_map.items():
+        ids: List[str] = []
+        if isinstance(value, dict):
+            ids = [str(item).strip() for item in value.get("sample_evidence_ids", []) if str(item).strip()]
+        elif isinstance(value, list):
+            ids = [str(item).strip() for item in value if str(item).strip()]
+        if ids:
+            subset[section] = ids[:8]
+    if _estimate_prompt_tokens(json.dumps(subset, ensure_ascii=False)) <= token_budget:
+        return subset
+    ids_only: List[str] = []
+    for ids in subset.values():
+        for evidence_id in ids:
+            if evidence_id not in ids_only:
+                ids_only.append(evidence_id)
+    compact = {"evidence_ids": ids_only[:8], "evidence_text_omitted_due_budget": True}
+    while _estimate_prompt_tokens(json.dumps(compact, ensure_ascii=False)) > token_budget and len(compact["evidence_ids"]) > 3:
+        compact["evidence_ids"] = compact["evidence_ids"][:-1]
+    return compact
+
+
+def _build_emergency_prompt_payload(
+    *,
+    company: str,
+    doctrine: Dict[str, Any],
+    compact_pcim: Dict[str, Any],
+    excluded_sections: List[str],
+) -> Dict[str, Any]:
+    years = _collect_years_from_value(compact_pcim)[:4]
+    top_business = _extract_summary_fragments(
+        [
+            compact_pcim.get("business_understanding"),
+            compact_pcim.get("business_economics_inputs"),
+            compact_pcim.get("management_quality_inputs"),
+            compact_pcim.get("moat_inputs"),
+        ],
+        max_items=3,
+        item_limit=150,
+    )
+    top_financial = _extract_summary_fragments(
+        [
+            compact_pcim.get("financial_truth_inputs"),
+            compact_pcim.get("financial_quality_inputs"),
+            compact_pcim.get("cash_conversion_inputs"),
+            compact_pcim.get("return_on_capital_inputs"),
+        ],
+        max_items=3,
+        item_limit=150,
+    )
+    top_risks = _extract_summary_fragments(
+        [compact_pcim.get("risk_inputs"), compact_pcim.get("financial_quality_inputs")],
+        max_items=3,
+        item_limit=150,
+    )
+    top_uncertainties = _extract_summary_fragments(
+        [
+            compact_pcim.get("uncertainty_missing_data"),
+            compact_pcim.get("investor_financial_questions"),
+            compact_pcim.get("financial_warning_policy"),
+        ],
+        max_items=3,
+        item_limit=150,
+    )
+    evidence_subset = _compact_evidence_subset(compact_pcim, token_budget=DEFAULT_EVIDENCE_PACK_BUDGET_TOKENS)
+    top_evidence_ids = []
+    if isinstance(evidence_subset, dict):
+        ids = evidence_subset.get("evidence_ids")
+        if isinstance(ids, list):
+            top_evidence_ids = ids[:8]
+        else:
+            for value in evidence_subset.values():
+                if isinstance(value, list):
+                    for evidence_id in value:
+                        if evidence_id not in top_evidence_ids:
+                            top_evidence_ids.append(evidence_id)
+    return {
+        "company": company,
+        "available_years": years,
+        "doctrine_id": doctrine["doctrine_id"],
+        "compact_financial_truth_summary": compact_pcim.get("financial_truth_inputs") or {},
+        "top_business_facts": top_business[:3],
+        "top_financial_facts": top_financial[:3],
+        "top_risks": top_risks[:3],
+        "top_uncertainties": top_uncertainties[:3],
+        "top_evidence_ids": top_evidence_ids[:8],
+        "omitted_sections_summary": excluded_sections[:8],
+        "required_output_contract": {
+            "rating": "strong|mixed|weak|insufficient_evidence",
+            "must_include": [
+                "assessment",
+                "key_findings",
+                "red_flags",
+                "open_uncertainties",
+                "financial_assessment",
+                "user_facing_brief",
+            ],
+        },
+    }
+
+
 def _prepare_compact_prompt_pack(
     pcim: Dict[str, Any],
     sections: List[str],
     analyst: str,
-) -> Tuple[Dict[str, Any], Dict[str, Dict[str, Any]], Dict[str, int], bool]:
+) -> Tuple[Dict[str, Any], Dict[str, Dict[str, Any]], Dict[str, int], bool, Dict[str, Any]]:
     limits = _prompt_compaction_limits()
+    ordered_sections = _doctrine_priority_order(analyst, sections)
+    include_count = len(ordered_sections)
+    excluded_sections: List[str] = []
+    shrink_passes = 0
+    emergency_mode_used = False
+    sections_dropped_due_budget: List[str] = []
+
     while True:
-        compacted_pcim, stats, truncated = _build_compact_pcim_view(pcim, sections, limits, analyst)
+        include_sections = ordered_sections[:include_count]
+        excluded_sections = ordered_sections[include_count:]
+        compacted_pcim, stats, truncated = _build_compact_pcim_view(
+            pcim,
+            sections,
+            limits,
+            analyst,
+            include_sections=include_sections,
+            excluded_sections=excluded_sections,
+        )
         compact_chars = len(json.dumps(compacted_pcim, ensure_ascii=False))
-        if compact_chars <= limits["max_total_prompt_chars"]:
-            return compacted_pcim, stats, limits, truncated
+        compact_tokens = _estimate_prompt_tokens(json.dumps(compacted_pcim, ensure_ascii=False))
+        if (
+            compact_chars <= limits["max_total_prompt_chars"]
+            and compact_tokens <= limits["compact_input_pack_budget_tokens"]
+        ):
+            diagnostics = {
+                "included_sections": include_sections,
+                "excluded_sections": excluded_sections,
+                "shrink_passes_applied": shrink_passes,
+                "emergency_mode_used": emergency_mode_used,
+                "sections_dropped_due_budget": sections_dropped_due_budget,
+                "compact_input_pack_tokens": compact_tokens,
+            }
+            return compacted_pcim, stats, limits, truncated, diagnostics
+        if include_count > 3:
+            dropped = ordered_sections[include_count - 1]
+            include_count -= 1
+            if dropped not in sections_dropped_due_budget:
+                sections_dropped_due_budget.append(dropped)
+            shrink_passes += 1
+            continue
         next_limits = _shrink_limits(limits)
         if next_limits is None:
-            return compacted_pcim, stats, limits, True
+            emergency_payload = _build_emergency_prompt_payload(
+                company=str(pcim.get("company") or ""),
+                doctrine={"doctrine_id": analyst},
+                compact_pcim=compacted_pcim,
+                excluded_sections=excluded_sections or sections_dropped_due_budget,
+            )
+            diagnostics = {
+                "included_sections": ["emergency_skeleton"],
+                "excluded_sections": excluded_sections,
+                "shrink_passes_applied": shrink_passes,
+                "emergency_mode_used": True,
+                "sections_dropped_due_budget": sections_dropped_due_budget,
+                "compact_input_pack_tokens": compact_tokens,
+            }
+            return emergency_payload, stats, limits, True, diagnostics
         limits = next_limits
+        if limits["max_items_per_section"] == 1:
+            emergency_mode_used = True
+        shrink_passes += 1
 
 
 def _build_compact_prompt(
@@ -2029,14 +3003,33 @@ def _build_compact_prompt(
     pcim: Dict[str, Any],
     sections: List[str],
 ) -> Tuple[str, Dict[str, Any], Dict[str, Dict[str, int]], Dict[str, int], bool, Dict[str, Any]]:
-    stage_budget = resolve_stage_token_budget("investor_panel_analyst")
+    limits_used = _prompt_compaction_limits()
+    stage_budget = max(
+        resolve_stage_token_budget("investor_panel_analyst"),
+        limits_used["total_prompt_budget_tokens"],
+    )
+    reserved_system_tokens = limits_used["reserved_system_tokens"]
+    reserved_instruction_tokens = limits_used["reserved_instruction_tokens"]
+    reserved_output_schema_tokens = limits_used["reserved_output_schema_tokens"]
+    available_input_pack_tokens = limits_used["compact_input_pack_budget_tokens"]
     raw_selected_pcim = _selected_pcim_view(pcim, sections)
     raw_largest_sections = _largest_offending_fields(raw_selected_pcim)
-    compact_pcim, section_stats, limits_used, input_compacted = _prepare_compact_prompt_pack(
+    compact_pcim, section_stats, limits_used, input_compacted, pack_diagnostics = _prepare_compact_prompt_pack(
         pcim,
         sections,
         doctrine["doctrine_id"],
     )
+    if "financial_truth_inputs" in compact_pcim:
+        compact_pcim["financial_truth_inputs"] = compact_financial_truth_for_analyst(
+            compact_pcim["financial_truth_inputs"],
+            doctrine["doctrine_id"],
+            token_budget=limits_used["financial_truth_pack_budget_tokens"],
+        )
+    if "evidence_map" in compact_pcim:
+        compact_pcim["evidence_map"] = _compact_evidence_subset(
+            compact_pcim,
+            token_budget=limits_used["evidence_pack_budget_tokens"],
+        )
     llm_input_pack = _build_prompt_input_pack(
         company=company,
         doctrine=doctrine,
@@ -2064,9 +3057,16 @@ def _build_compact_prompt(
         pack_tokens = llm_input_pack.get("metadata", {}).get("tokens_estimated") or _estimate_prompt_tokens(
             json.dumps(llm_input_pack, ensure_ascii=False)
         )
+        input_pack_over_cap = pack_tokens > limits_used["compact_input_pack_budget_tokens"]
         hard_char_limit = limits_used.get("hard_max_prompt_chars") or 0
         over_hard_char_limit = bool(hard_char_limit and prompt_chars > hard_char_limit)
-        if prompt_tokens <= stage_budget and pack_tokens <= stage_budget and not over_hard_char_limit:
+        if (
+            prompt_tokens <= stage_budget
+            and prompt_tokens <= limits_used["hard_max_prompt_tokens"]
+            and pack_tokens <= stage_budget
+            and not input_pack_over_cap
+            and not over_hard_char_limit
+        ):
             break
         next_limits = _shrink_limits(limits_used)
         if next_limits is None:
@@ -2078,6 +3078,17 @@ def _build_compact_prompt(
             limits_used,
             doctrine["doctrine_id"],
         )
+        if "financial_truth_inputs" in compact_pcim:
+            compact_pcim["financial_truth_inputs"] = compact_financial_truth_for_analyst(
+                compact_pcim["financial_truth_inputs"],
+                doctrine["doctrine_id"],
+                token_budget=limits_used["financial_truth_pack_budget_tokens"],
+            )
+        if "evidence_map" in compact_pcim:
+            compact_pcim["evidence_map"] = _compact_evidence_subset(
+                compact_pcim,
+                token_budget=limits_used["evidence_pack_budget_tokens"],
+            )
         input_compacted = input_compacted or next_truncated
         llm_input_pack = _build_prompt_input_pack(
             company=company,
@@ -2106,6 +3117,22 @@ def _build_compact_prompt(
         for section, stats in section_stats.items()
         if stats["final_chars"] > stats["section_cap"]
     ]
+    budget_classes = _token_usage_by_budget_class(
+        system_instructions=_build_system_prompt(),
+        analyst_doctrine_instructions=json.dumps(
+            {
+                "primary_focus": doctrine.get("primary_focus", [])[:4],
+                "financial_rules": _financial_instruction_block(doctrine["doctrine_id"])[:4],
+                "evidence_routing": _shared_evidence_routing_rules(),
+            },
+            ensure_ascii=False,
+        ),
+        output_schema_or_contract=json.dumps(_llm_output_template(doctrine, sections), ensure_ascii=False),
+        compact_pcim_input_pack=((llm_input_pack.get("observations") or [{}])[0].get("selected_pcim") or {}),
+        compact_financial_truth_pack=compact_pcim.get("financial_truth_inputs") or {},
+        compact_evidence_pack=compact_pcim.get("evidence_map") or {},
+        warning_policy_pack={"required_warning_groups": _canonical_required_financial_warning_groups(_derive_financial_context(compact_pcim, sections, []))[:8]},
+    )
     hard_char_limit = limits_used.get("hard_max_prompt_chars") or 0
     over_hard_char_limit = bool(hard_char_limit and prompt_chars > hard_char_limit)
     warnings: List[str] = []
@@ -2113,7 +3140,16 @@ def _build_compact_prompt(
     if prompt_chars > limits_used["max_total_prompt_chars"]:
         budget_status = "pass_with_warning"
         warnings.append("prompt_chars exceeded soft target but token budget passed")
-    if prompt_tokens > stage_budget or pack_tokens > stage_budget or over_hard_char_limit or section_cap_violations:
+    if pack_tokens > limits_used["compact_input_pack_budget_tokens"]:
+        warnings.append("compact input pack remained above hard sub-budget before final fallback")
+    if (
+        prompt_tokens > stage_budget
+        or prompt_tokens > limits_used["hard_max_prompt_tokens"]
+        or pack_tokens > stage_budget
+        or pack_tokens > limits_used["compact_input_pack_budget_tokens"]
+        or over_hard_char_limit
+        or section_cap_violations
+    ):
         raise ValueError(
             "Investor panel prompt remains above budget after compaction: "
             f"prompt_chars={prompt_chars}, prompt_tokens={prompt_tokens}, pack_tokens={pack_tokens}, "
@@ -2126,6 +3162,16 @@ def _build_compact_prompt(
         )
     budget_report = {
         "token_budget": stage_budget,
+        "reserved_system_tokens": reserved_system_tokens,
+        "reserved_instruction_tokens": reserved_instruction_tokens,
+        "reserved_output_schema_tokens": reserved_output_schema_tokens,
+        "available_input_pack_tokens": available_input_pack_tokens,
+        "total_prompt_budget_tokens": limits_used["total_prompt_budget_tokens"],
+        "hard_max_prompt_tokens": limits_used["hard_max_prompt_tokens"],
+        "compact_input_pack_budget_tokens": limits_used["compact_input_pack_budget_tokens"],
+        "financial_truth_pack_budget_tokens": limits_used["financial_truth_pack_budget_tokens"],
+        "evidence_pack_budget_tokens": limits_used["evidence_pack_budget_tokens"],
+        "doctrine_context_budget_tokens": limits_used["doctrine_context_budget_tokens"],
         "prompt_tokens_before": initial_prompt_tokens,
         "prompt_tokens_after": prompt_tokens,
         "pack_tokens_before": initial_pack_tokens,
@@ -2134,10 +3180,31 @@ def _build_compact_prompt(
         "prompt_chars_after": prompt_chars,
         "raw_largest_sections": raw_largest_sections,
         "compacted_largest_sections": compacted_largest_sections,
+        "raw_section_tokens": {
+            key: _estimate_prompt_tokens(json.dumps(value, ensure_ascii=False))
+            for key, value in raw_selected_pcim.items()
+        },
+        "compacted_section_tokens": {
+            key: _estimate_prompt_tokens(json.dumps(value, ensure_ascii=False))
+            for key, value in compact_pcim.items()
+        },
         "section_caps": {
             section: stats["section_cap"]
             for section, stats in section_stats.items()
         },
+        "included_sections": list(pack_diagnostics.get("included_sections", [])),
+        "excluded_sections": list(pack_diagnostics.get("excluded_sections", [])),
+        "shrink_passes_applied": int(pack_diagnostics.get("shrink_passes_applied", 0)),
+        "emergency_mode_used": bool(pack_diagnostics.get("emergency_mode_used", False)),
+        "sections_dropped_due_budget": list(pack_diagnostics.get("sections_dropped_due_budget", [])),
+        "token_usage_by_budget_class": budget_classes,
+        "evidence_map_included": "evidence_map" in compact_pcim,
+        "evidence_map_tokens": _estimate_prompt_tokens(json.dumps(compact_pcim.get("evidence_map") or {}, ensure_ascii=False)),
+        "financial_truth_tokens": _estimate_prompt_tokens(json.dumps(compact_pcim.get("financial_truth_inputs") or {}, ensure_ascii=False)),
+        "static_instruction_tokens": budget_classes["system_instructions"] + budget_classes["analyst_doctrine_instructions"],
+        "output_schema_tokens": budget_classes["output_schema_or_contract"],
+        "omitted_evidence_count": max(0, len(_collect_section_evidence_ids(pcim, sections)) - len(_collect_section_evidence_ids(compact_pcim, list(compact_pcim.keys())))),
+        "evidence_compaction_note": "Only evidence IDs reachable from included compact sections are passed to the analyst prompt.",
         "budget_status": budget_status,
         "warnings": warnings,
     }
@@ -2154,7 +3221,19 @@ def _build_prompt_input_pack(
     limits_used: Dict[str, int],
     input_compacted: bool,
 ) -> Dict[str, Any]:
+    company_memory_context = build_company_memory_context(
+        pcim_path.parent.parent,
+        doctrine["doctrine_id"],
+        token_budget=limits_used["doctrine_context_budget_tokens"],
+    )
     limitations = [COMPACTION_REASONING_LIMIT] if input_compacted else []
+    limitations.extend(company_memory_context.get("limitations") or [])
+    limitations = list(dict.fromkeys(limitations))
+    financial_truth_summary = compact_pcim.get("financial_truth_inputs") if isinstance(compact_pcim, dict) else {}
+    evidence_subset = _compact_evidence_subset(
+        compact_pcim if isinstance(compact_pcim, dict) else {},
+        token_budget=limits_used["evidence_pack_budget_tokens"],
+    )
     max_dict_keys = max(
         limits_used["max_dict_keys_per_item"],
         len(allowed_sections) + 2,
@@ -2163,21 +3242,27 @@ def _build_prompt_input_pack(
         limits_used["max_sections"],
         len(allowed_sections) + 1,
     )
-    return build_llm_input_pack(
+    pack = build_llm_input_pack(
         stage="investor_panel_analyst",
-        purpose=f"Produce doctrine-bound investor analysis for {doctrine['doctrine_id']} from declared PCIM sections only.",
+        purpose=(
+            f"Produce doctrine-bound investor analysis for {doctrine['doctrine_id']} from declared PCIM sections "
+            "and longitudinal company-memory summaries only."
+        ),
         company=company,
         year=None,
         observations=[
             {
                 "selected_pcim": compact_pcim,
+                "company_memory_context": company_memory_context,
+                "financial_truth_summary": financial_truth_summary,
+                "evidence_subset": evidence_subset,
             }
         ],
         limitations=limitations,
         source_artifacts=[str(pcim_path)],
         pack_name=f"{doctrine['doctrine_id']}_input_pack",
         policy={
-            "allowed_sections": ["selected_pcim"],
+            "allowed_sections": ["selected_pcim", "company_memory_context"],
             "max_items": limits_used["max_items_per_section"],
             "max_chars": limits_used["max_total_prompt_chars"],
             "include_evidence_ids": True,
@@ -2193,6 +3278,10 @@ def _build_prompt_input_pack(
             "drop_raw_evidence_references": True,
         },
     )
+    pack["financial_truth_summary_for_prompt"] = financial_truth_summary
+    pack["evidence_subset_for_prompt"] = evidence_subset
+    pack["company_memory_context_for_prompt"] = company_memory_context
+    return pack
 
 
 def _required_assessment_keys(doctrine: Dict[str, Any]) -> List[str]:
@@ -2276,8 +3365,10 @@ def _llm_output_template(doctrine: Dict[str, Any], allowed_sections: List[str]) 
 def _build_system_prompt() -> str:
     return (
         "You are an investor-panel analyst inside Prometheus. "
-        "Reason only from the supplied PCIM sections and doctrine configuration. "
+        "Reason only from the supplied PCIM sections, company-memory progression summaries, and doctrine configuration. "
         "Do not use outside knowledge, do not invent evidence, and do not make buy/sell/hold recommendations. "
+        "Treat company-memory streams as longitudinal evidence, not a snapshot scorecard. "
+        "Do not treat ambition, commissioning, or a management statement as delivered execution without later evidence. "
         "Return exactly one valid JSON object matching the requested schema."
     )
 
@@ -2286,6 +3377,7 @@ def _shared_evidence_routing_rules() -> List[str]:
     return [
         "Evidence routing:",
         "- Revenue, CFO, receivable, debt, and similar financial claims should rely on financial_metrics_used, matching financial evidence, or both.",
+        "- Treat the latest fiscal year in the supplied financial truth as the current baseline; include latest-year metrics before using older years as trend context.",
         "- Governance, integrity, and incentive claims must use governance, ownership, compensation, board, committee, related-party, capital-allocation, or explicit uncertainty evidence.",
         "- Market-risk evidence supports only FX, currency, interest-rate, or market-risk claims unless risk oversight is explicit.",
         "- Section names and JSON filenames are never valid evidence IDs.",
@@ -2319,113 +3411,112 @@ def _build_llm_prompt(
 ) -> str:
     compact_pack = deepcopy(llm_input_pack)
     compact_pack.pop("input_policy", None)
+    first_observation = (llm_input_pack.get("observations") or [{}])[0]
+    compact_selected_pcim = first_observation.get("selected_pcim") or {}
+    compact_financial_truth_summary = (
+        llm_input_pack.get("financial_truth_summary_for_prompt")
+        or first_observation.get("financial_truth_summary")
+        or compact_selected_pcim.get("financial_truth_inputs")
+        or {}
+    )
+    evidence_subset = _compact_evidence_subset(
+        compact_selected_pcim,
+        token_budget=DEFAULT_EVIDENCE_PACK_BUDGET_TOKENS,
+    )
+    warning_policy_pack = {
+        "required_warning_groups": _canonical_required_financial_warning_groups(
+            _derive_financial_context(
+                compact_selected_pcim,
+                allowed_sections,
+                [],
+            )
+        )[:8]
+    }
+    compact_pack["observations"] = [{"selected_pcim": compact_selected_pcim}]
+    compact_pack["evidence_subset"] = evidence_subset
+    compact_pack["warning_policy_pack"] = warning_policy_pack
     compact_pack_text = json.dumps(compact_pack, ensure_ascii=False, separators=(",", ":"))
-    compact_shape_text = json.dumps(_llm_output_template(doctrine, allowed_sections), ensure_ascii=False, separators=(",", ":"))
-    compact_selected_pcim = ((llm_input_pack.get("observations") or [{}])[0].get("selected_pcim") or {})
+    compact_shape_text = json.dumps(
+        {
+            "assessment": "object with doctrine-required strings",
+            "rating": "strong|mixed|weak|insufficient_evidence",
+            "key_findings": [{"finding": "string", "evidence_ids": ["string"]}],
+            "red_flags": [{"flag": "string", "severity": "low|medium|high", "evidence_ids": ["string"]}],
+            "open_uncertainties": [{"uncertainty": "string", "evidence_ids": ["string"]}],
+            "financial_metrics_used": [{"metric_id": "string", "metric": "string", "period": "string", "used_for": "string"}],
+            "financial_assessment": {
+                "financials_used": True,
+                "basis_used": "consolidated|standalone|unknown",
+                "key_financial_strengths": ["string"],
+                "key_financial_concerns": ["string"],
+                "financial_red_flags": ["string"],
+                "missing_financial_data": ["string"],
+                "financial_interpretation_limits": ["string"],
+                "financial_warnings_carried_forward": ["string"],
+            },
+            "evidence_ids": ["string"],
+            "reasoning_limits": ["string"],
+            "user_facing_brief": {
+                "title": "string",
+                "lens": "string",
+                "what_looks_good": ["string"],
+                "what_needs_caution": ["string"],
+                "what_is_missing": ["string"],
+                "financial_lens": "string",
+                "bottom_line": "string",
+            },
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     metric_registry = _build_financial_metric_registry(compact_selected_pcim, allowed_sections)
+    rules = [
+        "Use only provided PCIM facts.",
+        "Return one valid JSON object only.",
+        "Do not invent evidence_ids, facts, metrics, or ratios.",
+        "Do not calculate new ratios, owner earnings, margin of safety, or valuation.",
+        "Carry forward major financial warnings and missing-data limits.",
+        "If FCF/capex/share-count/basis data is missing, say so explicitly.",
+        "Do not treat dividends, related-party advances, or governance ambiguity as automatic condemnation without context.",
+        "No buy, sell, hold, target price, fair value, undervalued, or overvalued language.",
+        "Never mention internal system names such as PCIM, CIM, artifact, JSON, evidence IDs, source artifacts, input sections, schema, validation, prompt, or LLM wording.",
+        "Write as an investment analyst speaking to a human reader, not as a pipeline describing its internals.",
+    ]
+    doctrine_block = {
+        "doctrine_id": doctrine["doctrine_id"],
+        "investor_lens": doctrine["investor_lens"],
+        "primary_focus": doctrine.get("primary_focus", [])[:4],
+        "financial_rules": _financial_instruction_block(doctrine["doctrine_id"])[:12],
+        "canonical_questions": doctrine.get("canonical_questions", [])[:4],
+        "red_flags": doctrine.get("red_flags", [])[:4],
+        "uncertainty_rules": doctrine.get("uncertainty_rules", [])[:4],
+    }
     return "\n".join(
         [
             f"Company: {company}",
             f"Doctrine ID: {doctrine['doctrine_id']}",
             f"Investor Lens: {doctrine['investor_lens']}",
-            f"PCIM Source: {pcim_path}",
-            "Task: Produce a structured investor analysis from PCIM only.",
-            "",
+            "Task: Produce structured investor analysis from compact PCIM only.",
             "Rules:",
-            "- Use only the PCIM sections provided below.",
-            "- Return only valid JSON. No markdown, no prose before or after JSON.",
-            "- Return one valid JSON object containing both the internal analysis fields and user_facing_brief.",
-            "- If evidence is missing or conflicting, say so explicitly.",
-            "- Cite evidence_ids for every major finding, red flag, and uncertainty when available.",
-            "- Financial interpretation must use only metrics already present in the supplied PCIM sections.",
-            "- Do not calculate new ratios, spreads, or derived financial metrics that are not already present in PCIM.",
-            "- If CFO, FCF, ROCE, share count, or comparability inputs are missing, say so under financial_missing_data or financial_interpretation_limits.",
-            "- You must mention each major financial warning in financial_assessment.missing_financial_data, financial_assessment.financial_interpretation_limits, or financial_assessment.financial_warnings_carried_forward.",
-            "- You must include the exact major financial warnings below in financial_assessment.financial_warnings_carried_forward.",
-            "- You must also include those warnings in missing_financial_data or financial_interpretation_limits where relevant.",
-            "- Do not hide missing financial data. If a warning is doctrine-irrelevant, still carry it forward as a limitation.",
-            "- Do not invent a fix or estimate missing values.",
-            "- Do not claim FCF, owner earnings, or FCF-supported dividend quality when FCF or capex is missing.",
-            "- Do not introduce facts or conclusions not present in selected PCIM.",
-            "- Prefer the most material 3-7 findings rather than listing everything.",
-            "- Do not treat dividends, related-party advances, or governance ambiguity as automatic condemnation without context from the supplied PCIM.",
+            *[f"- {rule}" for rule in rules],
             *_shared_evidence_routing_rules(),
-            "- Use multi_year_inputs only as historical context when that section is provided.",
-            "- Treat two-year trends as provisional unless the supplied evidence clearly supports a stronger claim.",
-            "- Do not infer promise fulfillment unless it is explicitly shown in the supplied evidence.",
-            "- Treat not_detected_this_year as absence of detection, not confirmed discontinuation.",
-            "- user_facing_brief must not mention PCIM, evidence_ids, analysis_mode, sections_consumed, evidence_map, or reasoning_limits.",
-            "- user_facing_brief must not contain evidence ID patterns like ev_ and must not contain buy/sell/hold recommendation language.",
-            "- user_facing_brief should use simple, serious investor language and preserve the analyst's school of thought.",
-            "- user_facing_brief must be a faithful summary of the internal analysis, not a second analysis.",
-            "- The user_facing_brief must be written for an investor and must not mention internal system terms such as PCIM, CIM, evidence IDs, schemas, artifacts, validators, source chunks, or input packs.",
-            "- supporting_pcim_sections must contain only values from the allowed list shown below.",
-            "",
             "Allowed supporting_pcim_sections:",
             json.dumps(allowed_sections, ensure_ascii=False, separators=(",", ":")),
-            "",
             "Allowed Financial Metrics:",
             json.dumps(
                 _format_allowed_financial_metrics(metric_registry),
                 ensure_ascii=False,
                 separators=(",", ":"),
             ),
-            "- financial_metrics_used should prefer objects with metric_id, metric, period, and used_for.",
-            "- supporting_pcim_sections must use only the allowed section names above.",
-            "- financial_metrics_used must use only the allowed metric_ids or obvious aliases of the allowed metrics with the correct period.",
-            "- If a metric is not listed above, do not mention it under financial_metrics_used.",
-            "- If you need to mention missing evidence, do that under financial_missing_data or financial_interpretation_limits instead of inventing a metric.",
-            '- All list fields must be valid JSON arrays. Never return a plain string for reasoning_limits, evidence_gaps, missing_financial_data, financial_interpretation_limits, financial_warnings_carried_forward, key_financial_strengths, key_financial_concerns, financial_red_flags, or financial_sections_consumed.',
-            '- Correct example: "reasoning_limits": ["No valuation was performed.", "Owner earnings could not be assessed because FCF/capex is missing."]',
-            '- Incorrect example: "reasoning_limits": "No valuation was performed."',
-            "",
+            "List-shape rule: all list fields must be valid JSON arrays, never a single string.",
             "Major Financial Warnings To Carry Forward:",
-            json.dumps(
-                _canonical_required_financial_warning_groups(
-                    _derive_financial_context(
-                        compact_selected_pcim,
-                        allowed_sections,
-                        [],
-                    )
-                ),
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-            "",
-            "Doctrine primary focus:",
-            json.dumps(doctrine.get("primary_focus", []), ensure_ascii=False, separators=(",", ":")),
-            "",
-            "Financial reasoning instructions:",
-            json.dumps(_financial_instruction_block(doctrine["doctrine_id"]), ensure_ascii=False, separators=(",", ":")),
-            "",
-            "Canonical principles:",
-            json.dumps(doctrine.get("canonical_principles", []), ensure_ascii=False, separators=(",", ":")),
-            "",
-            "Canonical questions:",
-            json.dumps(doctrine.get("canonical_questions", []), ensure_ascii=False, separators=(",", ":")),
-            "",
-            "Red flags to watch:",
-            json.dumps(doctrine.get("red_flags", []), ensure_ascii=False, separators=(",", ":")),
-            "",
-            "Uncertainty rules:",
-            json.dumps(doctrine.get("uncertainty_rules", []), ensure_ascii=False, separators=(",", ":")),
-            "",
-            "Historical-context guidance for this analyst:",
-            json.dumps(
-                {
-                    "graham": "Use multi_year_inputs to assess recurring financial or risk concerns, worsening liquidity, capital-allocation pattern, and missing cash-flow evidence.",
-                    "buffett": "Use multi_year_inputs to assess consistency of business direction, capital-allocation pattern, repeated themes, and durability of business quality.",
-                    "fisher": "Use multi_year_inputs to assess management ambition, execution continuity, product or R&D promises, and whether growth claims are followed through.",
-                    "munger": "Use multi_year_inputs to assess incentives, governance ambiguity, recurring risks, related-party or internal-control or regulatory issues, and avoidable mistakes.",
-                    "lynch": "Use multi_year_inputs to assess whether the story remains simple and consistent, whether growth matches observable evidence, and whether hype is increasing.",
-                }.get(doctrine["doctrine_id"], ""),
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-            "",
+            json.dumps(warning_policy_pack, ensure_ascii=False, separators=(",", ":")),
+            "Doctrine context:",
+            json.dumps(doctrine_block, ensure_ascii=False, separators=(",", ":")),
+            "Compact financial truth:",
+            json.dumps(compact_financial_truth_summary, ensure_ascii=False, separators=(",", ":")),
             "Required JSON shape:",
             compact_shape_text,
-            "",
             "Selected compact PCIM sections:",
             compact_pack_text,
         ]
@@ -3136,6 +4227,25 @@ def _build_financial_metric_lookup(metric_registry: List[Dict[str, Any]]) -> Tup
     return by_metric_id, by_alias
 
 
+def _preferred_metric_matches(metric_text: str, matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    normalized_metric = _normalize_metric_label(metric_text)
+    preferred_canonical: List[str] = []
+    if normalized_metric == _normalize_metric_label("closing shares"):
+        preferred_canonical = ["shares_outstanding"]
+    elif normalized_metric == _normalize_metric_label("owner-earnings estimate (derived)"):
+        preferred_canonical = ["owner_earnings_estimate"]
+    elif normalized_metric == _normalize_metric_label("identified capex (total)"):
+        preferred_canonical = ["total_identified_capex"]
+    elif normalized_metric == _normalize_metric_label("capex deployed (capital allocation ledger)"):
+        preferred_canonical = ["capex_deployed"]
+    elif normalized_metric == _normalize_metric_label("conservative fcf"):
+        preferred_canonical = ["conservative_fcf_after_total_capex"]
+    if not preferred_canonical:
+        return matches
+    preferred = [match for match in matches if str(match.get("canonical_metric") or "") in preferred_canonical]
+    return preferred or matches
+
+
 def _canonicalize_financial_metric_ref(
     item: Dict[str, Any],
     *,
@@ -3148,8 +4258,14 @@ def _canonicalize_financial_metric_ref(
         return {
             "metric_id": entry["metric_id"],
             "metric": entry["canonical_metric"],
+            "canonical_metric_id": entry["metric_id"],
+            "canonical_metric_name": entry["canonical_metric"],
+            "original_metric_label": str(item.get("metric") or metric_id).strip(),
+            "normalization_status": "exact_metric_id_match",
             "period": entry.get("period"),
             "used_for": item.get("used_for") or "unspecified",
+            "source_file": entry.get("source_file") or "",
+            "source_field": entry.get("source_field") or "",
         }, None
 
     metric_text = str(item.get("metric") or metric_id or "").strip()
@@ -3169,13 +4285,20 @@ def _canonicalize_financial_metric_ref(
         if match_metric_id and match_metric_id not in seen_metric_ids:
             seen_metric_ids.add(match_metric_id)
             unique_matches.append(match)
+    unique_matches = _preferred_metric_matches(metric_text, unique_matches)
     if len(unique_matches) == 1:
         entry = unique_matches[0]
         return {
             "metric_id": entry["metric_id"],
             "metric": entry["canonical_metric"],
+            "canonical_metric_id": entry["metric_id"],
+            "canonical_metric_name": entry["canonical_metric"],
+            "original_metric_label": metric_text,
+            "normalization_status": "alias_match",
             "period": entry.get("period"),
             "used_for": item.get("used_for") or "unspecified",
+            "source_file": entry.get("source_file") or "",
+            "source_field": entry.get("source_field") or "",
         }, f"financial metric canonicalized via alias: {metric_text} -> {entry['metric_id']}"
     if len(unique_matches) > 1:
         if not period:
@@ -3185,8 +4308,14 @@ def _canonicalize_financial_metric_ref(
                 return {
                     "metric_id": entry["metric_id"],
                     "metric": entry["canonical_metric"],
+                    "canonical_metric_id": entry["metric_id"],
+                    "canonical_metric_name": entry["canonical_metric"],
+                    "original_metric_label": metric_text,
+                    "normalization_status": "periodless_alias_match",
                     "period": entry.get("period"),
                     "used_for": item.get("used_for") or "unspecified",
+                    "source_file": entry.get("source_file") or "",
+                    "source_field": entry.get("source_field") or "",
                 }, f"financial metric canonicalized via alias: {metric_text} -> {entry['metric_id']}"
         same_canonical = {str(match.get("canonical_metric") or "") for match in unique_matches}
         if len(same_canonical) == 1:
@@ -3198,8 +4327,14 @@ def _canonicalize_financial_metric_ref(
             return {
                 "metric_id": preferred["metric_id"],
                 "metric": preferred["canonical_metric"],
+                "canonical_metric_id": preferred["metric_id"],
+                "canonical_metric_name": preferred["canonical_metric"],
+                "original_metric_label": metric_text,
+                "normalization_status": "same_canonical_alias_match",
                 "period": preferred.get("period"),
                 "used_for": item.get("used_for") or "unspecified",
+                "source_file": preferred.get("source_file") or "",
+                "source_field": preferred.get("source_field") or "",
             }, f"financial metric canonicalized via alias: {metric_text} -> {preferred['metric_id']}"
         return None, f"ambiguous financial metric reference: {metric_text}"
     return None, f"unknown financial metric reference: {metric_text}"
@@ -3254,8 +4389,378 @@ def _normalize_financial_assessment(value: Any) -> Dict[str, Any]:
             schema_warnings,
             default_empty=True,
         ),
+        "precise_missing_financial_data": _normalize_string_list(
+            value.get("precise_missing_financial_data"),
+            "financial_assessment.precise_missing_financial_data",
+            schema_warnings,
+            default_empty=True,
+        ),
+        "derived_not_explicitly_reported": _normalize_string_list(
+            value.get("derived_not_explicitly_reported"),
+            "financial_assessment.derived_not_explicitly_reported",
+            schema_warnings,
+            default_empty=True,
+        ),
+        "partial_financial_data": _normalize_string_list(
+            value.get("partial_financial_data"),
+            "financial_assessment.partial_financial_data",
+            schema_warnings,
+            default_empty=True,
+        ),
+        "unreliable_financial_data": _normalize_string_list(
+            value.get("unreliable_financial_data"),
+            "financial_assessment.unreliable_financial_data",
+            schema_warnings,
+            default_empty=True,
+        ),
+        "invalid_or_quarantined_financial_data": _normalize_string_list(
+            value.get("invalid_or_quarantined_financial_data"),
+            "financial_assessment.invalid_or_quarantined_financial_data",
+            schema_warnings,
+            default_empty=True,
+        ),
+        "trend_durability_limits": _normalize_string_list(
+            value.get("trend_durability_limits"),
+            "financial_assessment.trend_durability_limits",
+            schema_warnings,
+            default_empty=True,
+        ),
+        "financial_questions_for_investor": _normalize_string_list(
+            value.get("financial_questions_for_investor"),
+            "financial_assessment.financial_questions_for_investor",
+            schema_warnings,
+            default_empty=True,
+        ),
         "schema_warnings": schema_warnings,
     }
+
+
+def _build_analyst_output_skeleton(
+    *,
+    doctrine: Dict[str, Any],
+    company: str,
+    pcim_path: Path,
+    pcim: Dict[str, Any],
+) -> Dict[str, Any]:
+    skeleton = _deterministic_panel_output(
+        doctrine=doctrine,
+        company=company,
+        pcim_path=pcim_path,
+        pcim=pcim,
+    )
+    skeleton["analysis_mode"] = "llm_reasoning_v1"
+    return skeleton
+
+
+def _repair_assessment_draft(
+    draft_value: Any,
+    *,
+    doctrine: Dict[str, Any],
+    skeleton: Dict[str, Any],
+    schema_warnings: List[str],
+) -> Dict[str, Any]:
+    assessment_keys = _required_assessment_keys(doctrine)
+    repaired = dict(skeleton.get("assessment") or {})
+    primary_key = assessment_keys[0] if assessment_keys else ""
+    if isinstance(draft_value, dict):
+        unknown = [key for key in draft_value.keys() if key not in assessment_keys]
+        if unknown:
+            schema_warnings.append(
+                f"Unknown assessment fields were removed to diagnostics: {sorted(unknown)}."
+            )
+        for key in assessment_keys:
+            value = draft_value.get(key)
+            if isinstance(value, str) and value.strip():
+                repaired[key] = value.strip()
+            elif isinstance(value, list):
+                normalized = _normalize_string_list(
+                    value,
+                    f"assessment.{key}",
+                    schema_warnings,
+                    default_empty=True,
+                )
+                if normalized:
+                    repaired[key] = " ".join(normalized)
+        return repaired
+    if isinstance(draft_value, str) and draft_value.strip() and primary_key:
+        repaired[primary_key] = draft_value.strip()
+        schema_warnings.append("assessment was returned as string and normalized into the primary doctrine assessment field.")
+        return repaired
+    if isinstance(draft_value, list) and primary_key:
+        normalized = _normalize_string_list(
+            draft_value,
+            "assessment",
+            schema_warnings,
+            default_empty=True,
+        )
+        if normalized:
+            repaired[primary_key] = " ".join(normalized)
+        schema_warnings.append("assessment was returned as list and normalized into the primary doctrine assessment field.")
+        return repaired
+    if draft_value is None:
+        schema_warnings.append("assessment was missing; deterministic skeleton defaults were retained.")
+        return repaired
+    schema_warnings.append("assessment had unsupported shape; deterministic skeleton defaults were retained.")
+    return repaired
+
+
+def _repair_financial_assessment_draft(
+    draft_value: Any,
+    *,
+    skeleton: Dict[str, Any],
+    schema_warnings: List[str],
+) -> Dict[str, Any]:
+    repaired = deepcopy(skeleton.get("financial_assessment") or {})
+    if isinstance(draft_value, dict):
+        bool_value = draft_value.get("financials_used")
+        if isinstance(bool_value, bool):
+            repaired["financials_used"] = bool_value
+        elif isinstance(bool_value, str) and bool_value.strip().lower() in {"true", "yes", "1"}:
+            repaired["financials_used"] = True
+            schema_warnings.append("financial_assessment.financials_used was normalized from string to boolean.")
+        elif isinstance(bool_value, str) and bool_value.strip().lower() in {"false", "no", "0"}:
+            repaired["financials_used"] = False
+            schema_warnings.append("financial_assessment.financials_used was normalized from string to boolean.")
+        basis_used = str(draft_value.get("basis_used") or "").strip()
+        if basis_used:
+            repaired["basis_used"] = basis_used
+        for field in (
+            "key_financial_strengths",
+            "key_financial_concerns",
+            "financial_red_flags",
+            "missing_financial_data",
+            "financial_interpretation_limits",
+            "financial_warnings_carried_forward",
+            "precise_missing_financial_data",
+            "derived_not_explicitly_reported",
+            "partial_financial_data",
+            "unreliable_financial_data",
+            "invalid_or_quarantined_financial_data",
+            "trend_durability_limits",
+            "financial_questions_for_investor",
+        ):
+            if field in draft_value:
+                repaired[field] = _normalize_string_list(
+                    draft_value.get(field),
+                    f"financial_assessment.{field}",
+                    schema_warnings,
+                    default_empty=True,
+                )
+        unknown = [
+            key for key in draft_value.keys()
+            if key not in {
+                "financials_used",
+                "basis_used",
+                "key_financial_strengths",
+                "key_financial_concerns",
+                "financial_red_flags",
+                "missing_financial_data",
+                "financial_interpretation_limits",
+                "financial_warnings_carried_forward",
+                "precise_missing_financial_data",
+                "derived_not_explicitly_reported",
+                "partial_financial_data",
+                "unreliable_financial_data",
+                "invalid_or_quarantined_financial_data",
+                "trend_durability_limits",
+                "financial_questions_for_investor",
+            }
+        ]
+        if unknown:
+            schema_warnings.append(
+                f"Unknown financial_assessment fields were removed to diagnostics: {sorted(unknown)}."
+            )
+        return repaired
+    if isinstance(draft_value, str) and draft_value.strip():
+        repaired.setdefault("financial_interpretation_limits", [])
+        repaired["financial_interpretation_limits"] = _unique_preserve_order(
+            list(repaired.get("financial_interpretation_limits") or []) + [draft_value.strip()]
+        )
+        schema_warnings.append("financial_assessment was returned as string and normalized into financial_interpretation_limits.")
+        return repaired
+    if isinstance(draft_value, list):
+        normalized = _normalize_string_list(
+            draft_value,
+            "financial_assessment",
+            schema_warnings,
+            default_empty=True,
+        )
+        if normalized:
+            repaired.setdefault("financial_interpretation_limits", [])
+            repaired["financial_interpretation_limits"] = _unique_preserve_order(
+                list(repaired.get("financial_interpretation_limits") or []) + normalized
+            )
+        schema_warnings.append("financial_assessment was returned as list and normalized into financial_interpretation_limits.")
+        return repaired
+    if draft_value is None:
+        schema_warnings.append("financial_assessment was missing; deterministic skeleton defaults were retained.")
+        return repaired
+    schema_warnings.append("financial_assessment had unsupported shape; deterministic skeleton defaults were retained.")
+    return repaired
+
+
+def _repair_user_facing_brief_draft(
+    draft_value: Any,
+    *,
+    skeleton: Dict[str, Any],
+    schema_warnings: List[str],
+) -> Dict[str, Any]:
+    repaired = deepcopy(skeleton.get("user_facing_brief") or {})
+    if isinstance(draft_value, dict):
+        for field in ("title", "lens", "financial_lens", "bottom_line"):
+            value = draft_value.get(field)
+            if isinstance(value, str) and value.strip():
+                repaired[field] = value.strip()
+        for field in ("what_looks_good", "what_needs_caution", "what_is_missing"):
+            if field in draft_value:
+                repaired[field] = _normalize_string_list(
+                    draft_value.get(field),
+                    f"user_facing_brief.{field}",
+                    schema_warnings,
+                    default_empty=True,
+                )
+        unknown = [
+            key for key in draft_value.keys()
+            if key not in {"title", "lens", "what_looks_good", "what_needs_caution", "what_is_missing", "financial_lens", "bottom_line"}
+        ]
+        if unknown:
+            schema_warnings.append(
+                f"Unknown user_facing_brief fields were removed to diagnostics: {sorted(unknown)}."
+            )
+        return repaired
+    if isinstance(draft_value, str) and draft_value.strip():
+        repaired["bottom_line"] = draft_value.strip()
+        schema_warnings.append("user_facing_brief was returned as string and normalized into bottom_line.")
+        return repaired
+    if isinstance(draft_value, list):
+        normalized = _normalize_string_list(
+            draft_value,
+            "user_facing_brief",
+            schema_warnings,
+            default_empty=True,
+        )
+        if normalized:
+            repaired["what_needs_caution"] = _unique_preserve_order(
+                list(repaired.get("what_needs_caution") or []) + normalized
+            )
+        schema_warnings.append("user_facing_brief was returned as list and normalized into what_needs_caution.")
+        return repaired
+    if draft_value is None:
+        schema_warnings.append("user_facing_brief was missing; deterministic skeleton defaults were retained.")
+        return repaired
+    schema_warnings.append("user_facing_brief had unsupported shape; deterministic skeleton defaults were retained.")
+    return repaired
+
+
+def _repair_llm_panel_output_draft(
+    parsed: Dict[str, Any],
+    *,
+    doctrine: Dict[str, Any],
+    company: str,
+    pcim_path: Path,
+    pcim_version: Any,
+    pcim: Dict[str, Any],
+    consumed_sections: List[str],
+) -> Tuple[Dict[str, Any], List[str]]:
+    skeleton = _build_analyst_output_skeleton(
+        doctrine=doctrine,
+        company=company,
+        pcim_path=pcim_path,
+        pcim=pcim,
+    )
+    repaired = deepcopy(skeleton)
+    schema_warnings: List[str] = []
+    known_fields = {
+        "assessment",
+        "rating",
+        "key_findings",
+        "red_flags",
+        "open_uncertainties",
+        "financial_metrics_used",
+        "financial_red_flags",
+        "financial_positive_signals",
+        "precise_missing_financial_data",
+        "derived_not_explicitly_reported",
+        "partial_financial_data",
+        "unreliable_financial_data",
+        "invalid_or_quarantined_financial_data",
+        "trend_durability_limits",
+        "financial_missing_data",
+        "financial_interpretation_limits",
+        "financial_questions_for_investor",
+        "financial_assessment",
+        "financial_sections_consumed",
+        "financial_warnings_carried_forward",
+        "evidence_ids",
+        "historical_context_used",
+        "years_considered",
+        "supporting_pcim_sections",
+        "reasoning_limits",
+        "user_facing_brief",
+        "key_concerns",
+        "key_questions",
+        "evidence_gaps",
+        "generated_at",
+    }
+    unknown_fields = sorted(key for key in parsed.keys() if key not in known_fields)
+    if unknown_fields:
+        schema_warnings.append(f"Unknown top-level fields were removed to diagnostics: {unknown_fields}.")
+
+    repaired["pcim_version"] = pcim_version
+    repaired["pcim_source"] = str(pcim_path)
+    repaired["sections_consumed"] = consumed_sections
+    repaired["assessment"] = _repair_assessment_draft(
+        parsed.get("assessment"),
+        doctrine=doctrine,
+        skeleton=skeleton,
+        schema_warnings=schema_warnings,
+    )
+    repaired["financial_assessment"] = _repair_financial_assessment_draft(
+        parsed.get("financial_assessment"),
+        skeleton=skeleton,
+        schema_warnings=schema_warnings,
+    )
+    repaired["user_facing_brief"] = _repair_user_facing_brief_draft(
+        parsed.get("user_facing_brief"),
+        skeleton=skeleton,
+        schema_warnings=schema_warnings,
+    )
+    passthrough_fields = [
+        "rating",
+        "key_findings",
+        "red_flags",
+        "open_uncertainties",
+        "financial_metrics_used",
+        "financial_red_flags",
+        "financial_positive_signals",
+        "precise_missing_financial_data",
+        "derived_not_explicitly_reported",
+        "partial_financial_data",
+        "unreliable_financial_data",
+        "invalid_or_quarantined_financial_data",
+        "trend_durability_limits",
+        "financial_missing_data",
+        "financial_interpretation_limits",
+        "financial_questions_for_investor",
+        "financial_sections_consumed",
+        "financial_warnings_carried_forward",
+        "evidence_ids",
+        "historical_context_used",
+        "years_considered",
+        "supporting_pcim_sections",
+        "reasoning_limits",
+        "key_concerns",
+        "key_questions",
+        "evidence_gaps",
+        "generated_at",
+    ]
+    for field in passthrough_fields:
+        if field in parsed:
+            repaired[field] = parsed.get(field)
+    repaired["schema_warnings"] = _unique_preserve_order(
+        list(repaired.get("schema_warnings") or []) + schema_warnings
+    )
+    return repaired, schema_warnings
 
 
 def _contains_any(texts: List[str], needles: Tuple[str, ...]) -> bool:
@@ -3280,6 +4785,906 @@ def _financial_warning_group_matches(texts: List[str], label: str) -> bool:
     definition = FINANCIAL_WARNING_GROUP_DEFINITIONS.get(label) or {}
     phrases = definition.get("equivalent_phrases") or FINANCIAL_WARNING_GROUPS.get(label, ())
     return any(phrase in lowered for phrase in phrases)
+
+
+def _payload_text_at_path(payload: Dict[str, Any], path: str) -> List[str]:
+    root: Any = payload
+    for part in path.split("."):
+        if not isinstance(root, dict):
+            return []
+        root = root.get(part)
+    if isinstance(root, str):
+        text = root.strip()
+        return [text] if text else []
+    if isinstance(root, list):
+        return [str(item).strip() for item in root if str(item).strip()]
+    return []
+
+
+ANALYST_BOILERPLATE_PATTERNS = (
+    "assessment is grounded in",
+    "is interpreted through the doctrine focus",
+    "consumes sections",
+    "consumes ",
+    "input pcim was compacted",
+    "analysis is limited to supplied facts",
+    "primary focus:",
+)
+
+ANALYST_LIMITATION_ASSESSMENT_DEFAULT = (
+    "Insufficient direct evidence in the compacted PCIM to make a confident doctrine-specific assessment. "
+    "Treat this as a limitation, not a company conclusion."
+)
+
+
+def _is_boilerplate_assessment_text(text: Any) -> bool:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+    return any(pattern in lowered for pattern in ANALYST_BOILERPLATE_PATTERNS)
+
+
+def _normalize_boilerplate_assessment_fields(payload: Dict[str, Any], diagnostics: Dict[str, Any]) -> Dict[str, Any]:
+    cleaned = deepcopy(payload if isinstance(payload, dict) else {})
+    assessment = cleaned.get("assessment")
+    if not isinstance(assessment, dict):
+        return cleaned
+    replacements: List[Dict[str, str]] = []
+    for key, value in list(assessment.items()):
+        if _is_boilerplate_assessment_text(value):
+            replacements.append(
+                {
+                    "field": f"assessment.{key}",
+                    "original": str(value),
+                    "replacement": ANALYST_LIMITATION_ASSESSMENT_DEFAULT,
+                    "reason": "boilerplate_assessment_default",
+                }
+            )
+            assessment[key] = ANALYST_LIMITATION_ASSESSMENT_DEFAULT
+    if replacements:
+        diagnostics.setdefault("boilerplate_assessment_repairs", []).extend(replacements)
+    return cleaned
+
+
+ACTIVE_ANALYST_EXTERNAL_TEXT_FIELDS = (
+    "key_findings",
+    "red_flags",
+    "open_uncertainties",
+    "financial_red_flags",
+    "financial_missing_data",
+    "financial_interpretation_limits",
+    "financial_warnings_carried_forward",
+    "precise_missing_financial_data",
+    "derived_not_explicitly_reported",
+    "partial_financial_data",
+    "unreliable_financial_data",
+    "invalid_or_quarantined_financial_data",
+    "trend_durability_limits",
+    "financial_questions_for_investor",
+    "reasoning_limits",
+    "key_concerns",
+    "key_questions",
+    "evidence_gaps",
+)
+
+ACTIVE_ANALYST_EXTERNAL_NESTED_LIST_FIELDS = (
+    "financial_assessment.key_financial_strengths",
+    "financial_assessment.key_financial_concerns",
+    "financial_assessment.financial_red_flags",
+    "financial_assessment.missing_financial_data",
+    "financial_assessment.financial_interpretation_limits",
+    "financial_assessment.financial_warnings_carried_forward",
+    "user_facing_brief.what_looks_good",
+    "user_facing_brief.what_needs_caution",
+    "user_facing_brief.what_is_missing",
+)
+
+ACTIVE_ANALYST_EXTERNAL_NESTED_SCALARS = (
+    "user_facing_brief.title",
+    "user_facing_brief.lens",
+    "user_facing_brief.bottom_line",
+    "user_facing_brief.financial_lens",
+)
+
+
+def _sanitize_active_external_reader_fields(payload: Dict[str, Any], diagnostics: Dict[str, Any]) -> Dict[str, Any]:
+    cleaned = deepcopy(payload if isinstance(payload, dict) else {})
+
+    assessment = cleaned.get("assessment")
+    if isinstance(assessment, dict):
+        for key, value in list(assessment.items()):
+            if isinstance(value, str):
+                assessment[key] = rewrite_text_for_external_reader(
+                    value,
+                    field_path=f"assessment.{key}",
+                    diagnostics=diagnostics,
+                )
+
+    for field in ACTIVE_ANALYST_EXTERNAL_TEXT_FIELDS:
+        value = cleaned.get(field)
+        if not isinstance(value, list):
+            continue
+        cleaned[field] = [
+            rewrite_text_for_external_reader(item, field_path=field, diagnostics=diagnostics)
+            for item in value
+            if str(item or "").strip()
+        ]
+
+    for path in ACTIVE_ANALYST_EXTERNAL_NESTED_LIST_FIELDS:
+        parent, child = path.split(".", 1)
+        container = cleaned.get(parent)
+        if not isinstance(container, dict):
+            continue
+        value = container.get(child)
+        if not isinstance(value, list):
+            continue
+        container[child] = [
+            rewrite_text_for_external_reader(item, field_path=path, diagnostics=diagnostics)
+            for item in value
+            if str(item or "").strip()
+        ]
+
+    for path in ACTIVE_ANALYST_EXTERNAL_NESTED_SCALARS:
+        parent, child = path.split(".", 1)
+        container = cleaned.get(parent)
+        if not isinstance(container, dict):
+            continue
+        container[child] = rewrite_text_for_external_reader(
+            container.get(child),
+            field_path=path,
+            diagnostics=diagnostics,
+        )
+
+    return cleaned
+
+
+def _active_claim_texts(payload: Dict[str, Any]) -> List[str]:
+    texts: List[str] = []
+    assessment = payload.get("assessment")
+    if isinstance(assessment, dict):
+        for value in assessment.values():
+            if isinstance(value, str) and value.strip():
+                texts.append(value.strip())
+    for item in payload.get("key_findings") or []:
+        if isinstance(item, dict):
+            value = str(item.get("finding") or "").strip()
+            if value:
+                texts.append(value)
+        elif isinstance(item, str) and item.strip():
+            texts.append(item.strip())
+    for item in payload.get("red_flags") or []:
+        if isinstance(item, dict):
+            value = str(item.get("flag") or "").strip()
+            if value:
+                texts.append(value)
+        elif isinstance(item, str) and item.strip():
+            texts.append(item.strip())
+    for item in payload.get("financial_red_flags") or []:
+        if isinstance(item, str) and item.strip():
+            texts.append(item.strip())
+    brief = payload.get("user_facing_brief") or {}
+    if isinstance(brief, dict):
+        for field in ("what_looks_good", "what_needs_caution"):
+            for item in brief.get(field) or []:
+                if isinstance(item, str) and item.strip():
+                    texts.append(item.strip())
+        for field in ("bottom_line", "financial_lens"):
+            value = brief.get(field)
+            if isinstance(value, str) and value.strip():
+                texts.append(value.strip())
+    return texts
+
+
+def _claim_text_present_in_active_fields(payload: Dict[str, Any], claim_text: Any) -> bool:
+    needle = str(claim_text or "").strip().lower()
+    if not needle:
+        return False
+    if _is_boilerplate_assessment_text(needle):
+        return False
+    for text in _active_claim_texts(payload):
+        lowered = text.lower()
+        if needle == lowered or needle in lowered or lowered in needle:
+            return True
+    return False
+
+
+def _metric_pool_contains(truth_pack: Dict[str, Any], metric_aliases: Tuple[str, ...], pool_keys: Tuple[str, ...]) -> bool:
+    aliases = {str(alias).strip().lower() for alias in metric_aliases if str(alias).strip()}
+    for pool_key in pool_keys:
+        for item in truth_pack.get(pool_key, []) or []:
+            lowered = str(item or "").strip().lower()
+            if lowered in aliases:
+                return True
+    return False
+
+
+def _warning_resolution(text: str, truth_pack: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return None
+    rules = (
+        (
+            ("fcf missing", "free cash flow missing"),
+            ("fcf",),
+            ("usable_current_metrics", "usable_derived_metrics"),
+            "Derived FCF / owner-earnings estimate is available for the current usable year, but precision is limited because maintenance versus growth capex split and multi-year bridge history are incomplete.",
+            "fcf",
+            "usable_or_derived",
+        ),
+        (
+            (
+                "fcf-based conclusions cannot be assessed",
+                "cannot construct owner-earnings bridge",
+                "free cash flow and capex data are not provided",
+                "owner-earnings cannot be assessed",
+            ),
+            ("fcf", "owner_earnings", "owner_earnings_estimate", "conservative_fcf"),
+            ("usable_current_metrics", "usable_derived_metrics"),
+            "Derived FCF / owner-earnings estimate is available for the current usable year, but precision is limited because maintenance versus growth capex split and multi-year bridge history are incomplete.",
+            "owner_earnings",
+            "usable_or_derived",
+        ),
+        (
+            ("capex missing", "capex is unavailable", "capex unavailable", "capex data are not provided", "capex details are unavailable"),
+            ("capex", "ppe_cwip_capex", "total_capex_for_fcf", "intangible_capex", "estimated_maintenance_capex", "estimated_growth_capex"),
+            ("usable_current_metrics", "usable_derived_metrics", "partial_metrics"),
+            "Identified capex is available, but maintenance versus growth capex split is unavailable.",
+            "capex",
+            "capex_precision_limit",
+        ),
+        (
+            ("payables missing", "payables or payable-days evidence is missing", "payable days missing"),
+            ("payables", "payable_days", "payable_turnover"),
+            ("usable_current_metrics", "usable_derived_metrics", "partial_metrics"),
+            "Payables and payable-days are available for the current usable year; multi-year payable-support history may still be limited.",
+            "payables",
+            "payables_available",
+        ),
+        (
+            ("cash conversion cycle cannot be assessed",),
+            ("cash_conversion_cycle", "payable_days", "payables"),
+            ("usable_current_metrics", "usable_derived_metrics", "partial_metrics"),
+            "Payables and payable-days are available for the current usable year; multi-year payable-support history may still be limited.",
+            "cash_conversion_cycle",
+            "payables_available",
+        ),
+        (
+            ("cfo/pat missing",),
+            ("cfo_to_pat", "cfo", "pat"),
+            ("usable_current_metrics", "usable_derived_metrics"),
+            "CFO and PAT evidence exists, but cash-conversion durability may still be limited.",
+            "cfo_to_pat",
+            "cash_conversion_available",
+        ),
+        (
+            ("roe unavailable",),
+            ("roe",),
+            ("usable_current_metrics", "usable_derived_metrics"),
+            "ROE is available, though multi-period durability may remain limited.",
+            "roe",
+            "roe_available",
+        ),
+        (
+            ("roce unavailable",),
+            ("roce",),
+            ("usable_current_metrics", "usable_derived_metrics"),
+            "ROCE is available, though multi-period durability may remain limited.",
+            "roce",
+            "roce_available",
+        ),
+        (
+            ("share count missing",),
+            ("shares_outstanding", "share_count", "closing_shares", "weighted_avg_shares", "weighted_average_diluted_shares", "diluted_shares"),
+            ("usable_current_metrics", "usable_derived_metrics", "partial_metrics"),
+            "Closing shares exist; weighted-average or diluted-share comparability may be limited.",
+            "shares_outstanding",
+            "share_count_available",
+        ),
+        (
+            ("ownership missing",),
+            ("promoter_holding", "pledged_promoter_holding", "fii_holding", "dii_holding", "mutual_fund_holding", "public_holding"),
+            ("invalid_or_quarantined_metrics", "unreliable_metrics"),
+            "Ownership/shareholding data is invalid or quarantined and should not be used downstream.",
+            "ownership",
+            "ownership_invalid_or_quarantined",
+        ),
+        (
+            ("basis unknown", "basis unclear", "standalone/consolidated basis unclear", "standalone/consolidated basis is unclear"),
+            ("basis",),
+            ("usable_current_metrics", "usable_derived_metrics", "partial_metrics"),
+            "Financial basis has been classified, but comparability may still require care.",
+            "basis",
+            "basis_resolved_or_classified",
+        ),
+    )
+    for phrases, aliases, pool_keys, rewritten, metric, reason in rules:
+        if any(phrase in lowered for phrase in phrases) and _metric_pool_contains(truth_pack, aliases, pool_keys):
+            return {
+                "rewritten_warning": rewritten,
+                "supporting_metric": metric,
+                "source_truth_pack_field": ",".join(pool_keys),
+                "resolution_status": reason,
+            }
+    return None
+
+
+ANALYST_FINANCIAL_TRUTH_ACTIVE_PATHS = (
+    "red_flags",
+    "open_uncertainties",
+    "key_findings",
+    "financial_red_flags",
+    "financial_missing_data",
+    "financial_interpretation_limits",
+    "financial_warnings_carried_forward",
+    "precise_missing_financial_data",
+    "reasoning_limits",
+    "user_facing_brief.what_looks_good",
+    "user_facing_brief.what_needs_caution",
+    "user_facing_brief.what_is_missing",
+    "user_facing_brief.financial_lens",
+    "financial_assessment.key_financial_strengths",
+    "financial_assessment.key_financial_concerns",
+    "financial_assessment.financial_red_flags",
+    "financial_assessment.missing_financial_data",
+    "financial_assessment.financial_interpretation_limits",
+    "financial_assessment.financial_warnings_carried_forward",
+)
+
+FINANCIAL_WARNING_PROVENANCE_ACTIVE = {
+    "active_current_year_absence",
+    "active_multi_year_limitation",
+    "active_precision_limitation",
+    "active_basis_limitation",
+    "active_per_share_limitation",
+}
+
+
+def _classify_financial_warning_provenance(text: str) -> str:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return "active_precision_limitation"
+    if any(token in lowered for token in ("basis", "standalone", "consolidated", "comparability")):
+        return "active_basis_limitation"
+    if any(
+        token in lowered
+        for token in (
+            "weighted-average shares",
+            "weighted average shares",
+            "diluted shares",
+            "share-count",
+            "share count",
+            "per-share",
+            "per share",
+            "eps comparability",
+            "book value per share",
+            "fcf/share",
+            "fcf per share",
+        )
+    ):
+        return "active_per_share_limitation"
+    if any(
+        token in lowered
+        for token in (
+            "multi-year",
+            "multi year",
+            "bridge history",
+            "bridge unavailable",
+            "cagr",
+            "durability",
+            "history is incomplete",
+            "history may still be limited",
+            "fy22/fy23",
+            "fy22",
+            "fy23",
+        )
+    ):
+        return "active_multi_year_limitation"
+    if any(
+        token in lowered
+        for token in (
+            "precision is limited",
+            "precision remains limited",
+            "precision may remain limited",
+            "split is unavailable",
+            "drivers unclear",
+            "unmapped",
+            "maintenance versus growth",
+            "maintenance-versus-growth",
+            "owner-earnings estimate is available",
+            "derived fcf",
+            "identified capex is available",
+        )
+    ):
+        return "active_precision_limitation"
+    if any(
+        token in lowered
+        for token in ("missing", "unavailable", "not supplied", "not provided", "not disclosed", "not available")
+    ):
+        return "active_current_year_absence"
+    return "active_precision_limitation"
+
+
+def _metric_label_from_warning(text: str) -> str:
+    metric = str(text or "").split(":", 1)[0].strip().replace("_", " ")
+    metric = " ".join(metric.split())
+    if not metric:
+        return "This metric"
+    if metric.lower() == "weighted avg shares":
+        return "Weighted-average shares"
+    if metric.lower() == "shares outstanding":
+        return "Shares outstanding"
+    if metric.lower() == "diluted shares":
+        return "Diluted shares"
+    if metric.lower() == "fcf":
+        return "FCF"
+    if metric.lower() == "capex":
+        return "Capex"
+    return metric[:1].upper() + metric[1:]
+
+
+def _rewrite_internal_financial_label(text: str, truth_pack: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return None
+    if lowered in {
+        "fcf: derived value used",
+        "fcf: fcf is derived from normalized inputs",
+    }:
+        return {
+            "rewritten_warning": "Derived FCF is available for the current usable year, but precision is limited because maintenance versus growth capex split is unavailable.",
+            "classification": "active_precision_limitation",
+            "reason": "derived_fcf_internal_label_rewritten",
+        }
+    if lowered in {
+        "critical financial fields include unknown basis entries",
+        "preferred basis is unknown",
+    }:
+        return {
+            "rewritten_warning": "Standalone versus consolidated basis remains unclear, which limits financial comparability.",
+            "classification": "active_basis_limitation",
+            "reason": "basis_internal_label_rewritten",
+        }
+    if lowered.endswith("current-year reconciliation blocks cagr") or lowered.endswith("current year reconciliation blocks cagr"):
+        return {
+            "rewritten_warning": "Current-year values are usable, but CAGR analysis remains limited because comparable multi-year history is incomplete.",
+            "classification": "active_multi_year_limitation",
+            "reason": "cagr_internal_label_rewritten",
+        }
+    if lowered.endswith("important rows unmapped"):
+        return {
+            "rewritten_warning": "Some financial line items remain unmapped, which limits precision in the available financial evidence.",
+            "classification": "active_precision_limitation",
+            "reason": "unmapped_rows_internal_label_rewritten",
+        }
+    if "field has no populated normalized value" in lowered:
+        metric_label = _metric_label_from_warning(text)
+        if any(token in lowered for token in ("weighted_avg_shares", "weighted average shares")):
+            rewritten = "Weighted-average shares are unavailable, so per-share comparability is limited."
+            classification = "active_per_share_limitation"
+        elif "diluted_shares" in lowered or "diluted shares" in lowered:
+            rewritten = "Diluted shares are unavailable, so per-share comparability is limited."
+            classification = "active_per_share_limitation"
+        elif any(token in lowered for token in ("shares_outstanding", "share count", "closing_shares")):
+            rewritten = "Share-count evidence is incomplete, so per-share comparability is limited."
+            classification = "active_per_share_limitation"
+        else:
+            rewritten = f"{metric_label} is unavailable in the normalized financial data."
+            classification = "active_current_year_absence"
+        return {
+            "rewritten_warning": rewritten,
+            "classification": classification,
+            "reason": "missing_normalized_value_internal_label_rewritten",
+        }
+    return None
+
+
+def _set_string_list_path(payload: Dict[str, Any], path: str, values: List[str]) -> None:
+    parts = path.split(".")
+    root: Any = payload
+    for part in parts[:-1]:
+        if not isinstance(root.get(part), dict):
+            root[part] = {}
+        root = root[part]
+    root[parts[-1]] = _unique_preserve_order(values)
+
+
+def finalize_analyst_financial_truth_consistency(
+    analysis: Dict[str, Any],
+    analyst_financial_truth_pack: Dict[str, Any],
+    diagnostics: Dict[str, Any],
+) -> Dict[str, Any]:
+    payload = deepcopy(analysis if isinstance(analysis, dict) else {})
+    truth_pack = analyst_financial_truth_pack if isinstance(analyst_financial_truth_pack, dict) else {}
+    diagnostics.setdefault("financial_warning_resolution", [])
+    diagnostics.setdefault("financial_warning_provenance", [])
+    diagnostics.setdefault("blocked_financial_warnings", [])
+    diagnostics.setdefault("blocked_stale_financial_warnings", [])
+    diagnostics.setdefault("diagnostic_only_financial_warnings", [])
+    blocked_warnings = {str(item).strip().lower() for item in truth_pack.get("blocked_financial_warnings", []) or [] if str(item).strip()}
+    rewritten_truth = {
+        str(item).strip().lower(): str(item).strip()
+        for item in truth_pack.get("rewritten_financial_warnings", []) or []
+        if str(item).strip()
+    }
+
+    for path in ANALYST_FINANCIAL_TRUTH_ACTIVE_PATHS:
+        items = _payload_text_at_path(payload, path)
+        rewritten_items: List[str] = []
+        for item in items:
+            resolution = _warning_resolution(item, truth_pack)
+            lowered = item.strip().lower()
+            if resolution is not None:
+                rewritten = resolution["rewritten_warning"]
+                rewritten_items.append(rewritten)
+                diagnostics["blocked_stale_financial_warnings"].append(item)
+                diagnostics["financial_warning_resolution"].append(
+                    {
+                        "path": path,
+                        "original_warning": item,
+                        "rewritten_warning": rewritten,
+                        "reason": resolution["resolution_status"],
+                        "supporting_metric": resolution["supporting_metric"],
+                        "source_truth_pack_field": resolution["source_truth_pack_field"],
+                        "resolution_status": "rewritten",
+                    }
+                )
+                diagnostics["financial_warning_provenance"].append(
+                    {
+                        "path": path,
+                        "text": rewritten,
+                        "classification": _classify_financial_warning_provenance(rewritten),
+                        "original_text": item,
+                    }
+                )
+                continue
+            if lowered in blocked_warnings:
+                rewritten = rewritten_truth.get(lowered) or _rewrite_blocked_financial_warning(item)
+                diagnostics["blocked_stale_financial_warnings"].append(item)
+                if rewritten and rewritten != item:
+                    rewritten_items.append(rewritten)
+                    diagnostics["financial_warning_resolution"].append(
+                        {
+                            "path": path,
+                            "original_warning": item,
+                            "rewritten_warning": rewritten,
+                            "reason": "blocked_downstream_warning",
+                            "supporting_metric": "",
+                            "source_truth_pack_field": "blocked_financial_warnings",
+                            "resolution_status": "rewritten",
+                        }
+                    )
+                    diagnostics["financial_warning_provenance"].append(
+                        {
+                            "path": path,
+                            "text": rewritten,
+                            "classification": _classify_financial_warning_provenance(rewritten),
+                            "original_text": item,
+                        }
+                    )
+                else:
+                    diagnostics["blocked_financial_warnings"].append(
+                        {
+                            "path": path,
+                            "original_warning": item,
+                            "resolution_status": "moved_to_diagnostics",
+                        }
+                    )
+                continue
+            internal_rewrite = _rewrite_internal_financial_label(item, truth_pack)
+            if internal_rewrite is not None:
+                rewritten = internal_rewrite["rewritten_warning"]
+                diagnostics["diagnostic_only_financial_warnings"].append(item)
+                if rewritten and rewritten != item:
+                    rewritten_items.append(rewritten)
+                    diagnostics["financial_warning_resolution"].append(
+                        {
+                            "path": path,
+                            "original_warning": item,
+                            "rewritten_warning": rewritten,
+                            "reason": internal_rewrite["reason"],
+                            "supporting_metric": "",
+                            "source_truth_pack_field": "internal_financial_label",
+                            "resolution_status": "rewritten",
+                        }
+                    )
+                    diagnostics["financial_warning_provenance"].append(
+                        {
+                            "path": path,
+                            "text": rewritten,
+                            "classification": internal_rewrite["classification"],
+                            "original_text": item,
+                        }
+                    )
+                continue
+            rewritten_items.append(item)
+            diagnostics["financial_warning_provenance"].append(
+                {
+                    "path": path,
+                    "text": item,
+                    "classification": _classify_financial_warning_provenance(item),
+                }
+            )
+        _set_string_list_path(payload, path, rewritten_items)
+
+    if isinstance(payload.get("user_facing_brief"), dict):
+        for field in ("bottom_line",):
+            path = f"user_facing_brief.{field}"
+            value = str(payload["user_facing_brief"].get(field) or "").strip()
+            if not value:
+                continue
+            resolution = _warning_resolution(value, truth_pack)
+            internal_rewrite = _rewrite_internal_financial_label(value, truth_pack)
+            if resolution is not None:
+                payload["user_facing_brief"][field] = resolution["rewritten_warning"]
+                diagnostics["blocked_stale_financial_warnings"].append(value)
+                diagnostics["financial_warning_resolution"].append(
+                    {
+                        "path": path,
+                        "original_warning": value,
+                        "rewritten_warning": resolution["rewritten_warning"],
+                        "reason": resolution["resolution_status"],
+                        "supporting_metric": resolution["supporting_metric"],
+                        "source_truth_pack_field": resolution["source_truth_pack_field"],
+                        "resolution_status": "rewritten",
+                    }
+                )
+                diagnostics["financial_warning_provenance"].append(
+                    {
+                        "path": path,
+                        "text": resolution["rewritten_warning"],
+                        "classification": _classify_financial_warning_provenance(resolution["rewritten_warning"]),
+                        "original_text": value,
+                    }
+                )
+                continue
+            if internal_rewrite is not None:
+                payload["user_facing_brief"][field] = internal_rewrite["rewritten_warning"]
+                diagnostics["diagnostic_only_financial_warnings"].append(value)
+                diagnostics["financial_warning_resolution"].append(
+                    {
+                        "path": path,
+                        "original_warning": value,
+                        "rewritten_warning": internal_rewrite["rewritten_warning"],
+                        "reason": internal_rewrite["reason"],
+                        "supporting_metric": "",
+                        "source_truth_pack_field": "internal_financial_label",
+                        "resolution_status": "rewritten",
+                    }
+                )
+                diagnostics["financial_warning_provenance"].append(
+                    {
+                        "path": path,
+                        "text": internal_rewrite["rewritten_warning"],
+                        "classification": internal_rewrite["classification"],
+                        "original_text": value,
+                    }
+                )
+
+    diagnostics["financial_warning_resolution"] = _unique_preserve_order(diagnostics["financial_warning_resolution"])
+    diagnostics["financial_warning_provenance"] = _unique_preserve_order(diagnostics["financial_warning_provenance"])
+    diagnostics["blocked_stale_financial_warnings"] = _unique_preserve_order(
+        diagnostics["blocked_stale_financial_warnings"]
+    )
+    diagnostics["diagnostic_only_financial_warnings"] = _unique_preserve_order(
+        diagnostics["diagnostic_only_financial_warnings"]
+    )
+    payload["blocked_stale_financial_warnings"] = (
+        ["Stale missing-data warnings were blocked after financial truth reconciliation."]
+        if diagnostics["blocked_stale_financial_warnings"]
+        else []
+    )
+    payload["diagnostic_only_financial_warnings"] = (
+        ["Internal raw financial warning labels were moved to diagnostics."]
+        if diagnostics["diagnostic_only_financial_warnings"]
+        else []
+    )
+    active_classes = [
+        item.get("classification")
+        for item in diagnostics["financial_warning_provenance"]
+        if isinstance(item, dict)
+    ]
+    active_has_invalid = any(classification not in FINANCIAL_WARNING_PROVENANCE_ACTIVE for classification in active_classes if classification)
+    if active_has_invalid:
+        payload["financial_truth_consistency_status"] = "fail"
+    elif diagnostics["blocked_stale_financial_warnings"] or diagnostics["diagnostic_only_financial_warnings"] or diagnostics["financial_warning_resolution"]:
+        payload["financial_truth_consistency_status"] = "warning"
+    else:
+        payload["financial_truth_consistency_status"] = "pass"
+    return payload
+
+
+def finalize_analyst_financial_warnings(
+    analysis: Dict[str, Any],
+    analyst_financial_truth_pack: Dict[str, Any],
+    diagnostics: Dict[str, Any],
+) -> Dict[str, Any]:
+    return finalize_analyst_financial_truth_consistency(
+        analysis,
+        analyst_financial_truth_pack,
+        diagnostics,
+    )
+
+
+def finalize_analyst_validation_status(
+    analysis: Dict[str, Any],
+    diagnostics: Dict[str, Any],
+) -> Dict[str, Any]:
+    payload = _normalize_boilerplate_assessment_fields(
+        deepcopy(analysis if isinstance(analysis, dict) else {}),
+        diagnostics if isinstance(diagnostics, dict) else {},
+    )
+    diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+    routing = diagnostics.get("evidence_routing_diagnostics") or {}
+    normalization = diagnostics.get("evidence_id_normalization") or {}
+    warning_entries = diagnostics.get("evidence_grounding_warnings") or payload.get("evidence_grounding_warnings") or []
+    unresolved_claims = [item for item in (routing.get("unresolved_claims") or []) if item]
+    unresolved_ids = [str(item).strip() for item in (normalization.get("unresolved_ids") or []) if str(item).strip()]
+    removed_invalid_ids = list(normalization.get("removed_invalid_ids") or [])
+    clean_writer_status = str(diagnostics.get("clean_writer_status") or "unknown").strip().lower()
+    payload_text = json.dumps(payload, ensure_ascii=False)
+    prior_evidence_status = str(payload.get("evidence_grounding_status") or "").strip().lower()
+    prior_validation_status = str(payload.get("validation_status") or "").strip().lower()
+    prior_status = str(payload.get("status") or "").strip().lower()
+    prior_final_status = next(
+        (
+            candidate
+            for candidate in (prior_status, prior_validation_status, prior_evidence_status)
+            if candidate in KNOWN_ANALYST_FINAL_STATUS
+        ),
+        "unknown",
+    )
+    has_meaningful_post_repair_diagnostics = any(
+        (
+            bool(unresolved_claims),
+            bool(unresolved_ids),
+            bool(removed_invalid_ids),
+            bool(diagnostics.get("boilerplate_assessment_repairs")),
+            bool(routing.get("replaced_evidence") or routing.get("claims_converted_to_limitations") or routing.get("removed_misrouted_evidence")),
+            bool(diagnostics.get("remaining_forbidden_keys") or diagnostics.get("remaining_forbidden_strings")),
+            clean_writer_status in {"pass", "fail", "warning"},
+        )
+    )
+
+    hard_failures: List[str] = []
+    warnings: List[str] = []
+    repaired: List[str] = []
+    diagnostic_only: List[str] = []
+
+    active_unresolved_claims: List[Dict[str, Any]] = []
+    non_active_unresolved_claims: List[Dict[str, Any]] = []
+    for item in unresolved_claims:
+        claim_text = (
+            item.get("claim_text")
+            or item.get("text")
+            or item.get("claim")
+            or item.get("finding")
+            or item.get("value")
+            or item.get("summary")
+            or ""
+        ) if isinstance(item, dict) else str(item)
+        if _is_boilerplate_assessment_text(claim_text):
+            diagnostic_only.append("boilerplate assessment text was excluded from active claim finalization")
+            continue
+        if _claim_text_present_in_active_fields(payload, claim_text):
+            active_unresolved_claims.append(item if isinstance(item, dict) else {"claim_text": str(item)})
+        else:
+            non_active_unresolved_claims.append(item if isinstance(item, dict) else {"claim_text": str(item)})
+
+    if active_unresolved_claims:
+        hard_failures.append("unresolved factual claims remain after evidence routing repair")
+    elif non_active_unresolved_claims:
+        warnings.append("unsupported factual claims were removed from active conclusions after evidence routing repair")
+
+    active_evidence_ids = set()
+    for evidence_id in payload.get("evidence_ids", []) or []:
+        if str(evidence_id).strip():
+            active_evidence_ids.add(str(evidence_id).strip())
+    for block in (payload.get("key_findings") or [], payload.get("red_flags") or [], payload.get("open_uncertainties") or []):
+        if isinstance(block, dict):
+            for evidence_id in block.get("evidence_ids", []) or []:
+                if str(evidence_id).strip():
+                    active_evidence_ids.add(str(evidence_id).strip())
+    unresolved_active = [item for item in unresolved_ids if item in active_evidence_ids]
+    if unresolved_active:
+        hard_failures.append("unresolved evidence IDs remain in active support")
+    elif unresolved_ids:
+        warnings.append(f"unresolved evidence IDs were removed from active support ({len(unresolved_ids)})")
+
+    if removed_invalid_ids:
+        repaired.append("invalid evidence IDs were removed before final save")
+
+    replacements = list(normalization.get("replacements") or [])
+    if replacements:
+        repaired.append("evidence IDs were normalized to canonical IDs before final save")
+    if diagnostics.get("boilerplate_assessment_repairs"):
+        repaired.append("boilerplate assessment defaults were replaced with conservative limitation wording")
+
+    if clean_writer_status == "fail":
+        hard_failures.append("clean writer validation failed")
+    elif clean_writer_status == "pass":
+        diagnostic_only.append("clean writer passed")
+
+    if diagnostics.get("remaining_forbidden_keys") or diagnostics.get("remaining_forbidden_strings"):
+        hard_failures.append("forbidden clean-payload content remains after sanitization")
+
+    forbidden_matches = find_forbidden_recommendation_language(payload_text)
+    if forbidden_matches:
+        hard_failures.append("forbidden recommendation or valuation language remains in final payload")
+
+    if routing.get("replaced_evidence") or routing.get("claims_converted_to_limitations") or routing.get("removed_misrouted_evidence"):
+        repaired.append("evidence routing was repaired deterministically")
+
+    blocked_stale_financial_warnings = _unique_preserve_order(
+        list(diagnostics.get("blocked_stale_financial_warnings", []) or [])
+    )
+    diagnostic_only_financial_warnings = _unique_preserve_order(
+        list(diagnostics.get("diagnostic_only_financial_warnings", []) or [])
+    )
+    financial_truth_consistency_status = str(
+        payload.get("financial_truth_consistency_status") or "pass"
+    ).strip().lower()
+    if financial_truth_consistency_status not in KNOWN_ANALYST_FINAL_STATUS:
+        financial_truth_consistency_status = "pass"
+    if financial_truth_consistency_status == "fail":
+        hard_failures.append("financial truth consistency finalization failed")
+    elif financial_truth_consistency_status == "warning":
+        warnings.append("financial truth consistency required stale-warning or internal-label cleanup")
+
+    for warning in warning_entries:
+        text = json.dumps(warning, ensure_ascii=False) if isinstance(warning, dict) else str(warning)
+        lowered = text.lower()
+        if "routing" in lowered or "metadata" in lowered or "category" in lowered:
+            warnings.append(text)
+            if "category" in lowered and "metadata" in lowered:
+                diagnostics.setdefault("evidence_category_metadata_weak", True)
+        else:
+            diagnostic_only.append(text)
+
+    if hard_failures:
+        final_status = "fail"
+    elif warnings or repaired or unresolved_ids:
+        final_status = "warning"
+    elif has_meaningful_post_repair_diagnostics:
+        final_status = "pass"
+    elif prior_final_status in KNOWN_ANALYST_FINAL_STATUS:
+        final_status = prior_final_status
+    else:
+        final_status = "pass"
+
+    if final_status == "warning" and not warnings and prior_final_status == "warning":
+        warnings.append("existing analyst artifact retained warning status after finalization review")
+    if final_status == "fail" and not hard_failures and prior_final_status == "fail":
+        hard_failures.append(f"evidence_grounding_status={prior_final_status}")
+
+    payload["evidence_grounding_status"] = final_status
+    payload["validation_status"] = final_status
+    payload["status"] = final_status
+    payload["financial_truth_consistency_status"] = financial_truth_consistency_status
+    payload["hard_failures"] = _unique_preserve_order(hard_failures)
+    payload["warnings"] = _unique_preserve_order(warnings)
+
+    diagnostics["pre_finalization_status"] = {
+        "evidence_grounding_status": str(analysis.get("evidence_grounding_status") or "").strip().lower() or "unknown",
+        "validation_status": str(analysis.get("validation_status") or "").strip().lower() or "unknown",
+        "status": str(analysis.get("status") or "").strip().lower() or "unknown",
+    }
+    diagnostics["post_finalization_status"] = {
+        "evidence_grounding_status": final_status,
+        "validation_status": final_status,
+        "status": final_status,
+    }
+    diagnostics["finalization_summary"] = {
+        "hard_failures": _unique_preserve_order(hard_failures),
+        "warnings": _unique_preserve_order(warnings),
+        "repaired": _unique_preserve_order(repaired),
+        "diagnostic_only": _unique_preserve_order(diagnostic_only),
+        "active_unresolved_claims": active_unresolved_claims,
+        "non_active_unresolved_claims": non_active_unresolved_claims,
+        "blocked_stale_financial_warnings": blocked_stale_financial_warnings,
+        "diagnostic_only_financial_warnings": diagnostic_only_financial_warnings,
+        "financial_truth_consistency_status": financial_truth_consistency_status,
+    }
+    return payload
 
 
 def _financial_context_metric_flags(context: Dict[str, Any]) -> Dict[str, bool]:
@@ -3539,8 +5944,8 @@ def _raise_if_financial_warning_contradicted(
         raise ValueError("analyst contradicts required PCIM warning: basis unknown")
 
 
-def _validate_llm_panel_output(
-    payload_text: str,
+def _validate_repaired_llm_panel_output(
+    parsed: Dict[str, Any],
     doctrine: Dict[str, Any],
     company: str,
     pcim_path: Path,
@@ -3549,16 +5954,11 @@ def _validate_llm_panel_output(
     consumed_sections: List[str],
     allowed_evidence_ids: List[str],
 ) -> Dict[str, Any]:
-    try:
-        parsed = json.loads(payload_text)
-    except (TypeError, json.JSONDecodeError) as exc:
-        raise ValueError("Malformed JSON") from exc
-
     if not isinstance(parsed, dict):
         raise ValueError("Expected a JSON object")
     if '"source_chunk"' in json.dumps(parsed, ensure_ascii=False):
         raise ValueError("source_chunk is not allowed in analyst output")
-    schema_warnings: List[str] = []
+    schema_warnings: List[str] = list(parsed.get("schema_warnings") or [])
 
     assessment = parsed.get("assessment")
     if not isinstance(assessment, dict):
@@ -3614,19 +6014,75 @@ def _validate_llm_panel_output(
     )
     financial_assessment = _normalize_financial_assessment(parsed.get("financial_assessment"))
     schema_warnings.extend(financial_assessment.pop("schema_warnings", []))
+    precise_missing_financial_data = _normalize_string_list(
+        parsed.get("precise_missing_financial_data"),
+        "precise_missing_financial_data",
+        schema_warnings,
+        default_empty=True,
+    )
+    derived_not_explicitly_reported = _normalize_string_list(
+        parsed.get("derived_not_explicitly_reported"),
+        "derived_not_explicitly_reported",
+        schema_warnings,
+        default_empty=True,
+    )
+    partial_financial_data = _normalize_string_list(
+        parsed.get("partial_financial_data"),
+        "partial_financial_data",
+        schema_warnings,
+        default_empty=True,
+    )
+    unreliable_financial_data = _normalize_string_list(
+        parsed.get("unreliable_financial_data"),
+        "unreliable_financial_data",
+        schema_warnings,
+        default_empty=True,
+    )
+    invalid_or_quarantined_financial_data = _normalize_string_list(
+        parsed.get("invalid_or_quarantined_financial_data"),
+        "invalid_or_quarantined_financial_data",
+        schema_warnings,
+        default_empty=True,
+    )
+    trend_durability_limits = _normalize_string_list(
+        parsed.get("trend_durability_limits"),
+        "trend_durability_limits",
+        schema_warnings,
+        default_empty=True,
+    )
+    financial_questions_for_investor = _normalize_string_list(
+        parsed.get("financial_questions_for_investor"),
+        "financial_questions_for_investor",
+        schema_warnings,
+        default_empty=True,
+    )
     reasoning_limits = _normalize_string_list(
         parsed.get("reasoning_limits"),
         "reasoning_limits",
         schema_warnings,
         default_empty=True,
     )
-    if parsed.get("user_facing_brief") is None:
-        raise ValueError("user_facing_brief is required")
+    brief_repair_diagnostics: Dict[str, Any] = {"brief_repair_diagnostics": []}
     normalized_brief = normalize_user_facing_brief_shape(parsed.get("user_facing_brief"))
     sanitized_brief = sanitize_user_facing_brief(normalized_brief)
-    normalized_sanitized_brief = normalize_user_facing_brief_shape(sanitized_brief)
-    normalized_length_brief = normalize_user_facing_brief_lengths(normalized_sanitized_brief)
+    finalized_brief = finalize_user_facing_brief_for_external_reader(
+        doctrine["doctrine_id"],
+        sanitize_user_facing_brief(normalize_user_facing_brief_shape(sanitized_brief)),
+        doctrine=doctrine,
+        diagnostics=brief_repair_diagnostics,
+    )
+    brief_issues = collect_user_facing_brief_validation_issues(doctrine["doctrine_id"], finalized_brief)
+    if brief_issues:
+        finalized_brief = finalize_user_facing_brief_for_external_reader(
+            doctrine["doctrine_id"],
+            finalized_brief,
+            doctrine=doctrine,
+            diagnostics=brief_repair_diagnostics,
+        )
+    normalized_length_brief = normalize_user_facing_brief_lengths(finalized_brief)
     user_facing_brief = validate_user_facing_brief(doctrine["doctrine_id"], normalized_length_brief)
+    if brief_repair_diagnostics.get("brief_repair_diagnostics") or brief_repair_diagnostics.get("rewritten_fields"):
+        schema_warnings.append("user_facing_brief canonical fields were finalized before validation.")
 
     supporting_pcim_sections = _normalize_string_list(
         parsed.get("supporting_pcim_sections"),
@@ -3649,11 +6105,13 @@ def _validate_llm_panel_output(
 
     selected_pcim = _selected_pcim_view(pcim, consumed_sections)
     derived_financial_context = _derive_financial_context(selected_pcim, consumed_sections, [])
+    truth_pack = derived_financial_context["truth_pack"]
     metric_registry = derived_financial_context["metric_registry"]
-    allowed_financial_metrics = set(_registry_metric_names(metric_registry))
     by_metric_id, by_alias = _build_financial_metric_lookup(metric_registry)
     financial_metrics_used: List[Dict[str, Any]] = []
     invalid_financial_metrics: List[str] = []
+    metric_normalizations_applied: List[Dict[str, Any]] = []
+    unsupported_financial_metric_references: List[Dict[str, Any]] = []
     canonicalization_warnings = list(metric_normalization_warnings)
     for metric_item in financial_metrics_used_raw:
         canonical_metric_item, warning = _canonicalize_financial_metric_ref(
@@ -3663,12 +6121,33 @@ def _validate_llm_panel_output(
         )
         if canonical_metric_item is None:
             invalid_financial_metrics.append(warning or str(metric_item))
+            unsupported_financial_metric_references.append(
+                {
+                    "original_metric_label": str(metric_item.get("metric") or metric_item.get("metric_id") or "").strip(),
+                    "canonical_metric_id": "",
+                    "repair_status": "omitted",
+                    "reason": warning or "unknown financial metric reference",
+                }
+            )
             continue
         financial_metrics_used.append(canonical_metric_item)
+        if canonical_metric_item.get("normalization_status") != "exact_metric_id_match":
+            metric_normalizations_applied.append(
+                {
+                    "original_metric_label": canonical_metric_item.get("original_metric_label") or canonical_metric_item.get("metric"),
+                    "canonical_metric_id": canonical_metric_item.get("canonical_metric_id") or canonical_metric_item.get("metric_id"),
+                    "canonical_metric_name": canonical_metric_item.get("canonical_metric_name") or canonical_metric_item.get("metric"),
+                    "repair_status": canonical_metric_item.get("normalization_status") or "normalized",
+                    "source_file": canonical_metric_item.get("source_file") or "",
+                    "source_field": canonical_metric_item.get("source_field") or "",
+                }
+            )
         if warning:
             canonicalization_warnings.append(warning)
     if canonicalization_warnings:
         reasoning_limits.extend(_unique_preserve_order(canonicalization_warnings))
+    if unsupported_financial_metric_references:
+        schema_warnings.append("unsupported metric reference omitted from financial_metrics_used after deterministic normalization.")
 
     financial_sections_consumed = _financial_sections_for_doctrine(consumed_sections)
     if (
@@ -3707,6 +6186,45 @@ def _validate_llm_panel_output(
         analyst=doctrine["doctrine_id"],
         schema_warnings=schema_warnings,
     )
+    context_metric_flags = _financial_context_metric_flags(derived_financial_context)
+    imprecise_financial_warning_messages: List[str] = []
+    blocked_warning_hits = [
+        item
+        for item in (
+            financial_warnings_carried_forward
+            + financial_missing_data
+            + financial_interpretation_limits
+            + precise_missing_financial_data
+            + financial_assessment["missing_financial_data"]
+            + financial_assessment["financial_warnings_carried_forward"]
+        )
+        if str(item).strip() in set(truth_pack["blocked_financial_warnings"])
+    ]
+    if blocked_warning_hits:
+        raise ValueError(
+            "analyst output contains blocked financial warnings: "
+            + ", ".join(sorted(set(blocked_warning_hits)))
+        )
+    raw_context_warning_texts = _texts_for_financial_matching(
+        _collect_financial_warnings(selected_pcim, consumed_sections),
+        derived_financial_context.get("missing_data", []),
+    )
+    if context_metric_flags["has_shares_outstanding"] and any(
+        "share count missing" in item.lower()
+        for item in raw_context_warning_texts
+    ):
+        imprecise_financial_warning_messages.append(
+            "PCIM share-count warning was imprecise; shares_outstanding exists, so equivalent per-share limitation wording was accepted."
+        )
+    invalid_as_positive = [
+        item for item in financial_positive_signals
+        if any(token and token.lower() in item.lower() for token in truth_pack["invalid_or_quarantined_metrics"] + truth_pack["unreliable_metrics"])
+    ]
+    if invalid_as_positive:
+        raise ValueError(
+            "analyst used invalid, quarantined, or unreliable financial data as positive evidence: "
+            + ", ".join(sorted(set(invalid_as_positive)))
+        )
     financial_missing_data = carry_forward_payload["financial_missing_data"]
     financial_interpretation_limits = carry_forward_payload["financial_interpretation_limits"]
     financial_warnings_carried_forward = carry_forward_payload["financial_warnings_carried_forward"]
@@ -3721,8 +6239,6 @@ def _validate_llm_panel_output(
         + financial_assessment["key_financial_concerns"]
         + financial_assessment["financial_red_flags"]
     )
-    context_metric_flags = _financial_context_metric_flags(derived_financial_context)
-    imprecise_financial_warning_messages: List[str] = []
     for group in required_limitations:
         label = str(group.get("warning_id") or "").strip()
         if label == "fcf_missing" and not _financial_warning_group_matches(carried_financial_items, label):
@@ -3775,7 +6291,7 @@ def _validate_llm_panel_output(
         all_financial_text=carried_financial_items + all_financial_text,
         financial_metrics_used=financial_metrics_used,
     )
-    if "fcf" not in {metric.lower() for metric in allowed_financial_metrics} and _contains_any(
+    if "fcf" not in {metric.lower() for metric in _registry_metric_names(metric_registry)} and _contains_any(
         carried_financial_items + all_financial_text,
         ("owner earnings", "free cash flow", "fcf"),
     ):
@@ -3787,11 +6303,6 @@ def _validate_llm_panel_output(
         ).lower()
         if not any(token in missing_context_text for token in ("free cash flow", "fcf", "owner earnings")):
             raise ValueError("analyst claims FCF or owner earnings without supplied FCF evidence")
-    if invalid_financial_metrics:
-        raise ValueError(
-            "financial_metrics_used contains metrics not present in selected PCIM: "
-            f"{sorted(set(invalid_financial_metrics))}"
-        )
     forbidden_matches = find_forbidden_recommendation_language(" ".join(all_financial_text))
     if forbidden_matches:
         raise ValueError(
@@ -4068,10 +6579,20 @@ def _validate_llm_panel_output(
         "red_flags": red_flags,
         "open_uncertainties": open_uncertainties,
         "financial_metrics_used": financial_metrics_used,
+        "financial_metric_normalizations_applied": metric_normalizations_applied,
+        "unsupported_financial_metric_references": unsupported_financial_metric_references,
         "financial_red_flags": financial_red_flags,
         "financial_positive_signals": financial_positive_signals,
+        "precise_missing_financial_data": precise_missing_financial_data,
+        "derived_not_explicitly_reported": derived_not_explicitly_reported,
+        "partial_financial_data": partial_financial_data,
+        "unreliable_financial_data": unreliable_financial_data,
+        "invalid_or_quarantined_financial_data": invalid_or_quarantined_financial_data,
+        "trend_durability_limits": trend_durability_limits,
         "financial_missing_data": financial_missing_data,
         "financial_interpretation_limits": financial_interpretation_limits,
+        "financial_questions_for_investor": financial_questions_for_investor,
+        "analyst_financial_truth_pack": truth_pack,
         "financial_assessment": financial_assessment,
         "financial_sections_consumed": financial_sections_consumed,
         "financial_warnings_carried_forward": financial_warnings_carried_forward or derived_financial_context["warnings"],
@@ -4086,14 +6607,25 @@ def _validate_llm_panel_output(
         "schema_warnings": _unique_preserve_order(schema_warnings),
         "reasoning_limits": reasoning_limits,
         "user_facing_brief": user_facing_brief,
+        "brief_repair_diagnostics": brief_repair_diagnostics.get("brief_repair_diagnostics", []),
         "generated_at": utc_now(),
     }
+    finalization_diagnostics: Dict[str, Any] = {
+        "brief_rewrite_diagnostics": brief_repair_diagnostics.get("rewritten_fields", []),
+        "brief_validation_issues": brief_repair_diagnostics.get("remaining_validation_issues", []),
+    }
+    payload = finalize_analyst_financial_warnings(
+        payload,
+        truth_pack,
+        finalization_diagnostics,
+    )
     hygiene_diagnostics: Dict[str, Any] = {"removed_invalid_evidence_ids": []}
     payload = sanitize_active_evidence_ids(
         payload,
         evidence_lookup=evidence_lookup,
         diagnostics=hygiene_diagnostics,
     )
+    payload = _sanitize_active_external_reader_fields(payload, hygiene_diagnostics)
     removed_invalid = hygiene_diagnostics.get("removed_invalid_evidence_ids", []) or []
     if removed_invalid:
         payload.setdefault("evidence_id_normalization", {})["applied"] = True
@@ -4111,8 +6643,47 @@ def _validate_llm_panel_output(
             list(payload.get("evidence_grounding_warnings") or [])
             + ["Invalid or non-evidence IDs were removed before analyst output save."]
         )
+    payload = finalize_analyst_validation_status(payload, finalization_diagnostics)
+    payload["finalization_diagnostics"] = finalization_diagnostics
     assert_valid_routed_payload(payload, evidence_lookup=evidence_lookup)
     return payload
+
+
+def _validate_llm_panel_output(
+    payload_text: str,
+    doctrine: Dict[str, Any],
+    company: str,
+    pcim_path: Path,
+    pcim_version: Any,
+    pcim: Dict[str, Any],
+    consumed_sections: List[str],
+    allowed_evidence_ids: List[str],
+) -> Dict[str, Any]:
+    try:
+        parsed = json.loads(payload_text)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("Malformed JSON") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("Expected a JSON object")
+    repaired, _repair_warnings = _repair_llm_panel_output_draft(
+        parsed,
+        doctrine=doctrine,
+        company=company,
+        pcim_path=pcim_path,
+        pcim_version=pcim_version,
+        pcim=pcim,
+        consumed_sections=consumed_sections,
+    )
+    return _validate_repaired_llm_panel_output(
+        repaired,
+        doctrine=doctrine,
+        company=company,
+        pcim_path=pcim_path,
+        pcim_version=pcim_version,
+        pcim=pcim,
+        consumed_sections=consumed_sections,
+        allowed_evidence_ids=allowed_evidence_ids,
+    )
 
 
 def _analysis_filename(doctrine_id: str, analysis_mode: str) -> str:
@@ -4326,6 +6897,10 @@ class InvestorPanelRunner:
         self.registry = InvestorDoctrineRegistry(doctrines_dir)
         self.llm = get_llm()
 
+    def _write_prompt_budget_diagnostics(self, analyst: str, payload: Dict[str, Any]) -> Path:
+        diagnostics_path = self.output_dir / f"prompt_budget_diagnostics_{_safe_slug(analyst)}.json"
+        return _write_json(diagnostics_path, payload)
+
     def _load_pcim(self) -> Tuple[Path, Dict[str, Any]]:
         pcim_path = self.company_memory_dir / PCIM_FILE
         pcim = _load_json(pcim_path)
@@ -4394,6 +6969,7 @@ class InvestorPanelRunner:
             "analyst": doctrine["doctrine_id"],
             "sections_requested": consumed_sections,
             "sections_included": list(compact_pcim.keys()),
+            "excluded_sections": budget_report.get("excluded_sections", []),
             "prompt_chars_before": budget_report["prompt_chars_before"],
             "prompt_chars_after": budget_report["prompt_chars_after"],
             "estimated_tokens_before": budget_report["prompt_tokens_before"],
@@ -4421,6 +6997,15 @@ class InvestorPanelRunner:
             f"budget_status={budget_report['budget_status']} "
             f"item_counts={section_stats} "
             f"limits={limits_used}"
+        )
+        self._write_prompt_budget_diagnostics(
+            doctrine["doctrine_id"],
+            {
+                "company": self.company,
+                "analyst": doctrine["doctrine_id"],
+                "sections_requested": consumed_sections,
+                **budget_report,
+            },
         )
 
         response = call_llm_with_input_pack(
@@ -4520,6 +7105,15 @@ class InvestorPanelRunner:
             f"approx_tokens={_estimate_prompt_tokens(prompt)} "
             f"budget_status={budget_report['budget_status']} "
             f"item_counts={section_stats} limits={limits_used}"
+        )
+        self._write_prompt_budget_diagnostics(
+            doctrine["doctrine_id"],
+            {
+                "company": self.company,
+                "analyst": doctrine["doctrine_id"],
+                "sections_requested": consumed_sections,
+                **budget_report,
+            },
         )
         return payload, prompt
 

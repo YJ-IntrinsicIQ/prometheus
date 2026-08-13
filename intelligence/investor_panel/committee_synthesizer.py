@@ -25,6 +25,9 @@ from .committee_validator import (
     validate_analyst_payload,
     validate_committee_output,
 )
+from intelligence.progression import build_interpretation_contract
+from .committee_brief_renderer import finalize_committee_brief_for_user
+from .company_memory_context import build_company_memory_context
 from .evidence_grounding import build_evidence_lookup
 from .evidence_grounding import PCIM_SECTION_NAME_DENYLIST
 from pipelines.pipeline_context import get_context
@@ -122,6 +125,130 @@ DISAGREEMENT_TYPE_ENUM_MAP = {
     "disagreement": "true_disagreement",
 }
 
+COMMITTEE_V2_VIEW_VALUES = {
+    "strong",
+    "reasonably_strong",
+    "mixed",
+    "weak",
+    "insufficient_evidence",
+}
+
+COMMITTEE_V2_DIRECTION_VALUES = {
+    "strengthening",
+    "weakening",
+    "stable",
+    "mixed",
+    "unclear",
+}
+
+COMMITTEE_V2_CONSENSUS_VALUES = {
+    "high",
+    "medium",
+    "low",
+    "fragmented",
+    "insufficient_evidence",
+}
+
+COMMITTEE_V2_DISAGREEMENT_TYPE_MAP = {
+    "true_disagreement": "evidence_disagreement",
+    "different_emphasis": "doctrine_weighting_difference",
+    "risk_weighting_difference": "uncertainty_tolerance_difference",
+    "evidence_gap": "unresolved_data_gap",
+}
+
+COMMITTEE_V2_STREAM_PRIORITY = [
+    "management quality",
+    "management commitments",
+    "projects",
+    "capacity evolution",
+    "risk evolution",
+    "management commentary",
+    "capital allocation outcomes",
+    "financial memory",
+]
+
+COMMITTEE_V2_STREAM_KEYWORDS = {
+    "management quality": [
+        "management quality",
+        "candor",
+        "credibility",
+        "execution",
+        "management",
+        "discipline",
+        "trust",
+    ],
+    "management commitments": [
+        "commitment",
+        "promise",
+        "promised",
+        "expected",
+        "announced",
+        "delivery",
+        "superseded",
+        "abandoned",
+    ],
+    "projects": [
+        "project",
+        "plant",
+        "facility",
+        "line",
+        "programme",
+        "program",
+        "initiative",
+        "expansion",
+    ],
+    "capacity evolution": [
+        "capacity",
+        "commission",
+        "commissioned",
+        "utilization",
+        "throughput",
+        "ramp",
+        "operational",
+        "underutilized",
+    ],
+    "risk evolution": [
+        "risk",
+        "receivable",
+        "payable",
+        "debt",
+        "liquidity",
+        "working capital",
+        "customer concentration",
+        "supplier",
+    ],
+    "management commentary": [
+        "commentary",
+        "management said",
+        "management stated",
+        "narrative",
+        "emphasis",
+        "conviction",
+    ],
+    "capital allocation outcomes": [
+        "capital allocation",
+        "capex",
+        "acquisition",
+        "roi",
+        "return",
+        "deployment",
+        "payoff",
+        "investment",
+    ],
+    "financial memory": [
+        "revenue",
+        "pat",
+        "cfo",
+        "fcf",
+        "cash",
+        "margin",
+        "eps",
+        "owner earnings",
+        "working capital",
+        "debt",
+    ],
+}
+
 
 def _normalize_enum_token(value: Any) -> str:
     return str(value or "").strip().lower().replace("-", " ").replace("_", " ")
@@ -180,6 +307,201 @@ def _write_json(path: Path, payload: Dict[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+def _flatten_strings(value: Any) -> List[str]:
+    items: List[str] = []
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            items.append(text)
+    elif isinstance(value, dict):
+        for child in value.values():
+            items.extend(_flatten_strings(child))
+    elif isinstance(value, list):
+        for child in value:
+            items.extend(_flatten_strings(child))
+    return items
+
+
+def _truth_pack_metric_present(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, dict):
+        status = str(value.get("availability_status") or value.get("status") or "").strip().lower()
+        if status in {"present_direct", "present_derived", "partial", "available", "estimate_available", "partially_measurable"}:
+            return True
+        for key in ("value", "value_crore", "metric_value", "current_value", "owner_earnings_estimate", "conservative_fcf_after_total_capex"):
+            metric_value = value.get(key)
+            if isinstance(metric_value, (int, float)) and not isinstance(metric_value, bool):
+                return True
+    elif isinstance(value, list):
+        return any(_truth_pack_metric_present(item) for item in value)
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        return True
+    return False
+
+
+def _truth_pack_has_metric(payload: Dict[str, Any], *metric_ids: str) -> bool:
+    for metric_id in metric_ids:
+        for bucket_name in (
+            "usable_current_metrics",
+            "usable_derived_metrics",
+            "partial_metrics",
+            "derived_not_explicitly_reported",
+            "precise_missing_metrics",
+            "unreliable_metrics",
+        ):
+            bucket = payload.get(bucket_name)
+            if isinstance(bucket, list):
+                for item in bucket:
+                    if not isinstance(item, dict):
+                        continue
+                    candidate = str(item.get("metric_id") or item.get("metric") or item.get("id") or "").strip().lower()
+                    if candidate == metric_id and _truth_pack_metric_present(item):
+                        return True
+        for container_name in (
+            "facts_by_metric",
+            "metric_registry",
+            "metrics",
+            "financial_truth_inputs",
+            "financial_snapshot_inputs",
+            "owner_earnings_readiness_inputs",
+            "working_capital_quality_inputs",
+            "per_share_compounding_inputs",
+        ):
+            container = payload.get(container_name)
+            if isinstance(container, dict):
+                candidate = container.get(metric_id)
+                if _truth_pack_metric_present(candidate):
+                    return True
+    return False
+
+
+def resolve_committee_financial_truth(
+    financial_truth_pack: Dict[str, Any] | None,
+    analyst_outputs: Sequence[Dict[str, Any]],
+    pcim: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    truth_pack = financial_truth_pack if isinstance(financial_truth_pack, dict) else {}
+    pcim_payload = pcim if isinstance(pcim, dict) else {}
+    analyst_payloads = [payload for payload in analyst_outputs if isinstance(payload, dict)]
+
+    def _from_analyst_truth(*metric_ids: str) -> bool:
+        return any(
+            _truth_pack_has_metric(payload.get("analyst_financial_truth_pack") or {}, *metric_ids)
+            for payload in analyst_payloads
+        )
+
+    def _from_selected_payload(*metric_ids: str) -> bool:
+        return _truth_pack_has_metric(truth_pack, *metric_ids) or _truth_pack_has_metric(pcim_payload, *metric_ids)
+
+    cfo_available = _from_selected_payload("cfo") or _from_analyst_truth("cfo")
+    capex_available = _from_selected_payload(
+        "capex",
+        "capex_crore",
+        "total_identified_capex",
+        "ppe_cwip_capex",
+        "intangible_capex",
+        "capex_deployed",
+    ) or _from_analyst_truth(
+        "capex",
+        "total_identified_capex",
+        "ppe_cwip_capex",
+        "intangible_capex",
+        "capex_deployed",
+    )
+    fcf_available = _from_selected_payload(
+        "fcf",
+        "fcf_crore",
+        "conservative_fcf_after_total_capex",
+        "fcf_after_ppe_cwip_capex",
+        "owner_earnings_estimate",
+    ) or _from_analyst_truth(
+        "fcf",
+        "conservative_fcf_after_total_capex",
+        "fcf_after_ppe_cwip_capex",
+        "owner_earnings_estimate",
+    )
+    owner_earnings_estimate_available = _from_selected_payload("owner_earnings_estimate") or _from_analyst_truth("owner_earnings_estimate")
+    conservative_fcf_available = _from_selected_payload("conservative_fcf_after_total_capex", "fcf_after_ppe_cwip_capex") or _from_analyst_truth(
+        "conservative_fcf_after_total_capex",
+        "fcf_after_ppe_cwip_capex",
+    )
+    maintenance_growth_split_available = _from_selected_payload("maintenance_growth_capex_split", "maintenance_capex", "growth_capex") or _from_analyst_truth(
+        "maintenance_growth_capex_split",
+        "maintenance_capex",
+        "growth_capex",
+    )
+    working_capital_metrics_available = _from_selected_payload("receivable_days", "inventory_days", "payable_days", "cash_conversion_cycle") or _from_analyst_truth(
+        "receivable_days",
+        "inventory_days",
+        "payable_days",
+        "cash_conversion_cycle",
+    )
+    payables_available = _from_selected_payload("payables", "payable_days") or _from_analyst_truth("payables", "payable_days")
+    share_count_available = _from_selected_payload("shares_outstanding", "share_count", "closing_shares") or _from_analyst_truth(
+        "shares_outstanding",
+        "share_count",
+        "closing_shares",
+    )
+    weighted_average_shares_available = _from_selected_payload("weighted_avg_shares") or _from_analyst_truth("weighted_avg_shares")
+
+    basis_candidates = {
+        str(((payload.get("financial_assessment") or {}).get("basis_used") or "")).strip().lower()
+        for payload in analyst_payloads
+        if isinstance(payload.get("financial_assessment"), dict)
+    }
+    basis_candidates.discard("")
+    if "mixed" in basis_candidates or basis_candidates == {"consolidated", "standalone"}:
+        basis_status = "mixed"
+    elif "consolidated" in basis_candidates and len(basis_candidates) == 1:
+        basis_status = "consolidated"
+    elif "standalone" in basis_candidates and len(basis_candidates) == 1:
+        basis_status = "standalone"
+    else:
+        basis_status = "unknown"
+
+    maintenance_growth_split_missing = (owner_earnings_estimate_available or conservative_fcf_available) and not maintenance_growth_split_available
+    if owner_earnings_estimate_available or conservative_fcf_available:
+        owner_earnings_status = "available_derived_precision_limited" if maintenance_growth_split_missing else "available_explicit"
+    elif fcf_available:
+        owner_earnings_status = "available_explicit"
+    elif cfo_available and capex_available:
+        owner_earnings_status = "available_derived_precision_limited"
+    else:
+        owner_earnings_status = "missing"
+
+    return {
+        "cfo_available": cfo_available,
+        "capex_available": capex_available,
+        "fcf_available": fcf_available or (cfo_available and capex_available),
+        "owner_earnings_estimate_available": owner_earnings_estimate_available,
+        "conservative_fcf_available": conservative_fcf_available,
+        "maintenance_growth_split_available": maintenance_growth_split_available,
+        "maintenance_growth_split_missing": maintenance_growth_split_missing,
+        "working_capital_metrics_available": working_capital_metrics_available,
+        "payables_available": payables_available,
+        "share_count_available": share_count_available,
+        "weighted_average_shares_available": weighted_average_shares_available,
+        "basis_status": basis_status,
+        "fcf_missing": not (fcf_available or owner_earnings_estimate_available or conservative_fcf_available or (cfo_available and capex_available)),
+        "capex_missing": not capex_available,
+        "owner_earnings_status": owner_earnings_status,
+        "truth_detected": any(
+            (
+                cfo_available,
+                capex_available,
+                fcf_available,
+                owner_earnings_estimate_available,
+                conservative_fcf_available,
+                working_capital_metrics_available,
+                payables_available,
+                share_count_available,
+                weighted_average_shares_available,
+            )
+        ),
+    }
 
 
 FORBIDDEN_COMMITTEE_KEYS = {
@@ -261,6 +583,26 @@ COMMITTEE_TEXT_REPLACEMENTS: Tuple[Tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(r"\bfinancial artifacts do not cover all company years\b", re.IGNORECASE),
         "Financial data does not cover all company years",
+    ),
+    (
+        re.compile(r"\bfcf\s*:\s*derived value used\b", re.IGNORECASE),
+        "FCF is derived rather than explicitly reported, so treat it as an estimate.",
+    ),
+    (
+        re.compile(r"\bfcf\s*:\s*fcf is derived from normalized inputs\b", re.IGNORECASE),
+        "FCF is derived rather than explicitly reported, so treat it as an estimate.",
+    ),
+    (
+        re.compile(r"\bcritical financial fields include unknown basis entries\b", re.IGNORECASE),
+        "The reporting basis remains unclear, limiting comparability.",
+    ),
+    (
+        re.compile(r"\bdiluted shares missing\b", re.IGNORECASE),
+        "Diluted share-count data is missing, limiting per-share analysis.",
+    ),
+    (
+        re.compile(r"\bfinancial basis remains unknown or unclear\b", re.IGNORECASE),
+        "The reporting basis remains unclear, limiting comparability.",
     ),
     (
         re.compile(r"\bfinancial artifacts\b", re.IGNORECASE),
@@ -495,6 +837,15 @@ def _truncate_text(value: Any, limit: int) -> str:
     return trimmed.rstrip(",;: ") + "…"
 
 
+def _ensure_sentence(text: Any) -> str:
+    value = str(text or "").strip()
+    if not value:
+        return ""
+    if value.endswith((".", "!", "?", "…")):
+        return value
+    return value + "."
+
+
 def _normalize_string_list(value: Any, *, max_items: int, max_chars: int) -> List[str]:
     if isinstance(value, str):
         items = [value]
@@ -638,6 +989,42 @@ def build_sanitized_committee_analyst_input(payload: Dict[str, Any]) -> Dict[str
                 max_items=3,
                 max_chars=220,
             ),
+            "precise_missing_financial_data": _normalize_string_list(
+                payload.get("precise_missing_financial_data")
+                or financial_assessment.get("precise_missing_financial_data"),
+                max_items=5,
+                max_chars=220,
+            ),
+            "derived_not_explicitly_reported": _normalize_string_list(
+                payload.get("derived_not_explicitly_reported")
+                or financial_assessment.get("derived_not_explicitly_reported"),
+                max_items=4,
+                max_chars=220,
+            ),
+            "partial_financial_data": _normalize_string_list(
+                payload.get("partial_financial_data")
+                or financial_assessment.get("partial_financial_data"),
+                max_items=4,
+                max_chars=220,
+            ),
+            "unreliable_financial_data": _normalize_string_list(
+                payload.get("unreliable_financial_data")
+                or financial_assessment.get("unreliable_financial_data"),
+                max_items=4,
+                max_chars=220,
+            ),
+            "invalid_or_quarantined_financial_data": _normalize_string_list(
+                payload.get("invalid_or_quarantined_financial_data")
+                or financial_assessment.get("invalid_or_quarantined_financial_data"),
+                max_items=4,
+                max_chars=220,
+            ),
+            "trend_durability_limits": _normalize_string_list(
+                payload.get("trend_durability_limits")
+                or financial_assessment.get("trend_durability_limits"),
+                max_items=4,
+                max_chars=220,
+            ),
             "missing_financial_data": _normalize_string_list(
                 financial_assessment.get("missing_financial_data")
                 or payload.get("financial_missing_data"),
@@ -653,6 +1040,12 @@ def build_sanitized_committee_analyst_input(payload: Dict[str, Any]) -> Dict[str
             "financial_warnings_carried_forward": _normalize_string_list(
                 canonical_financial_warnings,
                 max_items=6,
+                max_chars=220,
+            ),
+            "financial_questions_for_investor": _normalize_string_list(
+                payload.get("financial_questions_for_investor")
+                or financial_assessment.get("financial_questions_for_investor"),
+                max_items=5,
                 max_chars=220,
             ),
         },
@@ -798,6 +1191,29 @@ def _why_it_matters_for_unknown(category: str) -> str:
     return mapping.get(category, mapping["business_quality"])
 
 
+def _append_agreement(
+    bucket: List[Dict[str, Any]],
+    *,
+    theme: str,
+    summary: str,
+    analysts: Sequence[str],
+    evidence_limit: str,
+) -> None:
+    normalized_analysts = [str(item).strip().lower() for item in analysts if str(item).strip()]
+    if not theme or not summary or not normalized_analysts:
+        return
+    bucket.append(
+        {
+            "theme": theme,
+            "summary": summary,
+            "source_analysts": normalized_analysts,
+            "analysts": normalized_analysts,
+            "evidence_ids": [],
+            "evidence_limit": evidence_limit,
+        }
+    )
+
+
 def build_committee_synthesis_skeleton(
     company: str,
     analyst_artifacts: Sequence[Dict[str, Any]],
@@ -815,6 +1231,12 @@ def build_committee_synthesis_skeleton(
     notes = list(warning_notes or [])
     registry = list(uncertainty_registry or [])
     financial_manifest = dict(financial_warning_manifest or {})
+    committee_financial_truth = dict(financial_manifest.get("committee_financial_truth") or {})
+    blocked_warning_phrases = {
+        phrase.casefold()
+        for payload in included
+        for phrase in ((payload.get("analyst_financial_truth_pack") or {}).get("blocked_financial_warnings") or [])
+    }
     ratings = [_canonical_rating_value(payload.get("rating")) for payload in included]
     years: List[str] = []
     for payload in included:
@@ -933,14 +1355,48 @@ def build_committee_synthesis_skeleton(
         )
 
     missing_financial_data: List[str] = []
+    precise_missing_financial_data: List[str] = []
+    derived_not_explicitly_reported: List[str] = []
+    unreliable_financial_data: List[str] = []
+    invalid_or_quarantined_financial_data: List[str] = []
+    trend_durability_limits: List[str] = []
     financial_limits: List[str] = []
     financial_red_flags: List[str] = []
     investor_questions_from_financials: List[str] = []
+    for payload in included:
+        financial = payload.get("financial_assessment") or {}
+        for field_name, target in (
+            ("precise_missing_financial_data", precise_missing_financial_data),
+            ("derived_not_explicitly_reported", derived_not_explicitly_reported),
+            ("unreliable_financial_data", unreliable_financial_data),
+            ("invalid_or_quarantined_financial_data", invalid_or_quarantined_financial_data),
+            ("trend_durability_limits", trend_durability_limits),
+            ("financial_questions_for_investor", investor_questions_from_financials),
+        ):
+            for item in (payload.get(field_name) or financial.get(field_name) or []):
+                text = str(item or "").strip()
+                if text:
+                    target.append(text)
+    financial_strengths = [
+        item["signal"] for item in strongest_positive_signals[:3]
+    ]
+    financial_concerns = [item["risk"] for item in most_important_risks[:3]]
+
     if financial_manifest.get("fcf_missing"):
         missing_financial_data.append("Free cash flow is missing; FCF-based conclusions cannot be assessed.")
         financial_limits.append("Owner-earnings analysis is limited because free cash flow/capex evidence is incomplete.")
         investor_questions_from_financials.append("What capex and free-cash-flow evidence is needed to assess owner earnings and cash-generation quality?")
         financial_red_flags.append("Cash-generation evidence remains incomplete.")
+    elif committee_financial_truth.get("owner_earnings_status") == "available_derived_precision_limited":
+        financial_strengths.append(
+            "Derived owner-earnings / conservative FCF estimate is available for the current usable year, but precision is limited."
+        )
+        financial_limits.append(
+            "Derived owner-earnings / conservative FCF estimate is available, but precision is limited because maintenance versus growth capex split is unavailable."
+        )
+        investor_questions_from_financials.append(
+            "What maintenance versus growth capex split would make the current owner-earnings estimate more decision-useful?"
+        )
     if financial_manifest.get("capex_missing"):
         missing_financial_data.append("Capex evidence is missing or incomplete.")
     if financial_manifest.get("payables_missing"):
@@ -951,27 +1407,37 @@ def build_committee_synthesis_skeleton(
         financial_limits.append("Share-count evidence is incomplete, so per-share analysis is limited.")
 
     areas_of_agreement: List[Dict[str, Any]] = []
-    if len(financial_manifest.get("missing_fcf", [])) >= 2:
-        areas_of_agreement.append(
-            {
-                "theme": "free cash flow evidence gap",
-                "summary": "Multiple analysts treat missing free-cash-flow evidence as a real limitation on financial judgment.",
-                "source_analysts": list(financial_manifest.get("missing_fcf", [])),
-                "analysts": list(financial_manifest.get("missing_fcf", [])),
-                "evidence_ids": [],
-                "evidence_limit": "Built deterministically from analyst financial warning carry-forward.",
-            }
+    if committee_financial_truth.get("owner_earnings_status") == "available_derived_precision_limited":
+        _append_agreement(
+            areas_of_agreement,
+            theme="derived owner-earnings estimate is available but precision-limited",
+            summary="Current-year derived FCF / owner-earnings evidence exists, but precision is limited by missing maintenance-versus-growth capex split and incomplete multi-year bridge history.",
+            analysts=[payload.get("doctrine_id") for payload in included],
+            evidence_limit="Built deterministically from recomputed committee financial truth.",
         )
-    if len(financial_manifest.get("missing_capex", [])) >= 2:
-        areas_of_agreement.append(
-            {
-                "theme": "capex visibility is incomplete",
-                "summary": "Multiple analysts highlight missing capex detail as a blocker for cleaner financial interpretation.",
-                "source_analysts": list(financial_manifest.get("missing_capex", [])),
-                "analysts": list(financial_manifest.get("missing_capex", [])),
-                "evidence_ids": [],
-                "evidence_limit": "Built deterministically from analyst financial warning carry-forward.",
-            }
+    if committee_financial_truth.get("maintenance_growth_split_missing"):
+        _append_agreement(
+            areas_of_agreement,
+            theme="maintenance versus growth capex split remains unavailable",
+            summary="Capex is identified, but the maintenance-versus-growth split is still unavailable, which limits owner-earnings precision.",
+            analysts=[payload.get("doctrine_id") for payload in included],
+            evidence_limit="Built deterministically from recomputed committee financial truth.",
+        )
+    if committee_financial_truth.get("working_capital_metrics_available"):
+        _append_agreement(
+            areas_of_agreement,
+            theme="working-capital intensity is severe",
+            summary="Working-capital metrics are available and keep cash-conversion pressure in view even when current-year metrics are usable.",
+            analysts=[payload.get("doctrine_id") for payload in included if payload.get("doctrine_id")],
+            evidence_limit="Built deterministically from recomputed committee financial truth and analyst financial sections.",
+        )
+    if committee_financial_truth.get("basis_status") == "unknown":
+        _append_agreement(
+            areas_of_agreement,
+            theme="basis clarity remains incomplete",
+            summary="The reporting basis remains unclear enough to limit full comparability across some financial conclusions.",
+            analysts=list(financial_manifest.get("basis_unknown_analysts", [])) or [payload.get("doctrine_id") for payload in included],
+            evidence_limit="Built deterministically from recomputed committee financial truth.",
         )
 
     areas_of_disagreement: List[Dict[str, Any]] = []
@@ -1004,11 +1470,6 @@ def build_committee_synthesis_skeleton(
         for unknown in critical_unknowns[:5]
     ]
 
-    financial_strengths = [
-        item["signal"] for item in strongest_positive_signals[:3]
-    ]
-    financial_concerns = [item["risk"] for item in most_important_risks[:3]]
-
     skeleton = {
         "company": company,
         "analysis_mode": "committee_synthesis_v1",
@@ -1030,6 +1491,11 @@ def build_committee_synthesis_skeleton(
             "financial_concerns": financial_concerns,
             "financial_disagreements": [],
             "missing_financial_data": _dedupe(missing_financial_data),
+            "precise_missing_financial_data": _dedupe(precise_missing_financial_data),
+            "derived_not_explicitly_reported": _dedupe(derived_not_explicitly_reported),
+            "unreliable_financial_data": _dedupe(unreliable_financial_data),
+            "invalid_or_quarantined_financial_data": _dedupe(invalid_or_quarantined_financial_data),
+            "trend_durability_limits": _dedupe(trend_durability_limits),
             "financial_red_flags": _dedupe(financial_red_flags),
             "financial_interpretation_limits": _dedupe(financial_limits),
             "investor_questions_from_financials": _dedupe(investor_questions_from_financials),
@@ -1047,6 +1513,8 @@ def build_committee_synthesis_skeleton(
         "evidence_id_normalization": {"applied": False, "replacements": [], "unresolved_ids": []},
         "analyst_coverage_map": coverage_map,
         "financial_warning_manifest": financial_manifest,
+        "committee_financial_truth": committee_financial_truth,
+        "blocked_financial_warning_manifest": sorted(blocked_warning_phrases),
         "executive_committee_summary": "",
         "synthesis_narrative": [],
         "disagreement_explanation": [],
@@ -1056,8 +1524,149 @@ def build_committee_synthesis_skeleton(
     return skeleton
 
 
+def finalize_committee_financial_warnings(payload: Dict[str, Any]) -> Dict[str, Any]:
+    cleaned = json.loads(json.dumps(payload, ensure_ascii=False))
+    blocked = {
+        str(item or "").strip().casefold()
+        for item in cleaned.get("blocked_financial_warning_manifest", []) or []
+        if str(item or "").strip()
+    }
+    rewrites = {
+        str(item or "").strip().casefold(): str(item or "").strip()
+        for item in ((cleaned.get("financial_warning_policy") or {}).get("financial_warnings_rewritten", []) or [])
+        if str(item or "").strip()
+    }
+    if not blocked:
+        return cleaned
+
+    def _should_block(text: str) -> bool:
+        lowered = str(text or "").strip().casefold()
+        return any(phrase in lowered for phrase in blocked)
+
+    def _rewrite(text: str) -> str:
+        lowered = str(text or "").strip().casefold()
+        for phrase in blocked:
+            if phrase in lowered:
+                for replacement in rewrites.values():
+                    if replacement:
+                        return replacement
+        return str(text or "").strip()
+
+    financial_view = cleaned.get("financial_committee_view")
+    if isinstance(financial_view, dict):
+        for field in ("missing_financial_data", "financial_interpretation_limits", "financial_red_flags", "investor_questions_from_financials"):
+            values = []
+            for item in financial_view.get(field, []) or []:
+                text = str(item or "").strip()
+                if not text:
+                    continue
+                if _should_block(text):
+                    replacement = _rewrite(text)
+                    if replacement:
+                        values.append(replacement)
+                    continue
+                values.append(text)
+            financial_view[field] = _dedupe(values)
+
+    critical_unknowns = []
+    for item in cleaned.get("critical_unknowns", []) or []:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("unknown") or "").strip()
+        if text and _should_block(text):
+            replacement = _rewrite(text)
+            if replacement:
+                item = dict(item)
+                item["unknown"] = replacement
+            else:
+                continue
+        critical_unknowns.append(item)
+    cleaned["critical_unknowns"] = critical_unknowns
+
+    for field in ("areas_of_agreement", "strongest_positive_signals", "most_important_risks", "investigation_questions"):
+        sanitized_items = []
+        for item in cleaned.get(field, []) or []:
+            if not isinstance(item, dict):
+                continue
+            blob = " ".join(
+                str(item.get(key) or "").strip()
+                for key in ("theme", "summary", "signal", "risk", "question", "reason", "linked_unknown_or_risk", "why_it_matters")
+            ).strip()
+            if blob and _should_block(blob):
+                replacement = _rewrite(blob)
+                if field == "investigation_questions" and replacement:
+                    item = dict(item)
+                    item["question"] = replacement if replacement.endswith("?") else f"{replacement}?"
+                    item["reason"] = "This remains a precision limit rather than a fully missing-data gap."
+                    sanitized_items.append(item)
+                continue
+            sanitized_items.append(item)
+        cleaned[field] = sanitized_items
+    return cleaned
+
+
+def finalize_financial_committee_view(
+    financial_committee_view: Dict[str, Any] | None,
+    committee_financial_truth: Dict[str, Any] | None,
+) -> tuple[Dict[str, Any], List[str], List[str]]:
+    view = json.loads(json.dumps(financial_committee_view or {}, ensure_ascii=False))
+    truth = committee_financial_truth if isinstance(committee_financial_truth, dict) else {}
+    blocked_stale_financial_warnings: List[str] = []
+    repairs: List[str] = []
+
+    def _rewrite_items(field: str) -> None:
+        values = []
+        for item in view.get(field, []) or []:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            lowered = text.lower()
+            if truth.get("fcf_missing") is False and ("free cash flow is missing" in lowered or "fcf missing" in lowered):
+                blocked_stale_financial_warnings.append(text)
+                repairs.append(f"{field}: blocked stale FCF-missing warning")
+                continue
+            if truth.get("capex_missing") is False and "capex missing" in lowered:
+                blocked_stale_financial_warnings.append(text)
+                repairs.append(f"{field}: blocked stale capex-missing warning")
+                continue
+            if (
+                "owner earnings" in lowered
+                and truth.get("owner_earnings_status") == "available_derived_precision_limited"
+                and field == "financial_strengths"
+            ):
+                text = (
+                    "Derived owner-earnings / conservative FCF estimate is available for the current usable year, "
+                    "supported by available CFO and identified capex, but precision is limited because maintenance "
+                    "versus growth capex split is unavailable."
+                )
+                repairs.append(f"{field}: rewrote owner-earnings strength to precision-limited wording")
+            values.append(text)
+        view[field] = _dedupe(values)
+
+    for field_name in (
+        "financial_strengths",
+        "financial_concerns",
+        "missing_financial_data",
+        "financial_red_flags",
+        "financial_interpretation_limits",
+        "investor_questions_from_financials",
+    ):
+        _rewrite_items(field_name)
+
+    if truth.get("owner_earnings_status") == "available_derived_precision_limited":
+        limit = (
+            "Derived owner-earnings / conservative FCF estimate is available, but precision is limited because "
+            "maintenance versus growth capex split is unavailable."
+        )
+        if limit not in view.get("financial_interpretation_limits", []):
+            view.setdefault("financial_interpretation_limits", []).append(limit)
+            repairs.append("financial_interpretation_limits: added owner-earnings precision limitation")
+
+    return view, blocked_stale_financial_warnings, repairs
+
+
 class InvestmentCommitteeSynthesizer:
-    TARGET_TOTAL_PROMPT_TOKENS = 5600
+    TARGET_TOTAL_PROMPT_TOKENS = 5650
     PROMPT_SAFETY_MARGIN_TOKENS = 300
     MAX_SCHEMA_PROMPT_TOKENS = 350
     MAX_ANALYST_BLOCK_TOKENS = 450
@@ -1338,13 +1947,18 @@ class InvestmentCommitteeSynthesizer:
         self,
         included: Sequence[Dict[str, Any]],
     ) -> Dict[str, Any]:
+        pcim_payload = _load_json(self._pcim_path())
+        company_truth_pack_path = self.companies_root / self.company / "company_memory" / "financials" / "financial_truth_pack.json"
+        company_truth_pack = _load_json(company_truth_pack_path)
+        committee_financial_truth = resolve_committee_financial_truth(company_truth_pack, included, pcim_payload)
+        truth_detected = bool(committee_financial_truth.get("truth_detected"))
         manifest = {
-            "fcf_missing": False,
-            "capex_missing": False,
+            "fcf_missing": bool(committee_financial_truth.get("fcf_missing")) if truth_detected else False,
+            "capex_missing": bool(committee_financial_truth.get("capex_missing")) if truth_detected else False,
             "payables_missing": False,
             "weighted_avg_shares_missing": False,
             "diluted_shares_missing": False,
-            "basis_unknown": False,
+            "basis_unknown": committee_financial_truth.get("basis_status") == "unknown" if truth_detected else False,
             "working_capital_risk": False,
             "audit_or_reconciliation_warnings": [],
             "missing_fcf": [],
@@ -1352,6 +1966,8 @@ class InvestmentCommitteeSynthesizer:
             "missing_payables": [],
             "basis_unknown_analysts": [],
             "share_count_limitations": [],
+            "blocked_stale_financial_warnings": [],
+            "committee_financial_truth": committee_financial_truth,
         }
         for payload in included:
             sanitized = build_sanitized_committee_analyst_input(payload)
@@ -1364,15 +1980,30 @@ class InvestmentCommitteeSynthesizer:
             )
             lowered_blob = " ".join(item.lower() for item in combined)
             if "free cash flow" in lowered_blob or "fcf" in lowered_blob:
-                manifest["fcf_missing"] = True
+                if not truth_detected:
+                    manifest["fcf_missing"] = True
+                else:
+                    manifest["blocked_stale_financial_warnings"].extend(
+                        item for item in combined if "free cash flow" in item.lower() or "fcf" in item.lower()
+                    )
                 if analyst and analyst not in manifest["missing_fcf"]:
                     manifest["missing_fcf"].append(analyst)
             if "capex" in lowered_blob:
-                manifest["capex_missing"] = True
+                if not truth_detected:
+                    manifest["capex_missing"] = True
+                else:
+                    manifest["blocked_stale_financial_warnings"].extend(
+                        item for item in combined if "capex" in item.lower()
+                    )
                 if analyst and analyst not in manifest["missing_capex"]:
                     manifest["missing_capex"].append(analyst)
             if "payables" in lowered_blob:
-                manifest["payables_missing"] = True
+                if not truth_detected:
+                    manifest["payables_missing"] = True
+                else:
+                    manifest["blocked_stale_financial_warnings"].extend(
+                        item for item in combined if "payables" in item.lower()
+                    )
                 if analyst and analyst not in manifest["missing_payables"]:
                     manifest["missing_payables"].append(analyst)
                 manifest["working_capital_risk"] = True
@@ -1380,11 +2011,12 @@ class InvestmentCommitteeSynthesizer:
                 manifest["weighted_avg_shares_missing"] = True
             if "diluted shares" in lowered_blob:
                 manifest["diluted_shares_missing"] = True
-            if "share-count" in lowered_blob or "share count" in lowered_blob:
+            if (not truth_detected or not committee_financial_truth.get("share_count_available")) and ("share-count" in lowered_blob or "share count" in lowered_blob):
                 if analyst and analyst not in manifest["share_count_limitations"]:
                     manifest["share_count_limitations"].append(analyst)
             if "basis" in lowered_blob and "unknown" in lowered_blob:
-                manifest["basis_unknown"] = True
+                if not truth_detected:
+                    manifest["basis_unknown"] = True
                 if analyst and analyst not in manifest["basis_unknown_analysts"]:
                     manifest.setdefault("basis_unknown_analysts", []).append(analyst)
             if any(token in lowered_blob for token in ("reconciliation", "audit", "validation warning")):
@@ -1392,6 +2024,23 @@ class InvestmentCommitteeSynthesizer:
         manifest["audit_or_reconciliation_warnings"] = _normalize_casefold_deduped_list(
             manifest["audit_or_reconciliation_warnings"]
         )
+        manifest["blocked_stale_financial_warnings"] = _normalize_casefold_deduped_list(
+            manifest["blocked_stale_financial_warnings"]
+        )
+        if manifest["missing_payables"] and (not truth_detected or not committee_financial_truth.get("payables_available")):
+            manifest["payables_missing"] = True
+            manifest["working_capital_risk"] = True
+        if not truth_detected or not committee_financial_truth.get("weighted_average_shares_available"):
+            weighted_mentions = [
+                payload for payload in included
+                if "weighted average shares" in " ".join(
+                    _flatten_strings((payload.get("financial_assessment") or {}).get("missing_financial_data"))
+                    + _flatten_strings((payload.get("financial_assessment") or {}).get("financial_interpretation_limits"))
+                    + _flatten_strings(payload.get("financial_warnings_carried_forward") or [])
+                ).lower()
+            ]
+            if weighted_mentions:
+                manifest["weighted_avg_shares_missing"] = True
         return manifest
 
     def _build_committee_input(
@@ -1403,6 +2052,12 @@ class InvestmentCommitteeSynthesizer:
     ) -> Dict[str, Any]:
         analysts = [self._compact_analyst_input(payload) for payload in included]
         analysts = self._apply_dynamic_analyst_budget(analysts)
+        committee_input_bundle_v2 = self._build_committee_input_bundle_v2(
+            analysts=analysts,
+            missing=missing,
+            excluded=excluded,
+            warning_notes=warning_notes,
+        )
         return {
             "company": self.company,
             "analysts": analysts,
@@ -1411,6 +2066,156 @@ class InvestmentCommitteeSynthesizer:
             "evidence_quality_notes": list(warning_notes),
             "financial_warning_manifest": self._build_committee_financial_warning_manifest(included),
             "allowed_critical_unknowns_registry": self._build_uncertainty_registry(included),
+            "committee_input_bundle_v2": committee_input_bundle_v2,
+            "shared_progression": committee_input_bundle_v2.get("shared_progression", {}),
+        }
+
+    def _build_committee_input_bundle_v2(
+        self,
+        *,
+        analysts: Sequence[Dict[str, Any]],
+        missing: Sequence[str],
+        excluded: Sequence[str],
+        warning_notes: Sequence[str],
+    ) -> Dict[str, Any]:
+        company_root = self.companies_root / self.company
+        doctrine_contexts: List[Dict[str, Any]] = []
+        per_doctrine_budget = max(
+            400,
+            min(
+                900,
+                max(400, resolve_stage_token_budget("committee_synthesis") // 8),
+            ),
+        )
+        for doctrine_id in EXPECTED_ANALYSTS:
+            context = build_company_memory_context(
+                company_root,
+                doctrine_id,
+                token_budget=per_doctrine_budget,
+            )
+            if context:
+                doctrine_contexts.append(context)
+
+        seen_streams: set[str] = set()
+        merged_streams: List[Dict[str, Any]] = []
+        streams_considered: List[str] = []
+        latest_years: List[str] = []
+        evidence_ids: List[str] = []
+        source_artifact_count = 0
+        limitations: List[str] = []
+
+        def _extend_unique(bucket: List[str], values: Sequence[str]) -> None:
+            for value in values:
+                text = str(value or "").strip()
+                if text and text not in bucket:
+                    bucket.append(text)
+
+        for context in doctrine_contexts:
+            _extend_unique(streams_considered, context.get("streams_considered") or [])
+            _extend_unique(latest_years, context.get("latest_years") or [])
+            _extend_unique(limitations, context.get("limitations") or [])
+            _extend_unique(evidence_ids, context.get("evidence_ids") or [])
+            source_artifact_count += int(context.get("source_artifact_count") or 0)
+            for stream in context.get("streams", []) or []:
+                if not isinstance(stream, dict):
+                    continue
+                stream_name = str(stream.get("stream") or "").strip()
+                if not stream_name or stream_name in seen_streams:
+                    continue
+                seen_streams.add(stream_name)
+                merged_streams.append(json.loads(json.dumps(stream, ensure_ascii=False)))
+
+        streams_by_name = {
+            str(stream.get("stream") or "").strip().lower(): stream
+            for stream in merged_streams
+            if isinstance(stream, dict) and str(stream.get("stream") or "").strip()
+        }
+        shared_progression = {
+            "company": self.company,
+            "context_version": "v2",
+            "latest_years": latest_years[:5],
+            "streams_considered": streams_considered[:12] if streams_considered else list(COMMITTEE_V2_STREAM_PRIORITY),
+            "streams_found": [stream.get("stream") for stream in merged_streams if isinstance(stream, dict) and stream.get("stream")],
+            "streams_missing": [name for name in COMMITTEE_V2_STREAM_PRIORITY if name not in streams_by_name],
+            "streams": merged_streams[:7],
+            "streams_by_name": streams_by_name,
+            "evidence_ids": evidence_ids[:30],
+            "source_artifact_count": source_artifact_count,
+            "limitations": _dedupe(
+                limitations
+                + [
+                    "Committee progression context is compact and prioritizes the clearest longitudinal streams."
+                ]
+            ),
+        }
+
+        financial_truth_pack = _load_json(
+            company_root / "company_memory" / "financials" / "financial_truth_pack.json"
+        )
+        shared_progression["financial_truth"] = {
+            "company": self.company,
+            "schema_version": financial_truth_pack.get("schema_version"),
+            "generated_at": financial_truth_pack.get("generated_at"),
+            "basis_used": financial_truth_pack.get("basis_used"),
+            "owner_earnings_status": financial_truth_pack.get("owner_earnings_status"),
+            "owner_earnings_estimate_available": financial_truth_pack.get("owner_earnings_estimate_available"),
+            "fcf_missing": financial_truth_pack.get("fcf_missing"),
+            "capex_missing": financial_truth_pack.get("capex_missing"),
+            "payables_available": financial_truth_pack.get("payables_available"),
+            "weighted_average_shares_available": financial_truth_pack.get("weighted_average_shares_available"),
+            "summary": _truncate_text(financial_truth_pack.get("summary") or financial_truth_pack.get("financial_memory_summary"), 260),
+            "limitations": _normalize_optional_string_list(financial_truth_pack.get("limitations")),
+            "warnings": _normalize_optional_string_list(financial_truth_pack.get("warnings")),
+        }
+        for stream_name in (
+            "management quality",
+            "management commitments",
+            "projects",
+            "capacity evolution",
+            "risk evolution",
+            "management commentary",
+            "capital allocation outcomes",
+            "financial memory",
+        ):
+            shared_progression[stream_name.replace(" ", "_")] = streams_by_name.get(stream_name)
+
+        analyst_outputs = {
+            str(item.get("analyst") or item.get("doctrine_id") or "").strip().lower(): json.loads(
+                json.dumps(item, ensure_ascii=False)
+            )
+            for item in analysts
+            if isinstance(item, dict) and str(item.get("analyst") or item.get("doctrine_id") or "").strip()
+        }
+        analyst_evidence_ids: List[str] = []
+        for item in analysts:
+            if not isinstance(item, dict):
+                continue
+            _extend_unique(analyst_evidence_ids, _normalize_optional_string_list(item.get("evidence_ids")))
+        evidence_coverage = {
+            "analysts_considered": list(analyst_outputs.keys()),
+            "analyst_count": len(analyst_outputs),
+            "shared_stream_count": len(merged_streams),
+            "source_artifact_count": source_artifact_count,
+            "analyst_evidence_ids": analyst_evidence_ids[:40],
+            "shared_evidence_ids": evidence_ids[:30],
+        }
+
+        return {
+            "company_identity": {
+                "company": self.company,
+                "company_root": str(company_root),
+                "analysis_mode": "committee_synthesis_v2",
+            },
+            "analyst_outputs": analyst_outputs,
+            "shared_progression": shared_progression,
+            "evidence_coverage": evidence_coverage,
+            "limitations": _dedupe(
+                _normalize_optional_string_list(warning_notes)
+                + list(shared_progression.get("limitations") or [])
+                + [
+                    "Committee synthesis reads compact progression summaries, not raw company-memory blobs."
+                ]
+            ),
         }
 
     def _build_committee_narrative_input(
@@ -1461,6 +2266,707 @@ class InvestmentCommitteeSynthesizer:
             "deterministic_disagreement_candidates": deterministic_disagreements,
             "existing_summary": skeleton.get("overall_committee_view", {}).get("summary", ""),
             "dominant_tension": skeleton.get("overall_committee_view", {}).get("dominant_tension", ""),
+        }
+
+    def _related_stream_names(self, text: str, shared_progression: Dict[str, Any]) -> List[str]:
+        lower = str(text or "").lower()
+        scored: List[Tuple[int, str]] = []
+        for stream_name, keywords in COMMITTEE_V2_STREAM_KEYWORDS.items():
+            score = sum(1 for keyword in keywords if keyword in lower)
+            if score:
+                scored.append((score, stream_name))
+        if not scored:
+            stream_names = [
+                str(item.get("stream") or "").strip()
+                for item in (shared_progression.get("streams") or [])
+                if isinstance(item, dict) and str(item.get("stream") or "").strip()
+            ]
+            return stream_names[:2]
+        return [name for _score, name in sorted(scored, key=lambda item: (-item[0], item[1]))[:3]]
+
+    def _confidence_from_support(
+        self,
+        supporting_analysts: Sequence[str],
+        supporting_evidence: Sequence[str],
+    ) -> str:
+        analysts = _dedupe([str(item).strip().lower() for item in supporting_analysts if str(item).strip()])
+        evidence = _dedupe([str(item).strip() for item in supporting_evidence if str(item).strip()])
+        if len(analysts) >= 3 or (len(analysts) >= 2 and len(evidence) >= 2):
+            return "high"
+        if analysts or evidence:
+            return "medium"
+        return "low"
+
+    def _commitment_effect_from_text(self, text: str) -> str:
+        lower = str(text or "").lower()
+        if any(token in lower for token in ("delayed", "delay", "underutilized", "weaken", "worsen", "missing", "unable to verify", "unclear")):
+            return "weakened"
+        if any(token in lower for token in ("delivered", "commissioned", "operational", "improved", "strengthen", "ramp", "confirmed", "progress")):
+            return "strengthened"
+        return "unchanged"
+
+    def _turning_point_confidence(self, item: Dict[str, Any]) -> str:
+        supporting = _normalize_optional_string_list(item.get("supporting_analysts") or item.get("affected_analysts"))
+        evidence = _normalize_optional_string_list(item.get("supporting_evidence") or item.get("evidence_ids"))
+        return self._confidence_from_support(supporting, evidence)
+
+    def _derive_v2_disagreement_type(self, item: Dict[str, Any]) -> str:
+        text = " ".join(
+            [
+                str(item.get("theme") or ""),
+                str(item.get("summary") or ""),
+                str(item.get("why_it_matters") or ""),
+                str(item.get("disagreement") or ""),
+            ]
+        ).lower()
+        if any(token in text for token in ("fact", "factual", "evidence", "contradict", "conflict")):
+            return "evidence_disagreement"
+        if any(token in text for token in ("time", "timing", "later", "earlier", "horizon", "future")):
+            return "time_horizon_difference"
+        if any(token in text for token in ("risk", "downside", "uncertain", "uncertainty", "confidence", "caution")):
+            return "uncertainty_tolerance_difference"
+        if any(token in text for token in ("cash", "balance sheet", "debt", "liquidity", "working capital", "financial")):
+            return "financial_vs_business_tension"
+        if any(token in text for token in ("execution", "delivery", "project", "capacity", "commission", "utilization")):
+            return "execution_vs_outcome_tension"
+        if any(token in text for token in ("value", "valuation", "price", "multiple", "quality")):
+            return "valuation_vs_quality_tension"
+        if any(token in text for token in ("missing", "unknown", "unclear", "cannot", "unable")):
+            return "unresolved_data_gap"
+        return "doctrine_weighting_difference"
+
+    def _build_major_disagreement_records(
+        self,
+        payload: Dict[str, Any],
+        shared_progression: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        major_disagreements: List[Dict[str, Any]] = []
+        for item in payload.get("areas_of_disagreement", []) or []:
+            if not isinstance(item, dict):
+                continue
+            analysts_a = _normalize_optional_string_list(
+                item.get("analysts_positive_or_less_concerned")
+                or item.get("analysts_on_side_a")
+                or item.get("analysts_with_business_quality_focus")
+            )
+            analysts_b = _normalize_optional_string_list(
+                item.get("analysts_cautious_or_negative")
+                or item.get("analysts_on_side_b")
+                or item.get("analysts_with_downside_or_execution_focus")
+            )
+            evidence_ids = _normalize_optional_string_list(item.get("evidence_ids"))
+            topic = str(item.get("theme") or item.get("topic") or "").strip()
+            side_a_view = str(item.get("summary") or item.get("side_a_view") or "").strip()
+            side_b_view = str(item.get("why_it_matters") or item.get("side_b_view") or "").strip()
+            if not topic or not side_a_view:
+                continue
+            disagreement_type = self._derive_v2_disagreement_type(item)
+            evidence_context = _dedupe(
+                evidence_ids
+                + _normalize_optional_string_list(item.get("evidence_limit"))
+            )
+            what_resolves = str(item.get("what_evidence_would_resolve_it") or "").strip()
+            if not what_resolves:
+                if disagreement_type == "execution_vs_outcome_tension":
+                    what_resolves = "Later evidence showing execution translated into operating results."
+                elif disagreement_type == "financial_vs_business_tension":
+                    what_resolves = "Later evidence showing business progress translated into better financial resilience."
+                elif disagreement_type == "time_horizon_difference":
+                    what_resolves = "Later evidence showing whether the current evidence is durable over more than one period."
+                elif disagreement_type == "unresolved_data_gap":
+                    what_resolves = "A later filing or operating update that closes the missing evidence gap."
+                else:
+                    what_resolves = "Later evidence showing whether the shared signal is real, durable, and decision-relevant."
+            major_disagreements.append(
+                {
+                    "topic": topic,
+                    "analysts_on_side_a": analysts_a,
+                    "side_a_view": side_a_view,
+                    "analysts_on_side_b": analysts_b,
+                    "side_b_view": side_b_view,
+                    "reason_for_disagreement": str(item.get("why_it_matters") or item.get("summary") or "").strip(),
+                    "evidence_causing_tension": evidence_context,
+                    "what_evidence_would_resolve_it": what_resolves,
+                    "investor_importance": str(item.get("why_it_matters") or "This disagreement affects conviction.") or "This disagreement affects conviction.",
+                    "confidence": self._confidence_from_support(analysts_a + analysts_b, evidence_ids),
+                    "disagreement_type": disagreement_type,
+                }
+            )
+        return major_disagreements[:7]
+
+    def _build_shared_conviction_records(
+        self,
+        payload: Dict[str, Any],
+        shared_progression: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        records: List[Dict[str, Any]] = []
+        for item in payload.get("areas_of_agreement", []) or []:
+            if not isinstance(item, dict):
+                continue
+            conclusion = str(item.get("theme") or item.get("summary") or "").strip()
+            if not conclusion:
+                continue
+            supporting_analysts = _normalize_optional_string_list(item.get("analysts") or item.get("source_analysts"))
+            source_streams = self._related_stream_names(conclusion + " " + str(item.get("summary") or ""), shared_progression)
+            records.append(
+                {
+                    "conclusion": conclusion,
+                    "supporting_analysts": supporting_analysts,
+                    "supporting_evidence": _normalize_optional_string_list(item.get("evidence_ids")),
+                    "progression": str(item.get("summary") or "").strip(),
+                    "why_it_matters": str(item.get("why_it_matters") or item.get("summary") or "").strip() or "This materially shapes investor conviction.",
+                    "confidence": self._confidence_from_support(supporting_analysts, _normalize_optional_string_list(item.get("evidence_ids"))),
+                    "source_streams": source_streams,
+                }
+            )
+        return records[:7]
+
+    def _build_progression_list_items(
+        self,
+        *,
+        shared_progression: Dict[str, Any],
+        include_negative: bool,
+    ) -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
+        for stream in shared_progression.get("streams", []) or []:
+            if not isinstance(stream, dict):
+                continue
+            stream_name = str(stream.get("stream") or "").strip()
+            if not stream_name:
+                continue
+            if stream_name not in COMMITTEE_V2_STREAM_PRIORITY and stream_name not in {
+                "financial memory",
+                "management quality",
+                "management commitments",
+                "projects",
+                "capacity evolution",
+                "risk evolution",
+                "management commentary",
+                "capital allocation outcomes",
+            }:
+                continue
+            assessments = stream.get("assessments") or []
+            if not isinstance(assessments, list):
+                assessments = []
+            if stream_name == "management commitments" and isinstance(stream.get("timeline"), list):
+                timeline_items = stream.get("timeline") or []
+                if timeline_items:
+                    assessments = timeline_items
+            if not assessments:
+                continue
+            for assessment in assessments[:2]:
+                if not isinstance(assessment, dict):
+                    continue
+                summary = str(
+                    assessment.get("what_changed")
+                    or assessment.get("summary")
+                    or assessment.get("progression_summary")
+                    or assessment.get("current_state")
+                    or ""
+                ).strip()
+                why = str(
+                    assessment.get("why_it_changed")
+                    or assessment.get("why_it_matters")
+                    or assessment.get("investor_implication")
+                    or ""
+                ).strip()
+                if not summary and not why:
+                    continue
+                status = str(
+                    assessment.get("status")
+                    or assessment.get("current_status")
+                    or assessment.get("conviction_impact")
+                    or ""
+                ).strip().lower()
+                effect = self._commitment_effect_from_text(" ".join([summary, why, status]))
+                if include_negative and effect == "strengthened":
+                    continue
+                if not include_negative and effect == "weakened":
+                    continue
+                period = str(
+                    assessment.get("period")
+                    or assessment.get("latest_period")
+                    or stream.get("latest_period")
+                    or ""
+                ).strip()
+                items.append(
+                    {
+                        "period": period,
+                        "summary": summary or f"{stream_name.title()} moved to a new state.",
+                        "event": summary or f"{stream_name.title()} moved to a new state.",
+                        "conclusion": summary or f"{stream_name.title()} moved to a new state.",
+                        "before": str(
+                            assessment.get("before")
+                            or assessment.get("previous_state")
+                            or "Earlier evidence was not explicit."
+                        ).strip(),
+                        "after": str(
+                            assessment.get("after")
+                            or assessment.get("status")
+                            or assessment.get("current_status")
+                            or "Later evidence is still being read."
+                        ).strip(),
+                        "why_it_matters": why or "This changes the investor interpretation of the business trajectory.",
+                        "affected_analysts": {
+                            "management quality": ["buffett", "munger"],
+                            "management commitments": ["buffett", "fisher", "munger"],
+                            "projects": ["fisher", "lynch"],
+                            "capacity evolution": ["fisher", "lynch"],
+                            "risk evolution": ["graham", "buffett", "munger"],
+                            "management commentary": ["buffett", "fisher", "munger"],
+                            "capital allocation outcomes": ["buffett", "munger", "graham"],
+                            "financial memory": ["graham", "buffett", "lynch"],
+                        }.get(stream_name, ["graham", "buffett", "fisher", "munger", "lynch"]),
+                        "supporting_analysts": {
+                            "management quality": ["buffett", "munger"],
+                            "management commitments": ["buffett", "fisher", "munger"],
+                            "projects": ["fisher", "lynch"],
+                            "capacity evolution": ["fisher", "lynch"],
+                            "risk evolution": ["graham", "buffett", "munger"],
+                            "management commentary": ["buffett", "fisher", "munger"],
+                            "capital allocation outcomes": ["buffett", "munger", "graham"],
+                            "financial memory": ["graham", "buffett", "lynch"],
+                        }.get(stream_name, ["graham", "buffett", "fisher", "munger", "lynch"]),
+                        "conviction_effect": effect,
+                        "confidence": self._confidence_from_support(
+                            ["buffett", "graham"] if stream_name == "financial memory" else ["fisher"] if stream_name in {"projects", "capacity evolution"} else ["buffett"],
+                            _normalize_optional_string_list(assessment.get("evidence_ids")),
+                        ),
+                        "source_streams": [stream_name],
+                    }
+                )
+        return items
+
+    def _build_unresolved_items_v2(
+        self,
+        payload: Dict[str, Any],
+        shared_progression: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        unresolved: List[Dict[str, Any]] = []
+        for item in payload.get("critical_unknowns", []) or []:
+            if not isinstance(item, dict):
+                continue
+            question = str(item.get("unknown") or "").strip()
+            if not question:
+                continue
+            affected_analysts = _normalize_optional_string_list(item.get("raised_by"))
+            affected_thesis_area = self._related_stream_names(question + " " + str(item.get("why_it_matters") or ""), shared_progression)
+            evidence_needed = str(item.get("evidence_needed") or item.get("evidence_limit") or "").strip()
+            if not evidence_needed:
+                evidence_needed = "Later evidence that closes the current uncertainty."
+            unresolved.append(
+                {
+                    "question": question.rstrip("."),
+                    "why_it_matters": str(item.get("why_it_matters") or "This remains decision-relevant.").strip(),
+                    "affected_analysts": affected_analysts,
+                    "affected_thesis_area": affected_thesis_area[:3],
+                    "evidence_needed": evidence_needed,
+                    "current_confidence": self._confidence_from_support(affected_analysts, _normalize_optional_string_list(item.get("source_uncertainty_ids")) or []),
+                }
+            )
+        return unresolved[:7]
+
+    def _build_judgment_block(
+        self,
+        *,
+        assessment: str,
+        direction: str,
+        strongest_evidence: str,
+        main_concern: str,
+        unresolved_issue: str,
+        confidence: str,
+        economic_mechanism: str,
+    ) -> Dict[str, Any]:
+        interpretation = build_interpretation_contract(
+            conclusion=assessment,
+            what_changed=[strongest_evidence],
+            why_it_matters=main_concern or unresolved_issue,
+            economic_mechanism=economic_mechanism,
+            thesis_impact=(
+                "strengthens"
+                if direction == "strengthening"
+                else "weakens"
+                if direction == "weakening"
+                else "neutral"
+                if direction in {"stable", "mixed"}
+                else "unresolved"
+            ),
+            positive_evidence=[strongest_evidence],
+            negative_evidence=[main_concern],
+            unresolved=[unresolved_issue],
+            what_to_watch=[main_concern, unresolved_issue],
+            confidence={"level": confidence, "basis": [], "limitations": []},
+        )
+        return {
+            "assessment": _truncate_text(assessment or "This judgment is still being assembled from the available evidence.", 280),
+            "direction": direction or "unclear",
+            "strongest_evidence": _truncate_text(
+                strongest_evidence or "No single evidence anchor is strong enough yet, so the committee keeps this judgment provisional.",
+                220,
+            ),
+            "main_concern": _truncate_text(
+                main_concern or "The committee still needs more longitudinal evidence before this concern can be reduced.",
+                220,
+            ),
+            "unresolved_issue": _truncate_text(
+                unresolved_issue or "The main unresolved issue remains open until later evidence makes it clearer.",
+                220,
+            ),
+            "confidence": confidence,
+            "interpretation": interpretation,
+        }
+
+    def _build_committee_summary_v2(
+        self,
+        *,
+        committee_view: str,
+        committee_direction: str,
+        consensus_strength: str,
+        shared_convictions: Sequence[Dict[str, Any]],
+        disagreements: Sequence[Dict[str, Any]],
+        strengtheners: Sequence[Dict[str, Any]],
+        weakeners: Sequence[Dict[str, Any]],
+        unresolved_items: Sequence[Dict[str, Any]],
+        turning_points: Sequence[Dict[str, Any]],
+        evidence_confidence: Dict[str, Any],
+    ) -> str:
+        positive = "; ".join(
+            _truncate_text(item.get("conclusion") or item.get("summary") or "", 120)
+            for item in shared_convictions[:2]
+            if isinstance(item, dict)
+        )
+        negative = "; ".join(
+            _truncate_text(item.get("summary") or item.get("event") or "", 120)
+            for item in weakeners[:2]
+            if isinstance(item, dict)
+        )
+        disagreement_text = "; ".join(
+            _truncate_text(item.get("topic") or item.get("reason_for_disagreement") or "", 120)
+            for item in disagreements[:2]
+            if isinstance(item, dict)
+        )
+        unresolved_text = "; ".join(
+            _truncate_text(item.get("question") or item.get("why_it_matters") or "", 120)
+            for item in unresolved_items[:2]
+            if isinstance(item, dict)
+        )
+        turning_text = "; ".join(
+            _truncate_text(item.get("event") or item.get("why_it_matters") or "", 120)
+            for item in turning_points[:2]
+            if isinstance(item, dict)
+        )
+        strength_text = "; ".join(
+            _truncate_text(item.get("summary") or item.get("conclusion") or "", 120)
+            for item in strengtheners[:2]
+            if isinstance(item, dict)
+        )
+        confidence_level = str(evidence_confidence.get("level") or "medium").strip()
+        basis = "; ".join(_normalize_optional_string_list(evidence_confidence.get("basis"))[:3])
+        limitations = "; ".join(_normalize_optional_string_list(evidence_confidence.get("limitations"))[:2])
+        parts = [
+            f"The committee sees the company as {committee_view.replace('_', ' ')} and the evidence trend as {committee_direction.replace('_', ' ')}.",
+            f"Consensus is {consensus_strength}, which means the panel is not averaging views; it is preserving where doctrines truly align and where they do not.",
+            f"The strongest shared convictions are {positive or 'still developing from the available evidence'}, and they matter because they show where multiple doctrines now see the same direction of travel rather than the same isolated number.",
+            f"Thesis strengtheners include {strength_text or 'the clearer progression signals that are already visible in the longitudinal record'}; the main weakeners remain {negative or 'the unresolved cautions and missing follow-through in the record'}, so the committee can say both what improved and what still limits conviction.",
+            f"Key turning points are {turning_text or 'still concentrated in the clearest evidence of progress, delay, or contradiction'}, which keeps the committee anchored to change over time instead of a single snapshot.",
+            f"The unresolved questions are {unresolved_text or 'the decision-relevant gaps that still need later evidence to close'}, and these should stay open until the next filing, update, or operating disclosure answers them directly.",
+            f"Doctrinal disagreement remains visible around {disagreement_text or 'how much weight to give future promise versus current evidence'}, which is useful because it tells an investor whether the gap is factual, temporal, or just a different weighting of the same evidence.",
+            f"Evidence confidence is {confidence_level} because {basis or 'the committee has compact progression summaries, but some evidence remains indirect or incomplete'}; {limitations or 'that uncertainty should be treated as part of the conclusion, not hidden from it'}.",
+            "Management, capital allocation, and risk judgments are kept separate so the committee can say where the business is improving, where execution still lags, and where the balance sheet or operating record may still be resisting conviction.",
+            "That separation matters because the business can improve while the financial footing weakens, or the reverse can happen, and the committee should name that tension rather than smoothing it away into a bland consensus.",
+            "The next diligence pass should focus on the evidence gaps most likely to change conviction, especially the items that sit closest to the current disagreements and turning points.",
+        ]
+        return " ".join(parts)
+
+    def _derive_committee_v2_overlay(
+        self,
+        *,
+        payload: Dict[str, Any],
+        committee_input: Dict[str, Any],
+        included: Sequence[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        bundle = committee_input.get("committee_input_bundle_v2") or {}
+        shared_progression = bundle.get("shared_progression") or {}
+        management_quality = shared_progression.get("management_quality") or {}
+        capital_allocation_outcomes = shared_progression.get("capital_allocation_outcomes") or {}
+        financial_truth_stream = shared_progression.get("financial_truth") or {}
+        shared_convictions = self._build_shared_conviction_records(payload, shared_progression)
+        major_disagreements = self._build_major_disagreement_records(payload, shared_progression)
+        strengtheners = self._build_progression_list_items(shared_progression=shared_progression, include_negative=False)
+        weakeners = self._build_progression_list_items(shared_progression=shared_progression, include_negative=True)
+        unresolved_items = self._build_unresolved_items_v2(payload, shared_progression)
+        turning_points: List[Dict[str, Any]] = []
+        seen_turning_points: set[Tuple[str, str, str]] = set()
+        for item in self._build_progression_list_items(shared_progression=shared_progression, include_negative=False) + self._build_progression_list_items(shared_progression=shared_progression, include_negative=True):
+            if not isinstance(item, dict):
+                continue
+            key = (
+                str(item.get("event") or "").strip().casefold(),
+                str(item.get("period") or "").strip().casefold(),
+                str(item.get("why_it_matters") or "").strip().casefold(),
+            )
+            if key in seen_turning_points:
+                continue
+            seen_turning_points.add(key)
+            turning_points.append(item)
+            if len(turning_points) >= 6:
+                break
+
+        for item in payload.get("most_important_risks", []) or []:
+            if not isinstance(item, dict):
+                continue
+            weakeners.append(
+                {
+                    "summary": str(item.get("risk") or item.get("summary") or "").strip(),
+                    "period": str(payload.get("years_considered", [])[-1] if payload.get("years_considered") else ""),
+                    "source_streams": self._related_stream_names(
+                        str(item.get("risk") or item.get("summary") or ""),
+                        shared_progression,
+                    ),
+                    "supporting_analysts": _normalize_optional_string_list(item.get("raised_by")),
+                    "why_it_matters": str(item.get("summary") or item.get("why_it_matters") or "").strip(),
+                    "conviction_effect": "weakened",
+                    "confidence": self._confidence_from_support(
+                        _normalize_optional_string_list(item.get("raised_by")),
+                        _normalize_optional_string_list(item.get("evidence_ids")),
+                    ),
+                }
+            )
+        for item in payload.get("strongest_positive_signals", []) or []:
+            if not isinstance(item, dict):
+                continue
+            strengtheners.append(
+                {
+                    "summary": str(item.get("signal") or item.get("summary") or "").strip(),
+                    "period": str(payload.get("years_considered", [])[-1] if payload.get("years_considered") else ""),
+                    "source_streams": self._related_stream_names(
+                        str(item.get("signal") or item.get("summary") or ""),
+                        shared_progression,
+                    ),
+                    "supporting_analysts": _normalize_optional_string_list(item.get("supported_by")),
+                    "why_it_matters": str(item.get("summary") or item.get("why_it_matters") or "").strip(),
+                    "conviction_effect": "strengthened",
+                    "confidence": self._confidence_from_support(
+                        _normalize_optional_string_list(item.get("supported_by")),
+                        _normalize_optional_string_list(item.get("evidence_ids")),
+                    ),
+                }
+            )
+
+        strengthener_count = len([item for item in strengtheners if item.get("conviction_effect") == "strengthened"])
+        weakener_count = len([item for item in weakeners if item.get("conviction_effect") == "weakened"])
+        if not shared_convictions and not major_disagreements and not unresolved_items:
+            consensus_strength = "insufficient_evidence"
+        elif len(shared_convictions) >= 4 and len(major_disagreements) <= 1:
+            consensus_strength = "high"
+        elif len(shared_convictions) >= 2 and len(major_disagreements) <= 3:
+            consensus_strength = "medium"
+        elif len(major_disagreements) >= 4:
+            consensus_strength = "fragmented"
+        else:
+            consensus_strength = "low"
+
+        if strengthener_count > weakener_count + 1:
+            committee_direction = "strengthening"
+        elif weakener_count > strengthener_count + 1:
+            committee_direction = "weakening"
+        elif strengthener_count and weakener_count:
+            committee_direction = "mixed"
+        elif strengthener_count:
+            committee_direction = "strengthening"
+        elif weakener_count:
+            committee_direction = "weakening"
+        else:
+            committee_direction = "stable"
+
+        if consensus_strength == "insufficient_evidence":
+            committee_view = "insufficient_evidence"
+        elif consensus_strength == "fragmented" or committee_direction == "weakening" and weakener_count > strengthener_count:
+            committee_view = "weak"
+        elif consensus_strength == "high" and committee_direction == "strengthening":
+            committee_view = "strong"
+        elif consensus_strength in {"high", "medium"} and committee_direction in {"strengthening", "stable"}:
+            committee_view = "reasonably_strong"
+        else:
+            committee_view = "mixed"
+
+        financial_committee_view = payload.get("financial_committee_view") or {}
+        financial_strengths = _normalize_optional_string_list(financial_committee_view.get("financial_strengths"))
+        financial_concerns = _normalize_optional_string_list(financial_committee_view.get("financial_concerns"))
+        financial_limits = _normalize_optional_string_list(financial_committee_view.get("financial_interpretation_limits"))
+        management_interpretation = management_quality.get("interpretation") if isinstance(management_quality.get("interpretation"), dict) else {}
+        capital_interpretation = {}
+        capital_assessments = capital_allocation_outcomes.get("assessments") or []
+        if capital_assessments and isinstance(capital_assessments[0], dict):
+            maybe_interp = capital_assessments[0].get("interpretation")
+            if isinstance(maybe_interp, dict):
+                capital_interpretation = maybe_interp
+        evidence_confidence = {
+            "level": "high" if consensus_strength == "high" and strengthener_count >= 2 else "medium" if shared_convictions or major_disagreements else "low",
+            "basis": _dedupe(
+                [
+                    f"{len(shared_convictions)} shared convictions",
+                    f"{len(major_disagreements)} disagreements preserved",
+                    f"{len(turning_points)} turning points selected",
+                    f"{len(unresolved_items)} unresolved items carried forward",
+                ]
+                + _normalize_optional_string_list(payload.get("evidence_quality_notes"))
+            ),
+            "limitations": _dedupe(
+                _normalize_optional_string_list(payload.get("synthesis_limits"))
+                + _normalize_optional_string_list(shared_progression.get("limitations"))
+            ),
+        }
+
+        financial_judgment = self._build_judgment_block(
+            assessment=(
+                "Financial progression looks "
+                + ("improving" if strengthener_count >= weakener_count else "stretched" if weakener_count > strengthener_count else "mixed")
+                + " when read through the available financial-truth evidence."
+            ),
+            direction="strengthening" if strengthener_count > weakener_count else "weakening" if weakener_count > strengthener_count else "stable",
+            strongest_evidence=financial_strengths[0] if financial_strengths else str(financial_truth_stream.get("summary") or ""),
+            main_concern=financial_concerns[0] if financial_concerns else (financial_limits[0] if financial_limits else "The financial evidence remains incomplete in the areas that most affect conviction."),
+            unresolved_issue=(unresolved_items[0]["question"] if unresolved_items else (financial_limits[0] if financial_limits else "The main unresolved financial question is still open.")),
+            confidence=evidence_confidence["level"],
+            economic_mechanism="Financial evidence matters because cash conversion, owner earnings, and per-share economics determine whether reported progress is durable.",
+        )
+        business_quality_judgment = self._build_judgment_block(
+            assessment=(
+                "Business quality appears "
+                + ("to be strengthening" if committee_direction == "strengthening" else "stable but uneven" if committee_direction == "stable" else "under pressure")
+                + " when viewed through projects, capacity, commentary, and risks."
+            ),
+            direction=committee_direction,
+            strongest_evidence=str(
+                (strengtheners[0].get("summary") or strengtheners[0].get("conclusion") or strengtheners[0].get("event"))
+                if strengtheners
+                else payload.get("overall_committee_view", {}).get("summary", "")
+            ),
+            main_concern=str(
+                (weakeners[0].get("summary") or weakeners[0].get("conclusion") or weakeners[0].get("event"))
+                if weakeners
+                else payload.get("overall_committee_view", {}).get("dominant_tension", "")
+            ),
+            unresolved_issue=(unresolved_items[0]["question"] if unresolved_items else "The core business-quality question remains how durable the visible progress will prove to be."),
+            confidence=evidence_confidence["level"],
+            economic_mechanism="Business quality matters because execution quality determines whether operating progress persists and compounds.",
+        )
+        management_judgment = self._build_judgment_block(
+            assessment=str(management_interpretation.get("conclusion") or management_quality.get("overall_view") or "Management judgment is read directly from the management-quality synthesis and related commitments."),
+            direction=str(management_quality.get("overall_direction") or committee_direction or "unclear"),
+            strongest_evidence=str((management_interpretation.get("positive_evidence") or [management_quality.get("overall_view") or ""])[0] or (financial_strengths[0] if financial_strengths else "")),
+            main_concern=str((management_interpretation.get("negative_evidence") or [management_quality.get("weakest_dimension") or ""])[0] or (payload.get("most_important_risks", [{}])[0].get("risk") if payload.get("most_important_risks") else "Candor and follow-through still need more longitudinal proof.")),
+            unresolved_issue=str((management_interpretation.get("unresolved") or [management_quality.get("investor_implication") or ""])[0] or "Whether management's stated direction consistently matches later evidence."),
+            confidence=evidence_confidence["level"],
+            economic_mechanism="Management quality matters because execution discipline, candor, and capital allocation shape how reliably the business can compound.",
+        )
+        capital_allocation_judgment = self._build_judgment_block(
+            assessment=(
+                "Capital allocation remains"
+                + (" more convincing" if any("return" in str(item.get("summary") or item.get("conclusion") or "").lower() for item in strengtheners) else " an evidence question")
+                + " because deployed capital must still be judged against later outcomes."
+            ),
+            direction="strengthening" if any("return" in str(item.get("summary") or item.get("conclusion") or "").lower() for item in strengtheners) else "unclear",
+            strongest_evidence=str((capital_interpretation.get("positive_evidence") or [capital_allocation_outcomes.get("summary") or capital_allocation_outcomes.get("latest_period") or ""])[0]),
+            main_concern=(capital_interpretation.get("negative_evidence") or [financial_limits[0] if financial_limits else "Return evidence is thinner than deployment evidence."])[0],
+            unresolved_issue=(capital_interpretation.get("unresolved") or ["The committee still wants later evidence that capital deployed produced measurable returns."])[0],
+            confidence=evidence_confidence["level"],
+            economic_mechanism="Capital allocation matters because deployment only creates value if later returns exceed the opportunity cost of the cash used.",
+        )
+        risk_judgment = self._build_judgment_block(
+            assessment="Risk remains part of the thesis rather than a footnote, with the most material risks still anchored in working capital, execution, and unresolved evidence gaps.",
+            direction="weakening" if any("risk" in str(item.get("summary") or "").lower() for item in weakeners) else "stable",
+            strongest_evidence=financial_concerns[0] if financial_concerns else (
+                str(weakeners[0].get("summary") or weakeners[0].get("conclusion") or weakeners[0].get("event"))
+                if weakeners
+                else "The risk record remains mixed."
+            ),
+            main_concern=(financial_limits[0] if financial_limits else "The most important risks are still not fully resolved."),
+            unresolved_issue=(unresolved_items[0]["question"] if unresolved_items else "Which risk changes most if the next evidence update is positive?"),
+            confidence=evidence_confidence["level"],
+            economic_mechanism="Risk matters because downside mechanisms such as weak cash conversion, execution slippage, or dilution can overwhelm otherwise positive operating signals.",
+        )
+
+        what_would_change_the_view: List[str] = []
+        if unresolved_items:
+            for item in unresolved_items[:5]:
+                question = str(item.get("question") or "").strip()
+                if question:
+                    what_would_change_the_view.append(
+                        f"Later evidence answers: {question.rstrip('?')}."
+                    )
+        for item in strengtheners[:3]:
+            summary = str(item.get("summary") or item.get("conclusion") or "").strip()
+            if summary and summary not in what_would_change_the_view:
+                what_would_change_the_view.append(
+                    f"New evidence confirms that {summary.lower()}."
+                )
+        for item in weakeners[:3]:
+            summary = str(item.get("summary") or item.get("event") or "").strip()
+            if summary and summary not in what_would_change_the_view:
+                what_would_change_the_view.append(
+                    f"New evidence shows that {summary.lower()} is not durable."
+                )
+        what_would_change_the_view = _dedupe([_ensure_sentence(item) for item in what_would_change_the_view])[:5]
+
+        top_diligence_questions: List[Dict[str, Any]] = []
+        sorted_unresolved = sorted(
+            unresolved_items,
+            key=lambda x: (0 if x.get("current_confidence") == "low" else 1, str(x.get("question") or "")),
+        )
+        for idx, item in enumerate(sorted_unresolved[:7]):
+            question = str(item.get("question") or "").strip()
+            if not question:
+                continue
+            top_diligence_questions.append(
+                {
+                    "rank": idx + 1,
+                    "question": question if question.endswith("?") else f"{question}?",
+                    "why_it_matters": str(item.get("why_it_matters") or "This question is decision-relevant.").strip(),
+                    "affected_analysts": _normalize_optional_string_list(item.get("affected_analysts")),
+                    "priority_reason": "Decision impact and unresolved disagreement.",
+                    "evidence_needed": str(item.get("evidence_needed") or "").strip(),
+                }
+            )
+
+        committee_summary = self._build_committee_summary_v2(
+            committee_view=committee_view,
+            committee_direction=committee_direction,
+            consensus_strength=consensus_strength,
+            shared_convictions=shared_convictions,
+            disagreements=major_disagreements,
+            strengtheners=strengtheners,
+            weakeners=weakeners,
+            unresolved_items=unresolved_items,
+            turning_points=turning_points,
+            evidence_confidence=evidence_confidence,
+        )
+
+        return {
+            "company_slug": self.company,
+            "committee_view": committee_view,
+            "committee_direction": committee_direction,
+            "consensus_strength": consensus_strength,
+            "strongest_shared_convictions": shared_convictions,
+            "major_disagreements": major_disagreements,
+            "disagreement_explanations": [
+                _truncate_text(item.get("reason_for_disagreement") or item.get("topic") or "", 260)
+                for item in major_disagreements
+            ][:7],
+            "thesis_strengtheners": strengtheners[:7],
+            "thesis_weakeners": weakeners[:7],
+            "unresolved_items": unresolved_items[:7],
+            "major_turning_points": turning_points[:6],
+            "financial_judgment": financial_judgment,
+            "business_quality_judgment": business_quality_judgment,
+            "management_judgment": management_judgment,
+            "capital_allocation_judgment": capital_allocation_judgment,
+            "risk_judgment": risk_judgment,
+            "evidence_confidence": evidence_confidence,
+            "what_would_change_the_view": what_would_change_the_view,
+            "top_diligence_questions": top_diligence_questions,
+            "committee_summary": committee_summary,
         }
 
     def _fallback_narrative_payload(self, skeleton: Dict[str, Any]) -> Dict[str, Any]:
@@ -2078,6 +3584,19 @@ class InvestmentCommitteeSynthesizer:
         normalized, analyst_reference_repairs = self._normalize_committee_analyst_references(
             normalized
         )
+        for item in normalized.get("areas_of_disagreement", []) or []:
+            if not isinstance(item, dict):
+                continue
+            disagreement_type = str(item.get("disagreement_type") or "").strip()
+            if not disagreement_type:
+                item["disagreement_type"] = "different_emphasis"
+                _record_enum_repair(
+                    enum_repairs,
+                    path="areas_of_disagreement[].disagreement_type",
+                    original=disagreement_type or None,
+                    normalized="different_emphasis",
+                    reason="missing_disagreement_type_defaulted",
+                )
         return normalized, {
             "metadata_repairs": metadata_repairs,
             "enum_repairs": enum_repairs,
@@ -2092,6 +3611,7 @@ class InvestmentCommitteeSynthesizer:
         included: Sequence[Dict[str, Any]],
         missing: Sequence[str],
         excluded: Sequence[str],
+        committee_input: Dict[str, Any] | None = None,
         metadata_repairs: Sequence[Dict[str, Any]] | None = None,
         enum_repairs: Sequence[Dict[str, Any]] | None = None,
         string_list_repairs: Sequence[Dict[str, Any]] | None = None,
@@ -2104,13 +3624,167 @@ class InvestmentCommitteeSynthesizer:
             missing=missing,
             excluded=excluded,
         )
+        pre_finalization = json.loads(json.dumps(validated, ensure_ascii=False))
         normalized_payload, normalized_repairs = self.normalize_committee_payload_for_validation(
             validated,
             included=included,
             missing=missing,
             excluded=excluded,
         )
-        validated = normalized_payload
+        validated = finalize_committee_financial_warnings(normalized_payload)
+        committee_financial_truth = dict((validated.get("financial_warning_manifest") or {}).get("committee_financial_truth") or {})
+        finalized_financial_view, blocked_stale_financial_warnings, financial_view_repairs = finalize_financial_committee_view(
+            validated.get("financial_committee_view") or {},
+            committee_financial_truth,
+        )
+        validated["financial_committee_view"] = finalized_financial_view
+        validated = finalize_committee_brief_for_user(
+            validated,
+            committee_financial_truth,
+            enable_financial_enrichment=False,
+        )
+        finalization_contract_repairs: List[Dict[str, Any]] = []
+        finalization_contract_violations: List[Dict[str, Any]] = []
+        guard_diagnostics: Dict[str, Any] = {
+            "company": self.company,
+            "generated_at": str(validated.get("generated_at") or "").strip() or utc_now(),
+        }
+
+        def _present(value: Any) -> bool:
+            if isinstance(value, str):
+                return bool(value.strip())
+            if isinstance(value, list):
+                return bool(value)
+            if isinstance(value, dict):
+                return bool(value)
+            return value is not None
+
+        def _event(
+            *,
+            field_path: str,
+            pre_value: Any,
+            post_value: Any,
+            transformation: str,
+            reason: str,
+        ) -> Dict[str, Any]:
+            return {
+                "failure_class": "COMMITTEE_FINALIZATION_CONTRACT_VIOLATION",
+                "field_path": field_path,
+                "pre_finalize_value_present": _present(pre_value),
+                "post_finalize_value_present": _present(post_value),
+                "transformation": transformation,
+                "reason": reason,
+            }
+
+        overall = validated.get("overall_committee_view")
+        pre_overall = pre_finalization.get("overall_committee_view") if isinstance(pre_finalization, dict) else {}
+        if not isinstance(overall, dict):
+            finalization_contract_violations.append(
+                _event(
+                    field_path="overall_committee_view",
+                    pre_value=pre_overall,
+                    post_value=overall,
+                    transformation="finalize_committee_brief_for_user",
+                    reason="required object missing or changed type after finalization",
+                )
+            )
+        else:
+            for key in ("summary", "dominant_tension"):
+                post_value = str(overall.get(key) or "").strip()
+                pre_value = str((pre_overall or {}).get(key) or "").strip() if isinstance(pre_overall, dict) else ""
+                if post_value:
+                    continue
+                if pre_value:
+                    overall[key] = pre_value
+                    finalization_contract_repairs.append(
+                        _event(
+                            field_path=f"overall_committee_view.{key}",
+                            pre_value=pre_value,
+                            post_value=post_value,
+                            transformation="finalize_committee_brief_for_user",
+                            reason="required text was emptied during finalization and restored from pre-finalization value",
+                        )
+                    )
+                else:
+                    finalization_contract_violations.append(
+                        _event(
+                            field_path=f"overall_committee_view.{key}",
+                            pre_value=pre_value,
+                            post_value=post_value,
+                            transformation="finalize_committee_brief_for_user",
+                            reason="required text missing after finalization and no supported pre-finalization value exists",
+                        )
+                    )
+
+        cleaned_unknowns: List[Dict[str, Any]] = []
+        pre_unknowns = pre_finalization.get("critical_unknowns") if isinstance(pre_finalization, dict) else []
+        for index, item in enumerate(validated.get("critical_unknowns", []) or []):
+            if not isinstance(item, dict):
+                cleaned_unknowns.append(item)
+                continue
+            unknown = str(item.get("unknown") or "").strip()
+            if unknown:
+                cleaned_unknowns.append(item)
+                continue
+            pre_item = pre_unknowns[index] if isinstance(pre_unknowns, list) and len(pre_unknowns) > index else None
+            finalization_contract_repairs.append(
+                _event(
+                    field_path=f"critical_unknowns[{index}].unknown",
+                    pre_value=pre_item.get("unknown") if isinstance(pre_item, dict) else None,
+                    post_value=unknown,
+                    transformation="finalize_committee_brief_for_user",
+                    reason="optional critical unknown was emptied during finalization and dropped from the list",
+                )
+            )
+        validated["critical_unknowns"] = cleaned_unknowns
+
+        if finalization_contract_repairs:
+            guard_diagnostics.setdefault("finalization_contract_repairs", []).extend(finalization_contract_repairs)
+        if finalization_contract_violations:
+            guard_diagnostics["finalization_contract_violations"] = finalization_contract_violations
+            guard_diagnostics["status"] = "finalization_contract_violation"
+            _write_json(self.diagnostics_path, guard_diagnostics)
+            raise ValueError(
+                "COMMITTEE_FINALIZATION_CONTRACT_VIOLATION: "
+                f"{json.dumps(finalization_contract_violations[:3], ensure_ascii=False)}"
+            )
+        if committee_input is not None:
+            v2_overlay = self._derive_committee_v2_overlay(
+                payload=validated,
+                committee_input=committee_input,
+                included=included,
+            )
+            validated.update(v2_overlay)
+            validated["analysis_mode"] = "committee_synthesis_v2"
+            validated["company_slug"] = self.company
+            validated["committee_summary"] = v2_overlay.get("committee_summary") or validated.get("committee_summary") or validated.get("overall_committee_view", {}).get("summary", "")
+            validated["committee_view"] = v2_overlay.get("committee_view") or validated.get("committee_view")
+            validated["committee_direction"] = v2_overlay.get("committee_direction") or validated.get("committee_direction")
+            validated["consensus_strength"] = v2_overlay.get("consensus_strength") or validated.get("consensus_strength")
+            validated["strongest_shared_convictions"] = v2_overlay.get("strongest_shared_convictions") or validated.get("strongest_shared_convictions")
+            validated["major_disagreements"] = v2_overlay.get("major_disagreements") or validated.get("major_disagreements")
+            validated["disagreement_explanations"] = v2_overlay.get("disagreement_explanations") or validated.get("disagreement_explanations")
+            validated["thesis_strengtheners"] = v2_overlay.get("thesis_strengtheners") or validated.get("thesis_strengtheners")
+            validated["thesis_weakeners"] = v2_overlay.get("thesis_weakeners") or validated.get("thesis_weakeners")
+            validated["unresolved_items"] = v2_overlay.get("unresolved_items") or validated.get("unresolved_items")
+            validated["major_turning_points"] = v2_overlay.get("major_turning_points") or validated.get("major_turning_points")
+            validated["financial_judgment"] = v2_overlay.get("financial_judgment") or validated.get("financial_judgment")
+            validated["business_quality_judgment"] = v2_overlay.get("business_quality_judgment") or validated.get("business_quality_judgment")
+            validated["management_judgment"] = v2_overlay.get("management_judgment") or validated.get("management_judgment")
+            validated["capital_allocation_judgment"] = v2_overlay.get("capital_allocation_judgment") or validated.get("capital_allocation_judgment")
+            validated["risk_judgment"] = v2_overlay.get("risk_judgment") or validated.get("risk_judgment")
+            validated["evidence_confidence"] = v2_overlay.get("evidence_confidence") or validated.get("evidence_confidence")
+            validated["what_would_change_the_view"] = v2_overlay.get("what_would_change_the_view") or validated.get("what_would_change_the_view")
+            validated["top_diligence_questions"] = v2_overlay.get("top_diligence_questions") or validated.get("top_diligence_questions")
+        for item in validated.get("areas_of_disagreement", []) or []:
+            if not isinstance(item, dict):
+                continue
+            disagreement_type = item.get("disagreement_type")
+            assert disagreement_type in {
+                "true_disagreement",
+                "different_emphasis",
+                "risk_weighting_difference",
+            }, "areas_of_disagreement must contain canonical disagreement_type before final validation"
         validated["years_considered"] = self._years_considered(included)
         validated["evidence_quality_notes"] = self._load_inputs()[3]
         synthesis_limits = list(validated.get("synthesis_limits", []) or [])
@@ -2144,6 +3818,8 @@ class InvestmentCommitteeSynthesizer:
                 "financial_committee_view.financial_disagreements",
             ],
         }
+        if finalization_contract_repairs:
+            diagnostics["finalization_contract_repairs"] = list(finalization_contract_repairs)
         combined_metadata_repairs = list(metadata_repairs or []) + list(
             normalized_repairs.get("metadata_repairs") or []
         )
@@ -2164,6 +3840,19 @@ class InvestmentCommitteeSynthesizer:
             diagnostics["string_list_repairs"] = combined_string_list_repairs
         if combined_analyst_reference_repairs:
             diagnostics["analyst_reference_repairs"] = combined_analyst_reference_repairs
+        if committee_financial_truth:
+            diagnostics["committee_financial_truth"] = committee_financial_truth
+        if blocked_stale_financial_warnings:
+            diagnostics["blocked_stale_financial_warnings"] = blocked_stale_financial_warnings
+        if financial_view_repairs:
+            diagnostics["owner_earnings_language_repairs"] = financial_view_repairs
+            diagnostics["validation_repairs_applied"] = financial_view_repairs
+        if validated.get("financial_warning_manifest"):
+            diagnostics["recomputed_financial_warning_manifest"] = validated.get("financial_warning_manifest")
+            if (validated.get("financial_warning_manifest") or {}).get("blocked_stale_financial_warnings"):
+                diagnostics["blocked_stale_financial_warnings"] = (
+                    validated.get("financial_warning_manifest") or {}
+                ).get("blocked_stale_financial_warnings")
         sanitized_input = _sanitize_committee_payload(
             validated,
             diagnostics=diagnostics,
@@ -2558,6 +4247,12 @@ class InvestmentCommitteeSynthesizer:
                 f"committee_synthesis.json not found for cleanup: {self.output_path}"
             )
         payload = _load_json(self.output_path)
+        committee_input = self._build_committee_input(
+            included=included,
+            missing=missing,
+            excluded=excluded,
+            warning_notes=_warning_notes,
+        )
         payload, repairs = self.normalize_committee_payload_for_validation(
             payload,
             included=included,
@@ -2569,6 +4264,7 @@ class InvestmentCommitteeSynthesizer:
             included=included,
             missing=missing,
             excluded=excluded,
+            committee_input=committee_input,
             metadata_repairs=repairs["metadata_repairs"],
             enum_repairs=repairs["enum_repairs"],
             string_list_repairs=repairs["string_list_repairs"],
@@ -2762,6 +4458,7 @@ class InvestmentCommitteeSynthesizer:
             included=included,
             missing=missing,
             excluded=excluded,
+            committee_input=committee_input,
             metadata_repairs=repairs["metadata_repairs"],
             enum_repairs=repairs["enum_repairs"],
             string_list_repairs=repairs["string_list_repairs"],

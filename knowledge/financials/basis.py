@@ -90,7 +90,10 @@ def available_basis_options(basis_views: Dict[str, Dict[str, Dict[str, Dict[str,
             for field_name, entry in fields.items():
                 if not isinstance(entry, dict):
                     continue
-                has_value = entry.get("value_original") not in (None, "", []) or isinstance(entry.get("value_crore"), (int, float))
+                has_value = any(
+                    isinstance(entry.get(field_name), (int, float))
+                    for field_name in ("value_crore", "value_per_share", "value_shares")
+                )
                 if not has_value:
                     continue
                 field_path = f"{section_name}.{field_name}"
@@ -115,17 +118,22 @@ def available_basis_options(basis_views: Dict[str, Dict[str, Dict[str, Dict[str,
 def choose_preferred_basis(basis_views: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]]) -> Tuple[str, List[str], str, str]:
     summary = available_basis_options(basis_views)
     available = [basis for basis in ("consolidated", "standalone", "unknown") if summary[basis]["field_count"] > 0]
-    consolidated_ready = summary["consolidated"]["critical_count"] >= 2 or summary["consolidated"]["field_count"] >= 5
-    standalone_ready = summary["standalone"]["critical_count"] >= 2 or summary["standalone"]["field_count"] >= 5
 
-    if summary["consolidated"]["field_count"] > 0 and consolidated_ready:
-        confidence = "high" if summary["consolidated"]["critical_count"] >= 4 else "medium"
-        return "consolidated", available, "selected consolidated because it is available and reasonably complete", confidence
-    if summary["standalone"]["field_count"] > 0 and standalone_ready:
-        confidence = "high" if summary["standalone"]["critical_count"] >= 4 else "medium"
-        return "standalone", available, "selected standalone because consolidated was unavailable or less complete", confidence
-    if summary["consolidated"]["field_count"] > 0:
-        return "consolidated", available, "selected consolidated because it was the only explicit basis available", "medium"
-    if summary["standalone"]["field_count"] > 0:
-        return "standalone", available, "selected standalone because it was the only explicit basis available", "medium"
+    explicit_bases = [basis for basis in ("consolidated", "standalone") if summary[basis]["field_count"] > 0]
+    if explicit_bases:
+        preferred_explicit = max(
+            explicit_bases,
+            key=lambda basis: (
+                summary[basis]["critical_count"],
+                summary[basis]["field_count"],
+                1 if basis == "consolidated" else 0,
+            ),
+        )
+        confidence = "high" if summary[preferred_explicit]["critical_count"] >= 4 else "medium"
+        if preferred_explicit == "consolidated":
+            reason = "selected consolidated because it has the stronger explicit basis signal"
+        else:
+            reason = "selected standalone because it has the stronger explicit basis signal"
+        return preferred_explicit, available, reason, confidence
+
     return "unknown", available, "basis could not be determined from available financial table evidence", "low"

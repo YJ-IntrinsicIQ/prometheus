@@ -155,6 +155,8 @@ SHARES_OUTSTANDING_ALLOWED_LINE_TOKENS = (
     "issued subscribed and fully paid up",
     "equity shares outstanding",
     "outstanding equity shares",
+    "number of shares outstanding",
+    "number of equity shares outstanding",
 )
 
 SHARES_OUTSTANDING_DISALLOWED_LINE_TOKENS = (

@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import time
+from collections import defaultdict
 from pathlib import Path
 import re
 
@@ -18,30 +19,45 @@ from knowledge.ai.input_packs import call_llm_with_input_pack  # noqa: E402
 from knowledge.business_understanding import run_business_understanding  # noqa: E402
 from knowledge.discovery_runtime import DiscoveryRuntime  # noqa: E402
 from knowledge.module_extractor import ModuleExtractor  # noqa: E402
+from knowledge.module_extractor.schema import ModuleExtractionResult  # noqa: E402
 from knowledge.question_engine import QuestionPlanner  # noqa: E402
 from knowledge.question_engine import QuestionRegistry  # noqa: E402
 from knowledge.retrieval.retriever import HybridRetriever  # noqa: E402
-from knowledge.company_memory import CompanyMemoryAggregateBuilder, MultiYearCompanyMemoryBuilder  # noqa: E402
+from knowledge.company_memory import CompanyMemoryAggregateBuilder, ManagementCommitmentsBuilder, MultiYearCompanyMemoryBuilder  # noqa: E402
 from knowledge.company_memory.pcim_multi_year_builder import audit_saved_pcim_manifest  # noqa: E402
 from knowledge.cim_contract import CIMContractBuilder  # noqa: E402
 from knowledge.business_identity import ensure_business_identity_contract  # noqa: E402
 from knowledge.artifact_audit import run_company_artifact_audit  # noqa: E402
 from knowledge.evidence_layer import write_evidence_layer_summary  # noqa: E402
+from knowledge.document_intake import build_document_intake_report, read_document_text  # noqa: E402
+from intelligence.management_commentary import ManagementCommentaryBuilder  # noqa: E402
+from intelligence.capital_allocation_outcomes import CapitalAllocationOutcomesBuilder  # noqa: E402
+from intelligence.management_quality import ManagementQualityBuilder  # noqa: E402
 from intelligence.investor_panel import (  # noqa: E402
     CommitteeBriefRenderer,
     CommitteeBriefQAGate,
+    finalize_analyst_financial_warnings,
+    finalize_analyst_validation_status,
     InvestmentCommitteeSynthesizer,
     InvestorBriefBuilder,
     InvestorPanelRunner,
     find_forbidden_recommendation_language,
 )
+from intelligence.ask_intrinsiciq import generate_ask_intrinsiciq_view  # noqa: E402
+from intelligence.projects import ProjectsBuilder  # noqa: E402
+from intelligence.capacity import CapacityEvolutionBuilder  # noqa: E402
+from intelligence.risks import build_risk_evolution  # noqa: E402
 from embeddings.index_builder import ensure_company_year_index, indexed_chunk_count  # noqa: E402
 from scripts.pdf_reader import extract_pages  # noqa: E402
 from scripts.smart_chunker import chunk_pages  # noqa: E402
-from knowledge.question_engine.schema import DiscoveryPlan  # noqa: E402
+from knowledge.question_engine.schema import DiscoveryPlan, QuestionModule  # noqa: E402
+from knowledge.discovery_runtime.schema import DiscoveryResult, ExecutionStatistics  # noqa: E402
 from knowledge.financials import (  # noqa: E402
     write_financial_memory_artifacts,
     write_financial_audit_report,
+    write_financial_basis_resolution,
+    write_financial_fact_registry,
+    write_investor_financial_modules,
     write_financial_pcim_validation,
     write_financial_quality_scorecard,
     write_financial_driver_attribution,
@@ -102,6 +118,40 @@ INTELLIGENCE_OUTPUT_FILES = [
     "company_intelligence.json",
     "management_summary.json",
 ]
+MANAGEMENT_COMMITMENTS_OUTPUT_FILES = [
+    "management_commitments.json",
+    "commitment_timeline.json",
+    "commitment_validation.json",
+    "management_commitments_manifest.json",
+]
+MANAGEMENT_COMMENTARY_OUTPUT_FILES = [
+    "commentary_themes.json",
+    "commentary_timelines.json",
+    "commentary_assessments.json",
+    "commentary_validation.json",
+    "commentary_manifest.json",
+]
+PROJECTS_OUTPUT_FILES = [
+    "projects_registry.json",
+    "project_timelines.json",
+    "project_assessments.json",
+    "projects_validation.json",
+    "projects_manifest.json",
+]
+CAPACITY_EVOLUTION_OUTPUT_FILES = [
+    "capacity_registry.json",
+    "capacity_timelines.json",
+    "capacity_assessments.json",
+    "capacity_validation.json",
+    "capacity_manifest.json",
+]
+RISK_EVOLUTION_OUTPUT_FILES = [
+    "risk_registry.json",
+    "risk_timelines.json",
+    "risk_assessments.json",
+    "risk_validation.json",
+    "risk_manifest.json",
+]
 FINANCIAL_DISCOVERY_OUTPUT_FILES = [
     "financial_discovery.json",
 ]
@@ -116,6 +166,14 @@ FINANCIAL_VALIDATION_OUTPUT_FILES = [
 ]
 FINANCIAL_RECONCILIATION_OUTPUT_FILES = [
     "financial_reconciliation_report.json",
+]
+FINANCIAL_BASIS_RESOLUTION_OUTPUT_FILES = [
+    "financial_basis_resolution.json",
+]
+FINANCIAL_TRUTH_REGISTRY_OUTPUT_FILES = [
+    "financial_fact_registry.json",
+    "financial_truth_reconciliation_report.json",
+    "financial_artifact_quarantine_report.json",
 ]
 FINANCIAL_RATIO_OUTPUT_FILES = [
     "financial_ratios.json",
@@ -151,6 +209,8 @@ FINANCIAL_PCIM_VALIDATION_OUTPUT_FILES = [
 ]
 FINANCIAL_MEMORY_OUTPUT_FILES = [
     "financial_year_index.json",
+    "financial_memory_manifest.json",
+    "financial_truth_pack.json",
     "financial_trends.json",
     "financial_quality_summary.json",
     "financial_quality_evolution.json",
@@ -159,6 +219,38 @@ FINANCIAL_MEMORY_OUTPUT_FILES = [
     "financial_driver_attribution.json",
     "financial_memory_summary.json",
     "financial_memory_audit_report.json",
+]
+INVESTOR_FINANCIAL_MODULE_OUTPUT_FILES = [
+    "owner_earnings_bridge.json",
+    "capital_allocation_roi_ledger.json",
+    "working_capital_quality_drilldown.json",
+    "order_revenue_cash_conversion_tracker.json",
+    "per_share_compounding_analysis.json",
+    "investor_financial_modules_manifest.json",
+]
+CAPITAL_ALLOCATION_OUTCOMES_OUTPUT_FILES = [
+    "capital_allocation_outcomes.json",
+    "capital_allocation_timelines.json",
+    "capital_allocation_assessments.json",
+    "capital_allocation_validation.json",
+    "capital_allocation_manifest.json",
+]
+MANAGEMENT_QUALITY_OUTPUT_FILES = [
+    "management_quality_summary.json",
+    "management_quality_dimensions.json",
+    "management_quality_evidence.json",
+    "management_quality_validation.json",
+    "management_quality_manifest.json",
+]
+ASK_INTRINSICIQ_OUTPUT_FILES = [
+    "company_research_view.json",
+    "business_journey.json",
+    "products_services.json",
+    "answer_cards.json",
+    "financial_visual_summaries.json",
+    "uncertainty_map.json",
+    "ask_intrinsiciq_manifest.json",
+    "ask_intrinsiciq_validation_report.json",
 ]
 ALL_STAGE_SEQUENCE = [
     "preflight",
@@ -172,8 +264,32 @@ ALL_STAGE_SEQUENCE = [
     "cim",
     "pcim",
 ]
+PRODUCTION_STAGE_SEQUENCE = [
+    "preflight",
+    "discovery",
+    "extraction",
+    "cleaning",
+    "business_understanding",
+    "business_intelligence",
+    "intelligence",
+    "financials",
+    "multi_year_memory",
+    "financial_memory",
+    "investor_financials",
+    "cim",
+    "pcim",
+    "financial_pcim_validation",
+    "audit",
+    "panel",
+    "ask_intrinsiciq",
+]
+STAGE_SEQUENCE_PROFILES = {
+    "all": ALL_STAGE_SEQUENCE,
+    "production": PRODUCTION_STAGE_SEQUENCE,
+}
 YEAR_REQUIRED_STAGES = {
     "all",
+    "production",
     "business_understanding",
     "business_intelligence",
     "financial_discovery",
@@ -181,6 +297,8 @@ YEAR_REQUIRED_STAGES = {
     "financial_normalization",
     "financial_validation",
     "financial_reconciliation",
+    "financial_basis_resolution",
+    "financial_truth_registry",
     "financial_ratios",
     "financial_growth",
     "corporate_actions",
@@ -194,6 +312,12 @@ YEAR_REQUIRED_STAGES = {
 }
 COMPANY_LEVEL_STAGES = {
     "company_memory",
+    "management_commitments",
+    "management_commentary",
+    "capital_allocation_outcomes",
+    "management_quality",
+    "projects",
+    "capacity_evolution",
     "multi_year_memory",
     "cim",
     "pcim",
@@ -207,12 +331,27 @@ COMPANY_LEVEL_STAGES = {
     "financial_trends",
     "financial_attribution",
     "financial_memory",
+    "investor_financials",
+    "ask_intrinsiciq",
 }
 STAGE_CATALOG = {
     "all": {
         "description": "Runs the canonical year-level pipeline in dependency order.",
         "requires": ["company", "year", "raw annual report", "non-empty chunks"],
         "outputs": ["run_summary.json", "year intelligence artifacts", "cim_v1.json", "pcim_v1.json"],
+        "llm_calls": True,
+        "scope": "company/year",
+        "year_required": True,
+    },
+    "production": {
+        "description": "Runs the full customer-facing Ask IntrinsicIQ production pipeline in dependency order.",
+        "requires": ["company", "year", "raw annual report", "auditable downstream company-memory outputs"],
+        "outputs": [
+            "run_summary.json",
+            "year intelligence artifacts",
+            "company_memory financials and investor panel artifacts",
+            "company_memory ask_intrinsiciq/*",
+        ],
         "llm_calls": True,
         "scope": "company/year",
         "year_required": True,
@@ -277,6 +416,31 @@ STAGE_CATALOG = {
         "description": "Checks normalized fundamentals for source relevance and value-type integrity before ratios and growth are calculated.",
         "requires": ["normalized_fundamentals.json", "financial_validation_report.json"],
         "outputs": ["companies/<company>/<year>/financials/financial_reconciliation_report.json"],
+        "llm_calls": False,
+        "scope": "company/year",
+        "year_required": True,
+    },
+    "financial_basis_resolution": {
+        "description": "Resolves standalone versus consolidated basis from deterministic document and table evidence, then safely enriches yearly financial artifacts.",
+        "requires": [
+            "normalized_fundamentals.json",
+            "financial_discovery.json / raw_financial_tables.json / clean_chunks.json if available",
+        ],
+        "outputs": ["companies/<company>/<year>/financials/financial_basis_resolution.json"],
+        "llm_calls": False,
+        "scope": "company/year",
+        "year_required": True,
+    },
+    "financial_truth_registry": {
+        "description": "Builds a year-level financial fact registry and truth-reconciliation report from deterministic financial artifacts.",
+        "requires": [
+            "normalized_fundamentals.json",
+            "financial_ratios.json / financial_growth.json / financial_quality_summary.json if available",
+        ],
+        "outputs": [
+            "companies/<company>/<year>/financials/financial_fact_registry.json",
+            "companies/<company>/<year>/financials/financial_truth_reconciliation_report.json",
+        ],
         "llm_calls": False,
         "scope": "company/year",
         "year_required": True,
@@ -388,6 +552,28 @@ STAGE_CATALOG = {
         "scope": "company",
         "year_required": False,
     },
+    "investor_financials": {
+        "description": "Builds investor-facing deterministic financial modules from reconciled company-memory financial truth.",
+        "requires": [
+            "company_memory/financials/financial_truth_pack.json or year-level truth-registry artifacts",
+            "at least one usable year in the financial truth loader",
+        ],
+        "outputs": [f"companies/<company>/company_memory/financials/investor_financial_modules/{name}" for name in INVESTOR_FINANCIAL_MODULE_OUTPUT_FILES],
+        "llm_calls": False,
+        "scope": "company",
+        "year_required": False,
+    },
+    "ask_intrinsiciq": {
+        "description": "Builds the canonical Ask IntrinsicIQ backend output layer and writes a minimal UI-ready company research view skeleton.",
+        "requires": [
+            "existing company-memory sources if available",
+            "no year context",
+        ],
+        "outputs": [f"companies/<company>/company_memory/ask_intrinsiciq/{name}" for name in ASK_INTRINSICIQ_OUTPUT_FILES],
+        "llm_calls": False,
+        "scope": "company",
+        "year_required": False,
+    },
     "financial_pcim_validation": {
         "description": "Validates that year-level financial PCIM sections stay compact, traceable, warning-aware, and aligned with deterministic financial artifacts.",
         "requires": [
@@ -399,10 +585,97 @@ STAGE_CATALOG = {
         "scope": "company/year",
         "year_required": True,
     },
-    "company_memory": {
+        "company_memory": {
         "description": "Builds company-level aggregate memory from yearly intelligence snapshots.",
         "requires": ["at least one valid yearly intelligence snapshot"],
         "outputs": ["companies/<company>/company_memory/*"],
+        "llm_calls": False,
+        "scope": "company",
+        "year_required": False,
+    },
+    "management_commitments": {
+        "description": "Builds canonical management commitments memory with progression, validation, and manifest outputs.",
+        "requires": [
+            "at least one valid yearly intelligence snapshot",
+            "companies/<company>/<year>/intelligence/company_intelligence.json",
+            "companies/<company>/<year>/intelligence/management_summary.json",
+        ],
+        "outputs": [f"companies/<company>/company_memory/management_commitments/{name}" for name in MANAGEMENT_COMMITMENTS_OUTPUT_FILES],
+        "llm_calls": False,
+        "scope": "company",
+        "year_required": False,
+    },
+    "management_commentary": {
+        "description": "Builds canonical management commentary evolution intelligence with progression, validation, and manifest outputs.",
+        "requires": [
+            "at least one valid yearly intelligence snapshot",
+            "companies/<company>/<year>/intelligence/company_intelligence.json",
+            "companies/<company>/<year>/intelligence/management_summary.json",
+        ],
+        "outputs": [f"companies/<company>/company_memory/management_commentary/{name}" for name in MANAGEMENT_COMMENTARY_OUTPUT_FILES],
+        "llm_calls": False,
+        "scope": "company",
+        "year_required": False,
+    },
+    "capital_allocation_outcomes": {
+        "description": "Builds canonical capital allocation outcomes intelligence from the existing capital-allocation ledger, financial timeline, and linked company-memory evidence.",
+        "requires": [
+            "companies/<company>/company_memory/financials/investor_financial_modules/capital_allocation_roi_ledger.json",
+            "companies/<company>/company_memory/financials/capital_allocation_financial_timeline.json",
+            "linked company-memory evidence if available",
+        ],
+        "outputs": [f"companies/<company>/company_memory/capital_allocation_outcomes/{name}" for name in CAPITAL_ALLOCATION_OUTCOMES_OUTPUT_FILES],
+        "llm_calls": False,
+        "scope": "company",
+        "year_required": False,
+    },
+    "management_quality": {
+        "description": "Builds canonical management-quality synthesis from longitudinal company-memory evidence across commitments, projects, capacity, risks, commentary, capital allocation, and per-share economics.",
+        "requires": [
+            "companies/<company>/company_memory/management_commitments/management_commitments.json",
+            "companies/<company>/company_memory/projects/projects_registry.json",
+            "companies/<company>/company_memory/capacity/capacity_registry.json",
+            "companies/<company>/company_memory/management_commentary/commentary_themes.json",
+            "companies/<company>/company_memory/financials/investor_financial_modules/owner_earnings_bridge.json if available",
+            "companies/<company>/company_memory/financials/investor_financial_modules/per_share_compounding_analysis.json if available",
+        ],
+        "outputs": [f"companies/<company>/company_memory/management_quality/{name}" for name in MANAGEMENT_QUALITY_OUTPUT_FILES],
+        "llm_calls": False,
+        "scope": "company",
+        "year_required": False,
+    },
+    "projects": {
+        "description": "Builds canonical projects intelligence with progression, execution assessment, and manifest outputs.",
+        "requires": [
+            "companies/<company>/<year>/extracted/clean_projects.json",
+            "companies/<company>/<year>/extracted/clean_capacity.json",
+            "company_memory/management_commitments/management_commitments.json if available",
+        ],
+        "outputs": [f"companies/<company>/company_memory/projects/{name}" for name in PROJECTS_OUTPUT_FILES],
+        "llm_calls": False,
+        "scope": "company",
+        "year_required": False,
+    },
+    "capacity_evolution": {
+        "description": "Builds canonical capacity-evolution intelligence from existing company-memory evidence and progression outputs.",
+        "requires": [
+            "companies/<company>/<year>/extracted/clean_capacity.json",
+            "company_memory/projects/projects_registry.json if available",
+            "company_memory/management_commitments/management_commitments.json if available",
+        ],
+        "outputs": [f"companies/<company>/company_memory/capacity/{name}" for name in CAPACITY_EVOLUTION_OUTPUT_FILES],
+        "llm_calls": False,
+        "scope": "company",
+        "year_required": False,
+    },
+    "risk_evolution": {
+        "description": "Builds canonical risk-evolution intelligence from existing company-memory evidence and progression outputs.",
+        "requires": [
+            "companies/<company>/<year>/intelligence/company_intelligence.json",
+            "companies/<company>/<year>/intelligence/management_summary.json",
+            "companies/<company>/<year>/financials/financial_audit_report.json if available",
+        ],
+        "outputs": [f"companies/<company>/company_memory/risks/{name}" for name in RISK_EVOLUTION_OUTPUT_FILES],
         "llm_calls": False,
         "scope": "company",
         "year_required": False,
@@ -709,13 +982,7 @@ def _resolve_annual_report_path(context):
 
 
 def _read_text_from_document(path):
-    suffix = path.suffix.lower()
-    if suffix == ".pdf":
-        pages = extract_pages(path)
-        return "\n".join((page.get("text") or "") for page in pages).strip()
-    if suffix in {".txt", ".md"}:
-        return path.read_text(encoding="utf-8").strip()
-    return ""
+    return read_document_text(path, allow_ocr=True)
 
 
 def _load_json_payload(path):
@@ -809,6 +1076,13 @@ def _run_preflight(context):
             f"Place the annual report PDF in: {context.raw_dir}"
         )
 
+    intake_report = build_document_intake_report(raw_docs, allow_ocr=True)
+    intake_report_path = context.extracted_dir / "document_intake_report.json"
+    intake_report_path.write_text(
+        json.dumps(intake_report, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
     extractable_docs = []
     for path in raw_docs:
         text = _read_text_from_document(path)
@@ -816,9 +1090,31 @@ def _run_preflight(context):
             extractable_docs.append(path)
 
     if not extractable_docs:
+        classified = [record for record in intake_report.get("documents", []) if str(record.get("classification", "")).strip()]
+        required_ocr = [record for record in classified if record.get("ocr_required")]
+        if required_ocr and not intake_report.get("ocr_available"):
+            raise RuntimeError(
+                "OCR_REQUIRED: image-only or substantially image-only PDFs were detected, "
+                "but no OCR infrastructure is available. "
+                f"See {intake_report_path} for document classification details."
+            )
+
+        blocked_classes = sorted(
+            {
+                str(record.get("classification", "UNSUPPORTED_PDF"))
+                for record in classified
+                if not record.get("has_extractable_text")
+            }
+        )
+        if blocked_classes:
+            raise RuntimeError(
+                "DOCUMENT_INTAKE_BLOCKED: "
+                f"{', '.join(blocked_classes)}. See {intake_report_path} for details."
+            )
+
         raise RuntimeError(
             "Raw documents found, but no extractable text was produced. "
-            "The PDF may be scanned/image-only or unsupported."
+            f"See {intake_report_path} for document intake details."
         )
 
     pdf_docs = [path for path in extractable_docs if path.suffix.lower() in INDEXABLE_RAW_DOC_SUFFIXES]
@@ -1026,6 +1322,76 @@ def _canonicalize_business_classification(business_classification):
     return classification
 
 
+def _prepare_business_intelligence_runtime_plan(plan):
+    loaded_modules = [
+        module_id
+        for module_id in getattr(plan, "loaded_modules", [])
+        if isinstance(module_id, str) and module_id.strip()
+    ]
+    if len(loaded_modules) <= 1:
+        return plan, None, loaded_modules
+
+    questions = list(getattr(plan, "questions", []))
+    synthetic_module = QuestionModule(
+        module_id="business_intelligence",
+        module_name="Business Intelligence",
+        description="Merged business intelligence question batch",
+        questions=questions,
+    )
+    runtime_plan = DiscoveryPlan(
+        business_dnas=list(getattr(plan, "business_dnas", [])),
+        loaded_modules=[synthetic_module.module_id],
+        questions=questions,
+    )
+    return runtime_plan, [synthetic_module], loaded_modules
+
+
+def _split_business_intelligence_results(result, original_modules, module_lookup):
+    if len(original_modules) <= 1:
+        return result
+
+    question_to_module = {}
+    for module in module_lookup.values():
+        for question in getattr(module, "questions", []):
+            question_to_module[question.id] = module.module_id
+
+    answers_by_module = {module_id: [] for module_id in original_modules}
+    for module_result in getattr(result, "module_results", []):
+        for answer in getattr(module_result, "answers", []):
+            module_id = question_to_module.get(answer.question_id)
+            if module_id in answers_by_module:
+                answers_by_module[module_id].append(answer)
+
+    split_results = []
+    for module_id in original_modules:
+        module = module_lookup.get(module_id)
+        module_name = module.module_name if module is not None else module_id
+        split_results.append(
+            ModuleExtractionResult(
+                module_id=module_id,
+                module_name=module_name,
+                answers=answers_by_module.get(module_id, []),
+            )
+        )
+
+    statistics = ExecutionStatistics(
+        modules_executed=len(original_modules),
+        questions_asked=result.statistics.questions_asked,
+        questions_answered=result.statistics.questions_answered,
+        questions_not_found=result.statistics.questions_not_found,
+        average_confidence=result.statistics.average_confidence,
+        execution_time_seconds=result.statistics.execution_time_seconds,
+        retrieved_chunks=result.statistics.retrieved_chunks,
+        llm_calls=result.statistics.llm_calls,
+    )
+    return DiscoveryResult(
+        business_classification=result.business_classification,
+        executed_modules=list(original_modules),
+        module_results=split_results,
+        statistics=statistics,
+    )
+
+
 def _resolve_positive_int_env(name):
     raw_value = os.getenv(name)
     if raw_value is None or not raw_value.strip():
@@ -1112,9 +1478,11 @@ def run_business_intelligence_stage(context=None, bundle=None):
 
     _write_json("discovery_plan.json", plan.to_dict())
 
+    runtime_plan, runtime_module_definitions, original_loaded_modules = _prepare_business_intelligence_runtime_plan(plan)
     runtime = DiscoveryRuntime(
         retriever=_build_runtime_retriever(context),
         extractor=_build_runtime_extractor(),
+        module_definitions=runtime_module_definitions,
     )
     runtime_classification = {
         **business_classification,
@@ -1125,7 +1493,16 @@ def run_business_intelligence_stage(context=None, bundle=None):
             "year": context.year,
             **runtime_classification,
         }
-    result = runtime.run(plan, business_classification=runtime_classification)
+    result = runtime.run(runtime_plan, business_classification=runtime_classification)
+    if len(original_loaded_modules) > 1:
+        registry = QuestionRegistry()
+        module_lookup = {}
+        for module_id in original_loaded_modules:
+            try:
+                module_lookup[module_id] = registry.get_module(module_id)
+            except Exception:
+                continue
+        result = _split_business_intelligence_results(result, original_loaded_modules, module_lookup)
 
     _write_json("module_results.json", {"module_results": [item.to_dict() for item in result.module_results]})
     _write_json("discovery_runtime.json", result.to_dict())
@@ -1403,6 +1780,74 @@ def run_financial_reconciliation(context=None):
     return output_path
 
 
+def run_financial_basis_resolution(context=None):
+    context = _ensure_context("financial_basis_resolution", context)
+    set_context(context)
+
+    normalized_path = context.financials_dir / "normalized_fundamentals.json"
+    if not normalized_path.exists():
+        raise RuntimeError(
+            f"financial_basis_resolution requires normalized_fundamentals.json for {context.company} {context.year}"
+        )
+
+    output_path = context.financials_dir / "financial_basis_resolution.json"
+    report = write_financial_basis_resolution(
+        company=context.company,
+        year=context.year,
+        financial_root=context.financials_dir,
+        output_path=output_path,
+    )
+    print("[FINANCIAL BASIS RESOLUTION]")
+    print(f"Company: {context.company}")
+    print(f"Year: {context.year}")
+    print(f"Output: {output_path}")
+    print(f"Resolved Basis: {report.resolved_basis}")
+    print(f"Confidence: {report.confidence}")
+    print(f"Field Resolutions: {len(report.field_resolutions)}")
+    print(f"Warnings: {len(report.warnings)}")
+    return output_path
+
+
+def run_financial_truth_registry(context=None):
+    context = _ensure_context("financial_truth_registry", context)
+    set_context(context)
+
+    normalized_path = context.financials_dir / "normalized_fundamentals.json"
+    if not normalized_path.exists():
+        raise RuntimeError(
+            f"financial_truth_registry requires normalized_fundamentals.json for {context.company} {context.year}"
+        )
+
+    registry_output_path = context.financials_dir / "financial_fact_registry.json"
+    reconciliation_output_path = context.financials_dir / "financial_truth_reconciliation_report.json"
+    quarantine_output_path = context.financials_dir / "financial_artifact_quarantine_report.json"
+    registry, report, quarantine_report = write_financial_fact_registry(
+        company=context.company,
+        year=context.year,
+        financial_root=context.financials_dir,
+        registry_output_path=registry_output_path,
+        reconciliation_output_path=reconciliation_output_path,
+        quarantine_output_path=quarantine_output_path,
+    )
+    print("[FINANCIAL TRUTH REGISTRY]")
+    print(f"Company: {context.company}")
+    print(f"Year: {context.year}")
+    print(f"Registry Output: {registry_output_path}")
+    print(f"Reconciliation Output: {reconciliation_output_path}")
+    print(f"Quarantine Output: {quarantine_output_path}")
+    print(
+        f"Facts: {len(registry.available_facts) + len(registry.derived_facts) + len(registry.partial_facts) + len(registry.unreliable_facts) + len(registry.invalid_facts)}"
+    )
+    print(f"Truth Status: {registry.downstream_readiness.get('financial_truth_status', 'unknown')}")
+    print(f"Contradictions: {len(report.contradictions_found)}")
+    print(f"Quarantined Facts: {len(quarantine_report.quarantined_facts)}")
+    return {
+        "financial_fact_registry.json": registry_output_path,
+        "financial_truth_reconciliation_report.json": reconciliation_output_path,
+        "financial_artifact_quarantine_report.json": quarantine_output_path,
+    }
+
+
 def run_financial_ratios(context=None):
     context = _ensure_context("financial_ratios", context)
     set_context(context)
@@ -1565,6 +2010,12 @@ def run_financials_stage(context=None):
 
     if stage_error is not None:
         raise stage_error
+    if str(report.status).lower() == "fail":
+        details = "; ".join(str(item) for item in report.hard_failures[:3])
+        raise RuntimeError(
+            f"financials audit failed for {context.company} {context.year}"
+            + (f": {details}" if details else "")
+        )
 
     return {"financial_audit_report.json": output_path}
 
@@ -1641,12 +2092,38 @@ def run_financial_attribution_stage(company, context=None):
     return {"financial_driver_attribution.json": output_path}
 
 
+def _refresh_year_level_financial_quality(company):
+    company_root = Path("companies") / company
+    written = {}
+    for year_dir in sorted(
+        (
+            child
+            for child in company_root.iterdir()
+            if child.is_dir() and child.name.lower().startswith("fy")
+        ),
+        key=lambda child: child.name.lower(),
+    ) if company_root.exists() else []:
+        financial_root = year_dir / "financials"
+        if not (financial_root / "normalized_fundamentals.json").exists():
+            continue
+        output_path = financial_root / "financial_quality_summary.json"
+        write_financial_quality_summary(
+            company=company,
+            year=year_dir.name,
+            financial_root=financial_root,
+            output_path=output_path,
+        )
+        written[f"{year_dir.name}/financial_quality_summary.json"] = output_path
+    return written
+
+
 def run_financial_memory_stage(company, context=None):
     if context is not None:
         set_context(context)
     paths = {}
     paths.update(run_financial_trends_stage(company=company, context=context))
-    paths.update(run_financial_quality_stage(company=company, context=context))
+    paths.update(_refresh_year_level_financial_quality(company))
+    paths.update(run_financial_quality_stage(company=company, context=None))
     paths.update(run_financial_attribution_stage(company=company, context=context))
 
     company_root = Path("companies") / company
@@ -1671,6 +2148,27 @@ def run_financial_memory_stage(company, context=None):
     print(f"Warnings: {len(report.warnings)}")
     print(f"Hard Failures: {len(report.hard_failures)}")
     paths["financial_memory_audit_report.json"] = output_path
+    return paths
+
+
+def run_investor_financials_stage(company, context=None):
+    if context is not None:
+        set_context(context)
+    company_root = Path("companies") / company
+    output_dir = company_root / "company_memory" / "financials" / "investor_financial_modules"
+    paths = write_investor_financial_modules(
+        company=company,
+        company_root=company_root,
+        output_dir=output_dir,
+    )
+    manifest_path = output_dir / "investor_financial_modules_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    print("[INVESTOR FINANCIALS]")
+    print(f"Company: {company}")
+    print(f"Output: {output_dir}")
+    print(f"Modules: {', '.join(manifest.get('modules_run', []))}")
+    print(f"Warnings: {len(manifest.get('warnings', []))}")
+    print(f"Limitations: {len(manifest.get('limitations', []))}")
     return paths
 
 
@@ -1712,6 +2210,246 @@ def run_company_memory_stage(company, context=None):
     return written_paths
 
 
+def run_management_commitments_stage(company, context=None):
+    if context is not None:
+        set_context(context)
+    valid_years, warnings = _require_company_level_intelligence(company, "management_commitments")
+    builder = ManagementCommitmentsBuilder(company=company)
+    written_paths = builder.build()
+    output_dir = Path("companies") / company / "company_memory" / "management_commitments"
+    commitments_path = output_dir / "management_commitments.json"
+    validation_path = output_dir / "commitment_validation.json"
+    commitments = _load_json_file(commitments_path) if commitments_path.exists() else {}
+    validation = _load_json_file(validation_path) if validation_path.exists() else {}
+    print("[MANAGEMENT COMMITMENTS]")
+    print(f"Company: {company}")
+    print(f"Valid Years: {', '.join(valid_years)}")
+    print(f"Output Dir: {output_dir}")
+    print(f"Commitments: {commitments.get('commitment_count', 0)}")
+    print(f"Validation: {validation.get('status', 'unknown')}")
+    print(f"Artifacts Written: {len(written_paths)}")
+    for warning in warnings:
+        print(f"Warning: {warning}")
+    for filename in sorted(written_paths):
+        print(f"- {filename}")
+    return written_paths
+
+
+def run_management_commentary_stage(company, context=None):
+    if context is not None:
+        set_context(context)
+    valid_years, warnings = _require_company_level_intelligence(company, "management_commentary")
+    builder = ManagementCommentaryBuilder(company=company)
+    written_paths = builder.build()
+    output_dir = Path("companies") / company / "company_memory" / "management_commentary"
+    themes_path = output_dir / "commentary_themes.json"
+    validation_path = output_dir / "commentary_validation.json"
+    themes = _load_json_file(themes_path) if themes_path.exists() else {}
+    validation = _load_json_file(validation_path) if validation_path.exists() else {}
+    print("[MANAGEMENT COMMENTARY]")
+    print(f"Company: {company}")
+    print(f"Valid Years: {', '.join(valid_years)}")
+    print(f"Output Dir: {output_dir}")
+    print(f"Themes: {themes.get('commentary_count', 0)}")
+    print(f"Validation: {validation.get('status', 'unknown')}")
+    print(f"Artifacts Written: {len(written_paths)}")
+    for warning in warnings:
+        print(f"Warning: {warning}")
+    for filename in sorted(written_paths):
+        print(f"- {filename}")
+    return written_paths
+
+
+def run_capital_allocation_outcomes_stage(company, context=None):
+    if context is not None:
+        set_context(context)
+    valid_years, warnings = _require_company_level_intelligence(company, "capital_allocation_outcomes")
+    builder = CapitalAllocationOutcomesBuilder(company=company)
+    written_paths = builder.build()
+    output_dir = Path("companies") / company / "company_memory" / "capital_allocation_outcomes"
+    outcomes_path = output_dir / "capital_allocation_outcomes.json"
+    timelines_path = output_dir / "capital_allocation_timelines.json"
+    assessments_path = output_dir / "capital_allocation_assessments.json"
+    validation_path = output_dir / "capital_allocation_validation.json"
+    outcomes = _load_json_file(outcomes_path) if outcomes_path.exists() else {}
+    timelines = _load_json_file(timelines_path) if timelines_path.exists() else {}
+    assessments = _load_json_file(assessments_path) if assessments_path.exists() else {}
+    validation = _load_json_file(validation_path) if validation_path.exists() else {}
+    print("[CAPITAL ALLOCATION OUTCOMES]")
+    print(f"Company: {company}")
+    print(f"Valid Years: {', '.join(valid_years)}")
+    print(f"Output Dir: {output_dir}")
+    print(f"Allocations: {outcomes.get('allocation_count', 0)}")
+    print(f"Timelines: {timelines.get('timeline_count', 0)}")
+    print(f"Assessments: {assessments.get('assessment_count', 0)}")
+    print(f"Validation: {validation.get('status', 'unknown')}")
+    print(f"Artifacts Written: {len(written_paths)}")
+    for warning in warnings:
+        print(f"Warning: {warning}")
+    for filename in sorted(written_paths):
+        print(f"- {filename}")
+    return written_paths
+
+
+def run_management_quality_stage(company, context=None):
+    if context is not None:
+        set_context(context)
+    valid_years, warnings = _require_company_level_intelligence(company, "management_quality")
+    builder = ManagementQualityBuilder(company=company)
+    written_paths = builder.build()
+    output_dir = Path("companies") / company / "company_memory" / "management_quality"
+    summary_path = output_dir / "management_quality_summary.json"
+    dimensions_path = output_dir / "management_quality_dimensions.json"
+    validation_path = output_dir / "management_quality_validation.json"
+    summary = _load_json_file(summary_path) if summary_path.exists() else {}
+    dimensions = _load_json_file(dimensions_path) if dimensions_path.exists() else {}
+    validation = _load_json_file(validation_path) if validation_path.exists() else {}
+    print("[MANAGEMENT QUALITY]")
+    print(f"Company: {company}")
+    print(f"Valid Years: {', '.join(valid_years)}")
+    print(f"Output Dir: {output_dir}")
+    print(f"Overall View: {summary.get('overall_view', 'unknown')}")
+    print(f"Overall Direction: {summary.get('overall_direction', 'unknown')}")
+    print(f"Dimensions: {len(dimensions.get('dimensions', []))}")
+    print(f"Validation: {validation.get('status', 'unknown')}")
+    print(f"Artifacts Written: {len(written_paths)}")
+    for warning in warnings:
+        print(f"Warning: {warning}")
+    for filename in sorted(written_paths):
+        print(f"- {filename}")
+    return written_paths
+
+
+def run_projects_stage(company, context=None):
+    if context is not None:
+        set_context(context)
+    valid_years, warnings = _require_company_level_intelligence(company, "projects")
+    builder = ProjectsBuilder(company=company)
+    written_paths = builder.build()
+    output_dir = Path("companies") / company / "company_memory" / "projects"
+    registry_path = output_dir / "projects_registry.json"
+    assessments_path = output_dir / "project_assessments.json"
+    validation_path = output_dir / "projects_validation.json"
+    registry = _load_json_file(registry_path) if registry_path.exists() else {}
+    assessments = _load_json_file(assessments_path) if assessments_path.exists() else {}
+    validation = _load_json_file(validation_path) if validation_path.exists() else {}
+    status_counts = defaultdict(int)
+    for project in registry.get("projects", []):
+        status_counts[str(project.get("current_status") or "unable_to_verify")] += 1
+    economic_observable = sum(
+        1
+        for assessment in assessments.get("assessments", [])
+        if assessment.get("economic_impact_status") in {"early_evidence", "partially_observed", "clearly_observed", "negative_outcome"}
+    )
+    print("[PROJECTS INTELLIGENCE]")
+    print(f"Company: {company}")
+    print(f"Valid Years: {', '.join(valid_years)}")
+    print(f"Output Dir: {output_dir}")
+    print(f"Projects detected: {registry.get('project_count', 0)}")
+    print(f"Active: {status_counts.get('announced', 0) + status_counts.get('planning', 0) + status_counts.get('funded', 0) + status_counts.get('under_execution', 0)}")
+    print(f"Commissioned: {status_counts.get('commissioned', 0) + status_counts.get('operational', 0)}")
+    print(f"Delayed: {status_counts.get('delayed', 0)}")
+    print(f"Unable to verify: {status_counts.get('unable_to_verify', 0)}")
+    print(f"Economic impact observable: {economic_observable}")
+    print(f"Validation: {validation.get('status', 'unknown').upper()}")
+    print(f"Artifacts Written: {len(written_paths)}")
+    for warning in warnings:
+        print(f"Warning: {warning}")
+    for filename in sorted(written_paths):
+        print(f"- {filename}")
+    return written_paths
+
+
+def run_capacity_evolution_stage(company, context=None):
+    if context is not None:
+        set_context(context)
+    valid_years, warnings = _require_company_level_intelligence(company, "capacity_evolution")
+    builder = CapacityEvolutionBuilder(company=company)
+    written_paths = builder.build()
+    output_dir = Path("companies") / company / "company_memory" / "capacity"
+    registry_path = output_dir / "capacity_registry.json"
+    assessments_path = output_dir / "capacity_assessments.json"
+    validation_path = output_dir / "capacity_validation.json"
+    registry = _load_json_file(registry_path) if registry_path.exists() else {}
+    assessments = _load_json_file(assessments_path) if assessments_path.exists() else {}
+    validation = _load_json_file(validation_path) if validation_path.exists() else {}
+    status_counts = defaultdict(int)
+    for capacity in registry.get("capacity_items", []):
+        status_counts[str(capacity.get("current_status") or "unable_to_verify")] += 1
+    utilization_counts = defaultdict(int)
+    for assessment in assessments.get("assessments", []):
+        utilization_counts[str(assessment.get("utilization_status") or "unclear")] += 1
+    economic_observable = sum(
+        1
+        for assessment in assessments.get("assessments", [])
+        if assessment.get("economic_impact_status") in {"early_evidence", "partially_observed", "clearly_observed", "negative_outcome"}
+    )
+    print("[CAPACITY EVOLUTION]")
+    print(f"Company: {company}")
+    print(f"Valid Years: {', '.join(valid_years)}")
+    print(f"Output Dir: {output_dir}")
+    print(f"Capacity items detected: {registry.get('capacity_count', 0)}")
+    print(f"Operational: {status_counts.get('operational', 0) + status_counts.get('commissioned', 0)}")
+    print(f"Ramping: {status_counts.get('ramping', 0)}")
+    print(f"Utilized: {status_counts.get('partially_utilized', 0) + status_counts.get('materially_utilized', 0)}")
+    print(f"Underutilized: {status_counts.get('underutilized', 0)}")
+    print(f"Unable to verify: {status_counts.get('unable_to_verify', 0)}")
+    print(f"Economic impact observable: {economic_observable}")
+    print(f"Validation: {validation.get('status', 'unknown').upper()}")
+    print(f"Artifacts Written: {len(written_paths)}")
+    for warning in warnings:
+        print(f"Warning: {warning}")
+    for filename in sorted(written_paths):
+        print(f"- {filename}")
+    return written_paths
+
+
+def run_risk_evolution_stage(company, context=None):
+    if context is not None:
+        set_context(context)
+    valid_years, warnings = _require_company_level_intelligence(company, "risk_evolution")
+    company_root = Path("companies") / company
+    written_paths = build_risk_evolution(company, companies_root=Path("companies"))
+    output_dir = company_root / "company_memory" / "risks"
+    registry_path = output_dir / "risk_registry.json"
+    assessments_path = output_dir / "risk_assessments.json"
+    validation_path = output_dir / "risk_validation.json"
+    registry = _load_json_file(registry_path) if registry_path.exists() else {}
+    assessments = _load_json_file(assessments_path) if assessments_path.exists() else {}
+    validation = _load_json_file(validation_path) if validation_path.exists() else {}
+    status_counts = defaultdict(int)
+    for risk in registry.get("risks", []):
+        status_counts[str(risk.get("current_status") or "unable_to_verify")] += 1
+    materiality_counts = defaultdict(int)
+    for risk in registry.get("risks", []):
+        materiality = risk.get("materiality", {})
+        level = str(materiality.get("level", "unclear"))
+        materiality_counts[level] += 1
+    print("[RISK EVOLUTION INTELLIGENCE]")
+    print(f"Company: {company}")
+    print(f"Valid Years: {', '.join(valid_years)}")
+    print(f"Output Dir: {output_dir}")
+    print(f"Risks detected: {registry.get('risk_count', 0)}")
+    print(f"Emerging: {status_counts.get('emerging', 0)}")
+    print(f"Persistent: {status_counts.get('persistent', 0)}")
+    print(f"Increasing: {status_counts.get('increasing', 0)}")
+    print(f"Reducing: {status_counts.get('reducing', 0)}")
+    print(f"Mitigated: {status_counts.get('mitigated', 0)}")
+    print(f"Resolved: {status_counts.get('resolved', 0)}")
+    print(f"Unable to verify: {status_counts.get('unable_to_verify', 0)}")
+    print(f"High materiality: {materiality_counts.get('high', 0)}")
+    print(f"Medium materiality: {materiality_counts.get('medium', 0)}")
+    print(f"Low materiality: {materiality_counts.get('low', 0)}")
+    print(f"Validation: {validation.get('status', 'unknown').upper()}")
+    print(f"Artifacts Written: {len(written_paths) if isinstance(written_paths, dict) else 0}")
+    for warning in warnings:
+        print(f"Warning: {warning}")
+    if isinstance(written_paths, dict):
+        for filename in sorted(written_paths.values()):
+            print(f"- {filename}")
+    return written_paths
+
+
 def run_cim_stage(company, context=None):
     if context is not None:
         set_context(context)
@@ -1750,6 +2488,64 @@ def run_multi_year_memory_stage(company, context=None):
     return written_paths
 
 
+def run_ask_intrinsiciq_stage(company, context=None, force=False):
+    if context is not None:
+        set_context(context)
+    result = generate_ask_intrinsiciq_view(company, force=force)
+    output_dir = Path("companies") / company / "company_memory" / "ask_intrinsiciq"
+    manifest = result.get("manifest") or {}
+    validation_report = result.get("validation_report") or {}
+    business_journey = result.get("business_journey") or {}
+    products_services = result.get("products_services") or {}
+    financial_visual_summaries = result.get("financial_visual_summaries") or {}
+    uncertainty_map = result.get("uncertainty_map") or {}
+    answer_cards = result.get("answer_cards") or {}
+    answer_coverage = answer_cards.get("coverage_summary") or {}
+    visual_coverage = financial_visual_summaries.get("coverage_summary") or {}
+    print("[ASK INTRINSICIQ]")
+    print(f"Company: {company}")
+    print(f"Output Dir: {output_dir}")
+    print(f"Generation Status: {manifest.get('generation_status', 'unknown')}")
+    print(f"Validation Status: {validation_report.get('status', 'unknown')}")
+    print(f"Journey Coverage: {business_journey.get('coverage_status', 'unknown')}")
+    print(f"Journey Stages: {len(business_journey.get('stages', []))}")
+    print(f"Products Coverage: {products_services.get('coverage_status', 'unknown')}")
+    print(f"Product Groups: {len(products_services.get('groups', []))}")
+    print(f"Product Items: {sum(len(group.get('items', [])) for group in products_services.get('groups', []))}")
+    print(f"Uncertainty Coverage: {uncertainty_map.get('coverage_status', 'unknown')}")
+    print(f"Mapped Uncertainties: {len(uncertainty_map.get('items', []))}")
+    print("Financial visuals:")
+    print(f"- available: {visual_coverage.get('available', 0)}")
+    print(f"- partial: {visual_coverage.get('partial', 0)}")
+    print(f"- unavailable: {visual_coverage.get('unavailable', 0)}")
+    print("Ask IntrinsicIQ answers:")
+    print(f"- supported: {answer_coverage.get('supported', 0)}")
+    print(f"- partially supported: {answer_coverage.get('partially_supported', 0)}")
+    print(f"- not supported: {answer_coverage.get('not_supported', 0)}")
+    print(f"- unavailable: {answer_coverage.get('unavailable', 0)}")
+    print(f"Sources Found: {len(manifest.get('source_files_found', []))}")
+    print(f"Sources Missing: {len(manifest.get('source_files_missing', []))}")
+    print("Artifacts Written: 8")
+    print("- business_journey.json")
+    print("- products_services.json")
+    print("- answer_cards.json")
+    print("- financial_visual_summaries.json")
+    print("- uncertainty_map.json")
+    print("- company_research_view.json")
+    print("- ask_intrinsiciq_manifest.json")
+    print("- ask_intrinsiciq_validation_report.json")
+    return {
+        "business_journey.json": output_dir / "business_journey.json",
+        "products_services.json": output_dir / "products_services.json",
+        "answer_cards.json": output_dir / "answer_cards.json",
+        "financial_visual_summaries.json": output_dir / "financial_visual_summaries.json",
+        "uncertainty_map.json": output_dir / "uncertainty_map.json",
+        "company_research_view.json": output_dir / "company_research_view.json",
+        "ask_intrinsiciq_manifest.json": output_dir / "ask_intrinsiciq_manifest.json",
+        "ask_intrinsiciq_validation_report.json": output_dir / "ask_intrinsiciq_validation_report.json",
+    }
+
+
 def run_audit_stage(company, context=None, fix_safe=False):
     if context is not None:
         set_context(context)
@@ -1768,6 +2564,29 @@ def run_audit_stage(company, context=None, fix_safe=False):
     for filename in sorted(written_paths):
         print(f"- {filename}")
     return written_paths
+
+
+def _load_audit_payload(company):
+    audit_path = Path("companies") / company / "audit" / "company_artifact_audit.json"
+    if not audit_path.exists():
+        raise RuntimeError(f"audit stage did not write expected artifact: {audit_path}")
+    try:
+        return json.loads(audit_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"audit artifact is not valid JSON: {audit_path}") from exc
+
+
+def _ensure_audit_allows_customer_output(company):
+    payload = _load_audit_payload(company)
+    status = str(payload.get("status") or "").lower()
+    if status == "fail":
+        critical_failures = payload.get("critical_failures") or []
+        details = f" Critical failures: {'; '.join(str(item) for item in critical_failures)}" if critical_failures else ""
+        raise RuntimeError(
+            "audit reported blocking readiness failures; customer-facing Ask IntrinsicIQ output is blocked."
+            f"{details}"
+        )
+    return payload
 
 
 def run_investor_panel_stage(company, analyst=None, context=None):
@@ -1990,32 +2809,127 @@ def _classify_financial_message(message):
 def _assess_panel_financial_context(context):
     checked = []
     missing = []
+    optional_missing = []
     warnings = []
     limitations = []
     hard_failures = []
     payloads = {}
 
     if context is None:
+        companies_root = Path("companies")
+        company_dirs = [path for path in companies_root.iterdir() if path.is_dir()] if companies_root.exists() else []
+        if len(company_dirs) != 1:
+            return {
+                "available": False,
+                "status": "missing",
+                "artifacts_checked": checked,
+                "missing_artifacts": missing,
+                "warnings": ["Year context was not provided; year-level financial readiness was not assessed."],
+                "limitations": ["Panel is running without an active year-specific financial prerequisite check."],
+                "hard_failures": [],
+            }
+        company_root = company_dirs[0]
+        company_memory_financial_dir = company_root / "company_memory" / "financials"
+        panel_dir = company_root / "company_memory" / "investor_panel"
+        company_truth_pack_path = company_memory_financial_dir / "financial_truth_pack.json"
+        checked.extend(
+            [
+                str(company_truth_pack_path),
+                str(company_memory_financial_dir / "financial_quality_summary.json"),
+                str(company_root / "company_memory" / "pcim_v1.json"),
+                str(panel_dir / "committee_synthesis.json"),
+            ]
+        )
+        truth_pack = _load_json_file(company_truth_pack_path) if company_truth_pack_path.exists() else {}
+        quality = _load_json_file(company_memory_financial_dir / "financial_quality_summary.json") if (company_memory_financial_dir / "financial_quality_summary.json").exists() else {}
+        pcim = _load_json_file(company_root / "company_memory" / "pcim_v1.json") if (company_root / "company_memory" / "pcim_v1.json").exists() else {}
+        committee = _load_json_file(panel_dir / "committee_synthesis.json") if (panel_dir / "committee_synthesis.json").exists() else {}
+        analyst_financial_usage_detected = False
+        if panel_dir.exists():
+            for analyst_path in panel_dir.glob("*_analysis.json"):
+                checked.append(str(analyst_path))
+                try:
+                    analyst_payload = _load_json_file(analyst_path)
+                except Exception:
+                    continue
+                financial_assessment = analyst_payload.get("financial_assessment") or {}
+                if financial_assessment.get("financials_used") or analyst_payload.get("financial_metrics_used"):
+                    analyst_financial_usage_detected = True
+        truth_detected = bool(
+            truth_pack.get("usable_current_metrics")
+            or truth_pack.get("usable_derived_metrics")
+            or truth_pack.get("partial_metrics")
+            or (committee.get("committee_financial_truth") or {}).get("truth_detected")
+            or analyst_financial_usage_detected
+            or pcim.get("financial_truth_inputs")
+        )
+        status = "missing"
+        if truth_detected:
+            truth_status = str(truth_pack.get("financial_panel_status") or "").strip().lower()
+            if truth_status == "pass":
+                status = "pass"
+            elif truth_status in {"warning", "partial"} or quality:
+                status = "warning"
+            else:
+                status = "warning"
         return {
-            "available": False,
-            "status": "missing",
+            "available": truth_detected,
+            "status": status,
             "artifacts_checked": checked,
             "missing_artifacts": missing,
-            "warnings": ["Year context was not provided; year-level financial readiness was not assessed."],
-            "limitations": ["Panel is running without an active year-specific financial prerequisite check."],
+            "warnings": [] if truth_detected else ["No company-memory financial truth source was detected."],
+            "limitations": [] if truth_detected else ["Panel is running without an active year-specific financial prerequisite check."],
             "hard_failures": [],
         }
+
+    company_root = Path("companies") / context.company
+    company_memory_financial_dir = company_root / "company_memory" / "financials"
 
     for filename in PANEL_REQUIRED_FINANCIAL_ARTIFACTS:
         path = context.financials_dir / filename
         checked.append(str(path))
         if not path.exists():
-            missing.append(filename)
+            missing.append(str(path))
             continue
         try:
             payloads[filename] = _load_json_file(path)
         except Exception as exc:
             hard_failures.append(f"Malformed financial artifact {filename}: {exc}")
+
+    company_memory_candidates = [
+        company_memory_financial_dir / "financial_truth_pack.json",
+        company_memory_financial_dir / "financial_memory_manifest.json",
+        company_memory_financial_dir / "financial_trends.json",
+        company_memory_financial_dir / "financial_quality_summary.json",
+        company_memory_financial_dir / "investor_financial_modules" / "investor_financial_modules_manifest.json",
+    ]
+    company_memory_payloads = {}
+    for path in company_memory_candidates:
+        checked.append(str(path))
+        if not path.exists():
+            optional_missing.append(str(path))
+            continue
+        try:
+            company_memory_payloads[path.name] = _load_json_file(path)
+        except Exception as exc:
+            hard_failures.append(f"Malformed financial artifact {path.name}: {exc}")
+
+    year_truth_candidates = []
+    for child in company_root.iterdir() if company_root.exists() else []:
+        if not child.is_dir() or not child.name.lower().startswith("fy"):
+            continue
+        fin_dir = child / "financials"
+        for filename in (
+            "financial_fact_registry.json",
+            "financial_truth_reconciliation_report.json",
+            "financial_basis_resolution.json",
+            "financial_artifact_quarantine_report.json",
+        ):
+            year_truth_candidates.append(fin_dir / filename)
+    for path in year_truth_candidates:
+        checked.append(str(path))
+        if not path.exists():
+            optional_missing.append(str(path))
 
     quality = payloads.get("financial_quality_summary.json")
     quality_status = str((quality or {}).get("status") or "").strip().lower()
@@ -2030,8 +2944,51 @@ def _assess_panel_financial_context(context):
             else:
                 limitations.append(text)
 
+    company_truth_pack = company_memory_payloads.get("financial_truth_pack.json") or {}
+    company_memory_quality = company_memory_payloads.get("financial_quality_summary.json") or {}
+    truth_pack_hydrated = any(
+        bool(company_truth_pack.get(field))
+        for field in (
+            "usable_current_metrics",
+            "usable_derived_metrics",
+            "derived_not_explicitly_reported",
+            "precision_limits",
+            "investor_relevant_questions",
+        )
+    )
+    truth_pack_status = str(company_truth_pack.get("financial_panel_status") or "").strip().lower()
+    pcim_path = company_root / "company_memory" / "pcim_v1.json"
+    checked.append(str(pcim_path))
+    pcim_payload = _load_json_file(pcim_path) if pcim_path.exists() else {}
+    pcim_truth_present = any(
+        key in pcim_payload
+        for key in (
+            "financial_truth_inputs",
+            "analyst_financial_truth_pack",
+            "financial_quality_inputs",
+        )
+    )
+    panel_dir = investor_panel_dir(context.company)
+    analyst_financial_usage_detected = False
+    for analyst in ("graham", "buffett", "fisher", "munger", "lynch"):
+        analysis_path = panel_dir / f"{analyst}_analysis.json"
+        checked.append(str(analysis_path))
+        if not analysis_path.exists():
+            continue
+        try:
+            analyst_payload = _load_json_file(analysis_path)
+        except Exception as exc:
+            warnings.append(f"Could not parse analyst artifact for financial-context assessment: {analysis_path} ({exc})")
+            continue
+        financial_assessment = analyst_payload.get("financial_assessment") or {}
+        if bool(financial_assessment.get("financials_used")) or bool(analyst_payload.get("financial_sections_consumed")):
+            analyst_financial_usage_detected = True
+    truth_pack_present = bool(company_truth_pack) and (truth_pack_hydrated or truth_pack_status in {"pass", "warning", "partial", "invalid"})
+
     if missing:
-        warnings.extend(f"Missing financial artifact: {filename}" for filename in missing)
+        warnings.extend(f"Missing financial artifact: {path}" for path in missing)
+    if optional_missing:
+        warnings.extend(f"Optional financial truth artifact missing: {path}" for path in optional_missing)
 
     if quality_status == "fail":
         hard_failures.append(
@@ -2042,7 +2999,20 @@ def _assess_panel_financial_context(context):
     elif not quality_status:
         warnings.append("financial_quality_summary.json is missing or has no usable status")
 
-    available = quality_status in {"pass", "warning"}
+    available = bool(
+        truth_pack_present
+        or pcim_truth_present
+        or analyst_financial_usage_detected
+        or quality_status in {"pass", "warning"}
+        or str((company_memory_quality or {}).get("status") or "").strip().lower() in {"pass", "warning"}
+    )
+    if truth_pack_status == "invalid":
+        warnings.append("financial_truth_pack.json is present but hydration status is invalid")
+    if analyst_financial_usage_detected and not (truth_pack_present or pcim_truth_present):
+        warnings.append("Analyst artifacts consumed financial sections but company-level financial truth hydration was not fully present.")
+    if not available and payloads:
+        available = True
+
     status = "pass"
     if hard_failures:
         status = "fail"
@@ -2057,7 +3027,7 @@ def _assess_panel_financial_context(context):
         "available": available,
         "status": status,
         "artifacts_checked": checked,
-        "missing_artifacts": missing,
+        "missing_artifacts": missing + optional_missing,
         "warnings": _dedupe_preserve(warnings),
         "limitations": _dedupe_preserve(limitations),
         "hard_failures": _dedupe_preserve(hard_failures),
@@ -2110,23 +3080,105 @@ def _validate_analyst_output(company, analyst, context=None):
             f"{analyst}: forbidden recommendation language detected ({matched_texts})"
         )
 
-    status = str(payload.get("evidence_grounding_status") or "").strip().lower()
-    if status == "fail":
-        failures.append(f"{analyst}: evidence_grounding_status=fail")
+    def _diagnostic_block(name):
+        nested = diagnostics.get("finalization_diagnostics") or {}
+        if isinstance(nested, dict):
+            nested_value = nested.get(name)
+            if nested_value:
+                return nested_value
+        value = diagnostics.get(name)
+        if value:
+            return value
+        return {}
 
-    normalization = diagnostics.get("evidence_id_normalization") or {}
-    unresolved_ids = list(normalization.get("unresolved_ids", []) or [])
-    if unresolved_ids and status == "pass":
-        failures.append(f"{analyst}: unresolved_ids present while status=pass")
-    elif unresolved_ids:
-        warnings.append(f"{analyst}: unresolved_ids present ({len(unresolved_ids)})")
+    def resolve_final_analyst_status(analyst_artifact, analyst_diagnostics):
+        def _status_block(name):
+            nested = analyst_diagnostics.get("finalization_diagnostics") or {}
+            if isinstance(nested, dict):
+                nested_value = nested.get(name)
+                if nested_value:
+                    return nested_value
+            value = analyst_diagnostics.get(name)
+            if value:
+                return value
+            return {}
 
-    warning_count = len(diagnostics.get("evidence_grounding_warnings", []) or [])
-    analyst_status = "pass"
-    if failures:
-        analyst_status = "fail"
-    elif status == "warning" or warning_count > 0:
-        analyst_status = "warning"
+        finalization_summary = _status_block("finalization_summary") or {}
+        post_finalization_status = _status_block("post_finalization_status") or {}
+        pre_finalization_status = _status_block("pre_finalization_status") or {}
+
+        resolved_evidence_grounding_status = str(
+            post_finalization_status.get("evidence_grounding_status")
+            or analyst_artifact.get("evidence_grounding_status")
+            or analyst_artifact.get("status")
+            or "fail"
+        ).strip().lower()
+        resolved_validation_status = str(
+            post_finalization_status.get("validation_status")
+            or analyst_artifact.get("validation_status")
+            or resolved_evidence_grounding_status
+            or "fail"
+        ).strip().lower()
+        resolved_status = str(
+            post_finalization_status.get("status")
+            or analyst_artifact.get("status")
+            or resolved_validation_status
+            or resolved_evidence_grounding_status
+            or "fail"
+        ).strip().lower()
+
+        hard_failures = list(finalization_summary.get("hard_failures", []) or analyst_artifact.get("hard_failures", []) or [])
+        active_unresolved_claims = list(finalization_summary.get("active_unresolved_claims", []) or [])
+
+        if hard_failures or active_unresolved_claims:
+            resolved_status = "fail"
+            resolved_validation_status = "fail"
+            resolved_evidence_grounding_status = "fail"
+
+        if resolved_status not in {"pass", "warning", "fail"}:
+            resolved_status = "fail"
+        if resolved_validation_status not in {"pass", "warning", "fail"}:
+            resolved_validation_status = resolved_status
+        if resolved_evidence_grounding_status not in {"pass", "warning", "fail"}:
+            resolved_evidence_grounding_status = resolved_status
+
+        return {
+            "status": resolved_status,
+            "validation_status": resolved_validation_status,
+            "evidence_grounding_status": resolved_evidence_grounding_status,
+            "hard_failures": hard_failures,
+            "active_unresolved_claims": active_unresolved_claims,
+            "finalization_summary": finalization_summary,
+            "post_finalization_status": post_finalization_status,
+            "pre_finalization_status": pre_finalization_status,
+        }
+
+    truth_pack = payload.get("analyst_financial_truth_pack") or {}
+    finalized_payload = finalize_analyst_financial_warnings(payload, truth_pack, diagnostics)
+    finalized_payload = finalize_analyst_validation_status(finalized_payload, diagnostics)
+
+    resolved = resolve_final_analyst_status(finalized_payload, diagnostics)
+    finalization_summary = resolved["finalization_summary"]
+    post_finalization_status = resolved["post_finalization_status"]
+    status = resolved["evidence_grounding_status"]
+    warning_count = len((finalization_summary.get("warnings", []) or [])) + len(diagnostics.get("evidence_grounding_warnings", []) or [])
+    analyst_status = resolved["status"]
+
+    final_hard_failures = list(resolved["hard_failures"] or [])
+    final_active_unresolved = list(resolved["active_unresolved_claims"] or [])
+
+    for item in final_hard_failures:
+        failures.append(f"{analyst}: {item}")
+    if final_active_unresolved:
+        failures.append(f"{analyst}: unresolved factual claims remain after evidence routing repair")
+    for item in finalized_payload.get("warnings", []) or []:
+        warnings.append(f"{analyst}: {item}")
+
+    if not final_hard_failures and not final_active_unresolved and analyst_status in {"pass", "warning"}:
+        failures = [
+            item for item in failures
+            if "unresolved factual claims remain after evidence routing repair" not in item
+        ]
 
     return {
         "status": analyst_status,
@@ -2135,10 +3187,17 @@ def _validate_analyst_output(company, analyst, context=None):
         "output": str(path),
         "failed_clean_candidate_path": str(failed_clean_candidate_path),
         "failed_clean_candidate_exists": failed_clean_candidate_path.exists(),
-        "payload": payload,
+        "payload": finalized_payload,
         "diagnostics": diagnostics,
         "warnings": warnings,
         "failures": failures,
+        "pre_finalization_status": resolved["pre_finalization_status"],
+        "post_finalization_status": post_finalization_status,
+        "finalization_summary": finalization_summary,
+        "resolved_final_status": resolved["status"],
+        "resolved_final_validation_status": resolved["validation_status"],
+        "resolved_final_evidence_grounding_status": resolved["evidence_grounding_status"],
+        "diagnostics_used": bool(diagnostics),
     }
 
 
@@ -2309,14 +3368,215 @@ def _write_panel_run_summary(company, payload, *, context=None):
     return path
 
 
+def canonicalize_panel_run_summary(summary):
+    analysts = summary.get("analysts") or {}
+    stages = summary.setdefault("stages", {})
+    analysts_stage = stages.get("analysts") or {}
+    financial_context = summary.get("financial_context") or {}
+
+    canonical_analyst_failures = []
+    canonical_stage_warnings = []
+    canonical_statuses = []
+    analyst_outputs = []
+    any_financial_usage = False
+
+    unresolved_claim_message = "unresolved factual claims remain after evidence routing repair"
+
+    for analyst, data in analysts.items():
+        if not isinstance(data, dict):
+            continue
+        warnings = _dedupe_preserve(list(data.get("warnings", []) or []))
+        post_finalization_status = data.get("post_finalization_status") or {}
+        finalization_summary = data.get("finalization_summary") or {}
+        hard_failures = _dedupe_preserve(list(finalization_summary.get("hard_failures", []) or []))
+        active_unresolved_claims = list(finalization_summary.get("active_unresolved_claims", []) or [])
+
+        post_status_present = isinstance(post_finalization_status, dict) and bool(
+            post_finalization_status.get("status")
+            or post_finalization_status.get("validation_status")
+            or post_finalization_status.get("evidence_grounding_status")
+        )
+
+        resolved_status = str(
+            post_finalization_status.get("status")
+            or data.get("status")
+            or "fail"
+        ).strip().lower()
+        resolved_validation_status = str(
+            post_finalization_status.get("validation_status")
+            or data.get("validation_status")
+            or resolved_status
+            or "fail"
+        ).strip().lower()
+        resolved_evidence_grounding_status = str(
+            post_finalization_status.get("evidence_grounding_status")
+            or data.get("evidence_grounding_status")
+            or resolved_status
+            or "fail"
+        ).strip().lower()
+
+        if resolved_status not in {"pass", "warning", "fail"}:
+            resolved_status = "fail"
+        if resolved_validation_status not in {"pass", "warning", "fail"}:
+            resolved_validation_status = resolved_status
+        if resolved_evidence_grounding_status not in {"pass", "warning", "fail"}:
+            resolved_evidence_grounding_status = resolved_status
+
+        canonical_hard_failures = []
+        if post_status_present:
+            if resolved_status == "fail":
+                if hard_failures or active_unresolved_claims:
+                    canonical_hard_failures.extend(hard_failures)
+                    if active_unresolved_claims and unresolved_claim_message not in canonical_hard_failures:
+                        canonical_hard_failures.append(unresolved_claim_message)
+                else:
+                    resolved_status = "warning"
+                    if resolved_validation_status == "fail":
+                        resolved_validation_status = "warning"
+                    if resolved_evidence_grounding_status == "fail":
+                        resolved_evidence_grounding_status = "warning"
+            else:
+                canonical_hard_failures = []
+        else:
+            canonical_hard_failures = _dedupe_preserve(list(data.get("hard_failures", []) or []))
+
+        if resolved_status in {"pass", "warning"}:
+            canonical_hard_failures = []
+        if resolved_validation_status == "fail" and resolved_status in {"pass", "warning"}:
+            resolved_validation_status = resolved_status
+        if resolved_evidence_grounding_status == "fail" and resolved_status in {"pass", "warning"}:
+            resolved_evidence_grounding_status = resolved_status
+
+        data["status"] = resolved_status
+        data["validation_status"] = resolved_validation_status
+        data["evidence_grounding_status"] = resolved_evidence_grounding_status
+        data["hard_failures"] = canonical_hard_failures
+        data["warnings"] = warnings
+
+        canonical_statuses.append(resolved_status)
+        canonical_stage_warnings.extend(warnings)
+        if resolved_status == "fail":
+            canonical_analyst_failures.extend(f"{analyst}: {item}" for item in canonical_hard_failures)
+        analyst_outputs.append(f"{analyst}:{resolved_status}")
+        if bool(data.get("financials_used")):
+            any_financial_usage = True
+
+    analysts_stage_status = "pass"
+    for status in canonical_statuses:
+        analysts_stage_status = _merge_status(analysts_stage_status, status)
+    if not canonical_statuses and analysts_stage.get("status"):
+        analysts_stage_status = str(analysts_stage.get("status") or "pass").lower()
+
+    stages["analysts"] = {
+        "status": analysts_stage_status,
+        "output": "; ".join(analyst_outputs),
+        "warnings": _dedupe_preserve(canonical_stage_warnings),
+        "hard_failures": _dedupe_preserve(canonical_analyst_failures),
+        "failures": _dedupe_preserve(canonical_analyst_failures),
+    }
+
+    company = summary.get("company")
+    year = summary.get("year")
+    panel_dir = investor_panel_dir(company) if company else Path()
+    company_root = Path("companies") / company if company else Path()
+    pcim_path = company_root / "company_memory" / "pcim_v1.json"
+    truth_pack_path = company_root / "company_memory" / "financials" / "financial_truth_pack.json"
+
+    artifacts_checked = _dedupe_preserve(list(financial_context.get("artifacts_checked", []) or []))
+    missing_artifacts = _dedupe_preserve(list(financial_context.get("missing_artifacts", []) or []))
+    financial_warnings = _dedupe_preserve(list(financial_context.get("warnings", []) or []))
+    financial_limitations = _dedupe_preserve(list(financial_context.get("limitations", []) or []))
+
+    if any_financial_usage:
+        for analyst, data in analysts.items():
+            output_path = data.get("output_path") or str(panel_dir / f"{analyst}_analysis.json")
+            if output_path:
+                artifacts_checked.append(str(output_path))
+        if company:
+            artifacts_checked.append(str(pcim_path))
+            artifacts_checked.append(str(truth_pack_path))
+            if not truth_pack_path.exists() and str(truth_pack_path) not in missing_artifacts:
+                missing_artifacts.append(str(truth_pack_path))
+        financial_context["available"] = True
+        if year is None:
+            if str(financial_context.get("status") or "").strip().lower() in {"", "missing"}:
+                financial_context["status"] = "warning"
+            elif str(financial_context.get("status") or "").strip().lower() == "fail":
+                financial_context["status"] = "warning"
+            inference_warning = "Financial context was inferred from analyst financial usage; year-specific readiness was not assessed."
+            if inference_warning not in financial_warnings:
+                financial_warnings.append(inference_warning)
+        elif str(financial_context.get("status") or "").strip().lower() == "missing":
+            financial_context["status"] = "warning"
+
+    if financial_context.get("available") and str(financial_context.get("status") or "").strip().lower() == "missing":
+        financial_context["status"] = "warning"
+
+    financial_context["artifacts_checked"] = _dedupe_preserve(artifacts_checked)
+    financial_context["missing_artifacts"] = _dedupe_preserve(missing_artifacts)
+    financial_context["warnings"] = _dedupe_preserve(financial_warnings)
+    financial_context["limitations"] = _dedupe_preserve(financial_limitations)
+    summary["financial_context"] = financial_context
+
+    top_warnings = _dedupe_preserve(list(financial_context.get("warnings", []) or []))
+    top_failures = []
+    overall_status = "pass"
+    financial_status = str(financial_context.get("status") or "pass").strip().lower()
+    if financial_status == "fail":
+        overall_status = "fail"
+    elif financial_status in {"warning", "partial", "missing"}:
+        overall_status = "warning"
+
+    for stage_name, stage in stages.items():
+        if not isinstance(stage, dict) or not stage:
+            continue
+        stage_status = str(stage.get("status") or "pass").strip().lower()
+        stage_warnings = _dedupe_preserve(list(stage.get("warnings", []) or []))
+        stage_failures = _dedupe_preserve(list(stage.get("hard_failures", []) or stage.get("failures", []) or []))
+        stage["warnings"] = stage_warnings
+        stage["hard_failures"] = stage_failures
+        stage["failures"] = stage_failures
+        top_warnings.extend(stage_warnings)
+        top_failures.extend(stage_failures)
+        overall_status = _merge_status(overall_status, stage_status)
+
+    summary["warnings"] = _dedupe_preserve(top_warnings)
+    summary["hard_failures"] = _dedupe_preserve(top_failures)
+    summary["failures"] = _dedupe_preserve(top_failures)
+    summary["status"] = "fail" if summary["hard_failures"] else overall_status
+
+    return summary
+
+
 def _assess_pcim_freshness(company, pcim_payload):
     company_root = Path("companies") / company
-    return audit_saved_pcim_manifest(
+    result = audit_saved_pcim_manifest(
         company_root,
         pcim_payload.get("pcim_source_manifest") or {},
         saved_multi_year_inputs=pcim_payload.get("multi_year_inputs") or {},
         expected_years=pcim_payload.get("available_years") or [],
     )
+    pcim_path = company_root / "company_memory" / "pcim_v1.json"
+    financial_sources = [
+        company_root / "company_memory" / "financials" / "financial_truth_pack.json",
+        company_root / "company_memory" / "financials" / "investor_financial_modules" / "investor_financial_modules_manifest.json",
+    ]
+    newer_sources = [
+        path
+        for path in financial_sources
+        if path.exists() and pcim_path.exists() and path.stat().st_mtime > pcim_path.stat().st_mtime
+    ]
+    if newer_sources:
+        result = dict(result)
+        result["status"] = "fail"
+        result["failures"] = _dedupe_preserve(
+            list(result.get("failures", []) or [])
+            + [
+                "PCIM is stale relative to governed financial outputs; rebuild CIM/PCIM before running the investor panel."
+            ]
+        )
+        result["stale_financial_sources"] = [str(path) for path in newer_sources]
+    return result
 
 
 def run_panel_stage(company, context=None, include_evidence_ids=False, regenerate_analysts=False):
@@ -2391,7 +3651,9 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
         summary["status"] = _merge_status(summary["status"], status)
 
     def finalize_and_raise(message):
+        canonicalize_panel_run_summary(summary)
         summary["generated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        summary["outputs"]["panel_run_summary"] = str(_panel_summary_path(company, context=context))
         summary_path = _write_panel_run_summary(company, summary, context=context)
         print(f"Panel Run — {company}")
         for stage_name, stage in summary["stages"].items():
@@ -2402,23 +3664,23 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
         print(f"Summary: {summary_path}")
         raise RuntimeError(message)
 
-    if context is not None:
-        financial_context = _assess_panel_financial_context(context)
-        summary["financial_context"] = {
-            key: value for key, value in financial_context.items() if key != "hard_failures"
-        }
-        for warning in summary["financial_context"]["warnings"]:
-            if warning not in summary["warnings"]:
-                summary["warnings"].append(warning)
-        if financial_context["hard_failures"]:
-            for failure in financial_context["hard_failures"]:
-                if failure not in summary["hard_failures"]:
-                    summary["hard_failures"].append(failure)
-            summary["status"] = _merge_status(summary["status"], "fail")
-            finalize_and_raise(financial_context["hard_failures"][0])
-        if summary["financial_context"]["status"] in {"warning", "partial", "missing"}:
-            summary["status"] = _merge_status(summary["status"], "warning")
+    financial_context = _assess_panel_financial_context(context)
+    summary["financial_context"] = {
+        key: value for key, value in financial_context.items() if key != "hard_failures"
+    }
+    for warning in summary["financial_context"]["warnings"]:
+        if warning not in summary["warnings"]:
+            summary["warnings"].append(warning)
+    if financial_context["hard_failures"]:
+        for failure in financial_context["hard_failures"]:
+            if failure not in summary["hard_failures"]:
+                summary["hard_failures"].append(failure)
+        summary["status"] = _merge_status(summary["status"], "fail")
+        finalize_and_raise(financial_context["hard_failures"][0])
+    if summary["financial_context"]["status"] in {"warning", "partial", "missing"}:
+        summary["status"] = _merge_status(summary["status"], "warning")
 
+    if context is not None:
         try:
             cim_paths = run_cim_stage(company=company, context=context)
         except Exception as exc:
@@ -2500,12 +3762,23 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
             payload = result["payload"]
             financial_assessment = payload.get("financial_assessment") or {}
             summary["analysts"][analyst] = {
-                "status": result["status"],
+                "status": result.get("resolved_final_status", result.get("status", "fail")),
                 "output_path": result["output"],
                 "financials_used": bool(financial_assessment.get("financials_used")),
                 "financial_sections_consumed": list(payload.get("financial_sections_consumed", []) or []),
-                "evidence_grounding_status": result["evidence_grounding_status"],
-                "validation_status": result["status"],
+                "evidence_grounding_status": result.get(
+                    "resolved_final_evidence_grounding_status",
+                    result.get("evidence_grounding_status", "fail"),
+                ),
+                "validation_status": result.get(
+                    "resolved_final_validation_status",
+                    result.get("validation_status", result.get("status", "fail")),
+                ),
+                "raw_artifact_status": str(payload.get("status") or ""),
+                "pre_finalization_status": result.get("pre_finalization_status", {}),
+                "post_finalization_status": result.get("post_finalization_status", {}),
+                "finalization_summary": result.get("finalization_summary", {}),
+                "diagnostics_used": bool(result.get("diagnostics_used")),
                 "warnings": result["warnings"],
                 "hard_failures": result["failures"],
             }
@@ -2533,8 +3806,13 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
                 "output_path": result.get("output"),
                 "financials_used": bool(financial_assessment.get("financials_used")),
                 "financial_sections_consumed": list(payload.get("financial_sections_consumed", []) or []),
-                "evidence_grounding_status": result.get("evidence_grounding_status", "fail"),
-                "validation_status": result["status"],
+                "evidence_grounding_status": result.get("resolved_final_evidence_grounding_status", result.get("evidence_grounding_status", "fail")),
+                "validation_status": result.get("resolved_final_validation_status", result["status"]),
+                "raw_artifact_status": str(payload.get("status") or ""),
+                "pre_finalization_status": result.get("pre_finalization_status", {}),
+                "post_finalization_status": result.get("post_finalization_status", {}),
+                "finalization_summary": result.get("finalization_summary", {}),
+                "diagnostics_used": bool(result.get("diagnostics_used")),
                 "warnings": list(result.get("warnings") or []),
                 "hard_failures": list(result.get("failures") or []),
             }
@@ -2553,7 +3831,9 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
             failures=validation["failures"],
         )
 
-    if analyst_failures:
+    canonicalize_panel_run_summary(summary)
+
+    if summary["stages"].get("analysts", {}).get("status") == "fail":
         finalize_and_raise("Panel stopped: analyst validation failed. See panel_run_summary.json for all failures.")
 
     try:
@@ -2571,8 +3851,17 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
     if "source_chunk" in json.dumps(synthesis_payload, ensure_ascii=False):
         synthesis_failures.append("committee_synthesis: source_chunk detected")
     normalization = synthesis_payload.get("evidence_id_normalization") or {}
-    if "disagreement_type" not in json.dumps(synthesis_payload, ensure_ascii=False):
-        synthesis_failures.append("committee_synthesis: disagreement_type missing")
+    for item in synthesis_payload.get("areas_of_disagreement", []) or []:
+        if not isinstance(item, dict):
+            synthesis_failures.append("committee_synthesis: areas_of_disagreement contains non-object item")
+            continue
+        if item.get("disagreement_type") not in {
+            "true_disagreement",
+            "different_emphasis",
+            "risk_weighting_difference",
+        }:
+            synthesis_failures.append("committee_synthesis: disagreement_type missing")
+            break
     if list(normalization.get("unresolved_ids", []) or []):
         synthesis_failures.append("committee_synthesis: unresolved_ids remain after cleanup")
     synthesis_status = "fail" if synthesis_failures else "pass"
@@ -2636,10 +3925,14 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
         warnings=list(qa_payload.get("warnings", []) or []),
         failures=list(qa_payload.get("failures", []) or []),
     )
-    if qa_status != "pass":
+    if qa_status == "warning":
+        summary["status"] = _merge_status(summary["status"], "warning")
+    if qa_status == "fail":
         finalize_and_raise("Panel stopped: committee brief QA failed")
 
+    canonicalize_panel_run_summary(summary)
     summary["generated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    summary["outputs"]["panel_run_summary"] = str(_panel_summary_path(company, context=context))
     summary_path = _write_panel_run_summary(company, summary, context=context)
     summary["outputs"]["panel_run_summary"] = str(summary_path)
 
@@ -2660,57 +3953,17 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
     print("- committee_brief_qa.json")
     print("- panel_run_summary.json")
 
+    canonicalize_panel_run_summary(summary)
     _write_panel_run_summary(company, summary, context=context)
     return {"panel_run_summary.json": summary_path, **summary["outputs"]}
 
 
 def run_all(context=None):
-    context = _ensure_context("all", context)
-    set_context(context)
+    return run_stage_sequence(context.company if context is not None else None, ALL_STAGE_SEQUENCE, context=context, profile_name="all")
 
-    summary = {
-        "company": context.company,
-        "year": context.year,
-        "run_mode": "all_v2",
-        "status": "pass",
-        "stages": [],
-        "llm_calls_estimated": 0,
-        "warnings": [],
-        "failures": [],
-        "generated_at": None,
-    }
 
-    def record_stage(stage_name, status, outputs=None, warnings=None, failures=None):
-        outputs = list(outputs or [])
-        warnings = list(warnings or [])
-        failures = list(failures or [])
-        summary["stages"].append(
-            {
-                "stage": stage_name,
-                "status": status,
-                "inputs_checked": list(STAGE_CATALOG.get(stage_name, {}).get("requires", [])),
-                "outputs": outputs,
-                "warnings": warnings,
-                "failures": failures,
-            }
-        )
-        if STAGE_CATALOG.get(stage_name, {}).get("llm_calls"):
-            summary["llm_calls_estimated"] += 1
-        for warning in warnings:
-            if warning not in summary["warnings"]:
-                summary["warnings"].append(warning)
-        for failure in failures:
-            if failure not in summary["failures"]:
-                summary["failures"].append(failure)
-        summary["status"] = _merge_status(summary["status"], status)
-
-    def finalize_summary():
-        summary["generated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        summary_path = context.year_root / "run_summary.json"
-        summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
-        return summary_path
-
-    stage_outputs = {
+def _build_stage_output_map(context):
+    return {
         "preflight": lambda: [str(context.extracted_dir / "clean_chunks.json")],
         "discovery": lambda: [str(context.raw_dir / filename) for filename in DISCOVERY_OUTPUT_FILES],
         "financial_discovery": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_DISCOVERY_OUTPUT_FILES],
@@ -2718,10 +3971,14 @@ def run_all(context=None):
         "financial_normalization": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_NORMALIZATION_OUTPUT_FILES],
         "financial_validation": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_VALIDATION_OUTPUT_FILES],
         "financial_reconciliation": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_RECONCILIATION_OUTPUT_FILES],
+        "financial_basis_resolution": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_BASIS_RESOLUTION_OUTPUT_FILES],
+        "financial_truth_registry": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_TRUTH_REGISTRY_OUTPUT_FILES],
         "financial_ratios": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_RATIO_OUTPUT_FILES],
         "financial_growth": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_GROWTH_OUTPUT_FILES],
         "corporate_actions": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_CORPORATE_ACTION_OUTPUT_FILES],
         "shareholding_pattern": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_SHAREHOLDING_OUTPUT_FILES],
+        "financials": lambda: [str(context.financials_dir / "financial_audit_report.json")],
+        "financial_pcim_validation": lambda: [str(context.financials_dir / "financial_pcim_validation.json")],
         "extraction": lambda: [str(context.extracted_dir / filename) for filename in EXTRACTION_OUTPUT_FILES],
         "cleaning": lambda: [str(context.extracted_dir / filename) for filename in CLEANING_OUTPUT_FILES],
         "business_understanding": lambda: [str(context.intelligence_dir / filename) for filename in BUSINESS_UNDERSTANDING_OUTPUT_FILES],
@@ -2731,85 +3988,416 @@ def run_all(context=None):
             str(Path("companies") / context.company / "company_memory" / "cim_v1.json"),
             str(Path("companies") / context.company / "company_memory" / "pcim_v1.json"),
         ],
+        "management_commitments": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "management_commitments" / filename)
+            for filename in MANAGEMENT_COMMITMENTS_OUTPUT_FILES
+        ],
+        "management_commentary": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "management_commentary" / filename)
+            for filename in MANAGEMENT_COMMENTARY_OUTPUT_FILES
+        ],
+        "capital_allocation_outcomes": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "capital_allocation_outcomes" / filename)
+            for filename in CAPITAL_ALLOCATION_OUTCOMES_OUTPUT_FILES
+        ],
+        "management_quality": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "management_quality" / filename)
+            for filename in MANAGEMENT_QUALITY_OUTPUT_FILES
+        ],
+        "projects": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "projects" / filename)
+            for filename in PROJECTS_OUTPUT_FILES
+        ],
+        "capacity_evolution": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "capacity" / filename)
+            for filename in CAPACITY_EVOLUTION_OUTPUT_FILES
+        ],
+        "risk_evolution": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "risks" / filename)
+            for filename in RISK_EVOLUTION_OUTPUT_FILES
+        ],
         "pcim": lambda: [str(Path("companies") / context.company / "company_memory" / "pcim_v1.json")],
         "multi_year_memory": lambda: [str(Path("companies") / context.company / "company_memory" / "multi_year" / "multi_year_index.json")],
+        "financial_memory": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "financials" / filename)
+            for filename in FINANCIAL_MEMORY_OUTPUT_FILES
+        ],
+        "investor_financials": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "financials" / "investor_financial_modules" / filename)
+            for filename in INVESTOR_FINANCIAL_MODULE_OUTPUT_FILES
+        ],
+        "audit": lambda: [
+            str(Path("companies") / context.company / "audit" / "company_artifact_audit.json"),
+            str(Path("companies") / context.company / "audit" / "company_artifact_audit.md"),
+            str(Path("companies") / context.company / "audit" / "financial_quality_scorecard.json"),
+            str(Path("companies") / context.company / "audit" / "financial_quality_scorecard.md"),
+        ],
+        "panel": lambda: [str(Path("companies") / context.company / "company_memory" / "investor_panel" / "panel_run_summary.json")],
+        "ask_intrinsiciq": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "ask_intrinsiciq" / filename)
+            for filename in ASK_INTRINSICIQ_OUTPUT_FILES
+        ],
     }
 
-    try:
+
+def _build_run_summary(context, profile_name):
+    return {
+        "company": context.company,
+        "year": context.year,
+        "run_mode": f"{profile_name}_v2",
+        "stage_profile": profile_name,
+        "status": "pass",
+        "stages": [],
+        "completed_stages": [],
+        "skipped_stages": [],
+        "failed_stage": None,
+        "llm_calls_estimated": 0,
+        "warnings": [],
+        "failures": [],
+        "total_runtime_seconds": 0.0,
+        "generated_at": None,
+    }
+
+
+def _finalize_run_summary(summary, context, started_at, skipped_stages):
+    summary["generated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    summary["total_runtime_seconds"] = round(time.time() - started_at, 3)
+    summary["completed_stages"] = [stage["stage"] for stage in summary["stages"] if stage["status"] in {"pass", "warning"}]
+    summary["skipped_stages"] = list(skipped_stages)
+    summary_path = context.year_root / "run_summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    return summary_path
+
+
+def _print_stage_sequence_summary(profile_name, summary):
+    completed = summary.get("completed_stages", [])
+    skipped = summary.get("skipped_stages", [])
+    failed_stage = summary.get("failed_stage")
+    if profile_name == "production" and summary.get("status") != "fail":
+        completed_set = set(completed)
+
+        def _status_for_group(required_stages):
+            return "complete" if all(stage in completed_set for stage in required_stages) else "incomplete"
+
+        print("Production pipeline complete")
+        print()
+        print(f"Core intelligence: {_status_for_group(ALL_STAGE_SEQUENCE)}")
+        print(f"Financial intelligence: {_status_for_group(['financials', 'financial_memory', 'investor_financials', 'financial_pcim_validation'])}")
+        print(f"Audit/readiness: {_status_for_group(['audit'])}")
+        print(f"Investor panel: {_status_for_group(['panel'])}")
+        print(f"Ask IntrinsicIQ: {_status_for_group(['ask_intrinsiciq'])}")
+    else:
+        print(f"{profile_name.capitalize()} pipeline {'complete' if summary.get('status') != 'fail' else 'stopped'}")
+    print()
+    print(f"Completed stages: {', '.join(completed) if completed else 'None'}")
+    print(f"Failed stage: {failed_stage or 'None'}")
+    print(f"Skipped stages: {', '.join(skipped) if skipped else 'None'}")
+    print(f"Total runtime: {summary.get('total_runtime_seconds', 0.0):.3f}s")
+
+
+def _record_stage(summary, stage_name, status, outputs=None, warnings=None, failures=None):
+    outputs = list(outputs or [])
+    warnings = list(warnings or [])
+    failures = list(failures or [])
+    summary["stages"].append(
+        {
+            "stage": stage_name,
+            "status": status,
+            "inputs_checked": list(STAGE_CATALOG.get(stage_name, {}).get("requires", [])),
+            "outputs": outputs,
+            "warnings": warnings,
+            "failures": failures,
+        }
+    )
+    if STAGE_CATALOG.get(stage_name, {}).get("llm_calls"):
+        summary["llm_calls_estimated"] += 1
+    for warning in warnings:
+        if warning not in summary["warnings"]:
+            summary["warnings"].append(warning)
+    for failure in failures:
+        if failure not in summary["failures"]:
+            summary["failures"].append(failure)
+    if status == "fail":
+        summary["failed_stage"] = stage_name
+    summary["status"] = _merge_status(summary["status"], status)
+
+
+def _reusable_year_financial_outputs(context):
+    """Return reusable only for a complete, non-failing artifact set for this year."""
+    required = (
+        "normalized_fundamentals.json",
+        "financial_validation_report.json",
+        "financial_reconciliation_report.json",
+        "financial_ratios.json",
+        "financial_growth.json",
+        "corporate_actions.json",
+        "shareholding_pattern.json",
+        "financial_audit_report.json",
+    )
+    payloads = {}
+    for filename in required:
+        path = context.financials_dir / filename
+        if not path.exists():
+            return False, []
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False, []
+        if not isinstance(payload, dict):
+            return False, []
+        payloads[filename] = payload
+
+    for filename, payload in payloads.items():
+        if str(payload.get("company", "")) != context.company or str(payload.get("year", "")) != context.year:
+            return False, []
+
+    for filename in ("financial_validation_report.json", "financial_reconciliation_report.json"):
+        if str(payloads[filename].get("status", "")).lower() == "fail":
+            return False, []
+        if payloads[filename].get("hard_failures"):
+            return False, []
+
+    audit = payloads["financial_audit_report.json"]
+    if str(audit.get("status", "")).lower() not in {"pass", "warning"} or audit.get("hard_failures"):
+        return False, []
+
+    return True, [
+        f"Reused existing validated financial outputs for {context.year}; no cross-period values were substituted."
+    ]
+
+
+def _run_stage_by_name(stage_name, context, *, stage_outputs, options, state):
+    company = context.company
+    if stage_name == "preflight":
         _run_preflight(context)
-        record_stage("preflight", "pass", outputs=stage_outputs["preflight"]())
-
+        return {"status": "pass", "outputs": stage_outputs["preflight"]()}
+    if stage_name == "discovery":
         run_discovery(context=context)
-        record_stage("discovery", "pass", outputs=stage_outputs["discovery"]())
-
+        return {"status": "pass", "outputs": stage_outputs["discovery"]()}
+    if stage_name == "extraction":
         run_extraction(context=context)
-        record_stage("extraction", "pass", outputs=stage_outputs["extraction"]())
-
+        return {"status": "pass", "outputs": stage_outputs["extraction"]()}
+    if stage_name == "cleaning":
         run_cleaning(context=context)
-        record_stage("cleaning", "pass", outputs=stage_outputs["cleaning"]())
-
+        return {"status": "pass", "outputs": stage_outputs["cleaning"]()}
+    if stage_name == "business_understanding":
         bundle = run_business_understanding_stage(context=context)
         validate_business_understanding_bundle(bundle)
         if sum(_artifact_counts(context.intelligence_dir, BUSINESS_UNDERSTANDING_OUTPUT_FILES).values()) <= 0:
             raise RuntimeError("business_understanding produced no usable artifacts")
-        record_stage("business_understanding", "pass", outputs=stage_outputs["business_understanding"]())
-
+        state["business_understanding_bundle"] = bundle
+        return {"status": "pass", "outputs": stage_outputs["business_understanding"]()}
+    if stage_name == "business_intelligence":
+        bundle = state.get("business_understanding_bundle")
+        if bundle is None:
+            bundle = _load_saved_business_intelligence_bundle(context)
         run_business_intelligence_stage(context=context, bundle=bundle)
         if sum(_artifact_counts(context.intelligence_dir, BUSINESS_INTELLIGENCE_OUTPUT_FILES).values()) <= 0:
             raise RuntimeError("business_intelligence produced no usable artifacts")
-        record_stage("business_intelligence", "pass", outputs=stage_outputs["business_intelligence"]())
-
+        return {"status": "pass", "outputs": stage_outputs["business_intelligence"]()}
+    if stage_name == "intelligence":
         run_intelligence(context=context)
-        record_stage("intelligence", "pass", outputs=stage_outputs["intelligence"]())
-
-        _, multi_year_warnings = _require_company_level_intelligence(context.company, "multi_year_memory")
-        run_multi_year_memory_stage(company=context.company, context=context)
-        multi_year_status = "warning" if multi_year_warnings else "pass"
-        record_stage(
-            "multi_year_memory",
-            multi_year_status,
-            outputs=stage_outputs["multi_year_memory"](),
-            warnings=multi_year_warnings,
+        return {"status": "pass", "outputs": stage_outputs["intelligence"]()}
+    if stage_name == "multi_year_memory":
+        _, warnings = _require_company_level_intelligence(company, "multi_year_memory")
+        run_multi_year_memory_stage(company=company, context=context)
+        return {
+            "status": "warning" if warnings else "pass",
+            "outputs": stage_outputs["multi_year_memory"](),
+            "warnings": warnings,
+        }
+    if stage_name == "management_commitments":
+        _, warnings = _require_company_level_intelligence(company, "management_commitments")
+        run_management_commitments_stage(company=company, context=context)
+        return {
+            "status": "warning" if warnings else "pass",
+            "outputs": stage_outputs["management_commitments"](),
+            "warnings": warnings,
+        }
+    if stage_name == "management_commentary":
+        _, warnings = _require_company_level_intelligence(company, "management_commentary")
+        run_management_commentary_stage(company=company, context=context)
+        return {
+            "status": "warning" if warnings else "pass",
+            "outputs": stage_outputs["management_commentary"](),
+            "warnings": warnings,
+        }
+    if stage_name == "capital_allocation_outcomes":
+        _, warnings = _require_company_level_intelligence(company, "capital_allocation_outcomes")
+        run_capital_allocation_outcomes_stage(company=company, context=context)
+        return {
+            "status": "warning" if warnings else "pass",
+            "outputs": stage_outputs["capital_allocation_outcomes"](),
+            "warnings": warnings,
+        }
+    if stage_name == "management_quality":
+        _, warnings = _require_company_level_intelligence(company, "management_quality")
+        run_management_quality_stage(company=company, context=context)
+        return {
+            "status": "warning" if warnings else "pass",
+            "outputs": stage_outputs["management_quality"](),
+            "warnings": warnings,
+        }
+    if stage_name == "projects":
+        _, warnings = _require_company_level_intelligence(company, "projects")
+        run_projects_stage(company=company, context=context)
+        return {
+            "status": "warning" if warnings else "pass",
+            "outputs": stage_outputs["projects"](),
+            "warnings": warnings,
+        }
+    if stage_name == "capacity_evolution":
+        _, warnings = _require_company_level_intelligence(company, "capacity_evolution")
+        run_capacity_evolution_stage(company=company, context=context)
+        return {
+            "status": "warning" if warnings else "pass",
+            "outputs": stage_outputs["capacity_evolution"](),
+            "warnings": warnings,
+        }
+    if stage_name == "risk_evolution":
+        _, warnings = _require_company_level_intelligence(company, "risk_evolution")
+        run_risk_evolution_stage(company=company, context=context)
+        return {
+            "status": "warning" if warnings else "pass",
+            "outputs": stage_outputs["risk_evolution"](),
+            "warnings": warnings,
+        }
+    if stage_name in {"cim", "pcim"}:
+        if not state.get("cim_pcim_built"):
+            _, warnings = _require_company_level_intelligence(company, "cim/pcim")
+            run_cim_stage(company=company, context=context)
+            state["cim_pcim_built"] = True
+            state["cim_pcim_warnings"] = warnings
+        outputs_key = "cim" if stage_name == "cim" else "pcim"
+        return {
+            "status": "pass",
+            "outputs": stage_outputs[outputs_key](),
+            "warnings": state.get("cim_pcim_warnings", []) if stage_name == "cim" else [],
+        }
+    if stage_name == "financials":
+        if options.get("_profile_name") == "production" and not options.get("force", False):
+            reusable, reuse_warnings = _reusable_year_financial_outputs(context)
+            if reusable:
+                return {
+                    "status": "warning" if reuse_warnings else "pass",
+                    "outputs": stage_outputs["financials"](),
+                    "warnings": reuse_warnings,
+                }
+        run_financials_stage(context=context)
+        return {"status": "pass", "outputs": stage_outputs["financials"]()}
+    if stage_name == "financial_memory":
+        run_financial_memory_stage(company=company, context=context)
+        return {"status": "pass", "outputs": stage_outputs["financial_memory"]()}
+    if stage_name == "investor_financials":
+        run_investor_financials_stage(company=company, context=context)
+        return {"status": "pass", "outputs": stage_outputs["investor_financials"]()}
+    if stage_name == "financial_pcim_validation":
+        run_financial_pcim_validation_stage(context=context)
+        return {"status": "pass", "outputs": stage_outputs["financial_pcim_validation"]()}
+    if stage_name == "audit":
+        run_audit_stage(company=company, context=context, fix_safe=options.get("fix_safe", False))
+        payload = _load_audit_payload(company)
+        status = str(payload.get("status") or "pass").lower()
+        normalized_status = "warning" if status == "warning" else "pass" if status == "pass" else "fail"
+        warnings = [str(item) for item in (payload.get("warnings") or [])]
+        failures = [str(item) for item in (payload.get("critical_failures") or [])] if normalized_status == "fail" else []
+        return {
+            "status": normalized_status,
+            "outputs": stage_outputs["audit"](),
+            "warnings": warnings,
+            "failures": failures,
+        }
+    if stage_name == "panel":
+        run_panel_stage(
+            company=company,
+            context=context,
+            include_evidence_ids=options.get("include_evidence_ids", False),
+            regenerate_analysts=options.get("regenerate_analysts", False),
         )
+        return {"status": "pass", "outputs": stage_outputs["panel"]()}
+    if stage_name == "ask_intrinsiciq":
+        _ensure_audit_allows_customer_output(company)
+        run_ask_intrinsiciq_stage(company=company, context=context, force=options.get("force", False))
+        return {"status": "pass", "outputs": stage_outputs["ask_intrinsiciq"]()}
+    raise RuntimeError(f"Unsupported sequence stage: {stage_name}")
 
-        _, cim_warnings = _require_company_level_intelligence(context.company, "cim/pcim")
-        run_cim_stage(company=context.company, context=context)
-        record_stage("cim", "pass", outputs=stage_outputs["cim"](), warnings=cim_warnings)
-        record_stage("pcim", "pass", outputs=stage_outputs["pcim"]())
+
+def run_stage_sequence(company_slug, stages, options=None, context=None, profile_name="custom"):
+    context = _ensure_context(profile_name, context)
+    set_context(context)
+    options = dict(options or {})
+    options["_profile_name"] = profile_name
+    summary = _build_run_summary(context, profile_name)
+    stage_outputs = _build_stage_output_map(context)
+    stage_list = list(stages)
+    started_at = time.time()
+    state = {}
+    skipped_stages = []
+
+    try:
+        for index, stage_name in enumerate(stage_list):
+            result = _run_stage_by_name(stage_name, context, stage_outputs=stage_outputs, options=options, state=state)
+            _record_stage(
+                summary,
+                stage_name,
+                result.get("status", "pass"),
+                outputs=result.get("outputs"),
+                warnings=result.get("warnings"),
+                failures=result.get("failures"),
+            )
+            if result.get("status") == "fail":
+                skipped_stages.extend(stage_list[index + 1 :])
+                break
     except Exception as exc:
-        current_stage = ALL_STAGE_SEQUENCE[len(summary["stages"])] if len(summary["stages"]) < len(ALL_STAGE_SEQUENCE) else "all"
-        record_stage(current_stage, "fail", failures=[str(exc)])
-        finalize_summary()
+        current_stage = stage_list[len(summary["stages"])] if len(summary["stages"]) < len(stage_list) else profile_name
+        _record_stage(summary, current_stage, "fail", failures=[str(exc)])
+        skipped_stages.extend(stage_list[len(summary["stages"]) :])
+        _finalize_run_summary(summary, context, started_at, skipped_stages)
+        _print_stage_sequence_summary(profile_name, summary)
         raise
 
-    finalize_summary()
+    _finalize_run_summary(summary, context, started_at, skipped_stages)
+    _print_stage_sequence_summary(profile_name, summary)
+    return summary
 
 
 def print_stage_catalog():
     for stage_name in [
         "all",
+        "production",
         "discovery",
         "financial_discovery",
         "financial_extraction",
         "financial_normalization",
         "financial_validation",
         "financial_reconciliation",
+        "financial_basis_resolution",
+        "financial_truth_registry",
         "financial_ratios",
-    "financial_growth",
-    "corporate_actions",
-    "shareholding_pattern",
-    "financial_pcim_validation",
-    "financials",
+        "financial_growth",
+        "corporate_actions",
+        "shareholding_pattern",
+        "financial_pcim_validation",
+        "financials",
         "financial_trends",
         "financial_quality",
         "financial_attribution",
         "financial_memory",
+        "investor_financials",
+        "ask_intrinsiciq",
         "extraction",
         "cleaning",
         "business_understanding",
         "business_intelligence",
         "intelligence",
         "company_memory",
+        "management_commitments",
+        "management_commentary",
+        "capital_allocation_outcomes",
+        "management_quality",
+        "projects",
+        "capacity_evolution",
+        "risk_evolution",
         "cim",
         "pcim",
         "audit",
@@ -2848,6 +4436,7 @@ def build_parser():
         "--stage",
         choices=[
             "all",
+            "production",
             "business_understanding",
             "business_intelligence",
             "financial_discovery",
@@ -2855,6 +4444,8 @@ def build_parser():
             "financial_normalization",
             "financial_validation",
             "financial_reconciliation",
+            "financial_basis_resolution",
+            "financial_truth_registry",
             "financial_ratios",
             "financial_growth",
             "corporate_actions",
@@ -2864,8 +4455,17 @@ def build_parser():
             "financial_quality",
             "financial_attribution",
             "financial_memory",
+            "investor_financials",
+            "ask_intrinsiciq",
             "financial_pcim_validation",
             "company_memory",
+            "management_commitments",
+            "management_commentary",
+            "capital_allocation_outcomes",
+            "management_quality",
+            "projects",
+            "capacity_evolution",
+            "risk_evolution",
             "multi_year_memory",
             "cim",
             "pcim",
@@ -2945,6 +4545,18 @@ def main():
 
     if args.stage == "all":
         run_all(context=context)
+    elif args.stage == "production":
+        run_stage_sequence(
+            args.company,
+            PRODUCTION_STAGE_SEQUENCE,
+            context=context,
+            profile_name="production",
+            options={
+                "fix_safe": args.fix_safe,
+                "include_evidence_ids": args.include_evidence_ids,
+                "regenerate_analysts": args.regenerate_analysts,
+            },
+        )
     elif args.stage == "business_understanding":
         run_business_understanding_stage(context=context)
     elif args.stage == "business_intelligence":
@@ -2959,6 +4571,10 @@ def main():
         run_financial_validation(context=context)
     elif args.stage == "financial_reconciliation":
         run_financial_reconciliation(context=context)
+    elif args.stage == "financial_basis_resolution":
+        run_financial_basis_resolution(context=context)
+    elif args.stage == "financial_truth_registry":
+        run_financial_truth_registry(context=context)
     elif args.stage == "financial_ratios":
         run_financial_ratios(context=context)
     elif args.stage == "financial_growth":
@@ -2977,10 +4593,26 @@ def main():
         run_financial_attribution_stage(company=args.company, context=context)
     elif args.stage == "financial_memory":
         run_financial_memory_stage(company=args.company, context=context)
+    elif args.stage == "investor_financials":
+        run_investor_financials_stage(company=args.company, context=context)
+    elif args.stage == "ask_intrinsiciq":
+        run_ask_intrinsiciq_stage(company=args.company, context=context)
     elif args.stage == "financial_pcim_validation":
         run_financial_pcim_validation_stage(context=context)
     elif args.stage == "company_memory":
         run_company_memory_stage(company=args.company, context=context)
+    elif args.stage == "management_commitments":
+        run_management_commitments_stage(company=args.company, context=context)
+    elif args.stage == "management_commentary":
+        run_management_commentary_stage(company=args.company, context=context)
+    elif args.stage == "capital_allocation_outcomes":
+        run_capital_allocation_outcomes_stage(company=args.company, context=context)
+    elif args.stage == "management_quality":
+        run_management_quality_stage(company=args.company, context=context)
+    elif args.stage == "projects":
+        run_projects_stage(company=args.company, context=context)
+    elif args.stage == "capacity_evolution":
+        run_capacity_evolution_stage(company=args.company, context=context)
     elif args.stage == "multi_year_memory":
         run_multi_year_memory_stage(company=args.company, context=context)
     elif args.stage in {"cim", "pcim"}:

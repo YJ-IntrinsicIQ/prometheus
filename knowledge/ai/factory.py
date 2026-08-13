@@ -8,6 +8,7 @@ from .exceptions import AIProviderError
 from .groq import GroqProvider
 from .mock import MockProvider
 from .openai import OpenAIProvider
+from .deepseek import DeepSeekProvider
 
 
 def get_llm(
@@ -21,6 +22,8 @@ def get_llm(
         return GroqProvider(model=model)
     if selected_provider == "openai":
         return OpenAIProvider(model=model)
+    if selected_provider == "deepseek":
+        return DeepSeekProvider()
     if selected_provider == "mock":
         configured_response = os.getenv("AI_MOCK_RESPONSE")
         responses = mock_responses

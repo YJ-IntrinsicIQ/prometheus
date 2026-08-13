@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f6f0e4;
+  --surface: #fffaf1;
+  --surface-strong: #f1e8d7;
+  --foreground: #14213d;
+  --muted: #5d675f;
+  --accent: #2d5b4f;
+  --accent-soft: #d8e6de;
+  --gold: #a8833f;
+  --gold-soft: #efe3bf;
+  --border: rgba(20, 33, 61, 0.12);
+  --shadow: 0 24px 60px rgba(20, 33, 61, 0.08);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-strong: var(--surface-strong);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-gold: var(--gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-border: var(--border);
+  --font-sans: "Inter", "Segoe UI", sans-serif;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  cursor: pointer;
+}
+
+button,
+select,
+a {
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease;
+}
+
+:focus-visible {
+  outline: 2px solid rgba(45, 91, 79, 0.38);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(45, 91, 79, 0.18);
+}
+
+.page-shell {
+  min-height: 100vh;
+  min-width: 0;
+  padding: 32px 20px 56px;
+}
+
+.content-frame {
+  width: 100%;
+  min-width: 0;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.editorial-card {
+  width: 100%;
+  min-width: 0;
+  background: linear-gradient(180deg, rgba(255, 250, 241, 0.98), rgba(255, 248, 236, 0.92));
+  border: 1px solid var(--border);
+  box-shadow: 0 20px 46px rgba(20, 33, 61, 0.06);
+}
+
+@media (min-width: 768px) {
+  .page-shell {
+    padding: 40px 32px 64px;
+  }
+}

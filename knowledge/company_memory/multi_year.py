@@ -877,6 +877,7 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
             years = [item["source_year"] for item in mentions]
             severity_by_year = {item["source_year"]: item["severity"] for item in mentions}
             latest_severity = severity_by_year[years[-1]]
+            risk_label = canonical.replace("_", " ").strip().capitalize() if canonical else "Risk"
             numeric_by_year = {item["source_year"]: item["numeric_value"] for item in mentions if item.get("numeric_value") is not None}
             first_rank = SEVERITY_RANK.get(severity_by_year[years[0]], 0)
             latest_rank = SEVERITY_RANK.get(latest_severity, 0)
@@ -896,7 +897,10 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
             record = {
                 "risk_id": group["risk_id"],
                 "normalized_risk": canonical,
+                "risk_name": risk_label,
                 "first_seen_year": years[0],
+                "latest_period": years[-1],
+                "current_state": latest_severity,
                 "repeated_years": years[1:],
                 "severity_by_year": severity_by_year,
                 "latest_severity": latest_severity,
@@ -917,6 +921,26 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
                     }
                     for item in mentions
                 ],
+                "what_changed": (
+                    f"{risk_label} remains visible across {len(years)} year(s)."
+                    if len(years) >= 2
+                    else f"{risk_label} is identified in the source evidence."
+                ),
+                "why_it_changed": (
+                    "Later filings keep pointing to the same underlying mechanism."
+                    if len(years) >= 2
+                    else "No later year is available yet to show whether the risk intensifies or recedes."
+                ),
+                "progression_summary": (
+                    f"{risk_label} remains under observation across the available years."
+                    if len(years) >= 2
+                    else f"{risk_label} has been identified, but follow-through is not yet visible."
+                ),
+                "investor_implication": (
+                    "The risk remains live in the evidence and should stay in view."
+                    if latest_severity in {"high", "severe", "medium"}
+                    else "The risk remains visible, but the evidence is still too thin for a stronger judgment."
+                ),
             }
             warnings = [item.get("validation_warning") for item in mentions if item.get("validation_warning")]
             if warnings:

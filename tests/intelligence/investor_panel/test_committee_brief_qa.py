@@ -102,6 +102,15 @@ def _committee_payload():
         "evidence_quality_notes": ["graham included with evidence grounding warnings: 4 issue(s)."],
         "synthesis_limits": ["Two-year history remains provisional."],
         "generated_at": "2026-07-13T00:00:00Z",
+        "committee_financial_truth": {
+            "fcf_missing": False,
+            "capex_missing": False,
+            "payables_missing": False,
+            "payables_available": True,
+            "working_capital_metrics_available": True,
+            "owner_earnings_estimate_available": True,
+            "owner_earnings_status": "available_derived_precision_limited",
+        },
     }
 
 
@@ -182,6 +191,14 @@ def test_committee_brief_qa_allows_corporate_action_language(tmp_path):
     assert result["checks"]["forbidden_language"]["status"] == "pass"
 
 
+def test_committee_brief_qa_allows_buyback_language(tmp_path):
+    gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
+    result = gate._v2_public_language_check("The company disclosed a buyback and dividend.")
+
+    assert result["status"] == "pass"
+    assert result["matches"] == []
+
+
 def test_committee_brief_qa_fails_evidence_ids_by_default(tmp_path):
     _write_committee_files(tmp_path, _committee_payload(), include_evidence_ids=True)
     gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
@@ -246,6 +263,219 @@ def test_committee_brief_qa_preserves_synthesis_limits(tmp_path):
 
     assert result["checks"]["source_fidelity"]["status"] == "pass"
     assert result["status"] == "pass"
+
+
+def test_committee_brief_qa_fails_stale_financial_contradiction(tmp_path):
+    payload = _committee_payload()
+    payload["committee_financial_truth"] = {
+        "fcf_missing": False,
+        "capex_missing": False,
+        "payables_available": True,
+        "working_capital_metrics_available": True,
+    }
+    brief_path = _write_committee_files(tmp_path, payload)
+    brief_path.write_text(
+        brief_path.read_text(encoding="utf-8") + "\nFree cash flow is missing.\n",
+        encoding="utf-8",
+    )
+    gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
+    result = json.loads(gate.build()["committee_brief_qa.json"].read_text(encoding="utf-8"))
+
+    assert result["status"] == "fail"
+    assert result["checks"]["quality_contradictions"]["status"] == "fail"
+    assert any("fcf_missing=false" in item for item in result["checks"]["quality_contradictions"]["contradictions"])
+
+
+def test_committee_brief_qa_fails_internal_or_broken_fragments(tmp_path):
+    payload = _committee_payload()
+    brief_path = _write_committee_files(tmp_path, payload)
+    brief_path.write_text(
+        brief_path.read_text(encoding="utf-8") + "\n- fcf: derived value used\n- ₹41.\n",
+        encoding="utf-8",
+    )
+    gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
+    result = json.loads(gate.build()["committee_brief_qa.json"].read_text(encoding="utf-8"))
+
+    assert result["status"] == "fail"
+    assert result["checks"]["quality_contradictions"]["internal_language"]
+    assert result["checks"]["quality_contradictions"]["formatting_issues"]
+
+
+def test_committee_brief_qa_fails_stale_capex_contradiction(tmp_path):
+    payload = _committee_payload()
+    brief_path = _write_committee_files(tmp_path, payload)
+    brief_path.write_text(
+        brief_path.read_text(encoding="utf-8") + "\nCapex data are not provided.\n",
+        encoding="utf-8",
+    )
+    gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
+    result = json.loads(gate.build()["committee_brief_qa.json"].read_text(encoding="utf-8"))
+
+    assert result["status"] == "fail"
+    assert any("capex_missing=false" in item for item in result["checks"]["quality_contradictions"]["contradictions"])
+
+
+def test_committee_brief_qa_fails_blank_question_body(tmp_path):
+    payload = _committee_payload()
+    brief_path = _write_committee_files(tmp_path, payload)
+    brief_text = brief_path.read_text(encoding="utf-8").replace(
+        "What do future filings show about operating cash flow coverage?",
+        "",
+    )
+    brief_path.write_text(brief_text, encoding="utf-8")
+    gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
+    result = json.loads(gate.build()["committee_brief_qa.json"].read_text(encoding="utf-8"))
+
+    assert result["status"] == "fail"
+    assert any("blank_question_body" in item for item in result["checks"]["quality_contradictions"]["low_quality_questions"])
+
+
+def test_committee_brief_qa_fails_business_only_financial_strength(tmp_path):
+    gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
+    brief_view = {
+        "committee_financial_truth": _committee_payload()["committee_financial_truth"],
+        "committee_view": {"summary": "", "dominant_tension": "", "confidence": "medium"},
+        "financial_view": {"financial_strengths": ["The business model and certification profile support the operating story."]},
+        "strongest_positive_signals": [],
+        "investigation_questions": [],
+    }
+    result = gate._quality_contradiction_check(brief_view, "**Financial Strengths:**\n- The business model and certification profile support the operating story.\n")
+
+    assert result["status"] == "warning"
+    assert any(
+        item.startswith("financial_strength_business_only:")
+        for item in result["readability_warnings"]
+    )
+
+
+def test_committee_brief_qa_passes_without_duplicate_or_empty_supported_by(tmp_path):
+    payload = _committee_payload()
+    payload["strongest_positive_signals"] = [
+        {
+            "signal": "Owner earnings estimate in-…",
+            "supported_by": ["buffett"],
+            "summary": "Owner earnings estimate in-…",
+            "evidence_ids": ["ev_x"],
+        },
+        {
+            "signal": "Derived owner-earnings estimate",
+            "supported_by": ["buffett"],
+            "summary": "Derived FCF / owner-earnings estimate is available for the current usable year, but precision is limited because maintenance-versus-growth capex split and multi-year bridge history are incomplete.",
+            "evidence_ids": ["ev_y"],
+        },
+    ]
+    _write_committee_files(tmp_path, payload)
+
+    gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
+    result = json.loads(gate.build()["committee_brief_qa.json"].read_text(encoding="utf-8"))
+    brief = (tmp_path / "companies" / "polymatech" / "company_memory" / "investor_panel" / "committee_brief.md").read_text(encoding="utf-8")
+
+    assert result["status"] == "pass"
+    assert brief.count("**Supported by:** Buffett") == 1
+    assert "**Supported by:** " in brief
+
+
+def test_committee_brief_qa_fails_semantically_truncated_heading(tmp_path):
+    brief_path = _write_committee_files(tmp_path, _committee_payload())
+    brief_path.write_text(
+        brief_path.read_text(encoding="utf-8").replace(
+            "### Visible capacity expansion",
+            "### capital-intensive manufacturer with",
+        ),
+        encoding="utf-8",
+    )
+    gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
+    result = json.loads(gate.build()["committee_brief_qa.json"].read_text(encoding="utf-8"))
+
+    assert result["status"] == "fail"
+    assert any(
+        "capital-intensive manufacturer with" in item
+        for item in result["checks"]["quality_contradictions"]["formatting_issues"]
+    )
+
+
+def test_committee_brief_qa_fails_missing_data_default_when_precision_gaps_exist(tmp_path):
+    payload = _committee_payload()
+    payload["financial_committee_view"]["missing_financial_data"] = []
+    payload["committee_financial_truth"]["basis_unknown"] = True
+    payload["committee_financial_truth"]["weighted_avg_shares_missing"] = True
+    brief_path = _write_committee_files(tmp_path, payload)
+    text = brief_path.read_text(encoding="utf-8").replace(
+        "- Standalone versus consolidated basis remains unclear, limiting comparability.",
+        "- No material missing financial data was recorded.",
+    )
+    brief_path.write_text(text, encoding="utf-8")
+
+    gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
+    result = json.loads(gate.build()["committee_brief_qa.json"].read_text(encoding="utf-8"))
+
+    assert result["status"] == "fail"
+    assert any(
+        "No material missing financial data was recorded." in item
+        for item in result["checks"]["quality_contradictions"]["contradictions"]
+    )
+
+
+def test_committee_brief_qa_warns_when_limitation_leaks_into_financial_strengths(tmp_path):
+    gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
+    brief_view = {
+        "committee_financial_truth": _committee_payload()["committee_financial_truth"],
+        "committee_view": {"summary": "", "dominant_tension": "", "confidence": "medium"},
+        "financial_view": {
+            "financial_strengths": [
+                "Standalone versus consolidated basis remains unclear, limiting comparability.",
+                "Revenue, PAT, and EPS are directionally supportive.",
+            ]
+        },
+        "strongest_positive_signals": [],
+        "investigation_questions": [],
+    }
+    result = gate._quality_contradiction_check(
+        brief_view,
+        "**Financial Strengths:**\n- Standalone versus consolidated basis remains unclear, limiting comparability.\n- Revenue, PAT, and EPS are directionally supportive.\n",
+    )
+
+    assert result["status"] == "warning"
+    assert any(
+        item.startswith("limitation_inside_financial_strengths:")
+        for item in result["readability_warnings"]
+    )
+
+
+def test_committee_brief_qa_warns_when_committee_view_omits_working_capital_risk(tmp_path):
+    gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
+    brief_view = {
+        "committee_financial_truth": {**_committee_payload()["committee_financial_truth"], "working_capital_risk": True},
+        "committee_view": {
+            "summary": "Reported profitability and cash-flow signals look constructive.",
+            "dominant_tension": "Profitability versus basis clarity.",
+            "confidence": "medium",
+        },
+        "financial_view": {"financial_strengths": ["Revenue, PAT, and EPS are directionally supportive."]},
+        "strongest_positive_signals": [],
+        "investigation_questions": [],
+    }
+    result = gate._quality_contradiction_check(brief_view, "## Committee View\nReported profitability and cash-flow signals look constructive.\n**Dominant Tension:** Profitability versus basis clarity.\n")
+
+    assert result["status"] == "warning"
+    warnings = result["readability_warnings"]
+    assert "committee_view_omits_working_capital_risk" in warnings
+    assert "dominant_tension_omits_working_capital_risk" in warnings
+
+
+def test_committee_brief_qa_warns_when_financial_strengths_are_too_thin(tmp_path):
+    gate = CommitteeBriefQAGate(company="polymatech", companies_root=tmp_path / "companies")
+    brief_view = {
+        "committee_financial_truth": _committee_payload()["committee_financial_truth"],
+        "committee_view": {"summary": "", "dominant_tension": "", "confidence": "medium"},
+        "financial_view": {"financial_strengths": ["Revenue, PAT, and EPS are directionally supportive."]},
+        "strongest_positive_signals": [],
+        "investigation_questions": [],
+    }
+    result = gate._quality_contradiction_check(brief_view, "**Financial Strengths:**\n- Revenue, PAT, and EPS are directionally supportive.\n")
+
+    assert result["status"] == "warning"
+    assert "financial_strengths_too_thin_for_available_financial_truth" in result["readability_warnings"]
 
 
 def test_pipeline_committee_brief_qa_stage_dispatch(monkeypatch):

@@ -70,6 +70,8 @@ def _write_analyst_output(
                 "evidence_grounding_warnings": [{"issue": str(i)} for i in range(warning_count)],
                 "schema_warnings": [],
                 "evidence_routing_diagnostics": {},
+                "post_finalization_status": {"status": status, "validation_status": status, "evidence_grounding_status": status},
+                "finalization_summary": {"hard_failures": [], "warnings": [], "active_unresolved_claims": [], "non_active_unresolved_claims": []},
             }
         ),
         encoding="utf-8",
@@ -118,6 +120,7 @@ def _write_committee_outputs(
     company: str = "polymatech",
     *,
     qa_status: str = "pass",
+    disagreements=None,
     year: Optional[str] = None,
 ):
     panel_dir = _panel_dir(base, company, year=year)
@@ -127,7 +130,11 @@ def _write_committee_outputs(
         json.dumps(
             {
                 "evidence_id_normalization": {"applied": True, "replacements": [], "unresolved_ids": []},
-                "areas_of_disagreement": [{"disagreement_type": "different_emphasis"}],
+                "areas_of_disagreement": (
+                    [{"disagreement_type": "different_emphasis"}]
+                    if disagreements is None
+                    else disagreements
+                ),
             }
         ),
         encoding="utf-8",
@@ -140,6 +147,218 @@ def _write_committee_outputs(
         encoding="utf-8",
     )
     return synthesis, brief, qa
+
+
+def test_panel_stage_accepts_empty_committee_disagreements(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, manifest_status="pass")
+    company_memory = tmp_path / "companies" / "polymatech" / "company_memory"
+    multi_year_dir = company_memory / "multi_year"
+    multi_year_dir.mkdir(parents=True, exist_ok=True)
+    (multi_year_dir / "company_year_index.json").write_text(
+        json.dumps({"years": ["fy24"]}),
+        encoding="utf-8",
+    )
+    (multi_year_dir / "multi_year_index.json").write_text(
+        json.dumps({"years_covered": ["fy24"]}),
+        encoding="utf-8",
+    )
+    _write_financial_artifacts(tmp_path, quality_status="pass")
+    for analyst in ("graham", "buffett", "fisher", "munger", "lynch"):
+        _write_analyst_output(tmp_path, analyst, status="pass")
+    _write_committee_outputs(tmp_path, disagreements=[])
+
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_committee_synthesis_stage",
+        lambda company, context=None, cleanup_only=False: {
+            "committee_synthesis.json": _panel_dir(tmp_path, company) / "committee_synthesis.json"
+        },
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_committee_brief_stage",
+        lambda company, context=None, include_evidence_ids=False: {
+            "committee_brief.md": _panel_dir(tmp_path, company) / "committee_brief.md"
+        },
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_committee_brief_qa_stage",
+        lambda company, context=None, include_evidence_ids=False: {
+            "committee_brief_qa.json": _panel_dir(tmp_path, company) / "committee_brief_qa.json"
+        },
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "_assess_pcim_freshness",
+        lambda company, pcim_payload: {"status": "pass", "warnings": [], "failures": []},
+    )
+
+    outputs = run_company_pipeline.run_panel_stage(company="polymatech")
+    summary = json.loads(_panel_summary_path(tmp_path).read_text(encoding="utf-8"))
+
+    assert "committee_synthesis.json" in outputs
+    assert summary["stages"]["committee_synthesis"]["status"] == "pass"
+
+
+def test_assess_panel_financial_context_uses_hydrated_truth_pack(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    company = "polymatech"
+    year = "fy24"
+    context = _make_context(tmp_path, company=company, year=year)
+    _write_financial_artifacts(tmp_path, company=company, year=year, quality_status="warning")
+    company_fin = tmp_path / "companies" / company / "company_memory" / "financials"
+    company_fin.mkdir(parents=True, exist_ok=True)
+    (company_fin / "financial_truth_pack.json").write_text(
+        json.dumps(
+            {
+                "company": company,
+                "generated_at": "2026-07-26T00:00:00Z",
+                "years_covered": ["fy24"],
+                "source_files_checked": [],
+                "source_files_used": [],
+                "source_files_missing": [],
+                "usable_current_metrics": [{"metric_id": "revenue"}],
+                "usable_derived_metrics": [],
+                "partial_metrics": [],
+                "precise_missing_metrics": [],
+                "unreliable_metrics": [],
+                "invalid_or_quarantined_metrics": [],
+                "derived_not_explicitly_reported": [],
+                "trend_durability_limits": [],
+                "precision_limits": ["Maintenance versus growth capex is estimated."],
+                "financial_warnings_allowed_downstream": [],
+                "financial_warnings_blocked_downstream": [],
+                "financial_warnings_rewritten": [],
+                "investor_relevant_questions": ["What explains capex timing?"],
+                "financial_panel_status": "warning",
+                "financial_panel_status_reason": "Hydrated truth exists with some limits.",
+                "financial_panel_usable_domains": ["owner_earnings"],
+                "financial_panel_limited_domains": ["working_capital"],
+                "financial_panel_blocked_domains": [],
+                "source_provenance": ["company_memory/financials/financial_truth_pack.json"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_company_pipeline._assess_panel_financial_context(context)
+
+    assert result["available"] is True
+    assert result["status"] in {"warning", "partial", "pass"}
+    assert result["artifacts_checked"]
+
+
+def test_assess_panel_financial_context_uses_existing_analyst_financial_usage(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    company = "polymatech"
+    year = "fy24"
+    context = _make_context(tmp_path, company=company, year=year)
+    _write_financial_artifacts(tmp_path, company=company, year=year, quality_status="warning")
+    _write_pcim(tmp_path, company=company)
+    panel_dir = _panel_dir(tmp_path, company)
+    panel_dir.mkdir(parents=True, exist_ok=True)
+    (panel_dir / "graham_analysis.json").write_text(
+        json.dumps(
+            {
+                "doctrine_id": "graham",
+                "financial_assessment": {"financials_used": True},
+                "financial_sections_consumed": ["balance_sheet_strength_inputs"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_company_pipeline._assess_panel_financial_context(context)
+
+    assert result["available"] is True
+    assert result["artifacts_checked"]
+    assert any("graham_analysis.json" in item for item in result["artifacts_checked"])
+    assert result["status"] in {"warning", "partial", "pass"}
+
+
+def test_assess_panel_financial_context_without_year_context_uses_company_memory_truth(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    company = "polymatech"
+    company_fin = tmp_path / "companies" / company / "company_memory" / "financials"
+    company_fin.mkdir(parents=True, exist_ok=True)
+    (company_fin / "financial_truth_pack.json").write_text(
+        json.dumps(
+            {
+                "financial_panel_status": "pass",
+                "usable_current_metrics": [{"metric_id": "fcf"}],
+                "usable_derived_metrics": [],
+                "partial_metrics": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    panel_dir = _panel_dir(tmp_path, company)
+    panel_dir.mkdir(parents=True, exist_ok=True)
+    (panel_dir / "graham_analysis.json").write_text(
+        json.dumps({"financial_assessment": {"financials_used": True}}),
+        encoding="utf-8",
+    )
+
+    result = run_company_pipeline._assess_panel_financial_context(None)
+
+    assert result["available"] is True
+    assert result["status"] == "pass"
+    assert result["artifacts_checked"]
+
+
+def test_panel_stage_records_financial_context_without_year_context(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    pcim_path = _write_pcim(tmp_path)
+    company_fin = tmp_path / "companies" / "polymatech" / "company_memory" / "financials"
+    company_fin.mkdir(parents=True, exist_ok=True)
+    (company_fin / "financial_truth_pack.json").write_text(
+        json.dumps(
+            {
+                "financial_panel_status": "pass",
+                "usable_current_metrics": [{"metric_id": "revenue"}],
+                "usable_derived_metrics": [],
+                "partial_metrics": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    pcim_path.touch()
+    for analyst in ("graham", "buffett", "fisher", "munger", "lynch"):
+        _write_analyst_output(tmp_path, analyst, status="pass")
+
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_committee_synthesis_stage",
+        lambda company, context=None, cleanup_only=False: (
+            _write_committee_outputs(tmp_path),
+            {"committee_synthesis.json": _panel_dir(tmp_path) / "committee_synthesis.json"},
+        )[1],
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_committee_brief_stage",
+        lambda company, context=None, include_evidence_ids=False: (
+            _write_committee_outputs(tmp_path),
+            {"committee_brief.md": _panel_dir(tmp_path) / "committee_brief.md"},
+        )[1],
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_committee_brief_qa_stage",
+        lambda company, context=None, include_evidence_ids=False: (
+            _write_committee_outputs(tmp_path),
+            {"committee_brief_qa.json": _panel_dir(tmp_path) / "committee_brief_qa.json"},
+        )[1],
+    )
+
+    run_company_pipeline.run_panel_stage(company="polymatech")
+    summary = json.loads(_panel_summary_path(tmp_path).read_text(encoding="utf-8"))
+
+    assert summary["financial_context"]["available"] is True
+    assert summary["financial_context"]["status"] == "pass"
+    assert summary["financial_context"]["artifacts_checked"]
 
 
 def test_panel_stage_exists_in_parser():
@@ -235,9 +454,239 @@ def test_panel_stage_reuses_existing_validated_analysts_by_default(tmp_path, mon
     result = run_company_pipeline.run_panel_stage(company="polymatech")
 
     summary = json.loads(_panel_summary_path(tmp_path).read_text(encoding="utf-8"))
-    assert summary["status"] == "pass"
+    assert summary["status"] == "warning"
     assert summary["analyst_source_mode"] == "loaded_existing"
+    assert summary["financial_context"]["available"] is True
     assert result["panel_run_summary.json"].name == "panel_run_summary.json"
+
+
+def test_loaded_existing_finalization_summary_overrides_intermediate_unresolved_claims(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path)
+    _write_analyst_output(tmp_path, "munger", status="warning")
+    diagnostics_path = _panel_dir(tmp_path) / "munger_analysis_diagnostics.json"
+    diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+    diagnostics["evidence_routing_diagnostics"] = {
+        "unresolved_claims": [{"claim_text": "old unsupported claim"}],
+    }
+    diagnostics["finalization_diagnostics"] = {
+        "post_finalization_status": {"status": "warning", "validation_status": "warning", "evidence_grounding_status": "warning"},
+        "finalization_summary": {"hard_failures": [], "warnings": [], "active_unresolved_claims": [], "non_active_unresolved_claims": []},
+    }
+    diagnostics_path.write_text(json.dumps(diagnostics), encoding="utf-8")
+
+    result = run_company_pipeline._validate_analyst_output("polymatech", "munger")
+
+    assert result["status"] == "warning"
+    assert result["failures"] == []
+
+
+def test_loaded_existing_true_active_unresolved_claim_still_fails(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path)
+    _write_analyst_output(tmp_path, "lynch", status="warning")
+    diagnostics_path = _panel_dir(tmp_path) / "lynch_analysis_diagnostics.json"
+    diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+    diagnostics["finalization_diagnostics"] = {
+        "post_finalization_status": {"status": "fail", "validation_status": "fail", "evidence_grounding_status": "fail"},
+        "finalization_summary": {
+            "hard_failures": ["unresolved factual claims remain after evidence routing repair"],
+            "warnings": [],
+            "active_unresolved_claims": [{"claim_text": "unsupported active claim"}],
+            "non_active_unresolved_claims": [],
+        },
+    }
+    diagnostics_path.write_text(json.dumps(diagnostics), encoding="utf-8")
+
+    result = run_company_pipeline._validate_analyst_output("polymatech", "lynch")
+
+    assert result["status"] == "fail"
+    assert any("unresolved factual claims remain after evidence routing repair" in item for item in result["failures"])
+
+
+def test_loaded_existing_missing_post_finalization_status_falls_back_to_artifact_status(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path)
+    _write_analyst_output(tmp_path, "graham", status="warning")
+    diagnostics_path = _panel_dir(tmp_path) / "graham_analysis_diagnostics.json"
+    diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+    diagnostics.pop("post_finalization_status", None)
+    diagnostics.pop("finalization_summary", None)
+    diagnostics_path.write_text(json.dumps(diagnostics), encoding="utf-8")
+
+    result = run_company_pipeline._validate_analyst_output("polymatech", "graham")
+
+    assert result["status"] == "warning"
+    assert result["resolved_final_status"] == "warning"
+
+
+def test_panel_summary_uses_resolved_post_finalization_status(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path)
+    for analyst in ("graham", "buffett", "fisher", "munger", "lynch"):
+        _write_analyst_output(tmp_path, analyst, status="warning")
+    diagnostics_path = _panel_dir(tmp_path) / "munger_analysis_diagnostics.json"
+    diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
+    diagnostics["finalization_diagnostics"] = {
+        "post_finalization_status": {"status": "warning", "validation_status": "warning", "evidence_grounding_status": "warning"},
+        "finalization_summary": {"hard_failures": [], "warnings": [], "active_unresolved_claims": [], "non_active_unresolved_claims": []},
+    }
+    diagnostics["evidence_routing_diagnostics"] = {"unresolved_claims": [{"claim_text": "stale intermediate claim"}]}
+    diagnostics_path.write_text(json.dumps(diagnostics), encoding="utf-8")
+
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_committee_synthesis_stage",
+        lambda company, context=None, cleanup_only=False: (
+            _write_committee_outputs(tmp_path),
+            {"committee_synthesis.json": _panel_dir(tmp_path) / "committee_synthesis.json"},
+        )[1],
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_committee_brief_stage",
+        lambda company, context=None, include_evidence_ids=False: (
+            _write_committee_outputs(tmp_path),
+            {"committee_brief.md": _panel_dir(tmp_path) / "committee_brief.md"},
+        )[1],
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_committee_brief_qa_stage",
+        lambda company, context=None, include_evidence_ids=False: (
+            _write_committee_outputs(tmp_path),
+            {"committee_brief_qa.json": _panel_dir(tmp_path) / "committee_brief_qa.json"},
+        )[1],
+    )
+
+    run_company_pipeline.run_panel_stage(company="polymatech")
+    summary = json.loads(_panel_summary_path(tmp_path).read_text(encoding="utf-8"))
+
+    assert summary["analysts"]["munger"]["status"] == "warning"
+    assert summary["analysts"]["munger"]["evidence_grounding_status"] == "warning"
+    assert summary["analysts"]["munger"]["validation_status"] == "warning"
+    assert summary["analysts"]["munger"]["raw_artifact_status"] in {"warning", "fail", "pass"}
+    assert not any("munger: unresolved factual claims remain after evidence routing repair" in item for item in summary["failures"])
+
+
+def test_canonicalize_panel_run_summary_overrides_stale_fail_and_infers_financial_context(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    company = "polymatech"
+    _write_pcim(tmp_path, company=company)
+    panel_dir = _panel_dir(tmp_path, company=company)
+    panel_dir.mkdir(parents=True, exist_ok=True)
+    (panel_dir / "munger_analysis.json").write_text("{}", encoding="utf-8")
+
+    summary = {
+        "company": company,
+        "year": None,
+        "status": "fail",
+        "financial_context": {
+            "available": False,
+            "status": "missing",
+            "artifacts_checked": [],
+            "missing_artifacts": [],
+            "warnings": [],
+            "limitations": [],
+        },
+        "stages": {
+            "analysts": {
+                "status": "fail",
+                "output": "munger:fail",
+                "warnings": [],
+                "hard_failures": ["munger: unresolved factual claims remain after evidence routing repair"],
+                "failures": ["munger: unresolved factual claims remain after evidence routing repair"],
+            },
+            "pcim": {"status": "pass", "output": "companies/polymatech/company_memory/pcim_v1.json", "warnings": [], "hard_failures": [], "failures": []},
+        },
+        "analysts": {
+            "munger": {
+                "status": "fail",
+                "raw_artifact_status": "fail",
+                "output_path": str(panel_dir / "munger_analysis.json"),
+                "financials_used": True,
+                "financial_sections_consumed": ["financial_quality_inputs"],
+                "evidence_grounding_status": "fail",
+                "validation_status": "fail",
+                "post_finalization_status": {
+                    "status": "warning",
+                    "validation_status": "warning",
+                    "evidence_grounding_status": "warning",
+                },
+                "finalization_summary": {
+                    "hard_failures": [],
+                    "warnings": [],
+                    "active_unresolved_claims": [],
+                    "non_active_unresolved_claims": [],
+                },
+                "warnings": [],
+                "hard_failures": ["munger: unresolved factual claims remain after evidence routing repair"],
+            }
+        },
+        "warnings": [],
+        "hard_failures": ["munger: unresolved factual claims remain after evidence routing repair"],
+        "failures": ["munger: unresolved factual claims remain after evidence routing repair"],
+    }
+
+    canonical = run_company_pipeline.canonicalize_panel_run_summary(summary)
+
+    assert canonical["analysts"]["munger"]["status"] == "warning"
+    assert canonical["analysts"]["munger"]["validation_status"] == "warning"
+    assert canonical["analysts"]["munger"]["evidence_grounding_status"] == "warning"
+    assert canonical["analysts"]["munger"]["hard_failures"] == []
+    assert canonical["stages"]["analysts"]["status"] == "warning"
+    assert canonical["stages"]["analysts"]["output"] == "munger:warning"
+    assert canonical["stages"]["analysts"]["hard_failures"] == []
+    assert canonical["stages"]["analysts"]["failures"] == []
+    assert canonical["status"] == "warning"
+    assert canonical["hard_failures"] == []
+    assert canonical["failures"] == []
+    assert canonical["financial_context"]["available"] is True
+    assert canonical["financial_context"]["status"] == "warning"
+    assert canonical["financial_context"]["artifacts_checked"]
+    assert any("Financial context was inferred from analyst financial usage" in item for item in canonical["financial_context"]["warnings"])
+
+
+def test_canonicalize_panel_run_summary_preserves_true_final_fail(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    summary = {
+        "company": "polymatech",
+        "year": None,
+        "status": "warning",
+        "financial_context": {"available": True, "status": "warning", "artifacts_checked": [], "missing_artifacts": [], "warnings": [], "limitations": []},
+        "stages": {"analysts": {"status": "warning", "output": "", "warnings": [], "hard_failures": [], "failures": []}},
+        "analysts": {
+            "lynch": {
+                "status": "warning",
+                "financials_used": True,
+                "evidence_grounding_status": "warning",
+                "validation_status": "warning",
+                "post_finalization_status": {
+                    "status": "fail",
+                    "validation_status": "fail",
+                    "evidence_grounding_status": "fail",
+                },
+                "finalization_summary": {
+                    "hard_failures": [],
+                    "warnings": [],
+                    "active_unresolved_claims": [{"claim_text": "unsupported active claim"}],
+                    "non_active_unresolved_claims": [],
+                },
+                "warnings": [],
+                "hard_failures": [],
+            }
+        },
+        "warnings": [],
+        "hard_failures": [],
+        "failures": [],
+    }
+
+    canonical = run_company_pipeline.canonicalize_panel_run_summary(summary)
+
+    assert canonical["analysts"]["lynch"]["status"] == "fail"
+    assert canonical["stages"]["analysts"]["status"] == "fail"
+    assert any("unresolved factual claims remain after evidence routing repair" in item for item in canonical["stages"]["analysts"]["hard_failures"])
+    assert canonical["status"] == "fail"
 
 
 def test_panel_stage_collects_all_existing_analyst_failures_before_stopping(tmp_path, monkeypatch):
@@ -253,6 +702,80 @@ def test_panel_stage_collects_all_existing_analyst_failures_before_stopping(tmp_
     summary = json.loads(_panel_summary_path(tmp_path).read_text(encoding="utf-8"))
     assert "graham: evidence_grounding_status=fail" in summary["failures"]
     assert "munger: evidence_grounding_status=fail" in summary["failures"]
+
+
+def test_panel_stage_finalize_gate_uses_canonicalized_summary(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path, company="acme")
+    panel_dir = _panel_dir(tmp_path, company="acme")
+    panel_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(run_company_pipeline, "_assess_pcim_freshness", lambda company, payload: {"status": "pass", "warnings": [], "failures": []})
+    monkeypatch.setattr(run_company_pipeline, "run_investor_panel_stage", lambda company, analyst, context=None: None)
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "_validate_analyst_output",
+        lambda company, analyst, context=None: {
+            "status": "fail",
+            "resolved_final_status": "warning",
+            "resolved_final_validation_status": "warning",
+            "resolved_final_evidence_grounding_status": "warning",
+            "warning_count": 1,
+            "output": str(panel_dir / f"{analyst}_analysis.json"),
+            "payload": {
+                "status": "fail",
+                "financial_assessment": {"financials_used": True},
+                "financial_sections_consumed": ["financial_quality_inputs"],
+            },
+            "warnings": [],
+            "failures": [f"{analyst}: unresolved factual claims remain after evidence routing repair"],
+            "post_finalization_status": {
+                "status": "warning",
+                "validation_status": "warning",
+                "evidence_grounding_status": "warning",
+            },
+            "finalization_summary": {
+                "hard_failures": [],
+                "warnings": [],
+                "active_unresolved_claims": [],
+                "non_active_unresolved_claims": [],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_committee_synthesis_stage",
+        lambda company, context=None, cleanup_only=False: (
+            _write_committee_outputs(tmp_path, company="acme"),
+            {"committee_synthesis.json": _panel_dir(tmp_path, company="acme") / "committee_synthesis.json"},
+        )[1],
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_committee_brief_stage",
+        lambda company, context=None, include_evidence_ids=False: (
+            _write_committee_outputs(tmp_path, company="acme"),
+            {"committee_brief.md": _panel_dir(tmp_path, company="acme") / "committee_brief.md"},
+        )[1],
+    )
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_committee_brief_qa_stage",
+        lambda company, context=None, include_evidence_ids=False: (
+            _write_committee_outputs(tmp_path, company="acme"),
+            {"committee_brief_qa.json": _panel_dir(tmp_path, company="acme") / "committee_brief_qa.json"},
+        )[1],
+    )
+
+    result = run_company_pipeline.run_panel_stage(company="acme", regenerate_analysts=True)
+    summary = json.loads((panel_dir / "panel_run_summary.json").read_text(encoding="utf-8"))
+
+    assert result["panel_run_summary.json"].name == "panel_run_summary.json"
+    assert summary["stages"]["analysts"]["status"] == "warning"
+    assert summary["status"] in {"warning", "pass"}
+    assert summary["analysts"]["munger"]["status"] == "warning"
+    assert summary["stages"]["analysts"]["hard_failures"] == []
+    assert summary["stages"]["analysts"]["failures"] == []
 
 
 def test_panel_doctor_reports_all_analysts(tmp_path, monkeypatch):
@@ -811,3 +1334,17 @@ def test_panel_stage_stops_when_financial_quality_status_is_fail(tmp_path, monke
     summary = json.loads(_panel_summary_path(tmp_path, year="fy24").read_text(encoding="utf-8"))
     assert summary["status"] == "fail"
     assert summary["financial_context"]["status"] == "fail"
+
+
+def test_panel_stage_stops_when_financial_truth_is_newer_than_pcim(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_pcim(tmp_path)
+    truth_pack = tmp_path / "companies" / "polymatech" / "company_memory" / "financials" / "financial_truth_pack.json"
+    truth_pack.parent.mkdir(parents=True, exist_ok=True)
+    truth_pack.write_text(json.dumps({"years_covered": ["fy25"]}), encoding="utf-8")
+    pcim_path = tmp_path / "companies" / "polymatech" / "company_memory" / "pcim_v1.json"
+    pcim_path.touch()
+    truth_pack.touch()
+
+    with pytest.raises(RuntimeError, match="PCIM is stale relative to governed financial outputs"):
+        run_company_pipeline.run_panel_stage(company="polymatech")

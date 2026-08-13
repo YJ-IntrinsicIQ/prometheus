@@ -15,6 +15,12 @@ class TrendPoint:
     basis: str
     source_artifact: str
     confidence: str
+    metric_name: str = ""
+    availability_status: str = "missing"
+    source_statement: str = ""
+    derived: bool = False
+    formula: str = ""
+    usable_downstream: bool = False
     warnings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -24,6 +30,12 @@ class TrendPoint:
             "basis": self.basis,
             "source_artifact": self.source_artifact,
             "confidence": self.confidence,
+            "metric_name": self.metric_name,
+            "availability_status": self.availability_status,
+            "source_statement": self.source_statement,
+            "derived": self.derived,
+            "formula": self.formula,
+            "usable_downstream": self.usable_downstream,
             "warnings": list(self.warnings),
         }
 
@@ -75,6 +87,7 @@ class FinancialTrendReport:
     years_covered: List[str]
     basis: str
     basis_policy: Dict[str, Any] = field(default_factory=dict)
+    trend_groups: Dict[str, Dict[str, TrendSeries]] = field(default_factory=dict)
     metric_trends: Dict[str, TrendSeries] = field(default_factory=dict)
     metric_series: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
     ratio_series: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
@@ -86,6 +99,8 @@ class FinancialTrendReport:
     per_share_trends: Dict[str, TrendSeries] = field(default_factory=dict)
     ownership_trends: Dict[str, TrendSeries] = field(default_factory=dict)
     corporate_actions_timeline: List[Dict[str, Any]] = field(default_factory=list)
+    unreliable_metrics: List[Dict[str, Any]] = field(default_factory=list)
+    invalid_or_quarantined_metrics: List[Dict[str, Any]] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     limitations: List[str] = field(default_factory=list)
 
@@ -96,6 +111,10 @@ class FinancialTrendReport:
             "years_covered": list(self.years_covered),
             "basis": self.basis,
             "basis_policy": dict(self.basis_policy),
+            "trend_groups": {
+                group: {key: value.to_dict() for key, value in metrics.items()}
+                for group, metrics in self.trend_groups.items()
+            },
             "metric_trends": {key: value.to_dict() for key, value in self.metric_trends.items()},
             "metric_series": {
                 key: list(value)
@@ -120,6 +139,8 @@ class FinancialTrendReport:
             "per_share_trends": {key: value.to_dict() for key, value in self.per_share_trends.items()},
             "ownership_trends": {key: value.to_dict() for key, value in self.ownership_trends.items()},
             "corporate_actions_timeline": list(self.corporate_actions_timeline),
+            "unreliable_metrics": list(self.unreliable_metrics),
+            "invalid_or_quarantined_metrics": list(self.invalid_or_quarantined_metrics),
             "warnings": list(self.warnings),
             "limitations": list(self.limitations),
         }
@@ -143,13 +164,30 @@ def _validate_series_container(name: str, payload: Any, errors: List[str]) -> No
             if not isinstance(point, dict):
                 errors.append(f"{name}.{metric}.series[{index}] must be an object")
                 continue
-            for point_key in ("year", "value", "basis", "source_artifact", "confidence", "warnings"):
+            for point_key in (
+                "year",
+                "value",
+                "basis",
+                "source_artifact",
+                "confidence",
+                "metric_name",
+                "availability_status",
+                "source_statement",
+                "derived",
+                "formula",
+                "usable_downstream",
+                "warnings",
+            ):
                 if point_key not in point:
                     errors.append(f"{name}.{metric}.series[{index}] missing required field: {point_key}")
             if point.get("basis") not in ALLOWED_TREND_BASIS:
                 errors.append(f"{name}.{metric}.series[{index}].basis invalid: {point.get('basis')}")
             if point.get("confidence") not in ALLOWED_TREND_CONFIDENCE:
                 errors.append(f"{name}.{metric}.series[{index}].confidence invalid: {point.get('confidence')}")
+            if "derived" in point and not isinstance(point.get("derived"), bool):
+                errors.append(f"{name}.{metric}.series[{index}].derived must be boolean")
+            if "usable_downstream" in point and not isinstance(point.get("usable_downstream"), bool):
+                errors.append(f"{name}.{metric}.series[{index}].usable_downstream must be boolean")
             if "warnings" in point and not isinstance(point.get("warnings"), list):
                 errors.append(f"{name}.{metric}.series[{index}].warnings must be a list")
         if "comparability_warnings" in item and not isinstance(item.get("comparability_warnings"), list):
@@ -166,6 +204,7 @@ def validate_financial_trend_payload(payload: Dict[str, Any]) -> List[str]:
         "years_covered",
         "basis",
         "basis_policy",
+        "trend_groups",
         "metric_trends",
         "metric_series",
         "ratio_series",
@@ -177,6 +216,8 @@ def validate_financial_trend_payload(payload: Dict[str, Any]) -> List[str]:
         "per_share_trends",
         "ownership_trends",
         "corporate_actions_timeline",
+        "unreliable_metrics",
+        "invalid_or_quarantined_metrics",
         "warnings",
         "limitations",
     ):
@@ -189,6 +230,12 @@ def validate_financial_trend_payload(payload: Dict[str, Any]) -> List[str]:
             errors.append(f"{key} must be a list")
     if "basis_policy" in payload and not isinstance(payload.get("basis_policy"), dict):
         errors.append("basis_policy must be an object")
+    if "trend_groups" in payload:
+        if not isinstance(payload.get("trend_groups"), dict):
+            errors.append("trend_groups must be an object")
+        else:
+            for group_name, metrics in payload.get("trend_groups", {}).items():
+                _validate_series_container(f"trend_groups.{group_name}", metrics, errors)
     if "metric_series" in payload and not isinstance(payload.get("metric_series"), dict):
         errors.append("metric_series must be an object")
     if "ratio_series" in payload and not isinstance(payload.get("ratio_series"), dict):
@@ -205,6 +252,10 @@ def validate_financial_trend_payload(payload: Dict[str, Any]) -> List[str]:
     ):
         if name in payload:
             _validate_series_container(name, payload.get(name), errors)
+
+    for field in ("unreliable_metrics", "invalid_or_quarantined_metrics"):
+        if field in payload and not isinstance(payload.get(field), list):
+            errors.append(f"{field} must be a list")
 
     growth_summary = payload.get("growth_summary")
     if growth_summary is not None:

@@ -193,6 +193,35 @@ COMMITTEE_FIELD_CONTRACTS = {
     "financial_committee_view.investor_questions_from_financials": {"type": "string_list"},
 }
 
+COMMITTEE_SYNTHESIS_MODES = {"committee_synthesis_v1", "committee_synthesis_v2"}
+V2_COMMITTEE_VIEW_VALUES = {"strong", "reasonably_strong", "mixed", "weak", "insufficient_evidence"}
+V2_COMMITTEE_DIRECTION_VALUES = {"strengthening", "weakening", "stable", "mixed", "unclear"}
+V2_CONSENSUS_STRENGTH_VALUES = {"high", "medium", "low", "fragmented", "insufficient_evidence"}
+V2_COMMITTEE_VIEW_ENUM_MAP = {
+    "strong": "strong",
+    "reasonably strong": "reasonably_strong",
+    "reasonably_strong": "reasonably_strong",
+    "mixed": "mixed",
+    "weak": "weak",
+    "insufficient evidence": "insufficient_evidence",
+    "insufficient_evidence": "insufficient_evidence",
+}
+V2_COMMITTEE_DIRECTION_ENUM_MAP = {
+    "strengthening": "strengthening",
+    "weakening": "weakening",
+    "stable": "stable",
+    "mixed": "mixed",
+    "unclear": "unclear",
+}
+V2_CONSENSUS_STRENGTH_ENUM_MAP = {
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+    "fragmented": "fragmented",
+    "insufficient evidence": "insufficient_evidence",
+    "insufficient_evidence": "insufficient_evidence",
+}
+
 
 def _safe_list_dict_to_string(item: Dict[str, Any], field: str) -> str:
     priority_keys = (
@@ -1402,6 +1431,9 @@ def _normalize_critical_unknown_item(
         or item.get("uncertainty")
         or item.get("question")
         or item.get("issue")
+        or item.get("unknown_text")
+        or item.get("open_question")
+        or item.get("description")
         or item.get("text")
         or item.get("summary"),
         "critical_unknowns.unknown",
@@ -1713,6 +1745,24 @@ def _owner_earnings_support_registry(
     )
     for payload in analyst_payloads:
         analyst = str(payload.get("doctrine_id") or "").strip().lower()
+        truth_pack = payload.get("analyst_financial_truth_pack") or {}
+        if isinstance(truth_pack, dict):
+            text_blob = "\n".join(_flatten_strings(truth_pack)).lower()
+            if any(token in text_blob for token in ("owner_earnings_estimate", "owner earnings estimate", "conservative_fcf_after_total_capex", "derived owner earnings")):
+                limitation_supported = True
+                if analyst and analyst not in supporting_analysts:
+                    supporting_analysts.append(analyst)
+                supporting_texts.append("Derived owner-earnings / conservative FCF estimate is available from financial truth.")
+                if "maintenance_growth" in text_blob or "maintenance versus growth capex" in text_blob:
+                    capex_missing = False
+            if any(token in text_blob for token in ("total_identified_capex", "identified capex", "capex_deployed", "ppe_cwip_capex")):
+                capex_missing = False
+            if any(token in text_blob for token in ("conservative_fcf_after_total_capex", "fcf_after_ppe_cwip_capex", "\"fcf\"", "metric_id\": \"fcf")):
+                fcf_missing = False
+            if any(token in text_blob for token in ("payable_days", "\"payables\"", "metric_id\": \"payables")):
+                payables_missing = False
+            if any(token in text_blob for token in ("shares_outstanding", "closing_shares", "weighted_avg_shares")):
+                basis_unknown = basis_unknown and False
         texts: List[str] = []
         for field in source_fields:
             texts.extend(str(item or "") for item in (payload.get(field) or []))
@@ -1770,6 +1820,11 @@ def _owner_earnings_support_registry(
         "capex_missing": capex_missing,
         "payables_missing": payables_missing,
         "basis_unknown": basis_unknown,
+        "owner_earnings_status": (
+            "available_derived_precision_limited"
+            if (not fcf_missing and not capex_missing and limitation_supported and not positive_supported)
+            else ("missing" if (fcf_missing or capex_missing) else "available_explicit")
+        ),
     }
 
 
@@ -2027,7 +2082,47 @@ def _validate_financial_committee_view(
         )
         if reference_type == "none":
             continue
+        if (
+            reference_type in {"positive_claim", "ambiguous"}
+            and owner_earnings_support.get("owner_earnings_status") == "available_derived_precision_limited"
+        ):
+            lowered = _normalize_owner_earnings_text(text)
+            if any(
+                phrase in lowered
+                for phrase in (
+                    "derived owner earnings",
+                    "owner earnings estimate",
+                    "conservative fcf estimate",
+                    "derived fcf estimate",
+                    "approximate",
+                    "precision is limited",
+                    "maintenance versus growth capex split",
+                    "maintenance/growth capex split",
+                )
+            ):
+                schema_warnings.append(
+                    f"{path} owner earnings reference allowed as derived precision-limited financial support."
+                )
+                continue
         if reference_type in {"question", "limitation", "neutral_reference"}:
+            lowered = _normalize_owner_earnings_text(text)
+            if (
+                owner_earnings_support.get("owner_earnings_status") == "available_derived_precision_limited"
+                and any(
+                    phrase in lowered
+                    for phrase in (
+                        "maintenance versus growth capex split",
+                        "maintenance/growth capex split",
+                        "approximate",
+                        "precision is limited",
+                        "owner earnings estimate",
+                    )
+                )
+            ):
+                schema_warnings.append(
+                    f"{path} owner earnings reference allowed as precision-limited derived estimate context."
+                )
+                continue
             if (
                 owner_earnings_support.get("owner_earnings_limitation_supported")
                 and not owner_earnings_support.get("owner_earnings_positive_claim_supported")
@@ -2083,6 +2178,139 @@ def _validate_financial_committee_view(
     return value
 
 
+def _validate_committee_v2_sections(
+    parsed: Dict[str, Any],
+    *,
+    schema_warnings: List[str],
+) -> None:
+    company_slug = parsed.get("company_slug")
+    if not isinstance(company_slug, str) or not company_slug.strip():
+        raise ValueError("company_slug is required for committee_synthesis_v2")
+
+    committee_view = parsed.get("committee_view")
+    if committee_view is not None and committee_view not in V2_COMMITTEE_VIEW_VALUES:
+        raise ValueError(
+            "committee_view must be strong, reasonably_strong, mixed, weak, or insufficient_evidence"
+        )
+    committee_direction = parsed.get("committee_direction")
+    if committee_direction is not None and committee_direction not in V2_COMMITTEE_DIRECTION_VALUES:
+        raise ValueError(
+            "committee_direction must be strengthening, weakening, stable, mixed, or unclear"
+        )
+    consensus_strength = parsed.get("consensus_strength")
+    if consensus_strength is not None and consensus_strength not in V2_CONSENSUS_STRENGTH_VALUES:
+        raise ValueError(
+            "consensus_strength must be high, medium, low, fragmented, or insufficient_evidence"
+        )
+
+    def _validate_object_list(field_name: str, required_keys: Sequence[str]) -> None:
+        value = parsed.get(field_name)
+        if not isinstance(value, list):
+            raise ValueError(f"{field_name} must be a list")
+        for item in value:
+            if not isinstance(item, dict):
+                raise ValueError(f"{field_name} must contain objects")
+            for key in required_keys:
+                if key not in item or (isinstance(item.get(key), str) and not str(item.get(key)).strip()):
+                    raise ValueError(f"{field_name}.{key} is required")
+
+    def _validate_string_list(field_name: str) -> None:
+        value = parsed.get(field_name)
+        if not isinstance(value, list):
+            raise ValueError(f"{field_name} must be a list")
+        if any(not isinstance(item, str) for item in value):
+            raise ValueError(f"{field_name} must contain strings")
+
+    _validate_object_list(
+        "strongest_shared_convictions",
+        ["conclusion", "supporting_analysts", "supporting_evidence", "progression", "why_it_matters", "confidence"],
+    )
+    _validate_object_list(
+        "major_disagreements",
+        [
+            "topic",
+            "analysts_on_side_a",
+            "side_a_view",
+            "analysts_on_side_b",
+            "side_b_view",
+            "reason_for_disagreement",
+            "evidence_causing_tension",
+            "what_evidence_would_resolve_it",
+            "investor_importance",
+            "confidence",
+        ],
+    )
+    _validate_object_list(
+        "thesis_strengtheners",
+        ["summary", "period", "source_streams", "supporting_analysts", "why_it_matters", "conviction_effect", "confidence"],
+    )
+    _validate_object_list(
+        "thesis_weakeners",
+        ["summary", "period", "source_streams", "supporting_analysts", "why_it_matters", "conviction_effect", "confidence"],
+    )
+    _validate_object_list(
+        "unresolved_items",
+        ["question", "why_it_matters", "affected_analysts", "affected_thesis_area", "evidence_needed", "current_confidence"],
+    )
+    _validate_object_list(
+        "major_turning_points",
+        ["period", "event", "before", "after", "why_it_matters", "affected_analysts", "conviction_effect", "confidence"],
+    )
+    _validate_object_list(
+        "top_diligence_questions",
+        ["rank", "question", "why_it_matters", "affected_analysts", "priority_reason", "evidence_needed"],
+    )
+    _validate_string_list("disagreement_explanations")
+    _validate_string_list("what_would_change_the_view")
+
+    for item in parsed.get("major_disagreements", []) or []:
+        if item.get("disagreement_type") and item.get("disagreement_type") not in {
+            "evidence_disagreement",
+            "doctrine_weighting_difference",
+            "time_horizon_difference",
+            "uncertainty_tolerance_difference",
+            "financial_vs_business_tension",
+            "execution_vs_outcome_tension",
+            "valuation_vs_quality_tension",
+            "unresolved_data_gap",
+        }:
+            raise ValueError("major_disagreements.disagreement_type must be a recognized v2 disagreement type")
+    for field_name in ("thesis_strengtheners", "thesis_weakeners", "major_turning_points"):
+        for item in parsed.get(field_name, []) or []:
+            if item.get("conviction_effect") and item.get("conviction_effect") not in {"strengthened", "weakened", "unchanged", "unclear"}:
+                raise ValueError(f"{field_name}.conviction_effect must be strengthened, weakened, unchanged, or unclear")
+
+    for field in ("financial_judgment", "business_quality_judgment", "management_judgment", "capital_allocation_judgment", "risk_judgment"):
+        value = parsed.get(field)
+        if not isinstance(value, dict):
+            raise ValueError(f"{field} must be an object")
+        for key in ("assessment", "direction", "strongest_evidence", "main_concern", "unresolved_issue", "confidence"):
+            if key not in value or (isinstance(value.get(key), str) and not str(value.get(key)).strip()):
+                raise ValueError(f"{field}.{key} is required")
+
+    evidence_confidence = parsed.get("evidence_confidence")
+    if not isinstance(evidence_confidence, dict):
+        raise ValueError("evidence_confidence must be an object")
+    if evidence_confidence.get("level") not in {"high", "medium", "low"}:
+        raise ValueError("evidence_confidence.level must be high, medium, or low")
+    if not isinstance(evidence_confidence.get("basis"), list) or any(
+        not isinstance(item, str) for item in evidence_confidence.get("basis", [])
+    ):
+        raise ValueError("evidence_confidence.basis must be a list of strings")
+    if not isinstance(evidence_confidence.get("limitations"), list) or any(
+        not isinstance(item, str) for item in evidence_confidence.get("limitations", [])
+    ):
+        raise ValueError("evidence_confidence.limitations must be a list of strings")
+
+    committee_summary = parsed.get("committee_summary")
+    if not isinstance(committee_summary, str) or not committee_summary.strip():
+        raise ValueError("committee_summary is required")
+    if len(committee_summary.split()) < 40:
+        schema_warnings.append(
+            "committee_summary is compact; consider expanding committee narrative context if evidence remains rich."
+        )
+
+
 def validate_analyst_payload(payload: Dict[str, Any], *, analyst: str) -> None:
     if not isinstance(payload, dict):
         raise ValueError(f"{analyst}_analysis.json must contain an object")
@@ -2128,8 +2356,8 @@ def validate_committee_output(
             f"{forbidden_key_paths}"
         )
 
-    required_keys = FINAL_REQUIRED_TOP_LEVEL_KEYS if mode == "final" else RAW_REQUIRED_TOP_LEVEL_KEYS
-    missing_keys = required_keys - set(parsed.keys())
+    base_required_keys = FINAL_REQUIRED_TOP_LEVEL_KEYS if mode == "final" else RAW_REQUIRED_TOP_LEVEL_KEYS
+    missing_keys = base_required_keys - set(parsed.keys())
     if missing_keys:
         raise ValueError(
             f"committee synthesis missing required keys: {sorted(missing_keys)}"
@@ -2137,8 +2365,38 @@ def validate_committee_output(
 
     if not isinstance(parsed.get("company"), str) or not parsed["company"].strip():
         raise ValueError("company is required")
-    if parsed["analysis_mode"] != "committee_synthesis_v1":
-        raise ValueError("analysis_mode must be committee_synthesis_v1")
+    analysis_mode = parsed.get("analysis_mode")
+    if analysis_mode not in COMMITTEE_SYNTHESIS_MODES:
+        raise ValueError("analysis_mode must be committee_synthesis_v1 or committee_synthesis_v2")
+
+    required_keys = FINAL_REQUIRED_TOP_LEVEL_KEYS if analysis_mode == "committee_synthesis_v1" else FINAL_REQUIRED_TOP_LEVEL_KEYS | {
+        "company_slug",
+        "committee_view",
+        "committee_direction",
+        "consensus_strength",
+        "strongest_shared_convictions",
+        "major_disagreements",
+        "disagreement_explanations",
+        "thesis_strengtheners",
+        "thesis_weakeners",
+        "unresolved_items",
+        "major_turning_points",
+        "financial_judgment",
+        "business_quality_judgment",
+        "management_judgment",
+        "capital_allocation_judgment",
+        "risk_judgment",
+        "evidence_confidence",
+        "what_would_change_the_view",
+        "top_diligence_questions",
+        "committee_summary",
+    }
+    if analysis_mode == "committee_synthesis_v2":
+        missing_keys = required_keys - set(parsed.keys())
+        if missing_keys:
+            raise ValueError(
+                f"committee synthesis missing required keys: {sorted(missing_keys)}"
+            )
 
     allowed_analysts = set(EXPECTED_ANALYSTS)
     included = _normalize_string_list(
@@ -2226,6 +2484,20 @@ def validate_committee_output(
     owner_earnings_support = _owner_earnings_support_registry(
         included_analyst_payloads or []
     )
+    financial_manifest = parsed.get("financial_warning_manifest") or {}
+    committee_truth = financial_manifest.get("committee_financial_truth") or {}
+    if isinstance(committee_truth, dict) and committee_truth.get("truth_detected"):
+        if committee_truth.get("fcf_missing") is False:
+            owner_earnings_support["fcf_missing"] = False
+        if committee_truth.get("capex_missing") is False:
+            owner_earnings_support["capex_missing"] = False
+        if committee_truth.get("payables_available") is True:
+            owner_earnings_support["payables_missing"] = False
+        if committee_truth.get("basis_status") in {"consolidated", "standalone", "mixed"}:
+            owner_earnings_support["basis_unknown"] = False
+        if committee_truth.get("owner_earnings_status") in {"available_explicit", "available_derived_precision_limited"}:
+            owner_earnings_support["owner_earnings_limitation_supported"] = True
+            owner_earnings_support["owner_earnings_status"] = committee_truth.get("owner_earnings_status")
     expected_financial_usage = _expected_financials_used(
         included_analyst_payloads or []
     )
@@ -2240,6 +2512,9 @@ def validate_committee_output(
         expected_basis_used=expected_basis_usage,
         schema_warnings=schema_warnings,
     )
+
+    if analysis_mode == "committee_synthesis_v2":
+        _validate_committee_v2_sections(parsed, schema_warnings=schema_warnings)
 
     allowed_evidence_set = set(allowed_evidence_ids)
 

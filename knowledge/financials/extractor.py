@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .basis import detect_basis
 from .discovery_schema import FINANCIAL_DISCOVERY_SECTIONS, FinancialDiscoveryResult
+from .line_item_mapper import map_line_item
 from .extraction_schema import (
     FINANCIAL_EXTRACTION_TABLES,
     ExtractedFinancialRow,
@@ -43,7 +44,7 @@ PERCENT_LABEL_HINTS = ("holding", "shareholding", "pledged", "public", "promoter
 NUMBER_TOKEN_RE = re.compile(r"^[\(\[]?-?(?:\d[\d,]*)(?:\.\d+)?[\)\]]?%?$")
 NOTE_TOKEN_RE = re.compile(r"^\d{1,3}[a-z]?(?:\([^)]+\))?$", re.IGNORECASE)
 DATE_PERIOD_RE = re.compile(
-    r"(?:as at|for the year ended)\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})",
+    r"(?:as at|for the year ended|year ended)\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})",
     re.IGNORECASE,
 )
 FY_PERIOD_RE = re.compile(r"\bFY\s?(\d{2,4})\b", re.IGNORECASE)
@@ -109,8 +110,6 @@ def _basis_from_candidate(*, text: str, item: Any) -> str:
 
 def _unit_hint(text: str, table_type: str) -> str:
     lowered = text.lower()
-    if "%" in text or (table_type == "shareholding_pattern" and any(hint in lowered for hint in PERCENT_LABEL_HINTS)):
-        return "%"
     if "per share" in lowered or table_type == "eps":
         return "INR per share" if any(token in lowered for token in ("rs", "₹", "inr")) else "per share"
     if "number of shares" in lowered or "weighted average" in lowered or "nominal value per share" in lowered:
@@ -133,6 +132,8 @@ def _unit_hint(text: str, table_type: str) -> str:
     for candidate in ("crores", "crore", "cr", "lakhs", "lacs", "lakh", "million", "mn", "billion", "inr", "₹", "rupees"):
         if candidate in lowered:
             return candidate
+    if "%" in text or (table_type == "shareholding_pattern" and any(hint in lowered for hint in PERCENT_LABEL_HINTS)):
+        return "%"
     return ""
 
 
@@ -380,9 +381,30 @@ def _split_rows(table_text: str, table_type: str) -> Tuple[List[Tuple[str, List[
         label_tokens.append(token)
         index += 1
 
+    if table_type == "balance_sheet":
+        rows = _label_balance_sheet_boundary_totals(rows)
+
     if not rows:
         warnings.append("no extractable table rows detected from candidate")
     return rows, warnings, rejected_labels
+
+
+def _label_balance_sheet_boundary_totals(
+    rows: Sequence[Tuple[str, List[str]]],
+) -> List[Tuple[str, List[str]]]:
+    """Restore an assets label only when a generic total sits at a hard section boundary.
+
+    PDF text extraction can collapse ``TOTAL ASSETS`` into ``TOTAL`` while attaching
+    ``EQUITY AND LIABILITIES`` to the following share-capital row.  The adjacency
+    requirement keeps ordinary subtotals untouched and preserves the reported value.
+    """
+    labeled = list(rows)
+    for index, (label, values) in enumerate(labeled[:-1]):
+        normalized = _clean_text(label).lower()
+        next_label = _clean_text(labeled[index + 1][0]).lower()
+        if normalized in {"total", "total."} and "equity and liabilities" in next_label:
+            labeled[index] = ("Total Assets", values)
+    return labeled
 
 
 def _confidence_for_rows(row_count: int, basis: str, score: int, is_primary_statement: bool) -> str:
@@ -399,7 +421,7 @@ def _period_labels(table_text: str, value_count: int) -> List[str]:
         return periods[:value_count]
     fallback = periods[:]
     while len(fallback) < value_count:
-        fallback.append(f"value_{len(fallback) + 1}")
+        fallback.append("PERIOD_COLUMN_UNRESOLVED")
     return fallback
 
 
@@ -543,6 +565,8 @@ def _build_row_objects(
                     raw_value=raw_value,
                     unit_hint=unit_hint,
                 )
+                if value_type == "percentage":
+                    per_value_unit_hint = "%"
             values.append(
                 ExtractedValue(
                     period=periods[index] if index < len(periods) else f"value_{index + 1}",
@@ -607,6 +631,167 @@ def _missing_key_row_warning(table_type: str, rows: Sequence[ExtractedFinancialR
         if hint not in labels:
             return f"{table_type} key rows appear incomplete"
     return None
+
+
+def _canonical_fields_from_rows(rows: Sequence[ExtractedFinancialRow]) -> List[str]:
+    fields: List[str] = []
+    for row in rows:
+        for match in map_line_item(table_type=row.table_type, line_item_raw=row.line_item_raw):
+            field_name = f"{match.canonical_section}.{match.canonical_field}"
+            if field_name not in fields:
+                fields.append(field_name)
+    return fields
+
+
+def _candidate_report(
+    *,
+    section_name: str,
+    discovery_items: Sequence[Any],
+    extracted_rows: Sequence[ExtractedFinancialRow],
+    required_fields: Sequence[str],
+) -> Dict[str, Any]:
+    page_numbers = sorted({item.page for item in discovery_items if isinstance(item.page, int)})
+    candidate_rows = [
+        row
+        for row in extracted_rows
+        if row.source_section_type == section_name and (not page_numbers or row.page in page_numbers)
+    ]
+    basis = "unknown"
+    if candidate_rows:
+        basis_counts: Dict[str, int] = {}
+        for row in candidate_rows:
+            basis_counts[row.basis] = basis_counts.get(row.basis, 0) + 1
+        basis = max(basis_counts, key=basis_counts.get)
+    positive_signals = []
+    for item in discovery_items:
+        for signal in getattr(item, "signals", [])[:3]:
+            if signal not in positive_signals:
+                positive_signals.append(signal)
+    if candidate_rows:
+        positive_signals.append(f"rows:{len(candidate_rows)}")
+    matched_fields = set(_canonical_fields_from_rows(candidate_rows))
+    missing_fields = [field for field in required_fields if field not in matched_fields]
+    score = len(candidate_rows) * 10 + len(page_numbers) * 3 + len(matched_fields) * 5
+    if basis != "unknown":
+        score += 5
+    selected = bool(candidate_rows) and not missing_fields
+    rejection_reason = None
+    negative_signals = []
+    if not candidate_rows:
+        rejection_reason = "no extracted rows linked to this candidate"
+        negative_signals.append("no rows")
+    elif missing_fields:
+        rejection_reason = f"missing required fields: {', '.join(sorted(missing_fields))}"
+        negative_signals.extend([f"missing:{field}" for field in missing_fields])
+    return {
+        "candidate_id": section_name,
+        "pages": page_numbers,
+        "title": section_name.replace("_", " ").title(),
+        "section_type": section_name,
+        "basis": basis,
+        "score": score,
+        "positive_signals": positive_signals,
+        "negative_signals": negative_signals,
+        "selected": selected,
+        "rejection_reason": rejection_reason,
+        "matched_fields": sorted(matched_fields),
+        "row_count": len(candidate_rows),
+    }
+
+
+def build_financial_extraction_readiness(discovery: FinancialDiscoveryResult, result: FinancialExtractionResult) -> Dict[str, Any]:
+    primary_requirements = {
+        "primary_profit_and_loss_statement": ["profit_and_loss.revenue", "profit_and_loss.pat"],
+        "primary_balance_sheet_statement": ["balance_sheet.total_assets", "balance_sheet.net_worth", "balance_sheet.equity_share_capital"],
+        "primary_cash_flow_statement": ["cash_flow.cfo"],
+    }
+    primary_tables = {
+        "primary_profit_and_loss_statement": "profit_and_loss",
+        "primary_balance_sheet_statement": "balance_sheet",
+        "primary_cash_flow_statement": "cash_flow",
+    }
+
+    statements_discovered = {
+        section: len(discovery.sections.get(section, [])) > 0
+        for section in primary_requirements
+    }
+    statements_extracted = {
+        table_type: len(result.tables.get(table_type, []))
+        for table_type in primary_tables.values()
+    }
+
+    candidate_reports = [
+        _candidate_report(
+            section_name=section_name,
+            discovery_items=discovery.sections.get(section_name, []),
+            extracted_rows=result.tables.get(primary_tables[section_name], []),
+            required_fields=required_fields,
+        )
+        for section_name, required_fields in primary_requirements.items()
+    ]
+
+    missing_required_metrics: List[str] = []
+    blocking_reasons: List[str] = []
+    for section_name, required_fields in primary_requirements.items():
+        if not statements_discovered[section_name]:
+            continue
+        report = next(item for item in candidate_reports if item["section_type"] == section_name)
+        if not report["selected"]:
+            blocking_reasons.append(f"{section_name}: {report['rejection_reason']}")
+            continue
+        matched = set(report["matched_fields"])
+        if section_name == "primary_balance_sheet_statement":
+            if not any(field in matched for field in required_fields):
+                missing_required_metrics.append("balance_sheet.total_assets")
+                blocking_reasons.append("primary_balance_sheet_statement: total assets missing")
+            if not any(field in matched for field in ("balance_sheet.net_worth", "balance_sheet.equity_share_capital")):
+                missing_required_metrics.append("balance_sheet.net_worth_or_equity_share_capital")
+                blocking_reasons.append("primary_balance_sheet_statement: equity / net worth missing")
+        else:
+            for required_field in required_fields:
+                if required_field not in matched:
+                    missing_required_metrics.append(required_field)
+                    blocking_reasons.append(f"{section_name}: {required_field} missing")
+
+    status = "READY"
+    if blocking_reasons:
+        status = "BLOCKED"
+    elif any(not report["selected"] for report in candidate_reports if report["row_count"] > 0):
+        status = "PARTIAL"
+    elif any(count == 0 for count in statements_extracted.values() if count > 0):
+        status = "PARTIAL"
+
+    basis_status = {
+        "profit_and_loss": next((row.basis for row in result.tables.get("profit_and_loss", []) if row.basis in {"standalone", "consolidated"}), "unknown"),
+        "balance_sheet": next((row.basis for row in result.tables.get("balance_sheet", []) if row.basis in {"standalone", "consolidated"}), "unknown"),
+        "cash_flow": next((row.basis for row in result.tables.get("cash_flow", []) if row.basis in {"standalone", "consolidated"}), "unknown"),
+    }
+
+    candidate_confidence = {
+        report["section_type"]: (
+            "high" if report["selected"] and report["score"] >= 25 else "medium" if report["row_count"] > 0 else "low"
+        )
+        for report in candidate_reports
+    }
+
+    return {
+        "company": result.company,
+        "year": result.year,
+        "generated_at": result.generated_at,
+        "status": status,
+        "reason_code": "FINANCIAL_EXTRACTION_NOT_READY" if status == "BLOCKED" else "",
+        "statements_discovered": statements_discovered,
+        "statements_extracted": statements_extracted,
+        "row_counts": {
+            table_type: len(result.tables.get(table_type, []))
+            for table_type in FINANCIAL_EXTRACTION_TABLES
+        },
+        "candidate_confidence": candidate_confidence,
+        "candidate_reports": candidate_reports,
+        "basis_status": basis_status,
+        "missing_required_metrics": sorted(set(missing_required_metrics)),
+        "blocking_reasons": blocking_reasons,
+    }
 
 
 def _rejection_record(
@@ -780,6 +965,8 @@ def write_financial_extraction(
         chunk_path=chunk_path,
         discovery_path=discovery_path,
     )
+    discovery = _parse_discovery(discovery_path)
+    readiness = build_financial_extraction_readiness(discovery, result)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
     rejections_path = output_path.parent / "financial_extraction_rejections.json"
@@ -787,4 +974,10 @@ def write_financial_extraction(
         json.dumps(_rejections_payload(result), indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    readiness_path = output_path.parent / "financial_extraction_readiness.json"
+    readiness_path.write_text(json.dumps(readiness, indent=2, ensure_ascii=False), encoding="utf-8")
+    if readiness.get("status") == "BLOCKED":
+        raise RuntimeError(
+            f"FINANCIAL_EXTRACTION_NOT_READY: {', '.join(readiness.get('blocking_reasons') or ['insufficient coverage'])}"
+        )
     return result

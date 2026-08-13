@@ -62,6 +62,7 @@ class FinancialDriverAttributionReport:
     generated_at: str
     years_covered: List[str]
     status: str
+    attribution_readiness: Dict[str, Any] = field(default_factory=dict)
     attributions: List[FinancialDriverAttributionItem] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     limitations: List[str] = field(default_factory=list)
@@ -72,6 +73,7 @@ class FinancialDriverAttributionReport:
             "generated_at": self.generated_at,
             "years_covered": list(self.years_covered),
             "status": self.status,
+            "attribution_readiness": dict(self.attribution_readiness),
             "attributions": [item.to_dict() for item in self.attributions],
             "warnings": list(self.warnings),
             "limitations": list(self.limitations),
@@ -83,7 +85,7 @@ def validate_financial_driver_attribution_payload(payload: Dict[str, Any]) -> Li
     if not isinstance(payload, dict):
         return ["financial driver attribution payload must be an object"]
 
-    for key in ("company", "generated_at", "years_covered", "status", "attributions", "warnings", "limitations"):
+    for key in ("company", "generated_at", "years_covered", "status", "attribution_readiness", "attributions", "warnings", "limitations"):
         if key not in payload:
             errors.append(f"missing required top-level field: {key}")
 
@@ -93,6 +95,8 @@ def validate_financial_driver_attribution_payload(payload: Dict[str, Any]) -> Li
     for list_key in ("years_covered", "attributions", "warnings", "limitations"):
         if list_key in payload and not isinstance(payload.get(list_key), list):
             errors.append(f"{list_key} must be a list")
+    if "attribution_readiness" in payload and not isinstance(payload.get("attribution_readiness"), dict):
+        errors.append("attribution_readiness must be an object")
 
     for index, item in enumerate(payload.get("attributions", [])):
         if not isinstance(item, dict):
