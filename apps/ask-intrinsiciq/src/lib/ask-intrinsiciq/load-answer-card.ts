@@ -49,13 +49,18 @@ type RawAnswerCardsPayload = {
     } | null;
     revenue_flow?: {
       model_type: "project_based" | "recurring" | "mixed" | "unclear";
-      steps: Array<{
-        order: number;
-        label: string;
-        explanation: string;
-      }>;
-      cash_timing_note: string;
-      working_capital_note: string;
+      steps: Array<
+        | {
+            order: number;
+            label: string;
+            explanation: string;
+          }
+        | string
+      >;
+      billing_basis_note?: string | null;
+      revenue_recognition_note?: string | null;
+      cash_timing_note?: string | null;
+      working_capital_note?: string | null;
       evidence_status: ResearchAnswerCard["uncertaintyNote"]["evidenceStatus"];
       offering_examples?: string[];
     } | null;
@@ -138,6 +143,29 @@ function groupReferencedProducts(
       items: group.items.filter((item) => refSet.has(item.id)),
     }))
     .filter((group) => group.items.length > 0);
+}
+
+function normalizeRevenueFlowStep(
+  step: RawAnswerCardsPayload["answers"][number]["revenue_flow"] extends infer RevenueFlow
+    ? RevenueFlow extends { steps: Array<infer Step> }
+      ? Step
+      : never
+    : never,
+  index: number,
+) {
+  if (typeof step === "string") {
+    return {
+      order: index + 1,
+      label: step,
+      explanation: "",
+    };
+  }
+
+  return {
+    order: step.order,
+    label: step.label,
+    explanation: step.explanation,
+  };
 }
 
 function getJourneyForAnswer(
@@ -291,9 +319,13 @@ async function loadCanonicalAnswerCard(
     revenueFlow: raw.revenue_flow
       ? {
           modelType: raw.revenue_flow.model_type,
-          steps: (raw.revenue_flow.steps ?? []).slice(0, 6),
-          cashTimingNote: raw.revenue_flow.cash_timing_note ?? "",
-          workingCapitalNote: raw.revenue_flow.working_capital_note ?? "",
+          steps: (raw.revenue_flow.steps ?? [])
+            .slice(0, 6)
+            .map((step, index) => normalizeRevenueFlowStep(step, index)),
+          billingBasisNote: raw.revenue_flow.billing_basis_note ?? undefined,
+          revenueRecognitionNote: raw.revenue_flow.revenue_recognition_note ?? undefined,
+          cashTimingNote: raw.revenue_flow.cash_timing_note ?? undefined,
+          workingCapitalNote: raw.revenue_flow.working_capital_note ?? undefined,
           evidenceStatus: raw.revenue_flow.evidence_status ?? "partial",
           offeringExamples: raw.revenue_flow.offering_examples ?? [],
         }
@@ -337,7 +369,7 @@ async function loadCanonicalAnswerCard(
     evidenceSummary: [
       {
         label: "Evidence summary",
-        detail: cleanPublicText(raw.evidence_summary.summary),
+        detail: cleanPublicText(raw.evidence_summary.summary ?? ""),
         evidenceStatus: raw.evidence_summary.status,
       },
       ...cleanPublicList(raw.evidence_summary.supporting_points, { limit: 3 }).map((detail, index) => ({
@@ -347,8 +379,8 @@ async function loadCanonicalAnswerCard(
       })),
     ].filter((item) => item.detail),
     uncertaintyNote: {
-      label: cleanPublicText(raw.uncertainty_note.title),
-      detail: cleanPublicText(raw.uncertainty_note.message),
+      label: cleanPublicText(raw.uncertainty_note.title ?? ""),
+      detail: cleanPublicText(raw.uncertainty_note.message ?? ""),
       evidenceStatus: "partial",
     },
     nextQuestions: nextQuestions as ResearchAnswerCard["nextQuestions"],

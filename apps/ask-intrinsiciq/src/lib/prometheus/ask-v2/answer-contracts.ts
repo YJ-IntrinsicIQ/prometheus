@@ -24,6 +24,8 @@ export type AskIntentId =
 
 export type CanonicalSourceKey =
   | "pcim"
+  | "companyModel"
+  | "managementProgression"
   | "financialTruthPack"
   | "ownerEarningsBridge"
   | "workingCapitalQuality"

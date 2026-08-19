@@ -17,6 +17,8 @@ from pipelines.pipeline_context import get_context, set_context  # noqa: E402
 from knowledge.ai import get_llm  # noqa: E402
 from knowledge.ai.input_packs import call_llm_with_input_pack  # noqa: E402
 from knowledge.business_understanding import run_business_understanding  # noqa: E402
+from knowledge.company_model import write_company_model  # noqa: E402
+from knowledge.management_progression import write_management_progression  # noqa: E402
 from knowledge.discovery_runtime import DiscoveryRuntime  # noqa: E402
 from knowledge.module_extractor import ModuleExtractor  # noqa: E402
 from knowledge.module_extractor.schema import ModuleExtractionResult  # noqa: E402
@@ -252,6 +254,16 @@ ASK_INTRINSICIQ_OUTPUT_FILES = [
     "ask_intrinsiciq_manifest.json",
     "ask_intrinsiciq_validation_report.json",
 ]
+COMPANY_MODEL_OUTPUT_FILES = [
+    "company_model.json",
+    "company_model_validation.json",
+    "company_model_manifest.json",
+]
+MANAGEMENT_PROGRESSION_OUTPUT_FILES = [
+    "management_progression.json",
+    "management_progression_validation.json",
+    "management_progression_manifest.json",
+]
 ALL_STAGE_SEQUENCE = [
     "preflight",
     "discovery",
@@ -312,6 +324,8 @@ YEAR_REQUIRED_STAGES = {
 }
 COMPANY_LEVEL_STAGES = {
     "company_memory",
+    "company_model",
+    "management_progression",
     "management_commitments",
     "management_commentary",
     "capital_allocation_outcomes",
@@ -570,6 +584,31 @@ STAGE_CATALOG = {
             "no year context",
         ],
         "outputs": [f"companies/<company>/company_memory/ask_intrinsiciq/{name}" for name in ASK_INTRINSICIQ_OUTPUT_FILES],
+        "llm_calls": False,
+        "scope": "company",
+        "year_required": False,
+    },
+    "company_model": {
+        "description": "Builds canonical Company Model v1 artifacts for business model, offerings, customers, revenue engines, economic drivers, dependencies, and current business state.",
+        "requires": [
+            "governed business-understanding evidence where available",
+            "company_memory/pcim_v1.json or yearly business_blueprint/business_classification artifacts",
+            "no Ask/UI presentation artifacts",
+        ],
+        "outputs": [f"companies/<company>/company_memory/company_model/{name}" for name in COMPANY_MODEL_OUTPUT_FILES],
+        "llm_calls": False,
+        "scope": "company",
+        "year_required": False,
+    },
+    "management_progression": {
+        "description": "Builds canonical Management Progression v1 artifacts for management statements, actions, milestones, outcomes, unresolved proof points, and investor implications.",
+        "requires": [
+            "company_memory/company_model/company_model.json if available",
+            "dedicated progression streams where available",
+            "legacy multi_year progression artifacts only as temporary adapters",
+            "no Ask/UI/Panel/Committee outputs",
+        ],
+        "outputs": [f"companies/<company>/company_memory/management_progression/{name}" for name in MANAGEMENT_PROGRESSION_OUTPUT_FILES],
         "llm_calls": False,
         "scope": "company",
         "year_required": False,
@@ -2546,6 +2585,47 @@ def run_ask_intrinsiciq_stage(company, context=None, force=False):
     }
 
 
+def run_company_model_stage(company, context=None):
+    if context is not None:
+        set_context(context)
+    written_paths = write_company_model(company)
+    output_dir = Path("companies") / company / "company_memory" / "company_model"
+    validation_path = output_dir / "company_model_validation.json"
+    validation = _load_json_file(validation_path)
+    model_path = output_dir / "company_model.json"
+    model = _load_json_file(model_path)
+    current_business_model = model.get("current_business_model") or {}
+    print("[COMPANY MODEL]")
+    print(f"Company: {company}")
+    print(f"Output Dir: {output_dir}")
+    print(f"Coverage: {model.get('coverage_status') or 'unknown'}")
+    print(f"Business Model Type: {current_business_model.get('business_model_type') or 'unknown'}")
+    print(f"Validation Status: {validation.get('status') or 'unknown'}")
+    print(f"Artifacts Written: {len(written_paths)}")
+    for filename in sorted(written_paths):
+        print(f"- {filename}")
+    return written_paths
+
+
+def run_management_progression_stage(company, context=None):
+    if context is not None:
+        set_context(context)
+    written_paths = write_management_progression(company)
+    output_dir = Path("companies") / company / "company_memory" / "management_progression"
+    validation = _load_json_file(output_dir / "management_progression_validation.json")
+    payload = _load_json_file(output_dir / "management_progression.json")
+    print("[MANAGEMENT PROGRESSION]")
+    print(f"Company: {company}")
+    print(f"Output Dir: {output_dir}")
+    print(f"Coverage: {payload.get('coverage_status') or 'unknown'}")
+    print(f"Progression Items: {len(payload.get('progression_items') or [])}")
+    print(f"Validation Status: {validation.get('status') or 'unknown'}")
+    print(f"Artifacts Written: {len(written_paths)}")
+    for filename in sorted(written_paths):
+        print(f"- {filename}")
+    return written_paths
+
+
 def run_audit_stage(company, context=None, fix_safe=False):
     if context is not None:
         set_context(context)
@@ -4037,6 +4117,14 @@ def _build_stage_output_map(context):
             str(Path("companies") / context.company / "company_memory" / "ask_intrinsiciq" / filename)
             for filename in ASK_INTRINSICIQ_OUTPUT_FILES
         ],
+        "company_model": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "company_model" / filename)
+            for filename in COMPANY_MODEL_OUTPUT_FILES
+        ],
+        "management_progression": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "management_progression" / filename)
+            for filename in MANAGEMENT_PROGRESSION_OUTPUT_FILES
+        ],
     }
 
 
@@ -4319,6 +4407,12 @@ def _run_stage_by_name(stage_name, context, *, stage_outputs, options, state):
         _ensure_audit_allows_customer_output(company)
         run_ask_intrinsiciq_stage(company=company, context=context, force=options.get("force", False))
         return {"status": "pass", "outputs": stage_outputs["ask_intrinsiciq"]()}
+    if stage_name == "company_model":
+        run_company_model_stage(company=company, context=context)
+        return {"status": "pass", "outputs": stage_outputs["company_model"]()}
+    if stage_name == "management_progression":
+        run_management_progression_stage(company=company, context=context)
+        return {"status": "pass", "outputs": stage_outputs["management_progression"]()}
     raise RuntimeError(f"Unsupported sequence stage: {stage_name}")
 
 
@@ -4385,6 +4479,8 @@ def print_stage_catalog():
         "financial_memory",
         "investor_financials",
         "ask_intrinsiciq",
+        "company_model",
+        "management_progression",
         "extraction",
         "cleaning",
         "business_understanding",
@@ -4457,6 +4553,8 @@ def build_parser():
             "financial_memory",
             "investor_financials",
             "ask_intrinsiciq",
+            "company_model",
+            "management_progression",
             "financial_pcim_validation",
             "company_memory",
             "management_commitments",
@@ -4597,6 +4695,10 @@ def main():
         run_investor_financials_stage(company=args.company, context=context)
     elif args.stage == "ask_intrinsiciq":
         run_ask_intrinsiciq_stage(company=args.company, context=context)
+    elif args.stage == "company_model":
+        run_company_model_stage(company=args.company, context=context)
+    elif args.stage == "management_progression":
+        run_management_progression_stage(company=args.company, context=context)
     elif args.stage == "financial_pcim_validation":
         run_financial_pcim_validation_stage(context=context)
     elif args.stage == "company_memory":

@@ -9,6 +9,21 @@ type RevenueFlowProps = {
 };
 
 export function RevenueFlow({ revenueFlow }: RevenueFlowProps) {
+  const billingBasisText =
+    revenueFlow.billingBasisNote?.trim() ||
+    "Billing basis is not established from the available business-model evidence.";
+  const revenueRecognitionText = revenueFlow.revenueRecognitionNote?.trim() || "";
+  const cashTimingText =
+    revenueFlow.cashTimingNote?.trim() ||
+    "Cash collection timing is not established from the available business-model evidence.";
+  const workingCapitalText = revenueFlow.workingCapitalNote?.trim() || "";
+  const engineLabel = {
+    project_based: "Project-based",
+    recurring: "Recurring",
+    mixed: "Mixed",
+    unclear: "Unclear",
+  }[revenueFlow.modelType] ?? "Unclear";
+
   return (
     <section className="rounded-[26px] border border-border bg-[rgba(255,255,255,0.44)] p-5 shadow-[0_14px_34px_rgba(15,23,42,0.04)] md:p-6">
       <div data-testid="wide-section-revenue-flow" />
@@ -21,12 +36,17 @@ export function RevenueFlow({ revenueFlow }: RevenueFlowProps) {
             How the revenue path works
           </h2>
         </div>
-        {revenueFlow.evidenceStatus === "partial" ? (
+        <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-2 rounded-full border border-[rgba(74,109,94,0.18)] bg-[rgba(74,109,94,0.08)] px-3 py-1 text-[0.72rem] text-accent">
             <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-            Partial evidence
+            {engineLabel} engine
           </span>
-        ) : null}
+          {revenueFlow.evidenceStatus === "partial" ? (
+            <span className="inline-flex items-center gap-2 rounded-full border border-[rgba(168,131,63,0.18)] bg-[rgba(168,131,63,0.08)] px-3 py-1 text-[0.72rem] text-gold">
+              Partial evidence
+            </span>
+          ) : null}
+        </div>
       </div>
 
       <div className="relative mt-6">
@@ -56,11 +76,11 @@ export function RevenueFlow({ revenueFlow }: RevenueFlowProps) {
                     <p className="text-[0.98rem] font-semibold leading-6 text-foreground">
                       {label}
                     </p>
-                    <p
-                      className="mt-1 text-[0.9rem] leading-6 text-muted"
-                    >
-                      {explanation}
-                    </p>
+                    {explanation ? (
+                      <p className="mt-1 text-[0.9rem] leading-6 text-muted">
+                        {explanation}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               </article>
@@ -87,19 +107,27 @@ export function RevenueFlow({ revenueFlow }: RevenueFlowProps) {
         </div>
       ) : null}
 
-      <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+      <div className="mt-5 grid gap-3 md:grid-cols-2">
+        <div className="rounded-[18px] border border-[rgba(74,109,94,0.16)] bg-[rgba(74,109,94,0.06)] px-4 py-3">
+          <p className="text-[0.82rem] font-medium text-muted">Billing basis</p>
+          <p className="mt-1 text-[0.92rem] leading-6 text-foreground">{billingBasisText}</p>
+        </div>
         <div className="rounded-[18px] border border-[rgba(74,109,94,0.16)] bg-[rgba(74,109,94,0.06)] px-4 py-3">
           <p className="text-[0.82rem] font-medium text-muted">Cash timing</p>
-          <p className="mt-1 text-[0.92rem] leading-6 text-foreground">
-            {revenueFlow.cashTimingNote}
-          </p>
+          <p className="mt-1 text-[0.92rem] leading-6 text-foreground">{cashTimingText}</p>
         </div>
-        <div className="rounded-[18px] border border-[rgba(168,131,63,0.18)] bg-[rgba(168,131,63,0.08)] px-4 py-3">
-          <p className="text-[0.82rem] font-medium text-muted">Working capital note</p>
-          <p className="mt-1 text-[0.92rem] leading-6 text-foreground">
-            {revenueFlow.workingCapitalNote}
-          </p>
-        </div>
+        {revenueRecognitionText ? (
+          <div className="rounded-[18px] border border-[rgba(168,131,63,0.18)] bg-[rgba(168,131,63,0.08)] px-4 py-3 md:col-span-2">
+            <p className="text-[0.82rem] font-medium text-muted">Revenue recognition</p>
+            <p className="mt-1 text-[0.92rem] leading-6 text-foreground">{revenueRecognitionText}</p>
+          </div>
+        ) : null}
+        {workingCapitalText ? (
+          <div className="rounded-[18px] border border-[rgba(168,131,63,0.18)] bg-[rgba(168,131,63,0.08)] px-4 py-3 md:col-span-2">
+            <p className="text-[0.82rem] font-medium text-muted">Working capital note</p>
+            <p className="mt-1 text-[0.92rem] leading-6 text-foreground">{workingCapitalText}</p>
+          </div>
+        ) : null}
       </div>
     </section>
   );

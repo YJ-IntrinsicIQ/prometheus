@@ -277,15 +277,15 @@ UNCERTAINTY_THEME_REGISTRY: Dict[str, Dict[str, Any]] = {
         "display_priority": 13,
     },
     "milestone_billing_detail": {
-        "title": "Milestone billing detail is limited",
-        "simple_explanation": "The available evidence suggests milestone-style billing, but it does not describe that timing in detail.",
+        "title": "Billing mechanics are not fully explained",
+        "simple_explanation": "The available evidence does not fully explain pricing or billing timing.",
         "why_it_matters": "Billing detail helps explain how revenue timing and cash timing can diverge.",
         "affected_topics": ["Billing mechanics", "Revenue timing"],
         "affected_question_ids": ["how-does-it-make-money"],
         "severity": "medium",
         "status": "partial",
         "evidence_status": "partial",
-        "suggested_investor_question": "How much billing depends on customer acceptance or milestone completion?",
+        "suggested_investor_question": "How are billing terms actually structured?",
         "display_priority": 14,
     },
     "collection_timing": {

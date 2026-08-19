@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 from .mapping_registry import CANONICAL_SECTION_FIELDS, FIELD_MAPPINGS, SPECIAL_MULTI_FIELD_ALIASES
 
@@ -89,6 +89,53 @@ _FORBIDDEN_BY_FIELD = {
         "revenue mix",
         "revenue growth",
         "turnover ratio",
+    ),
+    "total_assets": (
+        "average total assets",
+        "average assets",
+        "segment assets",
+        "earning assets",
+        "risk weighted assets",
+        "risk-weighted assets",
+        "rwa",
+        "aum",
+        "assets under management",
+        "assets under insurance",
+    ),
+    "net_worth": (
+        "tranche",
+        "off balance sheet",
+        "off-balance-sheet",
+        "increased from",
+        "decreased from",
+        "grew from",
+        "rose from",
+        "regulatory capital",
+        "capital adequacy",
+        "capital ratio",
+        "tier i capital",
+        "tier ii capital",
+        "risk weighted assets",
+        "risk-weighted assets",
+        "rwa",
+        "instrument",
+        "security",
+        "debenture",
+        "bond",
+    ),
+    "pbt": (
+        "working capital",
+        "working capital changes",
+        "operating profit",
+        "operating loss",
+        "cash flow",
+    ),
+    "tax": (
+        "paid",
+        "refund",
+        "refunds",
+        "payment",
+        "payments",
     ),
 }
 
@@ -349,6 +396,10 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
         if "total liabilities" not in normalized_label:
             return False
 
+    if canonical_field == "net_worth":
+        if "liabilities" in normalized_label:
+            return False
+
     if canonical_section == "profit_and_loss" and canonical_field == "total_income":
         if any(token in normalized_label for token in ("tax", "income tax", "profit before tax", "profit after tax")):
             return False
@@ -356,7 +407,13 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
             return False
 
     if canonical_section == "profit_and_loss" and canonical_field == "tax":
-        if any(token in normalized_label for token in ("rate", "reconciliation", "estimated", "provision", "deferred tax", "other comprehensive income")):
+        if any(token in normalized_label for token in ("rate", "reconciliation", "estimated", "provision", "other comprehensive income")):
+            return False
+        if table_type == "cash_flow" and "tax adjustment" in normalized_label:
+            return True
+        if "deferred tax" in normalized_label and not any(
+            token in normalized_label for token in ("tax expense", "income tax expense", "total tax expense", "current tax")
+        ):
             return False
         if not any(
             token in normalized_label
@@ -376,15 +433,40 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
             return False
 
     if canonical_section == "profit_and_loss" and canonical_field == "pat":
-        if not any(
+        if any(
             token in normalized_label
             for token in (
-                "profit after tax",
-                "profit for the year",
-                "profit for the period",
-                "profit loss for the period",
-                "profit loss for the year",
-                "pat",
+                "ratio",
+                "margin",
+                "per share",
+                "comprehensive income",
+                "attributable",
+                "associate",
+                "before tax",
+                "profit before tax",
+                "pbt",
+            )
+        ):
+            return False
+        if not (
+            _contains_any(
+                normalized_label,
+                (
+                    "profit after tax",
+                    "profit after taxation",
+                    "profit for the year",
+                    "profit for the period",
+                    "profit loss for the period",
+                    "profit loss for the year",
+                    "pat",
+                ),
+            )
+            or (
+                "net profit" in normalized_label
+                and _contains_any(
+                    normalized_label,
+                    ("5 6 8 9", "5-6-8-9", "after tax", "after taxation", "after taxes"),
+                )
             )
         ):
             return False
@@ -467,7 +549,170 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
     if canonical_field == "face_value" and "per share" in normalized_label and "face value" not in normalized_label and "nominal value" not in normalized_label:
         return False
 
+    # Cross-family routing guards: prevent fields from mapping in wrong table contexts
+    if canonical_section == "profit_and_loss" and canonical_field == "revenue":
+        if table_type in {"share_capital", "eps", "dividend", "shareholding_pattern", "corporate_actions"}:
+            return False
+        if table_type == "balance_sheet":
+            # Allow only explicit revenue aliases in balance_sheet context (e.g., revenue notes)
+            if not _is_exact_alias(normalized_label, "profit_and_loss", "revenue"):
+                return False
+    if canonical_section == "profit_and_loss" and canonical_field in {"pat", "pbt"}:
+        if table_type in {"share_capital", "eps", "dividend", "shareholding_pattern", "corporate_actions"}:
+            return False
+        if table_type == "balance_sheet":
+            # Allow only explicit summary labels in balance sheet context
+            if canonical_field == "pat" and not any(
+                token in normalized_label
+                for token in ("profit after tax", "profit after taxation", "total profit after", "profit for the year", "profit for the period", "net profit 5 6 8 9", "net profit 5-6-8-9")
+            ):
+                return False
+            if canonical_field == "pbt" and not any(
+                token in normalized_label
+                for token in ("profit before tax", "profit before taxation", "total profit before")
+            ):
+                return False
+        if table_type == "cash_flow":
+            # Allow PAT/PBT in cash_flow context (e.g., "Net Profit/(Loss) After taxation" in operating activities)
+            if canonical_field == "pat" and "after taxation" not in normalized_label and "after tax" not in normalized_label:
+                return False
+            if canonical_field == "pbt" and "before taxation" not in normalized_label and "before tax" not in normalized_label:
+                return False
+    if canonical_section == "profit_and_loss" and canonical_field == "tax":
+        if table_type in {"share_capital", "eps", "dividend", "shareholding_pattern", "corporate_actions"}:
+            return False
+        if table_type == "cash_flow" and "tax expense" in normalized_label and "tax paid" not in normalized_label:
+            return False  # tax expense in cash_flow should not map to P&L tax
+        if table_type == "balance_sheet" and (
+            "tax expense" in normalized_label or "tax expenses" in normalized_label or "deferred tax" in normalized_label
+        ):
+            return False  # tax expense/deferred tax in balance_sheet should not map to P&L tax
+    if canonical_section == "balance_sheet" and canonical_field in {"total_assets", "total_liabilities", "net_worth", "equity_share_capital", "reserves"}:
+        if table_type in {"profit_and_loss", "eps", "dividend", "shareholding_pattern", "corporate_actions"}:
+            return False
+    if canonical_section == "cash_flow" and canonical_field == "tax_paid":
+        if table_type in {"profit_and_loss", "balance_sheet", "share_capital", "eps", "dividend", "shareholding_pattern", "corporate_actions"}:
+            return False
+
     return True
+
+
+# Exact/approved aliases for high-risk fields — these get precedence over fuzzy matches
+_EXACT_ALIASES: Dict[str, Dict[str, List[str]]] = {
+    "profit_and_loss": {
+        "revenue": ["revenue", "total revenue", "revenue from operations", "income from operations", "total operating revenue"],
+        "pat": [
+            "profit for the year", "profit after tax", "profit after taxation", "profit for the period", "pat",
+            "net profit loss after taxation", "net profit/(loss) after taxation", "net profit loss after tax",
+            "a cash flow from operating activities net profit loss after taxation",
+            "a. cash flow from operating activities net profit/(loss) after taxation",
+            "net profit 5 6 8 9", "net profit 5-6-8-9",
+            # Roman numeral prefixed P&L labels (common in Indian financial statements)
+            "ix profit for the year vii viii", "vii profit for the year v vi", "xi profit for the year ix x",
+            "profit for the year a", "profit for the year vii viii", "profit for the year v vi",
+            # Datapatterns variants
+            "vii profit loss for the period", "vii profit loss for the period",
+            "add profit after tax", "profit after tax for the year", "profit after taxation rs in crores",
+        ],
+        "pbt": ["profit before tax", "profit before taxation", "net profit before tax"],
+        "tax": [
+            "total tax expense", "tax expense", "income tax expense", "current tax",
+            # Negative exact aliases for tax rows that should NOT map to P&L tax
+            # These are added to ensure they don't get fuzzy-matched to profit_and_loss.tax
+        ],
+    },
+    "balance_sheet": {
+        "total_assets": ["total assets"],
+        "total_liabilities": ["total liabilities"],
+        "net_worth": ["total equity", "net worth", "shareholders funds", "shareholders equity", "equity attributable to owners"],
+        "equity_share_capital": ["equity share capital", "paid up capital", "paid-up capital", "issued subscribed and paid up equity shares"],
+        "reserves": ["other equity", "reserves and surplus", "reserves"],
+    },
+    "cash_flow": {
+        "tax_paid": [
+            "income taxes paid", "taxes paid", "tax paid",
+            "direct taxes paid net of funds",
+            "tax adjustment", "tax adjustments",
+        ],
+        "cfo": ["net cash generated from operating activities", "net cash from operating activities", "operating cash flow"],
+        "pat": [
+            "a cash flow from operating activities net profit loss after taxation",
+            "a. cash flow from operating activities net profit/(loss) after taxation",
+            "net profit loss after taxation",
+            "net profit/(loss) after taxation",
+            "net profit loss after tax",
+            "profit after tax",
+            "profit after taxation",
+        ],
+    },
+    "share_data": {
+        "shares_outstanding": ["number of equity shares outstanding", "issued subscribed and paid up equity shares", "issued subscribed and fully paid up equity shares"],
+        "weighted_avg_shares": ["weighted average number of equity shares", "weighted average shares outstanding"],
+        "diluted_shares": ["weighted average number of diluted equity shares", "number of shares used for diluted eps"],
+        "face_value": ["face value", "nominal value", "nominal value of equity shares", "face value of equity shares"],
+    },
+}
+
+
+def _is_exact_alias(normalized_label: str, canonical_section: str, canonical_field: str) -> bool:
+    """Check if the label exactly matches an approved exact alias."""
+    exact_list = _EXACT_ALIASES.get(canonical_section, {}).get(canonical_field, [])
+    return normalized_label in exact_list
+
+
+def _resolve_ambiguity(matches: List[MappingMatch], normalized_label: str, table_type: str) -> List[MappingMatch]:
+    """
+    Resolve ambiguous matches where multiple fields have the same top score.
+    Tiebreaker rules:
+    1. Exact alias match wins over fuzzy match
+    2. Primary table context wins (e.g., cash_flow.cfo in cash_flow table_type > profit_and_loss.pat in cash_flow)
+    3. If still tied, return empty (ambiguity fail-safe: reject rather than guess)
+    """
+    if not matches:
+        return []
+
+    top_score = matches[0].score
+    top_matches = [m for m in matches if m.score == top_score]
+
+    # If only one match at top score, no ambiguity
+    if len(top_matches) == 1:
+        return top_matches
+
+    # Tiebreaker 1: Exact alias match wins
+    exact_matches = [m for m in top_matches if _is_exact_alias(normalized_label, m.canonical_section, m.canonical_field)]
+    if len(exact_matches) == 1:
+        return exact_matches
+    if len(exact_matches) > 1:
+        # Multiple exact matches — ambiguous
+        return []
+
+    # Tiebreaker 2: Primary table context (prefer field's native section for the table type)
+    # E.g., for cash_flow table_type, prefer cash_flow section fields
+    native_section = {
+        "profit_and_loss": "profit_and_loss",
+        "balance_sheet": "balance_sheet",
+        "cash_flow": "cash_flow",
+        "share_capital": "share_data",
+        "eps": "share_data",
+        "dividend": "corporate_actions",
+        "corporate_actions": "corporate_actions",
+        "shareholding_pattern": "shareholding_pattern",
+        "borrowings": "balance_sheet",
+        "fixed_assets": "balance_sheet",
+        "revenue": "profit_and_loss",
+        "tax": "profit_and_loss",
+        "statement_of_changes_in_equity": "balance_sheet",
+    }.get(table_type, table_type)
+
+    native_matches = [m for m in top_matches if m.canonical_section == native_section]
+    if len(native_matches) == 1:
+        return native_matches
+    if len(native_matches) > 1:
+        # Still ambiguous within native section
+        return []
+
+    # Ambiguity fail-safe: reject rather than guess
+    return []
 
 
 def map_line_item(*, table_type: str, line_item_raw: str) -> List[MappingMatch]:
@@ -506,21 +751,26 @@ def map_line_item(*, table_type: str, line_item_raw: str) -> List[MappingMatch]:
                 table_type=table_type,
             ):
                 continue
+
+            # Track if this was an exact alias match for tiebreaker
+            is_exact = _is_exact_alias(normalized_label, section_name, field_name)
             matches.append(
                 MappingMatch(
                     canonical_section=section_name,
                     canonical_field=field_name,
-                    score=best_alias_score,
-                    confidence=_confidence_from_score(best_alias_score),
-                    reason=f"alias_match:{field_name}",
+                    score=best_alias_score + (10 if is_exact else 0),  # Boost exact matches
+                    confidence=_confidence_from_score(best_alias_score + (10 if is_exact else 0)),
+                    reason=f"alias_match:{field_name}{':exact' if is_exact else ''}",
                 )
             )
 
     matches.sort(key=lambda item: (-item.score, item.canonical_section, item.canonical_field))
     if not matches:
         return []
-    top_score = matches[0].score
-    return [match for match in matches if match.score == top_score]
+
+    # Apply ambiguity resolution
+    resolved = _resolve_ambiguity(matches, normalized_label, table_type)
+    return resolved
 
 
 def mapping_registry_snapshot() -> Dict[str, Dict[str, Dict[str, object]]]:

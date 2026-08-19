@@ -78,7 +78,7 @@ CANONICAL_SECTION_FIELDS: Dict[str, List[str]] = {
 FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
     "profit_and_loss": {
         "revenue": {
-            "table_types": ["profit_and_loss", "revenue"],
+            "table_types": ["profit_and_loss", "balance_sheet", "revenue"],
             "aliases": ["revenue from operations", "revenue", "income from operations"],
         },
         "other_income": {
@@ -122,12 +122,20 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
             "aliases": ["profit before tax", "profit before taxation", "net profit before tax"],
         },
         "tax": {
-            "table_types": ["profit_and_loss", "tax"],
-            "aliases": ["total tax expense", "tax expense", "income tax expense", "tax"],
+            "table_types": ["profit_and_loss", "tax", "balance_sheet", "cash_flow"],
+            "aliases": ["total tax expense", "tax expense", "tax expenses", "income tax expense", "tax"],
         },
         "pat": {
-            "table_types": ["profit_and_loss"],
-            "aliases": ["profit for the year", "profit after tax", "pat", "profit for the period"],
+            "table_types": ["profit_and_loss", "balance_sheet", "cash_flow"],
+            "aliases": [
+                "profit for the year",
+                "profit after tax",
+                "profit after taxation",
+                "net profit after taxation",
+                "net profit 5 6 8 9",
+                "pat",
+                "profit for the period",
+            ],
         },
         "eps_basic": {
             "table_types": ["profit_and_loss", "eps"],
@@ -141,15 +149,32 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
     "balance_sheet": {
         "equity_share_capital": {
             "table_types": ["balance_sheet", "share_capital"],
-            "aliases": ["equity share capital", "share capital", "paid up share capital"],
+            "aliases": ["equity share capital", "share capital", "paid up capital", "paid up share capital"],
         },
         "reserves": {
-            "table_types": ["balance_sheet", "reserves"],
-            "aliases": ["other equity", "reserves and surplus", "reserves", "surplus in statement of profit and loss"],
+            "table_types": ["balance_sheet", "reserves", "share_capital", "statement_of_changes_in_equity"],
+            "aliases": [
+                "other equity",
+                "reserves and surplus",
+                "reserves",
+                "total i ii iii iv v",
+                "surplus in statement of profit and loss",
+                "retained earnings",
+                "investment fluctuation reserve",
+            ],
         },
         "net_worth": {
             "table_types": ["balance_sheet", "reserves"],
-            "aliases": ["total equity", "net worth"],
+            "aliases": [
+                "total equity",
+                "net worth",
+                "shareholders funds",
+                "shareholders' funds",
+                "shareholders equity",
+                "shareholders' equity",
+                "equity attributable to owners",
+                "equity attributable to shareholders",
+            ],
         },
         "total_debt": {
             "table_types": ["balance_sheet", "borrowings"],
@@ -255,7 +280,11 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
         },
         "tax_paid": {
             "table_types": ["cash_flow", "tax"],
-            "aliases": ["income taxes paid", "taxes paid", "tax paid"],
+            "aliases": [
+                "income taxes paid", "taxes paid", "tax paid",
+                "direct taxes paid net of funds",
+                "tax adjustment", "tax adjustments",
+            ],
         },
     },
     "share_data": {

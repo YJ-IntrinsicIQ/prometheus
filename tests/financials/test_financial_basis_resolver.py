@@ -313,8 +313,144 @@ def test_both_standalone_and_consolidated_tables_can_coexist(tmp_path):
 
     assert report.resolved_basis == "unknown"
     assert any("Both standalone and consolidated basis appear" in warning for warning in report.warnings)
+    assert normalized["preferred_basis"] == "mixed"
     assert normalized["profit_and_loss"]["revenue"]["basis"] == "standalone"
     assert normalized["balance_sheet"]["total_assets"]["basis"] == "consolidated"
+
+
+def test_preferred_basis_comes_from_resolved_fields_not_global_document_hint(tmp_path):
+    financial_root = _setup_financial_root(tmp_path)
+    _write_json(
+        financial_root.parent / "extracted" / "clean_chunks.json",
+        _clean_chunks_payload(
+            [
+                _chunk(1, "Consolidated financial statements overview", "global-consolidated"),
+                _chunk(10, "Standalone Statement of Profit and Loss", "standalone-pnl"),
+            ]
+        ),
+    )
+    _write_json(
+        financial_root / "financial_discovery.json",
+        _discovery_payload(
+            [
+                _discovery_item("primary_profit_and_loss_statement", 10, "Standalone Statement of Profit and Loss"),
+            ]
+        ),
+    )
+    _write_json(
+        financial_root / "raw_financial_tables.json",
+        _raw_payload(
+            [
+                _raw_row("profit_and_loss", "Revenue from operations", 10, basis="unknown"),
+                _raw_row("profit_and_loss", "Profit for the year", 10, basis="unknown"),
+            ]
+        ),
+    )
+    _write_json(
+        financial_root / "normalized_fundamentals.json",
+        _normalized_payload(
+            [
+                ("profit_and_loss", "revenue", 10, "Revenue from operations", "unknown"),
+                ("profit_and_loss", "pat", 10, "Profit for the year", "unknown"),
+            ]
+        ),
+    )
+
+    write_financial_basis_resolution(
+        company="acme",
+        year="fy25",
+        financial_root=financial_root,
+        output_path=financial_root / "financial_basis_resolution.json",
+    )
+    normalized = json.loads((financial_root / "normalized_fundamentals.json").read_text(encoding="utf-8"))
+
+    assert normalized["profit_and_loss"]["revenue"]["basis"] == "standalone"
+    assert normalized["profit_and_loss"]["pat"]["basis"] == "standalone"
+    assert normalized["preferred_basis"] == "standalone"
+
+
+def test_global_basis_does_not_set_preferred_when_fields_remain_unknown(tmp_path):
+    financial_root = _setup_financial_root(tmp_path)
+    _write_json(
+        financial_root.parent / "extracted" / "clean_chunks.json",
+        _clean_chunks_payload(
+            [
+                _chunk(1, "Consolidated financial statements overview", "global-consolidated"),
+                _chunk(10, "Operating table without a nearby reporting basis", "field-table"),
+            ]
+        ),
+    )
+    _write_json(financial_root / "raw_financial_tables.json", _raw_payload([_raw_row("profit_and_loss", "Revenue from operations", 10)]))
+    normalized = _normalized_payload([("profit_and_loss", "revenue", 10, "Revenue from operations", "unknown")])
+    normalized["preferred_basis"] = "consolidated"
+    normalized["basis_manifest"]["preferred_basis"] = "consolidated"
+    _write_json(financial_root / "normalized_fundamentals.json", normalized)
+
+    write_financial_basis_resolution(
+        company="acme",
+        year="fy25",
+        financial_root=financial_root,
+        output_path=financial_root / "financial_basis_resolution.json",
+    )
+    normalized = json.loads((financial_root / "normalized_fundamentals.json").read_text(encoding="utf-8"))
+
+    assert normalized["profit_and_loss"]["revenue"]["basis"] == "unknown"
+    assert normalized["preferred_basis"] == "unknown"
+
+
+def test_resolver_does_not_upgrade_unknown_field_to_incompatible_preferred_basis(tmp_path):
+    financial_root = _setup_financial_root(tmp_path)
+    _write_json(
+        financial_root.parent / "extracted" / "clean_chunks.json",
+        _clean_chunks_payload([_chunk(10, "Standalone Balance Sheet", "standalone-bs")]),
+    )
+    _write_json(
+        financial_root / "financial_discovery.json",
+        _discovery_payload([_discovery_item("primary_balance_sheet_statement", 10, "Standalone Balance Sheet")]),
+    )
+    _write_json(financial_root / "raw_financial_tables.json", _raw_payload([_raw_row("balance_sheet", "Total debt", 10)]))
+    normalized = _normalized_payload([("balance_sheet", "total_debt", 10, "Total debt", "unknown")])
+    normalized["preferred_basis"] = "consolidated"
+    normalized["basis_manifest"]["preferred_basis"] = "consolidated"
+    _write_json(financial_root / "normalized_fundamentals.json", normalized)
+
+    write_financial_basis_resolution(
+        company="acme",
+        year="fy25",
+        financial_root=financial_root,
+        output_path=financial_root / "financial_basis_resolution.json",
+    )
+    normalized = json.loads((financial_root / "normalized_fundamentals.json").read_text(encoding="utf-8"))
+
+    assert normalized["balance_sheet"]["total_debt"]["basis"] == "unknown"
+
+
+def test_resolver_demotes_stale_incompatible_canonical_basis(tmp_path):
+    financial_root = _setup_financial_root(tmp_path)
+    _write_json(
+        financial_root.parent / "extracted" / "clean_chunks.json",
+        _clean_chunks_payload([_chunk(10, "Standalone Balance Sheet", "standalone-bs")]),
+    )
+    _write_json(
+        financial_root / "financial_discovery.json",
+        _discovery_payload([_discovery_item("primary_balance_sheet_statement", 10, "Standalone Balance Sheet")]),
+    )
+    _write_json(financial_root / "raw_financial_tables.json", _raw_payload([_raw_row("balance_sheet", "Total debt", 10)]))
+    normalized = _normalized_payload([("balance_sheet", "total_debt", 10, "Total debt", "standalone")])
+    normalized["preferred_basis"] = "consolidated"
+    normalized["basis_manifest"]["preferred_basis"] = "consolidated"
+    _write_json(financial_root / "normalized_fundamentals.json", normalized)
+
+    write_financial_basis_resolution(
+        company="acme",
+        year="fy25",
+        financial_root=financial_root,
+        output_path=financial_root / "financial_basis_resolution.json",
+    )
+    normalized = json.loads((financial_root / "normalized_fundamentals.json").read_text(encoding="utf-8"))
+
+    assert normalized["balance_sheet"]["total_debt"]["basis"] == "unknown"
+    assert normalized["preferred_basis"] == "unknown"
 
 
 def test_conflicting_basis_evidence_remains_unknown(tmp_path):

@@ -4,14 +4,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from .answer_cards import build_answer_cards, build_question_catalog_view
-from .business_journey import build_business_journey
+from .canonical_projection import build_business_journey_from_company_model, build_products_services_from_company_model
 from .contracts import ASK_INTRINSICIQ_SCHEMA_VERSION, CompanyResearchView, empty_business_journey
 from .financial_visuals import build_financial_visual_summaries
 from .loader import load_company_memory_sources
 from .manifest import build_manifest
 from .paths import get_answer_cards_path, get_business_journey_path, get_company_research_view_path, get_financial_visual_summaries_path, get_manifest_path, get_uncertainty_map_path, get_validation_report_path
 from .paths import get_products_services_path
-from .products_services import build_products_services
 from .sanitizer import sanitize_public_payload
 from .uncertainty_mapper import build_uncertainty_map, summarize_uncertainty_for_view
 from .validator import build_validation_report, validate_answer_cards_payload, validate_business_journey_payload, validate_company_research_view, validate_financial_visual_summaries_payload, validate_products_services_payload, validate_uncertainty_map_payload
@@ -22,12 +21,12 @@ def generate_ask_intrinsiciq_view(company_slug: str, *, force: bool = False) -> 
     generated_at = _now_iso()
     source_bundle = load_company_memory_sources(company_slug)
     company_identity = _build_company_identity(company_slug, source_bundle)
-    business_journey_payload, business_journey_diagnostics = build_business_journey(
+    business_journey_payload, business_journey_diagnostics = build_business_journey_from_company_model(
         source_bundle,
         company_slug=company_slug,
         generated_at=generated_at,
     )
-    products_services_payload, products_services_diagnostics = build_products_services(
+    products_services_payload, products_services_diagnostics = build_products_services_from_company_model(
         source_bundle,
         business_journey_payload=business_journey_payload,
         company_slug=company_slug,
@@ -149,18 +148,15 @@ def generate_ask_intrinsiciq_view(company_slug: str, *, force: bool = False) -> 
 
 
 def _build_company_identity(company_slug: str, source_bundle: Dict[str, Any]) -> Dict[str, Any]:
-    pcim = ((source_bundle.get("sources") or {}).get("pcim") or {}).get("payload") or {}
-    identity_manifest = pcim.get("business_identity_manifest") or {}
-    company_name = str(pcim.get("company") or company_slug.replace("-", " ").title()).strip()
-    industry = _first_nonempty(
-        identity_manifest.get("primary_sector"),
-        identity_manifest.get("industry"),
-        "",
-    )
+    company_model = ((source_bundle.get("sources") or {}).get("company_model") or {}).get("payload") or {}
+    identity = company_model.get("company_identity") if isinstance(company_model.get("company_identity"), dict) else {}
+    current_model = company_model.get("current_business_model") if isinstance(company_model.get("current_business_model"), dict) else {}
+    company_name = str(identity.get("name") or company_slug.replace("-", " ").title()).strip()
+    industry = _first_nonempty(current_model.get("business_model_type"), "")
     description = _first_nonempty(
-        identity_manifest.get("business_summary"),
-        ((pcim.get("business_understanding") or {}).get("business_summary")),
-        "A concise company description is not yet available in this release.",
+        current_model.get("what_company_does"),
+        current_model.get("summary"),
+        "A concise business description is not yet available from the current evidence.",
     )
     periods = _extract_reporting_periods(source_bundle)
     return {
@@ -210,10 +206,16 @@ def _build_coverage(
 
 
 def _extract_reporting_periods(source_bundle: Dict[str, Any]) -> List[str]:
-    pcim = ((source_bundle.get("sources") or {}).get("pcim") or {}).get("payload") or {}
-    years = pcim.get("available_years") or []
-    if isinstance(years, list):
-        return [str(year) for year in years if str(year).strip()]
+    company_model = ((source_bundle.get("sources") or {}).get("company_model") or {}).get("payload") or {}
+    periods: List[str] = []
+    current_model = company_model.get("current_business_model") if isinstance(company_model.get("current_business_model"), dict) else {}
+    if current_model.get("source_period"):
+        periods.append(str(current_model.get("source_period")))
+    for change in company_model.get("business_model_evolution", []) if isinstance(company_model.get("business_model_evolution"), list) else []:
+        if isinstance(change, dict):
+            periods.extend(str(change.get(key) or "") for key in ("from_period", "to_period"))
+    if periods:
+        return sorted({period for period in periods if period})
     truth_pack = ((source_bundle.get("sources") or {}).get("financial_truth_pack") or {}).get("payload") or {}
     covered = truth_pack.get("years_covered") or []
     if isinstance(covered, list):

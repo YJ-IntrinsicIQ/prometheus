@@ -17,20 +17,19 @@ const QUESTION_ID_RULES: Record<string, IntentRule> = {
   "what-does-company-do": {
     primaryIntent: "business_understanding",
     secondaryIntents: ["cross_domain"],
-    canonicalSourceKeys: ["pcim"],
+    canonicalSourceKeys: ["companyModel"],
     evidenceBudget: 5,
   },
   "who-are-the-customers": {
     primaryIntent: "business_understanding",
     secondaryIntents: ["cross_domain"],
-    canonicalSourceKeys: ["pcim"],
+    canonicalSourceKeys: ["companyModel"],
     evidenceBudget: 5,
   },
   "how-does-it-make-money": {
     primaryIntent: "business_understanding",
-    secondaryIntents: ["financial_performance", "cross_domain"],
-    canonicalSourceKeys: ["pcim", "financialTruthPack", "ownerEarningsBridge"],
-    requiresFinancialValues: true,
+    secondaryIntents: ["cross_domain"],
+    canonicalSourceKeys: ["companyModel"],
     evidenceBudget: 6,
   },
   "what-makes-the-offering-important": {
@@ -87,50 +86,49 @@ const QUESTION_ID_RULES: Record<string, IntentRule> = {
   "what-has-management-promised": {
     primaryIntent: "management_commitments",
     secondaryIntents: ["management_commentary", "projects"],
-    canonicalSourceKeys: ["managementCommitments", "commentaryAssessments", "commentaryTimelines", "projectAssessments"],
+    canonicalSourceKeys: ["managementProgression"],
     requiresProgression: true,
     evidenceBudget: 7,
   },
   "did-past-claims-come-true": {
     primaryIntent: "management_commitments",
     secondaryIntents: ["projects", "capacity", "management_quality"],
-    canonicalSourceKeys: ["managementCommitments", "projectAssessments", "capacityAssessments", "managementQualitySummary"],
+    canonicalSourceKeys: ["managementProgression"],
     requiresProgression: true,
     evidenceBudget: 8,
   },
   "what-projects-are-underway": {
     primaryIntent: "projects",
     secondaryIntents: ["capacity", "management_commitments"],
-    canonicalSourceKeys: ["projectAssessments", "projectTimelines", "managementCommitments", "capacityAssessments"],
+    canonicalSourceKeys: ["managementProgression"],
     requiresProgression: true,
     evidenceBudget: 7,
   },
   "how-is-capacity-changing": {
     primaryIntent: "capacity",
     secondaryIntents: ["projects", "management_commitments"],
-    canonicalSourceKeys: ["capacityAssessments", "capacityTimelines", "projectAssessments", "managementCommitments"],
+    canonicalSourceKeys: ["managementProgression"],
     requiresProgression: true,
     evidenceBudget: 7,
   },
   "what-is-management-commentary-saying": {
     primaryIntent: "management_commentary",
     secondaryIntents: ["management_commitments", "management_quality"],
-    canonicalSourceKeys: ["commentaryAssessments", "commentaryTimelines", "managementQualitySummary"],
+    canonicalSourceKeys: ["managementProgression"],
     requiresProgression: true,
     evidenceBudget: 7,
   },
   "how-is-capital-allocated": {
     primaryIntent: "capital_allocation",
-    secondaryIntents: ["management_quality", "per_share_compounding", "owner_earnings"],
-    canonicalSourceKeys: ["capitalAllocationRoi", "capitalAllocationOutcomes", "capitalAllocationTimelines", "managementQualitySummary", "financialTruthPack"],
+    secondaryIntents: ["management_quality"],
+    canonicalSourceKeys: ["managementProgression"],
     requiresProgression: true,
-    requiresFinancialValues: true,
     evidenceBudget: 8,
   },
   "what-incentives-matter": {
     primaryIntent: "management_quality",
     secondaryIntents: ["capital_allocation", "management_commitments"],
-    canonicalSourceKeys: ["managementQualitySummary", "managementQualityDimensions", "managementCommitments"],
+    canonicalSourceKeys: ["managementProgression"],
     requiresProgression: true,
     evidenceBudget: 6,
   },
@@ -246,7 +244,7 @@ export function inferIntentFromText(question: string): IntentRule {
     return {
       primaryIntent: "management_commitments",
       secondaryIntents: ["projects", "capacity", "management_quality"],
-      canonicalSourceKeys: ["managementCommitments", "projectAssessments", "capacityAssessments", "managementQualitySummary"],
+      canonicalSourceKeys: ["managementProgression"],
       requiresProgression: true,
       evidenceBudget: 7,
     };
@@ -256,9 +254,8 @@ export function inferIntentFromText(question: string): IntentRule {
     return {
       primaryIntent: "capital_allocation",
       secondaryIntents: ["management_quality", "financial_performance", "per_share_compounding"],
-      canonicalSourceKeys: ["capitalAllocationRoi", "capitalAllocationOutcomes", "managementQualitySummary", "financialTruthPack"],
+      canonicalSourceKeys: ["managementProgression"],
       requiresProgression: true,
-      requiresFinancialValues: true,
       evidenceBudget: 8,
     };
   }
@@ -267,7 +264,7 @@ export function inferIntentFromText(question: string): IntentRule {
     return {
       primaryIntent: "capacity",
       secondaryIntents: ["projects", "management_commitments", "capital_allocation"],
-      canonicalSourceKeys: ["capacityAssessments", "capacityTimelines", "projectAssessments", "managementCommitments"],
+      canonicalSourceKeys: ["managementProgression"],
       requiresProgression: true,
       evidenceBudget: 7,
     };
@@ -277,7 +274,7 @@ export function inferIntentFromText(question: string): IntentRule {
     return {
       primaryIntent: "projects",
       secondaryIntents: ["capacity", "management_commitments", "capital_allocation"],
-      canonicalSourceKeys: ["projectAssessments", "projectTimelines", "capacityAssessments", "managementCommitments"],
+      canonicalSourceKeys: ["managementProgression"],
       requiresProgression: true,
       evidenceBudget: 7,
     };

@@ -6,6 +6,13 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict
 
 from intelligence.progression import build_interpretation_contract
 
+from .canonical_projection import (
+    canonical_company_model,
+    canonical_management_progression,
+    progression_items_for_question,
+    summarize_progression_item,
+    _billing_basis_phrase,
+)
 from .sanitizer import contains_forbidden_public_term, sanitize_public_payload, sanitize_public_text
 from .uncertainty_mapper import build_uncertainty_note_for_answer
 
@@ -213,6 +220,17 @@ def build_answer_cards(
             investor_financial_modules,
             uncertainty_map_payload or {},
         )
+        if question_id in {
+            "what-has-management-promised",
+            "did-past-claims-come-true",
+            "what-projects-are-underway",
+            "how-is-capacity-changing",
+            "what-is-management-commentary-saying",
+        }:
+            progression_confidence = _cap_progression_confidence(answer)
+            interpretation = dict(answer.get("interpretation") or {})
+            interpretation["confidence"] = progression_confidence
+            answer["interpretation"] = interpretation
         repetition_issues = detect_public_answer_repetition(answer)
         contradiction_issues = detect_answer_truth_contradictions(
             answer,
@@ -481,58 +499,6 @@ def _build_customers_answer(source_bundle: Dict[str, Any], *, business_journey_p
         products_refs=_first_product_refs(products_services_payload, limit=3),
         business_journey_ref=None,
         customer_roles=customer_roles,
-    )
-
-
-def _build_make_money_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
-    business_model_summary = str(products_services_payload.get("business_model_summary") or "").strip()
-    revenue_logic_summary = str(products_services_payload.get("revenue_logic_summary") or "").strip()
-    if not business_model_summary and not revenue_logic_summary:
-        return _build_generic_not_supported_answer(
-            source_bundle,
-            business_journey_payload=business_journey_payload,
-            products_services_payload=products_services_payload,
-            question=question,
-            direct_answer="The available company memory does not yet describe the revenue model clearly enough to answer this confidently.",
-            why="How the company makes money shapes margin durability, working-capital needs, and how understandable the business really is.",
-            limitation="Pricing, contract structure, and billing mechanics are not described in enough detail in the available evidence.",
-        )
-    customer_summary = str(products_services_payload.get("customer_summary") or "").strip()
-    cash_cycle_text = _working_capital_implication(source_bundle)
-    revenue_flow = _build_revenue_flow(source_bundle, products_services_payload)
-    return _draft(
-        answer_status="partially_supported" if revenue_logic_summary else "supported",
-        simple_answer=first_available_text(
-            revenue_logic_summary,
-            business_model_summary,
-            "The company appears to earn through specialised product and project delivery.",
-        ),
-        why_it_matters="This matters because revenue quality depends not only on what is sold, but also on whether delivery is recurring, project-based, milestone-driven, or tied to capital deployment ahead of billing.",
-        key_points=[
-            "Revenue appears mainly project-based rather than recurring." if revenue_logic_summary else "",
-            "The visible flow is order or programme, design and build, testing or qualification, then billing and collection." if revenue_logic_summary else "",
-            cash_cycle_text,
-            customer_summary,
-        ],
-        detailed_explanation=" ".join(
-            part
-            for part in [
-                business_model_summary,
-                customer_summary,
-                cash_cycle_text,
-                "That means revenue timing can depend on milestone acceptance, programme schedules, and how quickly customers pay after delivery."
-                if revenue_logic_summary
-                else "",
-            ]
-            if part
-        ),
-        evidence_status="partial" if revenue_logic_summary else "direct",
-        evidence_summary="Supported by the current business-model and revenue-logic evidence, though pricing detail and customer concentration remain thin.",
-        evidence_points=[revenue_logic_summary, cash_cycle_text],
-        uncertainty="The available material does not fully spell out pricing mechanics, milestone mix, or customer concentration.",
-        products_refs=_first_product_refs(products_services_payload, limit=3),
-        business_journey_ref=None,
-        revenue_flow=revenue_flow,
     )
 
 
@@ -1707,6 +1673,381 @@ def _build_capital_allocation_answer(source_bundle: Dict[str, Any], *, business_
     )
 
 
+def _build_canonical_business_summary_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
+    company_slug = str(source_bundle.get("company_slug") or "")
+    model = canonical_company_model(source_bundle, company_slug) if company_slug else {}
+    current = _get_record(model, "current_business_model")
+    business_summary = first_available_text(
+        str(business_journey_payload.get("summary") or "").strip(),
+        str(products_services_payload.get("business_model_summary") or "").strip(),
+        _complete_sentence(_get_string(current, "what_company_does")),
+        _complete_sentence(_get_string(current, "summary")),
+    )
+    if not current:
+        return _build_generic_not_supported_answer(
+            source_bundle,
+            business_journey_payload=business_journey_payload,
+            products_services_payload=products_services_payload,
+            question=question,
+            direct_answer="The available evidence does not yet support a reliable business answer.",
+            why="Business understanding should come from the underlying business evidence, not from frontend or older fallbacks.",
+            limitation="Regenerate the business evidence set before asking business-understanding questions.",
+        )
+    product_names = _first_product_names(products_services_payload, limit=3)
+    return _draft(
+        answer_status="supported" if str(model.get("coverage_status") or "") == "supported" else "partially_supported",
+        simple_answer=_complete_sentence(business_summary),
+        why_it_matters="This matters because the first investor question is what the business actually sells, who uses it, and how that activity can become cash.",
+        key_points=[
+            f"Offerings: {_join_human_list(product_names)}." if product_names else "",
+            str(products_services_payload.get("customer_summary") or ""),
+            str(products_services_payload.get("revenue_logic_summary") or ""),
+            _complete_sentence(_get_string(current, "economic_mechanism")),
+        ],
+        detailed_explanation=" ".join(
+            part
+            for part in [
+                _complete_sentence(business_summary),
+                str(products_services_payload.get("customer_summary") or ""),
+                str(products_services_payload.get("revenue_logic_summary") or ""),
+                _complete_sentence(_get_string(current, "economic_mechanism")),
+            ]
+            if part
+        ),
+        evidence_status="direct",
+        evidence_summary="Derived from the business evidence set: current business model, offerings, customers, and revenue engines.",
+        evidence_points=[
+            _get_string(current, "source_period"),
+            _get_string(current, "business_model_type"),
+            _get_string(current, "how_revenue_happens"),
+        ],
+        uncertainty=_first_string(list(products_services_payload.get("open_questions") or []), "Offering-level contribution and customer concentration may still be incomplete."),
+        products_refs=_first_product_refs(products_services_payload, limit=4),
+        business_journey_ref=None,
+        business_journey_mode="full",
+    )
+
+
+def _build_canonical_customers_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
+    company_slug = str(source_bundle.get("company_slug") or "")
+    model = canonical_company_model(source_bundle, company_slug) if company_slug else {}
+    current = _get_record(model, "current_business_model")
+    customers = _get_record_list(model, "customers")
+    customer_summary = str(products_services_payload.get("customer_summary") or "").strip()
+    if not customer_summary and not customers:
+        return _build_generic_not_supported_answer(
+            source_bundle,
+            business_journey_payload=business_journey_payload,
+            products_services_payload=products_services_payload,
+            question=question,
+            direct_answer="The available evidence does not yet support a reliable customer answer.",
+            why="Customer identity matters because payer, user, partner, and concentration patterns shape revenue durability.",
+            limitation="The evidence set does not yet preserve enough customer detail.",
+        )
+    payers = _clean_list([_get_string(customer, "payer_type") for customer in customers] + list(current.get("who_pays") or []))
+    users = _clean_list([_get_string(customer, "end_user_type") for customer in customers] + list(current.get("who_uses") or []))
+    customer_roles = _build_customer_roles(
+        payers=payers[:4],
+        integrators_or_partners=[],
+        end_users=users[:4],
+        international_customers=[value for value in payers + users if "international" in value.lower()][:3],
+        concentration_note="Customer concentration is not fully established in the available evidence.",
+        evidence_status="partial" if any(not customer.get("concentration_known") for customer in customers) else "direct",
+    )
+    return _draft(
+        answer_status="partially_supported",
+        simple_answer=customer_summary or f"The visible customer map points to {_join_human_list(payers or users)}.",
+        why_it_matters="This matters because who pays and who uses the product can be different, and that difference affects bargaining power, adoption, and revenue durability.",
+        key_points=[
+            f"Who pays: {_join_human_list(payers)}." if payers else "",
+            f"Who uses: {_join_human_list(users)}." if users else "",
+            "Customer concentration is not fully established in the available evidence.",
+        ],
+        detailed_explanation=customer_summary or "The available evidence identifies customer roles, but does not yet provide a complete named-customer or concentration map.",
+        evidence_status="partial",
+        evidence_summary="Derived from the business evidence set: customers and current business model customer roles.",
+        evidence_points=payers[:2] + users[:1],
+        uncertainty="Customer concentration and named-customer revenue mix remain incomplete unless the evidence says otherwise.",
+        products_refs=_first_product_refs(products_services_payload, limit=3),
+        business_journey_ref=None,
+        customer_roles=customer_roles,
+    )
+
+
+def _build_canonical_make_money_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
+    company_slug = str(source_bundle.get("company_slug") or "")
+    model = canonical_company_model(source_bundle, company_slug) if company_slug else {}
+    current = _get_record(model, "current_business_model")
+    business_summary = first_available_text(
+        str(business_journey_payload.get("summary") or "").strip(),
+        str(products_services_payload.get("business_model_summary") or "").strip(),
+        _complete_sentence(_get_string(current, "what_company_does")),
+        _complete_sentence(_get_string(current, "summary")),
+    )
+    revenue_summary = str(products_services_payload.get("revenue_logic_summary") or "").strip() or _get_string(current, "how_revenue_happens")
+    if not revenue_summary:
+        return _build_generic_not_supported_answer(
+            source_bundle,
+            business_journey_payload=business_journey_payload,
+            products_services_payload=products_services_payload,
+            question=question,
+            direct_answer="The available evidence does not yet support a reliable revenue-mechanism answer.",
+            why="Revenue mechanism matters because it determines whether growth is recurring, project-timed, usage-led, licensing-led, or capacity-led.",
+            limitation="Regenerate the business evidence set with revenue-engine detail before relying on this answer.",
+        )
+    customer_summary = str(products_services_payload.get("customer_summary") or "").strip()
+    customer_need = customer_summary or "Customer roles are not fully established in the available evidence."
+    product_summary = _complete_sentence(business_summary)
+    revenue_basis = _complete_sentence(revenue_summary)
+    revenue_flow = _build_revenue_flow(source_bundle, products_services_payload)
+    billing_basis_note = str(revenue_flow.get("billing_basis_note") or "").strip()
+    revenue_recognition_note = str(revenue_flow.get("revenue_recognition_note") or "").strip()
+    cash_timing_note = str(revenue_flow.get("cash_timing_note") or "").strip()
+    return _draft(
+        answer_status="supported" if str(model.get("coverage_status") or "") == "supported" else "partially_supported",
+        simple_answer=_complete_sentence(" ".join(part for part in [product_summary, customer_need, revenue_basis] if part)),
+        why_it_matters="This matters because investors need the economic engine, not just the product label.",
+        key_points=[
+            product_summary,
+            customer_need,
+            revenue_basis,
+            billing_basis_note,
+            revenue_recognition_note,
+            cash_timing_note,
+        ],
+        detailed_explanation=" ".join(
+            part
+            for part in [
+                product_summary,
+                customer_need,
+                revenue_basis,
+                billing_basis_note,
+                revenue_recognition_note,
+                cash_timing_note,
+            ]
+            if part
+        ),
+        evidence_status="direct",
+        evidence_summary="Derived from the business evidence set: revenue engines and current business model.",
+        evidence_points=[revenue_summary, _get_string(current, "source_period")],
+        uncertainty=_first_string(list(products_services_payload.get("open_questions") or []), "Billing mechanics are not clearly disclosed."),
+        products_refs=_first_product_refs(products_services_payload, limit=3),
+        business_journey_ref=None,
+        revenue_flow=revenue_flow,
+    )
+
+
+def _build_canonical_progression_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
+    question_id = str(question.get("id") or "")
+    company_slug = str(source_bundle.get("company_slug") or "")
+    progression_payload = canonical_management_progression(source_bundle, company_slug) if company_slug else {}
+    company_model = canonical_company_model(source_bundle, company_slug) if company_slug else {}
+    coverage = str(progression_payload.get("coverage_status") or "insufficient_evidence")
+    items = progression_items_for_question(progression_payload, question_id, company_model=company_model)
+    if coverage == "insufficient_evidence" or not items:
+        return _build_generic_not_supported_answer(
+            source_bundle,
+            business_journey_payload=business_journey_payload,
+            products_services_payload=products_services_payload,
+            question=question,
+            direct_answer="The available evidence does not yet support this answer.",
+            why="Progression questions should separate what management said, what it did, what happened later, and what remains unproven.",
+            limitation="Regenerate the progression evidence set or improve upstream progression evidence.",
+        )
+    item = items[0]
+    summary = summarize_progression_item(item, question_id)
+    implication = _get_record(item, "investor_implication")
+    status = "partially_supported" if coverage == "partial" or _uses_legacy_streams(items) else "supported"
+    key_points = _progression_key_points(items[:4], question_id)
+    unresolved = _clean_list(summary.get("unresolved_items") or [])
+    latest_evidence = _clean_list(summary.get("latest_evidence") or [])
+    conclusion = _progression_conclusion(question_id, summary)
+    confidence = _progression_confidence(question_id, summary, implication, coverage)
+    interpretation = build_interpretation_contract(
+        conclusion=_complete_sentence(conclusion),
+        what_changed=_clean_list([summary.get("what_changed")] + key_points)[:3],
+        why_it_matters=_progression_why_it_matters(question_id),
+        economic_mechanism=_first_string(_get_string(implication, "economic_mechanism"), _progression_economic_mechanism(question_id)),
+        thesis_impact=_first_string(_get_string(implication, "thesis_impact"), "unresolved"),
+        positive_evidence=[item for item in latest_evidence if not _looks_unresolved_like(item)][:3],
+        negative_evidence=[item for item in unresolved if item][:3],
+        unresolved=unresolved[:3],
+        what_to_watch=_progression_watch_items(question_id, implication, unresolved),
+        confidence=confidence,
+    )
+    interpretation["confidence"] = confidence
+    return _draft(
+        answer_status=status,
+        simple_answer=_complete_sentence(interpretation["conclusion"]),
+        why_it_matters=interpretation["why_it_matters"],
+        key_points=key_points,
+        detailed_explanation=_progression_detailed_explanation(question_id),
+        evidence_status="partial" if status == "partially_supported" else "direct",
+        evidence_summary="Derived from the progression evidence set only.",
+        evidence_points=latest_evidence[:3],
+        uncertainty=_first_string(unresolved, "Outcome evidence remains incomplete."),
+        products_refs=[],
+        business_journey_ref=None,
+        progression=summary,
+        interpretation=interpretation,
+    )
+
+
+def _progression_key_points(items: List[Dict[str, Any]], question_id: str) -> List[str]:
+    points = []
+    for item in items:
+        summary = summarize_progression_item(item, question_id)
+        label = _clean_display_phrase(str(summary.get("what_changed") or summary.get("headline") or "").strip(), limit_words=18)
+        if not label:
+            label = _clean_display_phrase(str(summary.get("headline") or summary.get("current_state") or "").strip(), limit_words=18)
+        points.append(_clean_display_phrase(f"{label}: {summary['current_state']}.", limit_words=18))
+    return _clean_list(points)[:4]
+
+
+def _progression_conclusion(question_id: str, summary: Dict[str, Any]) -> str:
+    if question_id == "what-has-management-promised":
+        return "Management commitment is visible, but later delivery evidence remains incomplete"
+    if question_id == "did-past-claims-come-true":
+        return "The prior claim is only partly verified by later evidence"
+    if question_id == "what-projects-are-underway":
+        return "The project is underway, but the business effect remains unproven"
+    if question_id == "how-is-capacity-changing":
+        return "Operating capacity is changing, but utilization or payoff remains unproven"
+    if question_id == "what-is-management-commentary-saying":
+        return "Management commentary shows a change in framing, but the business implication remains bounded by later evidence"
+    return "The progression remains visible, but outcome evidence is incomplete"
+
+
+def _progression_why_it_matters(question_id: str) -> str:
+    if question_id == "what-has-management-promised":
+        return "Investors need to separate explicit commitments from later delivery."
+    if question_id == "did-past-claims-come-true":
+        return "Claims matter only if later evidence shows follow-through."
+    if question_id == "what-projects-are-underway":
+        return "Projects show where management is deploying time and capital."
+    if question_id == "how-is-capacity-changing":
+        return "Capacity only matters if it raises the ability to produce, test, deliver, or serve."
+    if question_id == "what-is-management-commentary-saying":
+        return "Commentary matters because it reveals shifts in priorities, confidence, risk language, and emphasis."
+    return "The path from intention to action to outcome is what determines management credibility."
+
+
+def _progression_economic_mechanism(question_id: str) -> str:
+    if question_id == "what-has-management-promised":
+        return "Forward-looking commitments create conviction only when later evidence confirms delivery."
+    if question_id == "did-past-claims-come-true":
+        return "Claims create conviction only when follow-through turns into verifiable evidence."
+    if question_id == "what-projects-are-underway":
+        return "Projects matter when they convert management intent into operating capability or customer delivery."
+    if question_id == "how-is-capacity-changing":
+        return "Capacity matters when the business can produce, test, deliver, or serve more at useful economics."
+    if question_id == "what-is-management-commentary-saying":
+        return "Commentary matters when the framing of execution, risk, and priorities changes in a way that affects belief about future delivery."
+    return "Execution matters when it creates observable capability, utilization, cash generation, or return on capital."
+
+
+def _progression_detailed_explanation(question_id: str) -> str:
+    if question_id == "what-has-management-promised":
+        return "This view only counts explicit management commitments or forward-looking statements. It shows what management said, when it said it, what it intended, and what later evidence is still missing."
+    if question_id == "did-past-claims-come-true":
+        return "This view traces a prior claim to later evidence and asks whether the chain ends in delivery, delay, abandonment, or contradiction."
+    if question_id == "what-projects-are-underway":
+        return "This view tracks active execution: project, build, deployment, or integration. Completed history is excluded unless the active project itself remains ongoing."
+    if question_id == "how-is-capacity-changing":
+        return "This view only counts real operating capacity changes such as facilities, manufacturing, testing, workforce, or throughput. It excludes customer base, market size, and generic expansion."
+    if question_id == "what-is-management-commentary-saying":
+        return "This view only uses actual management commentary. Supporting evidence can come from capex, projects, or capacity, but those are not the commentary itself."
+    return "The progression view keeps management intent, action, later evidence, and uncertainty separate so the answer stays investor-useful."
+
+
+def _progression_watch_items(question_id: str, implication: Dict[str, Any], unresolved: List[str]) -> List[str]:
+    watch = _clean_list(_get_string_list(implication, "what_to_watch") + unresolved)
+    if question_id == "what-has-management-promised":
+        watch = watch or ["Later delivery evidence", "Whether management keeps or revises the original target", "Proof that the promise turned into action"]
+    elif question_id == "did-past-claims-come-true":
+        watch = watch or ["Later evidence", "Whether the claim was delivered, delayed, or contradicted", "Signals of follow-through"]
+    elif question_id == "what-projects-are-underway":
+        watch = watch or ["Execution milestones", "Customer or operating adoption", "Whether the project is still active"]
+    elif question_id == "how-is-capacity-changing":
+        watch = watch or ["Utilization", "Incremental throughput or productivity", "Whether capacity turns into useful economics"]
+    elif question_id == "what-is-management-commentary-saying":
+        watch = watch or ["Later commentary", "Shift in emphasis or risk language", "Whether commentary aligns with operating evidence"]
+    return watch[:3]
+
+
+def _progression_confidence(question_id: str, summary: Dict[str, Any], implication: Dict[str, Any], coverage: str) -> Dict[str, Any]:
+    confidence = _get_record(implication, "confidence") or {"level": "medium", "basis": ["progression evidence"], "limitations": []}
+    level = str(confidence.get("level") or "medium").lower()
+    rank = {"high": 3, "medium": 2, "low": 1, "insufficient": 0, "unavailable": 0}
+    cap = rank.get(level, 2)
+    current_state = str(summary.get("current_state") or "").lower()
+    latest_evidence = _clean_list(summary.get("latest_evidence") or [])
+    unresolved_items = _clean_list(summary.get("unresolved_items") or [])
+    if coverage == "partial":
+        cap = min(cap, 2)
+    if question_id == "did-past-claims-come-true":
+        if not latest_evidence:
+            cap = min(cap, 1)
+        elif current_state in {"announced", "unresolved"}:
+            cap = min(cap, 1)
+        elif unresolved_items:
+            cap = min(cap, 2)
+    elif current_state in {"announced", "in progress"} or unresolved_items:
+        cap = min(cap, 2)
+    capped_level = "high" if cap >= 3 else "medium" if cap == 2 else "low"
+    return {
+        "level": capped_level,
+        "basis": _clean_list(confidence.get("basis") or [])[:4] or ["progression evidence"],
+        "limitations": _clean_list(confidence.get("limitations") or [])[:4],
+    }
+
+
+def _cap_progression_confidence(answer: Dict[str, Any]) -> Dict[str, Any]:
+    interpretation = answer.get("interpretation") if isinstance(answer.get("interpretation"), dict) else {}
+    confidence = interpretation.get("confidence") if isinstance(interpretation.get("confidence"), dict) else {}
+    level = str(confidence.get("level") or "medium").lower()
+    rank = {"high": 3, "medium": 2, "low": 1, "insufficient": 0, "unavailable": 0}
+    cap = rank.get(level, 2)
+    progression = answer.get("progression") if isinstance(answer.get("progression"), dict) else {}
+    current_state = str(progression.get("current_state") or "").lower()
+    unresolved_items = _clean_list(progression.get("unresolved_items") or [])
+    latest_evidence = _clean_list(progression.get("latest_evidence") or [])
+    status = str(answer.get("answer_status") or "").lower()
+    if status == "not_supported":
+        cap = min(cap, 1)
+    elif status == "partially_supported":
+        cap = min(cap, 2)
+    if not latest_evidence:
+        cap = min(cap, 1)
+    elif current_state in {"announced", "in progress"} or unresolved_items:
+        cap = min(cap, 2)
+    capped_level = "high" if cap >= 3 else "medium" if cap == 2 else "low"
+    return {
+        "level": capped_level,
+        "basis": _clean_list(confidence.get("basis") or [])[:4] or ["progression evidence"],
+        "limitations": _clean_list(confidence.get("limitations") or [])[:4],
+    }
+
+
+def _uses_legacy_streams(items: List[Dict[str, Any]]) -> bool:
+    for item in items:
+        if any(str(stream).startswith("legacy_") for stream in item.get("stream_types", []) or []):
+            return True
+    return False
+
+
+def _complete_sentence(value: Any) -> str:
+    text = _clean_canonical_sentence(str(value or ""))
+    if not text:
+        return ""
+    return text if text.endswith((".", "?", "!")) else text + "."
+
+
+def _clean_canonical_sentence(value: Any) -> str:
+    text = " ".join(str(value or "").replace("...", "").replace("…", "").split()).strip(" ,;:-")
+    return text
+
+
 def _build_incentives_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
     summary = _source_payload(source_bundle, "management_quality_summary")
     if summary:
@@ -2067,10 +2408,10 @@ def _build_generic_not_supported_answer(
 ) -> Dict[str, Any]:
     return _draft(
         answer_status="not_supported",
-        simple_answer=direct_answer or "The available company memory does not yet support a reliable conclusion on this question.",
+        simple_answer=direct_answer or "The available evidence does not yet support a reliable conclusion on this question.",
         why_it_matters=why or "This still matters because the question is valid even when the current source set cannot answer it responsibly.",
         key_points=[
-            limitation or "The current source set does not preserve enough direct evidence to support a stronger answer.",
+            limitation or "The current evidence set does not preserve enough direct evidence to support a stronger answer.",
             "A more confident answer would require clearer, better-linked source evidence.",
         ],
         detailed_explanation="The right response here is to stay conservative. The available evidence is not strong enough to support a reliable answer without filling the gap through inference.",
@@ -2100,22 +2441,22 @@ def _build_unavailable_answer(question: Dict[str, Any], direct_answer: str, why:
 
 
 ANSWER_BUILDERS = {
-    "what-does-company-do": _build_business_summary_answer,
-    "who-are-the-customers": _build_customers_answer,
-    "how-does-it-make-money": _build_make_money_answer,
+    "what-does-company-do": _build_canonical_business_summary_answer,
+    "who-are-the-customers": _build_canonical_customers_answer,
+    "how-does-it-make-money": _build_canonical_make_money_answer,
     "what-makes-the-offering-important": _build_offering_importance_answer,
     "where-is-evidence-thin": _build_evidence_thin_answer,
     "are-profits-converting-into-cash": _build_cash_conversion_answer,
     "what-is-owner-earnings": _build_owner_earnings_answer,
     "is-working-capital-a-concern": _build_working_capital_answer,
     "are-per-share-economics-improving": _build_per_share_answer,
-    "what-has-management-promised": _build_management_promises_answer,
-    "did-past-claims-come-true": _build_past_claims_answer,
-    "what-projects-are-underway": _build_projects_answer,
-    "how-is-capacity-changing": _build_capacity_answer,
-    "what-is-management-commentary-saying": _build_commentary_answer,
-    "how-is-capital-allocated": _build_capital_allocation_answer,
-    "what-incentives-matter": _build_incentives_answer,
+    "what-has-management-promised": _build_canonical_progression_answer,
+    "did-past-claims-come-true": _build_canonical_progression_answer,
+    "what-projects-are-underway": _build_canonical_progression_answer,
+    "how-is-capacity-changing": _build_canonical_progression_answer,
+    "what-is-management-commentary-saying": _build_canonical_progression_answer,
+    "how-is-capital-allocated": _build_canonical_progression_answer,
+    "what-incentives-matter": _build_canonical_progression_answer,
     "what-should-i-ask-ir": _build_ask_ir_answer,
     "what-would-graham-worry-about": lambda *args, **kwargs: _build_lens_answer(*args, lens_key="graham_analysis", why="This lens matters because it stresses downside protection, financial resilience, and whether weak cash conversion can undermine a seemingly strong business.", **kwargs),
     "what-would-buffett-focus-on": _build_buffett_answer,
@@ -3044,6 +3385,77 @@ def _build_customer_roles(
 
 
 def _build_revenue_flow(source_bundle: Dict[str, Any], products_services_payload: Dict[str, Any]) -> Dict[str, Any]:
+    company_slug = str(source_bundle.get("company_slug") or "")
+    model = canonical_company_model(source_bundle, company_slug) if company_slug else {}
+    current = _get_record(model, "current_business_model")
+    revenue_engines = _get_record_list(model, "revenue_engines")
+    model_type = str(current.get("business_model_type") or "").lower()
+    billing_basis = "; ".join(
+        _dedupe_texts(
+            [
+                _billing_basis_phrase(engine.get("billing_basis"))
+                for engine in revenue_engines[:4]
+                if _billing_basis_phrase(engine.get("billing_basis"))
+            ]
+        )
+    )
+    revenue_recognition = _collect_explicit_revenue_timing(
+        revenue_engines,
+        ("recognition_basis", "revenue_recognition_basis", "recognition_timing"),
+    )
+    cash_timing = _collect_explicit_revenue_timing(
+        revenue_engines,
+        ("cash_timing", "cash_collection_timing", "collection_timing"),
+    )
+    if model_type == "content_ip":
+        return {
+            "model_type": "recurring",
+            "steps": [
+                {"order": 1, "label": "Own and refresh catalogue", "explanation": "The company builds or acquires content IP that can be monetized over time."},
+                {"order": 2, "label": "Reach listeners and licensees", "explanation": "Consumers, platforms, and partners use the catalogue through digital distribution and licensing channels."},
+                {"order": 3, "label": "Earn royalty and license income", "explanation": "Revenue comes from streaming royalties, licensing fees, and advertising tied to audience reach."},
+                {"order": 4, "label": "Monetize catalogue access", "explanation": "The monetization path depends on distribution, licensing, and audience reach terms."},
+            ],
+            "billing_basis_note": billing_basis or "Billing basis is not established from the available business-model evidence.",
+            "revenue_recognition_note": revenue_recognition or None,
+            "cash_timing_note": cash_timing or None,
+            "working_capital_note": None,
+            "evidence_status": "direct" if billing_basis else "partial",
+            "offering_examples": _first_product_names(products_services_payload, limit=3),
+        }
+    if model_type == "platform":
+        return {
+            "model_type": "mixed",
+            "steps": [
+                {"order": 1, "label": "Secure enterprise or operator demand", "explanation": "The business begins when enterprises or telecom partners need communication and workflow capability."},
+                {"order": 2, "label": "Deliver platform-led workflows", "explanation": "Messaging, security, and managed-deployment workflows are configured around those customer needs."},
+                {"order": 3, "label": "Run usage and service traffic", "explanation": "Revenue is driven by platform usage, message volumes, and deployment activity."},
+                {"order": 4, "label": "Bill through service or usage terms", "explanation": "The monetization path depends on usage-linked service charges and deployment terms."},
+            ],
+            "billing_basis_note": billing_basis or "Billing basis is not established from the available business-model evidence.",
+            "revenue_recognition_note": revenue_recognition or None,
+            "cash_timing_note": cash_timing or None,
+            "working_capital_note": None,
+            "evidence_status": "direct" if billing_basis else "partial",
+            "offering_examples": _first_product_names(products_services_payload, limit=3),
+        }
+    if model_type == "manufacturing":
+        return {
+            "model_type": "project_based",
+            "steps": [
+                {"order": 1, "label": "Win the order or programme", "explanation": "The business starts when a customer programme or order is awarded."},
+                {"order": 2, "label": "Design, build, and qualify", "explanation": "Systems or components are engineered, manufactured, and tested to meet specifications."},
+                {"order": 3, "label": "Deliver the finished system", "explanation": "The operating output is delivered or accepted into the customer programme."},
+                {"order": 4, "label": "Bill on order terms", "explanation": "The monetization path follows the order terms supported by the evidence."},
+            ],
+            "billing_basis_note": billing_basis or "Billing basis is not established from the available business-model evidence.",
+            "revenue_recognition_note": revenue_recognition or None,
+            "cash_timing_note": cash_timing or None,
+            "working_capital_note": None,
+            "evidence_status": "direct" if billing_basis else "partial",
+            "offering_examples": _first_product_names(products_services_payload, limit=3),
+        }
+
     revenue_text = " ".join(
         [
             str(products_services_payload.get("business_model_summary") or ""),
@@ -3055,33 +3467,56 @@ def _build_revenue_flow(source_bundle: Dict[str, Any], products_services_payload
         return {
             "model_type": "mixed",
             "steps": [
-                {"order": 1, "label": "Win enterprise or operator relationship", "explanation": "The business appears to begin with enterprise customers or telecom partners adopting a communication platform or service."},
-                {"order": 2, "label": "Configure communication workflows", "explanation": "The company then appears to configure messaging, security, engagement, or automation workflows for customer use cases."},
-                {"order": 3, "label": "Operate platform traffic", "explanation": "Revenue depends on platform usage, managed deployments, or communication volumes."},
-                {"order": 4, "label": "Bill for services", "explanation": "Billing appears tied to platform services, customer agreements, or usage-linked communication activity."},
-                {"order": 5, "label": "Collect and reinvest", "explanation": "Cash quality still depends on customer collections, platform investment needs, and working-capital discipline."},
+                {"order": 1, "label": "Secure customer demand", "explanation": "Enterprise or telecom customers need communication capability."},
+                {"order": 2, "label": "Deliver the communication workflow", "explanation": "The company configures platform and managed-service workflows around that demand."},
+                {"order": 3, "label": "Bill through service terms", "explanation": "Revenue depends on usage, service, or managed-deployment terms."},
+                {"order": 4, "label": "Collect through service terms", "explanation": "The monetization path depends on the supported service terms."},
             ],
-            "cash_timing_note": "Cash timing depends on customer collections and service-commercial terms, not on physical programme acceptance milestones.",
-            "working_capital_note": _working_capital_implication(source_bundle),
+            "billing_basis_note": billing_basis or "Billing basis is not established from the available business-model evidence.",
+            "revenue_recognition_note": revenue_recognition or None,
+            "cash_timing_note": cash_timing or None,
+            "working_capital_note": None,
             "evidence_status": "partial",
             "offering_examples": _first_product_names(products_services_payload, limit=3),
         }
     flow_steps = [
-        {"order": 1, "label": "Win programme or order", "explanation": "The business appears to begin with a customer order or programme award."},
-        {"order": 2, "label": "Define system scope", "explanation": "The company then appears to tailor the subsystem, product, or integrated system to programme requirements."},
-        {"order": 3, "label": "Build and qualify", "explanation": "Delivery appears to depend on in-house manufacturing, testing, or qualification work before customer acceptance."},
-        {"order": 4, "label": "Integrate and deliver", "explanation": "Systems or subsystems are then integrated into the wider customer programme or platform."},
-        {"order": 5, "label": "Bill against milestones", "explanation": "Billing appears linked to delivery, acceptance, or project milestones rather than simple recurring subscription timing."},
-        {"order": 6, "label": "Collect cash later", "explanation": "Cash conversion can lag delivery because collections depend on programme timing and working-capital intensity."},
+        {"order": 1, "label": "Win order or programme", "explanation": "The business appears to begin with a customer order or programme award."},
+        {"order": 2, "label": "Define the work scope", "explanation": "The company tailors the offering to programme requirements."},
+        {"order": 3, "label": "Build and deliver", "explanation": "Delivery depends on the relevant operating capability and customer acceptance."},
+        {"order": 4, "label": "Collect on the agreed terms", "explanation": "Revenue is earned according to the terms supported by the evidence."},
     ]
     return {
-        "model_type": "project_based",
+        "model_type": "unclear",
         "steps": flow_steps,
-        "cash_timing_note": "Cash timing appears tied to delivery or acceptance milestones rather than smooth recurring billing.",
-        "working_capital_note": _working_capital_implication(source_bundle),
+        "billing_basis_note": billing_basis or None,
+        "revenue_recognition_note": revenue_recognition or None,
+        "cash_timing_note": cash_timing or None,
+        "working_capital_note": None,
         "evidence_status": "partial",
         "offering_examples": _first_product_names(products_services_payload, limit=3),
     }
+
+
+def _collect_explicit_revenue_timing(revenue_engines: List[Dict[str, Any]], candidate_keys: tuple[str, ...]) -> str:
+    values: List[str] = []
+    for engine in revenue_engines:
+        for key in candidate_keys:
+            text = _first_string(engine.get(key))
+            if text:
+                values.append(text)
+    return "; ".join(_dedupe_texts(values))
+
+
+def _dedupe_texts(values: List[str]) -> List[str]:
+    seen = set()
+    result: List[str] = []
+    for value in values:
+        normalized = " ".join(str(value or "").lower().split())
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(str(value).strip())
+    return result
 
 
 def _finalize_structured_sections(
@@ -3108,14 +3543,6 @@ def _finalize_structured_sections(
             continue
         finalized_sections.append({"title": title, "points": cleaned_points})
     return finalized_sections
-
-
-def _working_capital_implication(source_bundle: Dict[str, Any]) -> str:
-    working_capital = _latest_year_record(_source_payload(source_bundle, "working_capital_quality_drilldown"), "drilldown")
-    cycle = _get_number(working_capital, "cash_conversion_cycle")
-    if cycle is None:
-        return "The available evidence does not yet show the full cash-conversion cycle."
-    return f"Working capital is important because cash appears to stay tied up for about {format_number(cycle)} days before it returns."
 
 
 def _join_human_list(values: List[str]) -> str:

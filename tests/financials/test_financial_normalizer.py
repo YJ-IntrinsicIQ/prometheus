@@ -1,11 +1,14 @@
 import json
+import shutil
 from pathlib import Path
 
 import pytest
 
 from knowledge.financials.ratio_calculator import calculate_financial_ratios
 from knowledge.financials.reconciler import build_financial_reconciliation_report
-from knowledge.financials.normalizer import _select_value, normalize_financial_tables, write_normalized_fundamentals
+from knowledge.financials.normalizer import _face_value_from_excerpt, _select_value, normalize_financial_tables, write_normalized_fundamentals
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _write_json(path: Path, payload) -> None:
@@ -136,6 +139,195 @@ def test_revenue_and_pat_mapping(tmp_path):
     assert payload["profit_and_loss"]["other_income"]["value_crore"] == 25.0
 
 
+def test_balance_sheet_revenue_row_normalizes_to_profit_and_loss_revenue(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Profit for the year", [("March 31, 2025", "120.00", 120.0)]),
+    ]
+    sections["balance_sheet"].append(
+        _row("balance_sheet", "Revenue", [("March 31, 2025", "500.00", 500.0)])
+    )
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["revenue"]["value_crore"] == 500.0
+    assert payload["profit_and_loss"]["revenue"]["source_section_type"] == "balance_sheet"
+    assert payload["profit_and_loss"]["revenue"]["source_line_item"] == "Revenue"
+
+
+def test_balance_sheet_capital_total_row_normalizes_to_net_worth(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)]),
+        _row("profit_and_loss", "Profit for the year", [("March 31, 2025", "120.00", 120.0)]),
+    ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "23604.46", 23604.4642)]),
+        _row("balance_sheet", "Details 1. Paid up Capital (`)", [("PERIOD_COLUMN_UNRESOLVED", "19,28,31,42,050", 1928.314205)]),
+        _row("balance_sheet", "Paid up Capital", [("March 31, 2025", "1728314205", 172831.4205)]),
+        _row("balance_sheet", "RESERVES AND SURPLUS I. Statutory Reserves Closing balance", [("March 31, 2025", "205131", 20.5131)]),
+        _row("balance_sheet", "TOTAL (I + II + III+IV+V)", [("March 31, 2025", "8321239", 832.1239)]),
+        _row("balance_sheet", "Total Liabilities", [("March 31, 2025", "22772.34", 22772.3403)]),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["balance_sheet"]["equity_share_capital"]["value_crore"] == 1928.314205
+    assert payload["balance_sheet"]["equity_share_capital"]["source_line_item"] == "Details 1. Paid up Capital (`)"
+    assert payload["balance_sheet"]["reserves"]["value_crore"] == 832.1239
+    assert payload["balance_sheet"]["reserves"]["source_line_item"] == "TOTAL (I + II + III+IV+V)"
+    assert payload["balance_sheet"]["net_worth"]["value_crore"] == 2760.4381
+    assert payload["balance_sheet"]["net_worth"]["formula"] == "equity_share_capital + reserves"
+    assert payload["balance_sheet"]["total_liabilities"]["value_crore"] == 22772.3403
+
+
+def test_total_equity_and_liabilities_is_not_promoted_to_net_worth(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)]),
+        _row("profit_and_loss", "Profit for the year", [("March 31, 2025", "120.00", 120.0)]),
+    ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "3009.00", 3009.0)]),
+        _row("balance_sheet", "Total Equity and Liabilities", [("March 31, 2025", "3009.00", 3009.0)]),
+        _row("balance_sheet", "Total Equity", [("March 31, 2025", "1942.00", 1942.0)]),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["balance_sheet"]["net_worth"]["source_line_item"] == "Total Equity"
+    assert payload["balance_sheet"]["net_worth"]["value_crore"] == 1942.0
+    assert payload["balance_sheet"]["total_liabilities"]["derived"] is True
+    assert payload["balance_sheet"]["total_liabilities"]["value_crore"] == 1067.0
+
+
+def test_real_ujjivan_fy23_balance_sheet_prefers_true_total_assets_candidate(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    real_path = ROOT / "companies" / "ujjivan" / "fy23" / "financials" / "raw_financial_tables.json"
+    real_discovery_path = ROOT / "companies" / "ujjivan" / "fy23" / "financials" / "financial_discovery.json"
+    shutil.copyfile(real_path, path)
+    shutil.copyfile(real_discovery_path, tmp_path / "financial_discovery.json")
+
+    payload = normalize_financial_tables(company="ujjivan", year="fy23", raw_tables_path=path)
+
+    assert payload["balance_sheet"]["total_assets"]["source_page"] == 316
+    assert payload["balance_sheet"]["total_assets"]["value_crore"] == 23604.4642
+    assert payload["balance_sheet"]["net_worth"]["derived"] is True
+    assert payload["balance_sheet"]["net_worth"]["source_line_item"] == "derived:net_worth"
+    assert payload["balance_sheet"]["net_worth"]["value_crore"] == 3957.8865
+    assert payload["balance_sheet"]["net_worth"]["source_page"] == 273
+    assert payload["balance_sheet"]["total_liabilities"]["derived"] is True
+    assert payload["balance_sheet"]["total_liabilities"]["formula"] == "total_assets - net_worth"
+    assert payload["balance_sheet"]["total_liabilities"]["value_crore"] == 19646.5777
+
+
+def test_real_ujjivan_fy22_balance_sheet_net_worth_scales_from_share_count(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    real_path = ROOT / "companies" / "ujjivan" / "fy22" / "financials" / "raw_financial_tables.json"
+    real_discovery_path = ROOT / "companies" / "ujjivan" / "fy22" / "financials" / "financial_discovery.json"
+    shutil.copyfile(real_path, path)
+    shutil.copyfile(real_discovery_path, tmp_path / "financial_discovery.json")
+
+    payload = normalize_financial_tables(company="ujjivan", year="fy22", raw_tables_path=path)
+
+    assert payload["balance_sheet"]["equity_share_capital"]["value_crore"] == 1928.314205
+    assert payload["balance_sheet"]["reserves"]["value_crore"] == 832.1239
+    assert payload["balance_sheet"]["net_worth"]["derived"] is True
+    assert payload["balance_sheet"]["net_worth"]["value_crore"] == 2760.4381
+    assert payload["balance_sheet"]["total_liabilities"]["derived"] is True
+    assert payload["balance_sheet"]["total_liabilities"]["value_crore"] == 20844.0261
+
+
+def test_balance_sheet_pat_label_normalizes_to_pat(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)]),
+    ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "1000.00", 1000.0)]),
+        _row("balance_sheet", "Total Equity", [("March 31, 2025", "600.00", 600.0)]),
+        _row("balance_sheet", "Total profit after taxes", [("March 31, 2025", "8.30", 8.3)]),
+        _row("balance_sheet", "Total Liabilities", [("March 31, 2025", "400.00", 400.0)]),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["pat"]["value_crore"] == 8.3
+    assert payload["profit_and_loss"]["pat"]["source_section_type"] == "balance_sheet"
+    assert payload["profit_and_loss"]["pat"]["statement_type"] == "balance_sheet"
+
+
+def test_balance_sheet_net_profit_row_normalizes_to_pat(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)]),
+    ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "1000.00", 1000.0)]),
+        _row("balance_sheet", "Total Equity", [("March 31, 2025", "600.00", 600.0)]),
+        _row("balance_sheet", "Net Profit (5-6-8-9)", [("March 31, 2025", "8.30", 8.3)]),
+        _row("balance_sheet", "Total Liabilities", [("March 31, 2025", "400.00", 400.0)]),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["pat"]["value_crore"] == 8.3
+    assert payload["profit_and_loss"]["pat"]["source_section_type"] == "balance_sheet"
+    assert payload["profit_and_loss"]["pat"]["source_line_item"] == "Net Profit (5-6-8-9)"
+
+
+def test_generic_net_profit_row_does_not_map_to_pat(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)]),
+        _row("profit_and_loss", "Profit for the year", [("March 31, 2025", "120.00", 120.0)]),
+    ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "1000.00", 1000.0)]),
+        _row("balance_sheet", "Total Equity", [("March 31, 2025", "600.00", 600.0)]),
+        _row("balance_sheet", "Mar-20 Mar-21 Mar-22 Net Profit", [("March 31, 2025", "8.30", 8.3)]),
+        _row("balance_sheet", "Total Liabilities", [("March 31, 2025", "400.00", 400.0)]),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["pat"]["value_crore"] == 120.0
+    assert payload["profit_and_loss"]["pat"]["source_line_item"] == "Profit for the year"
+
+
+def test_balance_sheet_ratio_lookalike_does_not_map_to_pat(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)]),
+    ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "1000.00", 1000.0)]),
+        _row("balance_sheet", "Total Equity", [("March 31, 2025", "600.00", 600.0)]),
+        _row("balance_sheet", "Total profit after taxes", [("March 31, 2025", "8.30", 8.3)]),
+        _row("balance_sheet", "Net profit ratio Profit after Tax Revenue from Operations", [("March 31, 2025", "15.0", 15.0)]),
+        _row("balance_sheet", "Total Liabilities", [("March 31, 2025", "400.00", 400.0)]),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["pat"]["value_crore"] == 8.3
+    assert payload["profit_and_loss"]["pat"]["source_line_item"] == "Total profit after taxes"
+
+
 def test_debt_and_reserves_mapping(tmp_path):
     path = tmp_path / "raw_financial_tables.json"
     sections = _minimum_required_sections()
@@ -152,6 +344,24 @@ def test_debt_and_reserves_mapping(tmp_path):
     assert payload["balance_sheet"]["long_term_debt"]["value_crore"] == 200.0
     assert payload["balance_sheet"]["short_term_debt"]["value_crore"] == 50.0
     assert payload["balance_sheet"]["reserves"]["value_crore"] == 350.0
+
+
+def test_numeric_date_period_labels_still_select_current_balance_sheet_values(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("31/03/2025", "1000.00", 1000.0), ("31/03/2024", "900.00", 900.0)]),
+        _row("balance_sheet", "Total Equity", [("31/03/2025", "600.00", 600.0), ("31/03/2024", "550.00", 550.0)]),
+        _row("balance_sheet", "Total Liabilities", [("31/03/2025", "400.00", 400.0), ("31/03/2024", "350.00", 350.0)]),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["balance_sheet"]["total_assets"]["value_crore"] == 1000.0
+    assert payload["balance_sheet"]["total_assets"]["period"] == "31/03/2025"
+    assert payload["balance_sheet"]["net_worth"]["value_crore"] == 600.0
+    assert payload["balance_sheet"]["total_liabilities"]["value_crore"] == 400.0
 
 
 def test_cash_flow_mapping(tmp_path):
@@ -339,6 +549,35 @@ def test_face_value_maps_from_equity_shares_rs_each_wording(tmp_path):
     assert payload["share_data"]["face_value"]["value_per_share"] == 2.0
 
 
+def test_face_value_maps_from_backtick_currency_marker(tmp_path, monkeypatch):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    excerpt = "Schedules forming part of the Balance Sheet (₹ in 000's) Equity shares of ` 10 each"
+    monkeypatch.setattr(
+        "knowledge.financials.normalizer._load_discovery_excerpt_index",
+        lambda _: {"CHK-001": excerpt, "page:1": excerpt},
+    )
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "404222163", 40422.2163)]),
+        _row(
+            "balance_sheet",
+            "Issued, Subscribed and Called up Capital",
+            [("March 31, 2025", "1958763276", 195876.3276)],
+            page=1,
+        ),
+        _row("balance_sheet", "TOTAL (I + II + III+IV+V+VI)", [("March 31, 2025", "3609.74", 3609.7398)]),
+    ]
+    sections["balance_sheet"][1]["chunk_id"] = "CHK-001"
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert _face_value_from_excerpt(excerpt) == 10.0
+    assert payload["balance_sheet"]["equity_share_capital"]["value_crore"] == 1958.7633
+    assert payload["balance_sheet"]["net_worth"]["value_crore"] == 5568.5031
+    assert payload["balance_sheet"]["total_liabilities"]["value_crore"] == 34853.7132
+
+
 def test_face_value_does_not_map_from_fair_value_wording(tmp_path):
     path = tmp_path / "raw_financial_tables.json"
     sections = _minimum_required_sections()
@@ -459,6 +698,98 @@ def test_total_tax_expense_is_preferred_over_current_tax_component(tmp_path):
 
     assert payload["profit_and_loss"]["tax"]["value_crore"] == -260.8
     assert payload["profit_and_loss"]["tax"]["source_line_item"] == "Total tax Expense (X)"
+
+
+def test_pbt_prefers_profit_before_tax_over_working_capital_cash_flow_bridge(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["cash_flow"] = [
+        _row(
+            "cash_flow",
+            "Operating Profit/(Loss) before Working Capital changes",
+            [("March 31, 2023", "15,991,439", 1599.1439)],
+            page=271,
+        ),
+        _row(
+            "cash_flow",
+            "Net Profit/(Loss) before taxation",
+            [("March 31, 2023", "14,672,376", 1467.2376)],
+            page=271,
+        ),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="ujjivan", year="fy23", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["pbt"]["value_crore"] == 1467.2376
+    assert payload["profit_and_loss"]["pbt"]["source_line_item"] == "Net Profit/(Loss) before taxation"
+
+
+def test_ujjivan_fy23_pat_and_tax_prefer_bridge_consistent_cash_flow_rows(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["cash_flow"] = [
+        _row(
+            "cash_flow",
+            "Operating Profit/(Loss) before Working Capital changes",
+            [("March 31, 2023", "15,991,439", 1599.1439)],
+            page=271,
+        ),
+        _row(
+            "cash_flow",
+            "Net Profit/(Loss) before taxation",
+            [("March 31, 2023", "14,672,376", 1467.2376)],
+            page=271,
+        ),
+        _row(
+            "cash_flow",
+            "A. Cash Flow from Operating Activities Net Profit/(Loss) After taxation",
+            [("March 31, 2023", "10,999,217", 1099.9217)],
+            page=271,
+        ),
+        _row(
+            "cash_flow",
+            "Tax adjustment",
+            [("March 31, 2023", "3,673,159", 367.3159)],
+            page=271,
+        ),
+        _row(
+            "cash_flow",
+            "Direct Taxes paid (net of refunds)",
+            [("March 31, 2023", "(2,803,717)", -280.3717)],
+            page=271,
+        ),
+    ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2023", "23604.46", 23604.4642)]),
+        _row("balance_sheet", "Details 1. Paid up Capital (`)", [("PERIOD_COLUMN_UNRESOLVED", "19,28,31,42,050", 1928.314205)]),
+        _row("balance_sheet", "TOTAL (I + II + III+IV+V)", [("March 31, 2023", "8321239", 832.1239)]),
+        _row(
+            "balance_sheet",
+            "Tax Expenses (including deferred tax)",
+            [("March 31, 2023", "(1,357,681)", -135.7681)],
+            page=316,
+        ),
+        _row(
+            "balance_sheet",
+            "Net Profit (5-6-8-9)",
+            [("March 31, 2023", "(4,145,904)", -414.5904)],
+            page=316,
+        ),
+        _row("balance_sheet", "Total Liabilities", [("March 31, 2023", "22772.34", 22772.3403)]),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="ujjivan", year="fy23", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["pbt"]["value_crore"] == 1467.2376
+    assert payload["profit_and_loss"]["pbt"]["source_line_item"] == "Net Profit/(Loss) before taxation"
+    assert payload["profit_and_loss"]["tax"]["value_crore"] == 367.3159
+    assert payload["profit_and_loss"]["tax"]["source_line_item"] == "Tax adjustment"
+    assert payload["profit_and_loss"]["pat"]["value_crore"] == 1099.9217
+    assert payload["profit_and_loss"]["pat"]["source_line_item"] == (
+        "A. Cash Flow from Operating Activities Net Profit/(Loss) After taxation"
+    )
 
 
 def test_deferred_tax_component_does_not_populate_total_tax(tmp_path):
@@ -589,7 +920,7 @@ def test_consolidated_preferred_over_standalone(tmp_path):
     assert payload["basis_views"]["standalone"]["profit_and_loss"]["revenue"]["value_crore"] == 400.0
 
 
-def test_cash_flow_from_alternate_basis_is_promoted(tmp_path):
+def test_cash_flow_from_alternate_basis_is_not_promoted(tmp_path):
     path = tmp_path / "raw_financial_tables.json"
     sections = _minimum_required_sections()
     sections["profit_and_loss"] = [
@@ -620,10 +951,10 @@ def test_cash_flow_from_alternate_basis_is_promoted(tmp_path):
     payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
 
     assert payload["preferred_basis"] == "consolidated"
-    assert payload["cash_flow"]["cfo"]["value_crore"] == 40.0
-    assert payload["cash_flow"]["cfo"]["basis"] == "standalone"
+    assert payload["cash_flow"]["cfo"]["value_crore"] is None
+    assert payload["basis_views"]["standalone"]["cash_flow"]["cfo"]["value_crore"] == 40.0
     assert any(
-        "cash_flow.cfo is available only in standalone basis and was promoted into preferred consolidated view" in warning
+        "cash_flow.cfo is available only in standalone basis and was not promoted into preferred consolidated view" in warning
         for warning in payload["warnings"]
     )
 

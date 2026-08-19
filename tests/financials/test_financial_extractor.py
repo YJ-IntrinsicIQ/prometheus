@@ -4,6 +4,11 @@ from pathlib import Path
 import pytest
 
 from knowledge.financials.extractor import extract_financial_tables, write_financial_extraction
+from knowledge.financials.extraction_schema import FinancialExtractionResult
+from knowledge.financials.extractor import _parse_discovery, build_financial_extraction_readiness
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _write_json(path: Path, payload) -> None:
@@ -57,6 +62,13 @@ def _candidate(section_type: str, chunk_id: str, page: int, excerpt: str, confid
         "reasoning": "synthetic test candidate",
         "signals": ["heading:test", "numeric_density"],
     }
+
+
+def _load_real_ujjivan_financials(year: str):
+    base = ROOT / "companies" / "ujjivan" / year / "financials"
+    discovery = _parse_discovery(base / "financial_discovery.json")
+    result = FinancialExtractionResult.from_dict(json.loads((base / "raw_financial_tables.json").read_text(encoding="utf-8")))
+    return discovery, result
 
 
 def test_profit_and_loss_table_extraction(tmp_path):
@@ -133,6 +145,280 @@ def test_profit_and_loss_table_extraction_recognizes_year_ended_periods(tmp_path
     assert pat_row.values[0].period == "March 31, 2022"
 
 
+def test_financial_note_revenue_routes_to_canonical_revenue_statement_type(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = "Financial Details FY 2024-25 Revenue from Operations 100.00 90.00"
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-REV-NOTE", "page": 72, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(sections={"financial_note": [_candidate("financial_note", "CHK-REV-NOTE", 72, text)]}),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy25",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    row = next(row for row in result.tables["revenue"] if "revenue from operations" in row.line_item_raw.lower())
+    assert row.statement_type == "revenue"
+    assert row.source_section_type == "financial_note"
+
+
+def test_financial_note_eps_routes_to_canonical_eps_statement_type(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = "Financial Details EPS (Basic) (`) FY 2024-25 EPS (Basic) (`) 1.23 0.98"
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-EPS-NOTE", "page": 72, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(sections={"eps_note": [_candidate("eps_note", "CHK-EPS-NOTE", 72, text)]}),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy25",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    row = next(row for row in result.tables["eps"] if "eps (basic)" in row.line_item_raw.lower())
+    assert row.statement_type == "eps"
+    assert row.source_section_type == "eps_note"
+
+
+def test_financial_note_paid_up_capital_routes_to_share_capital(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = (
+        "Section B: Financial Details of the Bank "
+        "1. Paid up Capital (`) 19,28,31,42,050 "
+        "2. Total Turnover (`) 31,26,07,35,251.63 "
+        "3. Total profit after taxes (`) 4,14,59,04,537.08"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-PAID-UP-NOTE", "page": 105, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(sections={"financial_note": [_candidate("financial_note", "CHK-PAID-UP-NOTE", 105, text)]}),
+    )
+
+    result = extract_financial_tables(
+        company="ujjivan",
+        year="fy22",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    row = next(row for row in result.tables["share_capital"] if "paid up capital" in row.line_item_raw.lower())
+    assert row.statement_type == "share_capital"
+    assert row.values[0].value_crore == 1928.314205
+
+
+def test_financial_note_balance_sheet_mix_routes_to_balance_sheet(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = (
+        "Management Message Business Segment Review As on March 31, 2022 (` in 000's) "
+        "Revenue 2,821,324 27,692,669 746,743 31,260,736 "
+        "Segment Assets 61,766,622 161,706,653 8,436,055 231,909,331 "
+        "Unallocated Assets 4,135,311 13 "
+        "Total Assets 236,044,642 14 "
+        "Segment Liabilities 54,498,992 142,679,793 7,443,443 204,622,228 "
+        "Unallocated Liabilities 3,648,737 16 "
+        "Capital Employed 7,267,650 19,026,881 992,612 27,287,144 "
+        "Unallocated Capital Employed 486,533 18"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-BS-MIX", "page": 133, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(sections={"financial_note": [_candidate("financial_note", "CHK-BS-MIX", 133, text)]}),
+    )
+
+    result = extract_financial_tables(
+        company="ujjivan",
+        year="fy22",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    row = next(row for row in result.tables["balance_sheet"] if row.line_item_raw == "Total Assets")
+    assert row.statement_type == "balance_sheet"
+    assert row.values[0].unit_hint == "thousands"
+    assert row.values[0].value_crore == 23604.4642
+
+
+def test_processing_units_prose_does_not_mask_monetary_revenue(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = (
+        "Business Segment Review Performance of the Year World of Ujjivan Banking as a separate sub-segment "
+        "of Retail Banking Segment will be implemented by the Bank based on the decision of the DBU Working Group. "
+        "C) Corporate/ Whole Sale Banking: The Wholesale Banking Segment provides loans to Corporates and Financial "
+        "Institutions. Revenues of the wholesale banking segment consist of interest earned on loans made to customers. "
+        "The principal expenses of the segment consist of interest expense on funds borrowed from external sources and "
+        "other internal segments, premises expenses, personnel costs, other direct overheads and allocated expenses of "
+        "delivery channels, specialist product groups, processing units and support groups. "
+        "As on March 31, 2023 (₹ in 000’s) Part A: Business segments SR. NO Business Segments Treasury Retail Banking "
+        "Corporate/ Wholesale Banking Total Particulars March 31, 2023 March 31, 2023 March 31, 2023 March 31, 2023 "
+        "1 Revenue 4,580,462 42,026,566 934,828 47,541,856 2 Unallocated Revenue - - - - 3 (less) Inter Segment Revenue "
+        "- - - - 4 Total Income (1+2-3) 4,580,462 42,026,566 934,828 47,541,856 11 Segment Assets 109,030,727 "
+        "210,307,562 11,031,412 330,369,701 13 Total Assets 333,168,775"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-BS-REV", "page": 315, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(sections={"financial_note": [_candidate("financial_note", "CHK-BS-REV", 315, text)]}),
+    )
+
+    result = extract_financial_tables(
+        company="ujjivan",
+        year="fy23",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    row = next(row for row in result.tables["balance_sheet"] if row.line_item_raw == "Revenue")
+    assert row.values[0].unit_hint == "thousands"
+    assert row.values[0].value_type == "monetary"
+    assert row.values[0].value_crore == 458.0462
+
+
+def test_paid_up_capital_balance_sheet_schedule_row_is_preserved(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = (
+        "Schedules forming part of the Balance Sheet as at March 31, 2022 (` in 000's) "
+        "Particulars As on March 31, 2022 As on March 31, 2021 "
+        "SCHEDULE -1 CAPITAL "
+        "Authorized Capital 2,300,000,000 Equity Shares of ` 10 each 23,000,000 23,000,000 "
+        "Issued, Subscribed and Called up Capital 1,728,314,205 (Previous Year: 1,728,314,205) "
+        "Equity Shares of ` 10 each 17,283,142 17,283,142 "
+        "200,000,000 11% Preference Shares (Perpetual Non-Cumulative Non-Convertible) of ` 10 each 2,000,000 2,000,000 "
+        "19,283,142 19,283,142 Paid up Capital 1,728,314,205 (Previous Year: 1,728,314,205) "
+        "Equity Shares of ` 10 each 17,283,142 17,283,142 "
+        "200,000,000 11% Preference Shares (Perpetual Non-Cumulative Non-Convertible) of ` 10 each 2,000,000 2,000,000 "
+        "TOTAL 19,283,142 19,283,142 "
+        "SCHEDULE -2 RESERVES AND SURPLUS I. Statutory Reserves Closing balance 205,131 205,131"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-CAPITAL", "page": 115, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={"primary_balance_sheet_statement": [_candidate("primary_balance_sheet_statement", "CHK-CAPITAL", 115, text)]}
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="ujjivan",
+        year="fy22",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    row = next(
+        row
+        for row in result.tables["balance_sheet"]
+        if "paid up capital" in row.line_item_raw.lower() or "called up capital" in row.line_item_raw.lower()
+    )
+    assert row.statement_type == "balance_sheet"
+    assert row.values[0].value_crore is not None
+
+
+def test_balance_sheet_table_extraction_recognizes_numeric_as_at_periods(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = (
+        "Standalone Balance Sheet (All figures are in INR Crores unless specifically stated otherwise) "
+        "Particulars Notes No As at 31/03/2025 As at 31/03/2024 "
+        "Property, plant and equipment 4 120.57 91.24 Capital work in progress 5a 7.18 1.35 "
+        "Total Assets 1,691.77 1,434.94 Equity Share capital 15 11.20 11.20 Total Liabilities 367.56 267.86"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-002-NUM", "page": 12, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={"primary_balance_sheet_statement": [_candidate("primary_balance_sheet_statement", "CHK-002-NUM", 12, text)]}
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy25",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    rows = result.tables["balance_sheet"]
+    total_assets = next(row for row in rows if row.line_item_raw == "Total Assets")
+    assert [value.period for value in total_assets.values[:2]] == ["31/03/2025", "31/03/2024"]
+    assert total_assets.values[0].value_crore == 1691.77
+    assert total_assets.values[0].value_type == "monetary"
+
+
+def test_paid_up_capital_summary_row_prefers_rupees_over_page_level_crores(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = (
+        "SECTION B: FINANCIAL DETAILS OF THE BANK Sr. No. Particulars Details "
+        "1. Paid-up Capital (`) 19,28,31,42,050 "
+        "2. Total Turnover (`) 2,806.07 Crore "
+        "3. Total profit after taxes (`) 8.30 Crores"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-PAID-UP", "page": 105, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={"primary_balance_sheet_statement": [_candidate("primary_balance_sheet_statement", "CHK-PAID-UP", 105, text)]}
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy21",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    row = next(row for row in result.tables["balance_sheet"] if "paid-up capital" in row.line_item_raw.lower())
+    assert row.values[0].unit_hint == "INR"
+    assert row.values[0].value_crore == 1928.314205
+
+
+def test_share_capital_note_monetary_rows_use_lakh_context(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = (
+        "The break-up of Basel II capital funds as at March 31, 2021 was as follows: "
+        "(₹ in Lakhs) Description Amount Core Equity Tier I Capital - Instruments and Reserves "
+        "Directly issued qualifying common share capital plus related stock surplus (share premium) 1,72,831 "
+        "Retained earnings 1,26,992 "
+        "Investment Fluctuation Reserve 2,051 "
+        "A CET1 capital before regulatory adjustments 2,99,824"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-LAKHS", "page": 53, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={"share_capital_note": [_candidate("share_capital_note", "CHK-LAKHS", 53, text)]}
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy21",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    retained = next(row for row in result.tables["share_capital"] if row.line_item_raw == "Retained earnings")
+    reserve = next(row for row in result.tables["share_capital"] if row.line_item_raw == "Investment Fluctuation Reserve")
+    assert retained.values[0].unit_hint == "lakhs"
+    assert retained.values[0].value_crore == 1269.92
+    assert reserve.values[0].value_crore == 20.51
+
+
 def test_mixed_unit_table_keeps_monetary_rows_in_declared_crores(tmp_path):
     chunk_path = tmp_path / "clean_chunks.json"
     discovery_path = tmp_path / "financial_discovery.json"
@@ -172,6 +458,37 @@ def test_mixed_unit_table_keeps_monetary_rows_in_declared_crores(tmp_path):
     assert (depreciation.values[0].unit_hint, depreciation.values[0].value_type, depreciation.values[0].value_crore) == (
         "crores", "monetary", -0.26
     )
+
+
+def test_current_liabilities_text_does_not_imply_crores_unit(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = (
+        "Particulars Note As at March 31, 2024 As at March 31, 2023 "
+        "Current liabilities Trade payables 54,838.87 53,670.80 "
+        "Other current liabilities 1,689.77 2,033.50 "
+        "Total current liabilities 1,00,582.60 81,949.56 "
+        "Total Liabilities 1,06,719.70 89,508.97 "
+        "TOTAL EQUITY AND LIABILITIES 3,00,897.93 2,41,258.32"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-CURRENT-NO-UNIT", "page": 290, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={"financial_note": [_candidate("financial_note", "CHK-CURRENT-NO-UNIT", 290, text)]}
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy24",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    row = next(row for row in result.tables["balance_sheet"] if row.line_item_raw == "Total Liabilities")
+    assert row.values[0].unit_hint == ""
+    assert row.values[0].value_crore is None
 
 
 def test_balance_sheet_table_extraction(tmp_path):
@@ -261,6 +578,56 @@ def test_balance_sheet_generic_subtotal_is_not_reclassified(tmp_path):
     labels = [row.line_item_raw for row in result.tables["balance_sheet"]]
     assert labels.count("Total Assets") == 1
     assert "TOTAL" in labels
+
+
+def test_balance_sheet_readiness_accepts_equity_plus_reserves_path(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    output_path = tmp_path / "raw_financial_tables.json"
+    text = (
+        "Standalone Balance Sheet (All figures are in INR Crores unless specifically stated otherwise) "
+        "Particulars As at March 31, 2025 As at March 31, 2024 Total Assets 300.00 270.00 "
+        "Equity Share capital 50.00 50.00 Retained earnings 25.00 20.00 "
+        "Investment Fluctuation Reserve 5.00 4.00"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-EQ", "page": 12, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={"primary_balance_sheet_statement": [_candidate("primary_balance_sheet_statement", "CHK-EQ", 12, text)]}
+        ),
+    )
+
+    result = write_financial_extraction(
+        company="acme",
+        year="fy25",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+        output_path=output_path,
+    )
+
+    readiness_payload = json.loads((tmp_path / "financial_extraction_readiness.json").read_text(encoding="utf-8"))
+    assert readiness_payload["status"] == "READY"
+    report = next(item for item in readiness_payload["candidate_reports"] if item["section_type"] == "primary_balance_sheet_statement")
+    assert report["selected"] is True
+    assert "balance_sheet.reserves" in report["matched_fields"]
+    assert any(row.line_item_raw == "Retained earnings" for row in result.tables["balance_sheet"])
+
+
+@pytest.mark.parametrize(
+    "year",
+    ["fy21", "fy22", "fy23"],
+)
+def test_real_ujjivan_balance_sheet_artifacts_keep_total_assets(year):
+    discovery, result = _load_real_ujjivan_financials(year)
+
+    readiness = build_financial_extraction_readiness(discovery, result)
+    report = next(item for item in readiness["candidate_reports"] if item["section_type"] == "primary_balance_sheet_statement")
+
+    assert readiness["status"] == "READY"
+    assert report["selected"] is True
+    assert "balance_sheet.total_assets" in report["matched_fields"]
+    assert any(row.line_item_raw == "Total Assets" for row in result.tables["balance_sheet"])
 
 
 def test_cash_flow_table_extraction_with_negative_values(tmp_path):

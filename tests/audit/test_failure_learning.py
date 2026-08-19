@@ -13,7 +13,7 @@ def test_failure_learning_registry_is_self_consistent():
 
     assert validation["status"] == "pass"
     assert validation["date"] == "2026-08-09"
-    assert validation["incident_count"] == 22
+    assert validation["incident_count"] == 23
     assert validation["taxonomy_count"] == len(INCIDENT_TAXONOMY)
     assert not validation["issues"]
 
@@ -35,12 +35,17 @@ def test_failure_class_registry_captures_period_resolution_unsupported():
     validation = validate_failure_class_registry()
 
     assert validation["status"] == "pass"
-    assert validation["failure_class_count"] == 5
+    assert validation["failure_class_count"] == len(FAILURE_CLASS_REGISTRY)
     assert not validation["issues"]
     assert FAILURE_CLASS_REGISTRY[0]["failure_class"] == "PERIOD_RESOLUTION_UNSUPPORTED"
     assert "risks" in FAILURE_CLASS_REGISTRY[0]["affected_modules"]
     assert any(
         entry["failure_class"] == "CROSS_COMPANY_INTELLIGENCE_CONTAMINATION"
         and entry["severity"] == "PRODUCTION BLOCKER"
+        for entry in FAILURE_CLASS_REGISTRY
+    )
+    assert any(
+        entry["failure_class"] == "PRIMARY_BALANCE_SHEET_REQUIRED_FIELD_MISSING"
+        and entry["root_cause_subtype"] == "MIXED_TABLE_SEMANTIC_ROUTING_COLLISION"
         for entry in FAILURE_CLASS_REGISTRY
     )

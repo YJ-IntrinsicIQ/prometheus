@@ -33,8 +33,31 @@ def test_pat_mapping_handles_profit_loss_label_variants():
     assert "pat" in {match.canonical_field for match in matches}
 
 
+def test_pat_mapping_from_balance_sheet_summary_label():
+    matches = map_line_item(table_type="balance_sheet", line_item_raw="Total profit after taxes")
+    assert "pat" in {match.canonical_field for match in matches}
+
+
+def test_tax_mapping_from_financial_note():
+    matches = map_line_item(table_type="balance_sheet", line_item_raw="Tax Expenses (including deferred tax)")
+    assert "tax" in {match.canonical_field for match in matches}
+
+
+def test_pbt_lookalikes_do_not_map_to_pbt():
+    matches = map_line_item(
+        table_type="cash_flow",
+        line_item_raw="Operating Profit/(Loss) before Working Capital changes",
+    )
+    assert "pbt" not in {match.canonical_field for match in matches}
+
+
 def test_pat_lookalikes_do_not_map_to_pat():
     matches = map_line_item(table_type="profit_and_loss", line_item_raw="For the year ended March")
+    assert "pat" not in {match.canonical_field for match in matches}
+
+
+def test_pat_ratio_lookalikes_do_not_map_to_pat():
+    matches = map_line_item(table_type="balance_sheet", line_item_raw="Net profit ratio Profit after Tax Revenue from Operations")
     assert "pat" not in {match.canonical_field for match in matches}
 
 
@@ -66,6 +89,18 @@ def test_balance_sheet_totals_do_not_match_on_weak_overlap():
     assert "fixed_assets" not in fields
 
 
+def test_real_ujjivan_fy23_asset_lookalikes_do_not_map_to_total_assets():
+    phrases = [
+        "Segment Assets",
+        "vi) Total Risk weighted assets ( RWA )",
+        "Average Total Assets",
+    ]
+
+    for phrase in phrases:
+        matches = map_line_item(table_type="balance_sheet", line_item_raw=phrase)
+        assert "total_assets" not in {match.canonical_field for match in matches}
+
+
 def test_balance_sheet_header_row_does_not_override_equity_line():
     matches = map_line_item(
         table_type="balance_sheet",
@@ -75,6 +110,49 @@ def test_balance_sheet_header_row_does_not_override_equity_line():
     assert "equity_share_capital" in fields
     assert "net_worth" not in fields
     assert "total_liabilities" not in fields
+
+
+def test_net_worth_rejects_off_balance_sheet_equity_tranche():
+    matches = map_line_item(
+        table_type="balance_sheet",
+        line_item_raw="Balance Sheet* Off Balance Sheet Total Equity Tranche",
+    )
+    assert "net_worth" not in {match.canonical_field for match in matches}
+
+
+def test_net_worth_still_maps_for_real_equity_language():
+    matches = map_line_item(
+        table_type="balance_sheet",
+        line_item_raw="Shareholders' Funds",
+    )
+    assert "net_worth" in {match.canonical_field for match in matches}
+
+
+def test_total_equity_and_liabilities_does_not_map_to_net_worth():
+    matches = map_line_item(
+        table_type="balance_sheet",
+        line_item_raw="Total Equity and Liabilities",
+    )
+    fields = {match.canonical_field for match in matches}
+
+    assert "net_worth" not in fields
+    assert "total_assets" not in fields
+
+
+def test_bank_reserve_equivalents_map_to_balance_sheet_reserves():
+    retained_earnings = map_line_item(table_type="share_capital", line_item_raw="Retained earnings")
+    reserve_fund = map_line_item(table_type="share_capital", line_item_raw="Investment Fluctuation Reserve")
+    assert ("balance_sheet", "reserves") in {
+        (match.canonical_section, match.canonical_field) for match in retained_earnings
+    }
+    assert ("balance_sheet", "reserves") in {
+        (match.canonical_section, match.canonical_field) for match in reserve_fund
+    }
+
+
+def test_paid_up_capital_maps_to_equity_share_capital():
+    matches = map_line_item(table_type="share_capital", line_item_raw="Paid up Capital")
+    assert "equity_share_capital" in {match.canonical_field for match in matches}
 
 
 def test_subtotals_do_not_map_to_full_balance_sheet_totals():

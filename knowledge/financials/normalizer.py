@@ -110,6 +110,8 @@ _FACE_VALUE_DISALLOWED_ROW_TOKENS = (
     "numbers amount",
 )
 
+_DISCOVERY_EXCERPT_CACHE: Dict[str, Dict[str, str]] = {}
+
 
 def _empty_entry(field_name: str) -> Dict[str, Any]:
     return {
@@ -233,16 +235,9 @@ def _build_preferred_sections(
                 alternate_basis = "standalone" if preferred_basis == "consolidated" else "consolidated"
                 alternate_entry = basis_views.get(alternate_basis, {}).get(section_name, {}).get(field_name, _empty_entry(field_name))
                 if _entry_has_value(alternate_entry):
-                    if section_name == "cash_flow":
-                        selected_entry = alternate_entry
-                        selected_basis = alternate_basis
-                        basis_warnings.append(
-                            f"{section_name}.{field_name} is available only in {alternate_basis} basis and was promoted into preferred {preferred_basis} view"
-                        )
-                    else:
-                        basis_warnings.append(
-                            f"{section_name}.{field_name} is available only in {alternate_basis} basis and was not promoted into preferred {preferred_basis} view"
-                        )
+                    basis_warnings.append(
+                        f"{section_name}.{field_name} is available only in {alternate_basis} basis and was not promoted into preferred {preferred_basis} view"
+                    )
 
             preferred_sections[section_name][field_name] = selected_entry
             available_in = [
@@ -295,6 +290,16 @@ def _period_match_score(period: str, target_year: str) -> int:
         score += 5
     if target_year and f"fy{target_year[-2:]}" in lowered:
         score += 5
+    # Extract year from period string (e.g., "March 31, 2023" -> 2023)
+    import re
+    year_match = re.search(r'(20\d{2}|19\d{2})', lowered)
+    if year_match and target_year:
+        target_yr = int(target_year[-2:]) + 2000  # fy23 -> 2023
+        period_yr = int(year_match.group(1))
+        if period_yr == target_yr:
+            score += 5  # Exact year match
+        elif abs(period_yr - target_yr) == 1:
+            score += 1  # Adjacent year (for comparative)
     if "march 31" in lowered or "31 march" in lowered:
         score += 1
     return score
@@ -379,6 +384,111 @@ def _clean_unit_for_field(*, field_name: str, selected_value: Dict[str, Any], li
     return unit_original
 
 
+def _load_discovery_excerpt_index(raw_tables_path: Path) -> Dict[str, str]:
+    discovery_path = raw_tables_path.with_name("financial_discovery.json")
+    cache_key = str(discovery_path)
+    cached = _DISCOVERY_EXCERPT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    if not discovery_path.exists():
+        _DISCOVERY_EXCERPT_CACHE[cache_key] = {}
+        return {}
+    try:
+        discovery_payload = json.loads(discovery_path.read_text(encoding="utf-8"))
+    except Exception:
+        _DISCOVERY_EXCERPT_CACHE[cache_key] = {}
+        return {}
+    excerpts: Dict[str, str] = {}
+    sections = discovery_payload.get("sections", {}) if isinstance(discovery_payload, dict) else {}
+    if isinstance(sections, dict):
+        for items in sections.values():
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                excerpt = str(item.get("text_excerpt") or "").strip()
+                if not excerpt:
+                    continue
+                chunk_id = str(item.get("chunk_id") or "").strip()
+                if chunk_id and chunk_id not in excerpts:
+                    excerpts[chunk_id] = excerpt
+                page = item.get("page")
+                if page is not None:
+                    page_key = f"page:{page}"
+                    if page_key not in excerpts:
+                        excerpts[page_key] = excerpt
+    _DISCOVERY_EXCERPT_CACHE[cache_key] = excerpts
+    return excerpts
+
+
+def _face_value_from_excerpt(excerpt: str) -> Optional[float]:
+    lowered = str(excerpt or "")
+    if not lowered:
+        return None
+    matches = [
+        float(match.group(1).replace(",", ""))
+        for match in re.finditer(
+            r"equity shares of\s*(?:[₹`]|rs\.?|re\.?)?\s*([\d,]+(?:\.\d+)?)\s*each",
+            lowered,
+            flags=re.IGNORECASE,
+        )
+        if match.group(1)
+    ]
+    if not matches:
+        matches = [
+            float(match.group(1).replace(",", ""))
+            for match in re.finditer(
+                r"face value of\s*(?:[₹`]|rs\.?|re\.?)?\s*([\d,]+(?:\.\d+)?)",
+                lowered,
+                flags=re.IGNORECASE,
+            )
+            if match.group(1)
+        ]
+    if not matches:
+        return None
+    return max(matches)
+
+
+def _correct_equity_share_capital_value(
+    *,
+    raw_tables_path: Path,
+    row: Dict[str, Any],
+    field_name: str,
+    selected_value: Dict[str, Any],
+    value_crore: Optional[float],
+) -> Optional[float]:
+    if field_name != "equity_share_capital":
+        return value_crore
+    normalized_label = _normalize_label(str(row.get("line_item_raw", "")))
+    if not any(
+        token in normalized_label
+        for token in (
+            "paid up capital",
+            "issued subscribed and called up capital",
+            "issued subscribed and paid up capital",
+            "called up capital",
+            "share capital",
+            "equity capital",
+        )
+    ):
+        return value_crore
+    raw_numeric = _parse_numeric(selected_value.get("value_raw"))
+    if raw_numeric is None or abs(raw_numeric) < 100_000_000:
+        return value_crore
+    excerpts = _load_discovery_excerpt_index(raw_tables_path)
+    excerpt = excerpts.get(str(row.get("chunk_id") or "").strip()) or excerpts.get(f"page:{row.get('page')}")
+    face_value = _face_value_from_excerpt(excerpt or "")
+    if face_value in (None, 0):
+        return value_crore
+    corrected = convert_to_crore(raw_numeric * float(face_value), "INR")
+    if corrected is None:
+        return value_crore
+    if isinstance(value_crore, (int, float)) and corrected >= float(value_crore) / 10:
+        return value_crore
+    return round(corrected, 4)
+
+
 def _normalized_value_type(field_name: str, extracted_value_type: str) -> str:
     if field_name in {"eps_basic", "eps_diluted", "face_value", "book_value_per_share", "tangible_book_value_per_share"}:
         return "per_share"
@@ -422,7 +532,7 @@ def _face_value_source_allowed(row: Dict[str, Any]) -> bool:
         return False
     if any(token in normalized_line_item for token in ("fair value", "market value", "nav", "investment value")):
         return False
-    if re.search(r"equity shares of r(?:s|e)\s*\d+(?:\.\d+)? each", normalized_line_item):
+    if re.search(r"equity shares of (?:[₹`]|r(?:s|e)\.?)\s*\d+(?:\.\d+)? each", normalized_line_item):
         return not any(token in normalized_line_item for token in _FACE_VALUE_DISALLOWED_ROW_TOKENS)
     if any(token in normalized_line_item for token in _FACE_VALUE_ALLOWED_LABEL_TOKENS):
         return True
@@ -434,6 +544,53 @@ def _current_and_comparatives(values: List[Dict[str, Any]], target_year: str) ->
     if not ranked:
         return None, []
     return ranked[0], ranked[1:]
+
+
+def _balance_sheet_unresolved_current_fallback(
+    *,
+    row: Dict[str, Any],
+    field_name: str,
+    target_year: str,
+) -> Optional[Dict[str, Any]]:
+    if field_name not in {"equity_share_capital", "reserves"}:
+        return None
+    if str(row.get("table_type", "")) != "balance_sheet":
+        return None
+    values = [item for item in row.get("values", []) if _parse_numeric(item.get("value_raw")) is not None]
+    if len(values) != 1:
+        return None
+    normalized_label = _normalize_label(row.get("line_item_raw", ""))
+    if field_name == "equity_share_capital":
+        if not any(
+            token in normalized_label
+            for token in (
+                "details 1 paid up capital",
+                "paid up capital",
+                "share capital",
+                "called up capital",
+                "issued subscribed and called up capital",
+                "issued subscribed and paid up capital",
+            )
+        ):
+            return None
+    elif field_name == "reserves":
+        if not any(
+            token in normalized_label
+            for token in (
+                "reserves and surplus",
+                "other equity",
+                "retained earnings",
+                "total i ii iii iv v",
+                "total equity",
+            )
+        ):
+            return None
+
+    selected_value = dict(values[0])
+    inferred_period = f"March 31, {target_year}" if target_year else str(selected_value.get("period", "") or "")
+    if inferred_period:
+        selected_value["period"] = inferred_period
+    return selected_value
 
 
 def _filtered_values_for_field(
@@ -517,6 +674,7 @@ def _build_normalized_entry(
     row: Dict[str, Any],
     selected_value: Dict[str, Any],
     match: MappingMatch,
+    raw_tables_path: Path,
     comparative_values: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     unit_original = _clean_unit_for_field(
@@ -533,6 +691,13 @@ def _build_normalized_entry(
         value_raw=str(selected_value.get("value_raw", "")),
         unit_original=unit_original,
         fallback_value_crore=selected_value.get("value_crore"),
+    )
+    value_crore = _correct_equity_share_capital_value(
+        raw_tables_path=raw_tables_path,
+        row=row,
+        field_name=field_name,
+        selected_value=selected_value,
+        value_crore=value_crore,
     )
     entry = {
         "canonical_field": field_name,
@@ -633,34 +798,83 @@ def _build_normalized_entry(
     return entry
 
 
-def _entry_rank(entry: Dict[str, Any], target_year: str) -> Tuple[int, int, int, int, int, int]:
+def _entry_rank(entry: Dict[str, Any], target_year: str) -> Tuple[int, int, int, int, int, int, int, int, float]:
     tax_specificity = 0
-    if (
-        str(entry.get("canonical_field", "") or "") == "tax"
-        and str(entry.get("statement_type", "") or "") == "profit_and_loss"
-    ):
-        normalized_line_item = _normalize_label(entry.get("source_line_item", ""))
-        if any(
-            token in normalized_line_item
-            for token in (
-                "total tax expense",
-                "total income tax expense",
-                "tax expense recognised",
-                "tax expense recognized",
-            )
-        ):
-            tax_specificity = 3
-        elif "income tax expense" in normalized_line_item:
-            tax_specificity = 2
-        elif "current tax" in normalized_line_item:
-            tax_specificity = 1
+    schedule_specificity = 0
+    pat_specificity = 0
+    normalized_line_item = _normalize_label(entry.get("source_line_item", ""))
+    canonical_field = str(entry.get("canonical_field", "") or "")
+    statement_type = str(entry.get("statement_type", "") or "")
+    source_section_type = str(entry.get("source_section_type", "") or "")
+    if canonical_field == "reserves":
+        if any(token in normalized_line_item for token in ("total i ii iii iv v", "total equity", "net worth")):
+            schedule_specificity = 3
+        elif any(token in normalized_line_item for token in ("reserves and surplus", "other equity", "retained earnings")):
+            schedule_specificity = 2
+    elif canonical_field == "equity_share_capital":
+        if "details 1 paid up capital" in normalized_line_item:
+            schedule_specificity = 3
+        elif any(token in normalized_line_item for token in ("paid up capital", "share capital", "called up capital")):
+            schedule_specificity = 1
+    if canonical_field == "tax":
+        # Semantic ranking for tax: prefer explicit total tax expense in primary P&L
+        # Reject cash_flow tax_paid, tax_adjustment; reject balance_sheet deferred tax / tax expenses
+        if statement_type == "profit_and_loss":
+            if any(
+                token in normalized_line_item
+                for token in (
+                    "total tax expense",
+                    "total income tax expense",
+                    "tax expense recognised",
+                    "tax expense recognized",
+                )
+            ):
+                tax_specificity = 3
+            elif "income tax expense" in normalized_line_item:
+                tax_specificity = 2
+            elif "current tax" in normalized_line_item:
+                tax_specificity = 1
+            else:
+                tax_specificity = 0
+        elif statement_type == "cash_flow":
+            # Cash flow tax_paid / tax_adjustment should rank lowest
+            if any(token in normalized_line_item for token in ("tax paid", "tax adjustment", "taxes paid", "income taxes paid")):
+                tax_specificity = -10  # Strongly penalize cash_flow tax entries for P&L tax field
+        elif statement_type == "balance_sheet":
+            # Balance sheet tax expenses / deferred tax should rank low
+            if any(token in normalized_line_item for token in ("deferred tax", "tax expense", "tax expenses")):
+                tax_specificity = -10  # Strongly penalize balance_sheet tax entries for P&L tax field
+    # PAT semantic specificity: prioritize true PAT over related profit fields
+    if canonical_field == "pat":
+        # Tier 1: Explicit PAT labels in primary P&L
+        if any(token in normalized_line_item for token in (
+            "profit for the year", "profit for the period", "profit after tax", "profit after taxation",
+            "ix profit for the year", "vii profit for the year", "xi profit for the year",
+            "vii profit loss for the period", "profit for the year a", "profit for the year v vi",
+        )) and str(entry.get("statement_type", "")) == "profit_and_loss":
+            pat_specificity = 4
+        # Tier 2: Cash flow PAT with explicit "after taxation" / "after tax"
+        elif "after taxation" in normalized_line_item or "after tax" in normalized_line_item:
+            if "cash flow" in normalized_line_item or str(entry.get("source_section_type", "")).startswith("primary_cash"):
+                pat_specificity = 3
+        # Tier 3: Balance sheet summary PAT (explicit total profit after tax)
+        elif any(token in normalized_line_item for token in (
+            "total profit after", "net profit 5 6 8 9", "net profit 5-6-8-9",
+        )) and str(entry.get("statement_type", "")) == "balance_sheet":
+            pat_specificity = 2
+        # Tier 4: Generic profit labels (lower priority)
+        elif "profit" in normalized_line_item:
+            pat_specificity = 1
     return (
         1 if entry.get("is_primary_statement") else 0,
         SOURCE_PRIORITY.get(str(entry.get("source_section_type", "")), 0),
         BASIS_ORDER.get(entry.get("basis", "unknown"), 0),
+        schedule_specificity,
         tax_specificity,
         _period_match_score(str(entry.get("period", "")), target_year),
+        pat_specificity,
         CONFIDENCE_ORDER.get(str(entry.get("table_confidence", entry.get("confidence", "low"))), 0),
+        _entry_value_magnitude(entry),
     )
 
 
@@ -678,6 +892,19 @@ def _choose_entry_for_period(entries: List[Dict[str, Any]], period: str) -> Opti
         if str(entry.get("period", "")) == str(period):
             return entry
     return None
+
+
+def _entry_value_magnitude(entry: Dict[str, Any]) -> float:
+    value_crore = entry.get("value_crore")
+    if isinstance(value_crore, (int, float)):
+        return abs(float(value_crore))
+    source_raw_number = entry.get("source_raw_number")
+    if isinstance(source_raw_number, (int, float)):
+        return abs(float(source_raw_number))
+    parsed = _parse_numeric(entry.get("value_original", ""))
+    if isinstance(parsed, (int, float)):
+        return abs(float(parsed))
+    return 0.0
 
 
 def _payables_component_kind(source_line_item: str) -> str:
@@ -1088,9 +1315,18 @@ def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path
     for table_type, rows in raw.tables.items():
         for row_obj in rows:
             row = row_obj.to_dict()
+            row["table_type"] = table_type
             matches = map_line_item(table_type=table_type, line_item_raw=row.get("line_item_raw", ""))
             row_values = row.get("values", [])
             row_selected_value, row_comparative_values = _current_and_comparatives(row_values, target_year)
+            if row_selected_value is None:
+                row_selected_value = _balance_sheet_unresolved_current_fallback(
+                    row=row,
+                    field_name="equity_share_capital" if any(match.canonical_field == "equity_share_capital" for match in matches) else "reserves" if any(match.canonical_field == "reserves" for match in matches) else "",
+                    target_year=target_year,
+                )
+                if row_selected_value is not None:
+                    row_comparative_values = []
             if row_selected_value is None:
                 unmapped_rows.append(
                     {
@@ -1125,6 +1361,14 @@ def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path
                     table_type=table_type,
                 )
                 selected_value, comparative_values = _current_and_comparatives(filtered_values, target_year)
+                if selected_value is None:
+                    selected_value = _balance_sheet_unresolved_current_fallback(
+                        row=row,
+                        field_name=match.canonical_field,
+                        target_year=target_year,
+                    )
+                    if selected_value is not None:
+                        comparative_values = []
                 if selected_value is None:
                     unmapped_rows.append(
                         {
@@ -1195,6 +1439,7 @@ def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path
                     row=row,
                     selected_value=selected_value,
                     match=match,
+                    raw_tables_path=raw_tables_path,
                     comparative_values=comparative_values,
                 )
                 basis = entry["basis"]

@@ -68,6 +68,14 @@ export async function loadPrometheusSources(companySlug: string, repoRoot?: stri
       "business intelligence summary",
       paths.pcim,
     ),
+    companyModel: await load<Record<string, unknown>>(
+      "company model",
+      paths.companyModel,
+    ),
+    managementProgression: await load<Record<string, unknown>>(
+      "management progression",
+      paths.managementProgression,
+    ),
     truthPack: await load<Record<string, unknown>>(
       "financial truth output",
       paths.financialTruthPack,

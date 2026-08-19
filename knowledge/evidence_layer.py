@@ -14,7 +14,10 @@ from knowledge.company_memory.guardrails import (
     normalize_period_label,
     resolve_period_status,
     semantic_validation,
+    temporal_years_from_text,
 )
+from knowledge.document_ownership import assess_source_period_ownership
+from intelligence.capacity.progression import _status_from_text as _capacity_status_from_text
 
 
 _YEAR_RE = re.compile(r"\b(?:fy)?20\d{2}\b", re.IGNORECASE)
@@ -86,22 +89,27 @@ def _financial_year_value(value: Any) -> int | None:
 
 
 def _period_year_values(text: str) -> List[int]:
-    years: List[int] = []
-    for match in _FY_YEAR_RE.finditer(text):
-        raw = match.group("year")
-        if len(raw) == 4:
-            years.append(int(raw))
-        elif len(raw) == 2 and raw.isdigit():
-            years.append(2000 + int(raw))
-    for match in _YEAR_RE.finditer(text):
-        raw = match.group(0).lower()
-        if raw.startswith("fy"):
-            digits = raw[2:]
-            if digits.isdigit():
-                years.append(2000 + int(digits))
-        elif raw.isdigit():
-            years.append(int(raw))
-    return sorted(set(years))
+    return temporal_years_from_text(text)
+
+
+def _period_context_for_value(text: Any, value: Any, *, width: int = 140) -> str:
+    haystack = str(text or "")
+    needle = str(value or "").strip()
+    if not haystack or not needle:
+        return ""
+    patterns = [re.escape(needle)]
+    if needle.lower().startswith("fy") and needle[2:].isdigit():
+        year = needle[2:]
+        patterns.append(rf"\bfy\s*{re.escape(year)}\b")
+    elif needle.isdigit() and len(needle) == 4:
+        patterns.append(rf"\bfy\s*{re.escape(needle[-2:])}\b")
+    for pattern in patterns:
+        match = re.search(pattern, haystack, re.IGNORECASE)
+        if match:
+            start = max(0, match.start() - width)
+            end = min(len(haystack), match.end() + width)
+            return " ".join(haystack[start:end].split())
+    return ""
 
 
 @dataclass(frozen=True)
@@ -588,9 +596,17 @@ def build_evidence_quality(item: Dict[str, Any], *, module_name: str) -> Dict[st
     time_specificity = derive_time_specificity(text)
     business_relevance = classify_business_relevance(text, module_name=module_name, actor_type=actor_type)
     source_period = item.get("source_year") or item.get("year") or ""
+    source_period_ownership = assess_source_period_ownership(
+        source_year=source_period,
+        source_text=item.get("source_chunk") or "",
+        filename=item.get("source_artifact") or "",
+    )
     explicit_year = item.get("year") or item.get("time_reference") or item.get("source_year") or ""
     target_period = ""
     temporal_role = ""
+    explicit_context = _period_context_for_value(item.get("source_chunk"), explicit_year)
+    if explicit_context and str(explicit_year or "").strip() not in period_text:
+        period_text = f"{period_text} {explicit_context}".strip()
     if module_name == "capacity_expansions":
         if item.get("current_capacity") and item.get("target_capacity"):
             temporal_role = "current_target"
@@ -607,8 +623,14 @@ def build_evidence_quality(item: Dict[str, Any], *, module_name: str) -> Dict[st
         if future_years and any(cue in period_text.lower() for cue in risk_cues):
             explicit_year = source_period
             target_period = str(max(future_years))
-    if module_name in {"promises", "initiatives"} and item.get("year"):
-        target_period = item.get("year") or ""
+    if module_name in {"promises", "initiatives"}:
+        target_text = str(item.get("target_period") or item.get("timeline") or item.get("time_reference") or "")
+        target_years = _period_year_values(target_text)
+        future_targets = [year for year in target_years if source_value is not None and year > source_value]
+        if future_targets:
+            target_period = str(max(future_targets))
+        elif item.get("year"):
+            target_period = item.get("year") or ""
     period_resolution = resolve_period_status(
         source_year=source_period,
         text=period_text,
@@ -629,6 +651,7 @@ def build_evidence_quality(item: Dict[str, Any], *, module_name: str) -> Dict[st
             "numeric_support": numeric_support,
         },
         status_text=str(item.get("status") or item.get("time_reference") or ""),
+        relevance_outcome=str(business_relevance.get("outcome") or ""),
     )
     semantic_flags = semantic_validation(
         module_name=module_name,
@@ -659,6 +682,7 @@ def build_evidence_quality(item: Dict[str, Any], *, module_name: str) -> Dict[st
         "confidence": confidence,
         "warnings": warnings,
         "business_relevance": business_relevance,
+        "source_period_ownership": source_period_ownership,
         "period_resolution": period_resolution,
         "progression_materiality": progression_materiality,
         "semantic_validation": semantic_flags,
@@ -678,6 +702,24 @@ def infer_generic_fields(item: Dict[str, Any], *, module_name: str) -> Dict[str,
         inferred["category"] = ""
     if "status" not in inferred or inferred.get("status") is None:
         inferred["status"] = ""
+    if module_name == "capacity_expansions":
+        status_sources = [
+            inferred.get("status"),
+            inferred.get("source_chunk"),
+            inferred.get("current_capacity"),
+            inferred.get("target_capacity"),
+            inferred.get("timeline"),
+            inferred.get("description"),
+            inferred.get("value"),
+        ]
+        status_text = " ".join(
+            _normalize_text(value)
+            for value in status_sources
+            if _normalize_text(value)
+        )
+        derived_status = _capacity_status_from_text(status_text)
+        if derived_status != "unable_to_verify" or not _normalize_text(inferred.get("status")):
+            inferred["status"] = derived_status
     if "actor" not in inferred or inferred.get("actor") is None:
         inferred["actor"] = classify_actor_type(" ".join(_normalize_text(value) for value in inferred.values() if isinstance(value, str)))
     if "time_reference" not in inferred or inferred.get("time_reference") is None:
@@ -790,8 +832,18 @@ def validate_cleaned_item(item: Dict[str, Any], *, module_name: str) -> Dict[str
         warnings.append("no amount for capital item")
     if quality.get("investor_relevance") == "low":
         warnings.append("weak investor relevance")
-    if quality.get("business_relevance", {}).get("quarantine"):
-        errors.append("business relevance quarantined")
+    # Four-outcome contract validation
+    br_outcome = str(quality.get("business_relevance", {}).get("outcome") or "").upper()
+    if br_outcome == "HARD_FAIL":
+        errors.append("business relevance outcome: HARD_FAIL — structurally invalid")
+    elif br_outcome == "QUARANTINE":
+        errors.append("business relevance outcome: QUARANTINE — quarantined from investor intelligence")
+    elif br_outcome == "DEMOTE":
+        warnings.append("business relevance outcome: DEMOTE — valid but secondary, not for canonical promotion")
+    elif quality.get("business_relevance", {}).get("quarantine"):
+        errors.append("business relevance quarantined (legacy)")
+    if str((quality.get("source_period_ownership") or {}).get("status") or "").lower() == "fail":
+        errors.append("source period ownership mismatch")
     if str((quality.get("period_resolution") or {}).get("status") or "").upper() in {"INVALID", "AMBIGUOUS", "OUTSIDE_ANALYSIS_WINDOW"}:
         errors.append("invalid or unsupported period resolution")
     if not (quality.get("progression_materiality") or {}).get("should_promote", True) and module_name in {"capital_allocations", "capacity_expansions", "projects", "commentary"}:

@@ -129,6 +129,7 @@ def normalize_candidate(
         relevance_status=str(relevance.get("status") or "ambiguous"),
         period_status=str(period_resolution.get("status") or "AMBIGUOUS"),
         status_text=candidate.get("current_status", ""),
+        relevance_outcome=str(relevance.get("outcome") or ""),
     )
     semantic_flags = semantic_validation(
         module_name="risks",

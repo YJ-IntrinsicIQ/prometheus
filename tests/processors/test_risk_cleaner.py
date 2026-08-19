@@ -1,8 +1,13 @@
 import json
+from pathlib import Path
 
 from core.company_context import CompanyContext
 from pipelines.pipeline_context import set_context
 from processors.risk_cleaner import create_cleaner
+from knowledge.evidence_layer import finalize_cleaned_item, validate_cleaned_item
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_risk_cleaner_excludes_quarantined_items_without_failing(tmp_path, monkeypatch):
@@ -41,6 +46,95 @@ def test_risk_cleaner_excludes_quarantined_items_without_failing(tmp_path, monke
         output = json.loads((context.extracted_dir / "clean_risks.json").read_text(encoding="utf-8"))
         assert len(output) == 1
         assert output[0]["risk"] == risks[0]["risk"]
+    finally:
+        set_context(None)
+
+
+def test_risk_cleaner_rejects_future_dated_near_neighbor_items(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = CompanyContext(company="polymatech", year="fy24")
+    context.create_directories()
+    set_context(context)
+
+    try:
+        bundle = {
+            "item_id": "risks_future_unsupported",
+            "risk": "Supply chain risk includes a standalone 2030 reference without any stated company action.",
+            "category": "supply chain dependence",
+            "severity": "medium",
+            "year": "2030",
+            "actor": "management",
+            "value": "Supply chain risk includes a standalone 2030 reference without any stated company action.",
+        }
+        (context.extracted_dir / "extracted_risks.json").write_text(
+            json.dumps([bundle], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        try:
+            create_cleaner().run()
+        except ValueError as exc:
+            message = str(exc)
+            assert "invalid or unsupported period resolution" in message
+            assert '"failure_class": "PERIOD_RESOLUTION_UNSUPPORTED"' in message
+            assert '"company": "polymatech"' in message
+            assert '"item_id": "risks_future_unsupported"' in message
+        else:
+            raise AssertionError("Expected future-dated near-neighbor risk to fail validation")
+    finally:
+        set_context(None)
+
+
+def test_risk_cleaner_accepts_current_risk_with_supported_future_target(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = CompanyContext(company="polymatech", year="fy24")
+    context.create_directories()
+    set_context(context)
+
+    try:
+        source = ROOT / "companies" / "polymatech" / "fy24" / "extracted" / "extracted_risks.json"
+        items = json.loads(source.read_text(encoding="utf-8"))
+        bundle = next(item for item in items if item.get("item_id") == "risks_00001")
+        (context.extracted_dir / "extracted_risks.json").write_text(
+            json.dumps([bundle], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        cleaned = create_cleaner().run()
+
+        assert len(cleaned) == 1
+        period = cleaned[0]["evidence_quality"]["period_resolution"]
+        assert period["status"] == "RESOLVED"
+        assert period["resolved_period"] == "fy24"
+        assert period["temporal_roles"]["target_period"] == "fy30"
+    finally:
+        set_context(None)
+
+
+def test_risk_cleaner_excludes_cross_year_source_period_mismatch(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = CompanyContext(company="tanla", year="fy23")
+    context.create_directories()
+    set_context(context)
+
+    try:
+        source = ROOT / "companies" / "tanla" / "fy23" / "extracted" / "extracted_risks.json"
+        items = json.loads(source.read_text(encoding="utf-8"))
+        contaminated = next(item for item in items if item.get("item_id") == "risks_00015")
+        (context.extracted_dir / "extracted_risks.json").write_text(
+            json.dumps([contaminated], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        finalized = finalize_cleaned_item(dict(contaminated), module_name="risks", item_index=1)
+        validation = validate_cleaned_item(finalized, module_name="risks")
+        assert "source period ownership mismatch" in validation["errors"]
+
+        cleaned = create_cleaner().run()
+
+        assert cleaned == []
+        output = json.loads((context.extracted_dir / "clean_risks.json").read_text(encoding="utf-8"))
+        assert output == []
     finally:
         set_context(None)
 

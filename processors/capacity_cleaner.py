@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from core.base_cleaner import BaseCleaner  # noqa: E402
+from knowledge.temporal_event_splitter import CAPACITY_SPLITTER  # noqa: E402
 
 
 INPUT_FILE = "extracted_capacity.json"
@@ -30,6 +31,10 @@ class CapacityCleaner(BaseCleaner):
         return bool(
             capacity_type
         )
+
+    def clean_item(self, item):
+        """Apply temporal event splitting for compound capacity items."""
+        return CAPACITY_SPLITTER.split(item)
 
     def deduplicate(self, items):
         seen = {}

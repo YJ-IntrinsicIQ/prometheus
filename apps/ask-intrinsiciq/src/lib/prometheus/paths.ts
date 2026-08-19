@@ -4,6 +4,8 @@ export type PrometheusAdapterPaths = {
   repoRoot: string;
   companyMemoryRoot: string;
   pcim: string;
+  companyModel: string;
+  managementProgression: string;
   financialTruthPack: string;
   ownerEarningsBridge: string;
   workingCapitalQuality: string;
@@ -71,6 +73,8 @@ export function getPrometheusPaths(
     repoRoot,
     companyMemoryRoot,
     pcim: path.join(companyMemoryRoot, "pcim_v1.json"),
+    companyModel: path.join(companyMemoryRoot, "company_model", "company_model.json"),
+    managementProgression: path.join(companyMemoryRoot, "management_progression", "management_progression.json"),
     financialTruthPack: path.join(financialRoot, "financial_truth_pack.json"),
     ownerEarningsBridge: path.join(
       investorFinancialRoot,

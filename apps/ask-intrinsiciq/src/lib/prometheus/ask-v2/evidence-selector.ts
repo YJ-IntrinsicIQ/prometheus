@@ -92,6 +92,12 @@ export function selectAskContextEvidence(sources: RawSources, plan: AskPlan): Se
       case "pcim":
         pushBusinessEvidence(state, sources.pcim);
         break;
+      case "companyModel":
+        pushCompanyModelEvidence(state, sources.companyModel);
+        break;
+      case "managementProgression":
+        pushManagementProgressionEvidence(state, sources.managementProgression);
+        break;
       case "rawDiscoveryBundles":
         pushRawDiscoveryEvidence(state, sources.rawDiscoveryBundles as RawDiscoveryBundle[] | undefined, plan);
         break;
@@ -110,6 +116,31 @@ function pushBusinessEvidence(state: SelectionState, payload: Record<string, unk
   const businessModel = (((payload || {}) as any).business_understanding || {}).latest_business_view?.business_model || {};
   push(state, "Business model", pickString(businessModel, "business_summary", "business_model"), "pcim");
   push(state, "Positioning", pickString(businessModel, "competitive_position_summary", "value_creation"), "pcim");
+}
+
+function pushCompanyModelEvidence(state: SelectionState, payload: Record<string, unknown> | null | undefined) {
+  const current = getRecord(payload, "current_business_model");
+  push(state, "Business model", pickString(current, "what_company_does", "summary"), "companyModel");
+  push(state, "Revenue mechanism", pickString(current, "how_revenue_happens", "economic_mechanism"), "companyModel");
+  for (const item of getArrayOfRecords(payload, "uncertainties").slice(0, 2)) {
+    const question = pickString(item, "question", "why_it_matters");
+    if (question) state.unresolved.push(question);
+  }
+}
+
+function pushManagementProgressionEvidence(state: SelectionState, payload: Record<string, unknown> | null | undefined) {
+  for (const item of getArrayOfRecords(payload, "progression_items").slice(0, 4)) {
+    const theme = pickString(item, "theme") || "Management progression";
+    const status = pickString(item, "current_status") || "unresolved";
+    const implication = getRecord(item, "investor_implication");
+    const conclusion = pickString(implication, "conclusion", "economic_mechanism");
+    push(state, theme, `${status}. ${conclusion}`.trim(), "managementProgression");
+    if (conclusion) state.progression.push(conclusion);
+    for (const unresolved of getArrayOfRecords(item, "unresolved").slice(0, 2)) {
+      const question = pickString(unresolved, "question", "why_it_matters");
+      if (question) state.unresolved.push(question);
+    }
+  }
 }
 
 function pushFinancialEvidence(
@@ -362,6 +393,20 @@ function capacityScore(item: Record<string, unknown>) {
   const utilization = pickString(item, "utilization_status", "current_status") || "";
   const order: Record<string, number> = { materially_utilized: 4, operational: 3, ramping: 2, commissioned: 1, underutilized: 0 };
   return order[utilization] ?? 1;
+}
+
+function getRecord(value: Record<string, unknown> | null | undefined, key: string): Record<string, unknown> {
+  const nested = value?.[key];
+  return nested && typeof nested === "object" && !Array.isArray(nested)
+    ? (nested as Record<string, unknown>)
+    : {};
+}
+
+function getArrayOfRecords(value: Record<string, unknown> | null | undefined, key: string) {
+  const nested = value?.[key];
+  return Array.isArray(nested)
+    ? nested.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null && !Array.isArray(item))
+    : [];
 }
 
 function pickString(item: Record<string, unknown> | null | undefined, ...keys: string[]) {

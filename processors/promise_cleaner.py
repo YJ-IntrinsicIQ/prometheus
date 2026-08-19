@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from core.base_cleaner import BaseCleaner  # noqa: E402
+from knowledge.temporal_event_splitter import PROMISE_SPLITTER  # noqa: E402
 
 
 INPUT_FILE = "extracted_promises.json"
@@ -125,9 +126,18 @@ class PromiseCleaner(BaseCleaner):
         return True
 
     def clean_item(self, promise):
-        promise["timeline"] = (
-            clean_timeline(promise)
-        )
+        """Apply temporal event splitting for compound promise items."""
+        # First, split compound promise items
+        split_items = PROMISE_SPLITTER.split(promise)
+
+        # If split, return the list of split items
+        if len(split_items) > 1:
+            for item in split_items:
+                item["timeline"] = clean_timeline(item)
+            return split_items
+
+        # Single item - apply existing logic
+        promise["timeline"] = clean_timeline(promise)
 
         return promise
 

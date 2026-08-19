@@ -7,8 +7,24 @@ from typing import Any, Dict, List, Sequence
 
 INVESTOR_RELEVANCE_VALUES = ("core", "supporting", "low", "excluded", "unknown")
 ELIGIBILITY_VALUES = ("eligible", "quarantined", "excluded", "unresolved")
+
+# Four-outcome business relevance contract
+BUSINESS_RELEVANCE_OUTCOMES = ("KEEP", "DEMOTE", "QUARANTINE", "HARD_FAIL")
 PERIOD_BASIS_VALUES = ("source_period", "event_period", "historical_reference", "derived_period", "unresolved")
 SEMANTIC_STATUS_VALUES = ("pass", "warning", "fail")
+FORWARD_TARGET_MODULES = {"projects", "promises", "capacity_expansions", "management_commitments", "initiatives"}
+TEMPORAL_ROLE_VALUES = (
+    "SOURCE_PERIOD",
+    "STATEMENT_PERIOD",
+    "EVENT_PERIOD",
+    "TARGET_PERIOD",
+    "MILESTONE_PERIOD",
+    "OUTCOME_PERIOD",
+    "HISTORICAL_CONTEXT",
+    "COMPARATIVE_PERIOD",
+    "NON_TEMPORAL_REFERENCE",
+    "UNKNOWN",
+)
 
 COMPANY_ACTORS = {"company_management", "company_board", "company"}
 EXTERNAL_ACTORS = {"government", "regulator", "customer", "supplier", "industry", "market", "analyst", "third_party"}
@@ -56,6 +72,133 @@ NON_CORE_TERMS = (
     "religious",
     "road",
     "bridge",
+)
+
+# Civic/public-interest terms that indicate non-investor intelligence (beyond core NON_CORE_TERMS)
+CIVIC_PUBLIC_INTEREST_TERMS = (
+    "consumer feedback",
+    "consumer complaint",
+    "consumer case",
+    "consumer protection",
+    "stakeholder litigation",
+    "unfair trade practice",
+    "public interest",
+    "civic",
+    "municipal",
+    "panchayat",
+    "zoning",
+    "building permit",
+    "environmental clearance",
+    "pollution control",
+    "waste management",
+    "water supply",
+    "sanitation",
+    "public hearing",
+    "labeling regulation",
+    "labeling compliance",
+    "disclosure regulation",
+    "platform disclosure",
+    "partner platform visibility",
+    "partner platform dependence",
+    "visibility on platform",
+    "platform dependence",
+    "government scheme",
+    "social welfare",
+    "affordable housing",
+    "rural development",
+    "livelihood",
+    "employment generation",
+    "skill development",
+    "vocational training",
+)
+
+# Module-specific core terms that signal investor relevance
+MODULE_CORE_TERMS = {
+    "risks": (
+        "concentration",
+        "dependence",
+        "counterparty",
+        "regulatory risk",
+        "compliance risk",
+        "credit risk",
+        "liquidity risk",
+        "operational risk",
+        "execution risk",
+        "platform risk",
+        "supplier risk",
+        "customer risk",
+        "reputation risk",
+        "disclosure risk",
+        "litigation risk",
+        "margin risk",
+        "revenue risk",
+        "cash flow risk",
+        "working capital risk",
+    ),
+    "projects": (
+        "capex",
+        "capacity",
+        "facility",
+        "plant",
+        "manufacturing",
+        "expansion",
+        "project",
+        "commissioned",
+        "operational",
+        "production",
+        "delivery",
+    ),
+    "promises": (
+        "target",
+        "guidance",
+        "commitment",
+        "milestone",
+        "commercial production",
+        "commissioning",
+        "launch",
+    ),
+    "capacity_expansions": (
+        "capacity",
+        "throughput",
+        "production",
+        "commercial production",
+        "line",
+        "facility",
+        "plant",
+        "expansion",
+    ),
+    "initiatives": (
+        "partnership",
+        "platform",
+        "product",
+        "launch",
+        "deployment",
+        "customer",
+        "solution",
+        "ecosystem",
+    ),
+    "commentary": (
+        "strategy",
+        "growth",
+        "execution",
+        "capital allocation",
+        "priority",
+        "risk",
+    ),
+}
+
+# Hard-fail terms: malformed, contaminated, or fundamentally broken items
+HARD_FAIL_TERMS = (
+    "audit",
+    "auditor",
+    "reasonable assurance",
+    "financial statement",
+    "going concern",
+    "table of contents",
+    "forward looking statement",
+    "corporate governance report",
+    "director profile",
+    "notice of annual general meeting",
 )
 
 BUSINESS_TERMS = (
@@ -239,9 +382,23 @@ def build_semantic_quality(
         "core": "core", "supporting": "supporting", "contextual": "low",
         "out_of_scope": "excluded", "ambiguous": "unknown",
     }.get(relevance_status, "unknown")
+
+    # Four-outcome contract drives eligibility
+    outcome = str(relevance.get("outcome") or "").upper()
+    if outcome == "KEEP":
+        resolved_eligibility = "eligible"
+    elif outcome == "DEMOTE":
+        resolved_eligibility = "quarantined"  # valid but secondary - don't promote
+    elif outcome == "QUARANTINE":
+        resolved_eligibility = "quarantined"
+    elif outcome == "HARD_FAIL":
+        resolved_eligibility = "excluded"
+    else:
+        # Fallback to legacy logic
+        resolved_eligibility = eligibility or ("eligible" if materiality.get("should_promote") and investor_relevance in {"core", "supporting"} else "quarantined")
+
     period_status = str(period.get("status") or "").upper()
     period_basis = "source_period" if period_status == "RESOLVED" else "historical_reference" if period_status == "HISTORICAL_CONTEXT" else "unresolved"
-    resolved_eligibility = eligibility or ("eligible" if materiality.get("should_promote") and investor_relevance in {"core", "supporting"} else "quarantined")
     semantic_status = "pass" if resolved_eligibility == "eligible" else "warning" if resolved_eligibility in {"quarantined", "unresolved"} else "fail"
     return {
         "investor_relevance": investor_relevance,
@@ -253,6 +410,7 @@ def build_semantic_quality(
         "eligibility": resolved_eligibility,
         "evidence_confidence": evidence_confidence,
         "semantic_status": semantic_status,
+        "relevance_outcome": outcome,
     }
 
 
@@ -290,17 +448,229 @@ def _strip_contextual_example_clauses(text: str) -> str:
     return re.sub(r"\((?:e\.g\.|for example|such as)[^)]*\)", " ", text, flags=re.IGNORECASE)
 
 
+_COMPARATIVE_YEAR_CUES = (
+    "from ",
+    "compared to",
+    "compares",
+    "comparison to",
+    "versus",
+    "vs ",
+    "vs.",
+    "up from",
+    "down from",
+    "increase from",
+    "decrease from",
+    "rose from",
+    "fell from",
+    "grew from",
+    "as of",
+    "as on",
+    "as at",
+    "during ",
+    "since ",
+    "between ",
+    "through ",
+    "ongoing",
+    "current",
+    "shipped",
+    "manufactured",
+    "commissioned",
+    "launched",
+    "handed over",
+    "completed",
+    "scaled",
+    "production",
+    "manufacturing",
+    "progress",
+    "in progress",
+    "achieved",
+    "year on year",
+    "year-on-year",
+    "y-o-y",
+    "yoy",
+)
+_YEAR_RANGE_RE = re.compile(r"\b(?:19|20)\d{2}\s*[-–]\s*(?:(?:19|20)\d{2}|\d{2})\b")
+_NAMED_REFERENCE_BEFORE_YEAR_RE = re.compile(
+    r"(?:"
+    r"\b(?:act|acts|regulation|regulations|rules|rule|code|standard|standards|scheme|circular|"
+    r"guideline|guidelines|notification)\s*,?\s*$"
+    r"|\b(?:income tax|banking regulation|companies|sebi|rbi|reserve bank of india|ind as|ias|ifrs)\s+"
+    r"(?:act|regulation|regulations|rules|standard|standards|scheme|circular|guidelines?)?\s*,?\s*$"
+    r"|\b(?:section|u/s|under section)\s+[a-z0-9()/. -]{0,40}$"
+    r"|\bdated\s+(?:[a-z]+\s+)?\d{1,2},?\s*$"
+    r")",
+    re.IGNORECASE,
+)
+_NAMED_REFERENCE_AFTER_YEAR_RE = re.compile(
+    r"^\s*(?:act|acts|regulation|regulations|rules|rule|code|standard|standards|scheme|circular|guidelines?|notification)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_comparative_year_context(text: str) -> bool:
+    normalized = _compact_lower(text)
+    if not normalized:
+        return False
+    if re.search(r"\bfrom\b.*\bto\b", normalized):
+        return True
+    return any(cue in normalized for cue in _COMPARATIVE_YEAR_CUES)
+
+
+def _has_year_range_context(text: str) -> bool:
+    return bool(_YEAR_RANGE_RE.search(_normalize_text(text)))
+
+
+def _has_target_year_context(text: str) -> bool:
+    normalized = _compact_lower(text)
+    return any(
+        cue in normalized
+        for cue in (
+            "target",
+            "expected",
+            "projected",
+            "forecast",
+            "planned",
+            "plan",
+            "aim",
+            "goal",
+            "milestone",
+            "by fy",
+            "by ",
+        )
+    )
+
+
+def _is_non_temporal_year_reference(text: str, match: re.Match[str]) -> bool:
+    start, end = match.span()
+    left_context = text[max(0, start - 90) : start]
+    right_context = text[end : min(len(text), end + 40)]
+    if _NAMED_REFERENCE_BEFORE_YEAR_RE.search(left_context):
+        return True
+    if _NAMED_REFERENCE_AFTER_YEAR_RE.search(right_context):
+        return True
+    return False
+
+
 def _extract_year_mentions(text: str) -> List[int]:
-    mentions: List[int] = []
-    for match in FY_YEAR_RE.finditer(text):
-        raw = match.group("year")
-        if len(raw) == 4:
-            mentions.append(int(raw))
-        elif len(raw) == 2 and raw.isdigit():
-            mentions.append(2000 + int(raw))
-    for match in YEAR_RE.finditer(text):
-        mentions.append(int(match.group("year")))
-    return sorted(set(mentions))
+    roles = classify_temporal_references(text)
+    return sorted(
+        {
+            int(item["year"])
+            for item in roles
+            if item["role"] != "NON_TEMPORAL_REFERENCE"
+        }
+    )
+
+
+def _year_value_from_match(raw: str) -> int:
+    if len(raw) == 4:
+        return int(raw)
+    return 2000 + int(raw)
+
+
+def _window(text: str, start: int, end: int, *, width: int = 120) -> str:
+    return _normalize_text(text[max(0, start - width) : min(len(text), end + width)])
+
+
+def _role_from_year_context(
+    *,
+    text: str,
+    match: re.Match[str],
+    year: int,
+    source_value: int | None,
+    target_value: int | None,
+    module_name: str,
+) -> str:
+    snippet = _compact_lower(_window(text, *match.span()))
+    if _is_non_temporal_year_reference(text, match):
+        return "NON_TEMPORAL_REFERENCE"
+    if target_value is not None and year == target_value and target_value != source_value:
+        return "TARGET_PERIOD" if target_value > (source_value or target_value) else "EVENT_PERIOD"
+    if source_value is not None and year == source_value:
+        if any(cue in snippet for cue in ("annual report", "for the year ended", "year ended", "fy ")):
+            return "SOURCE_PERIOD"
+        return "STATEMENT_PERIOD"
+    if source_value is not None and year < source_value:
+        if _has_comparative_year_context(snippet) or _has_year_range_context(snippet):
+            return "COMPARATIVE_PERIOD"
+        if any(cue in snippet for cue in HISTORICAL_CUES):
+            return "HISTORICAL_CONTEXT"
+        return "HISTORICAL_CONTEXT"
+    if _has_target_year_context(snippet):
+        return "TARGET_PERIOD"
+    if any(cue in snippet for cue in ("completed", "commissioned", "launched", "paid", "deployed", "distributed", "returned", "capitalised", "capitalized")):
+        return "EVENT_PERIOD"
+    if source_value is not None and year > source_value and (
+        module_name in FORWARD_TARGET_MODULES or module_name == "capital_allocations"
+    ):
+        return "TARGET_PERIOD"
+    return "UNKNOWN"
+
+
+def classify_temporal_references(
+    text: str,
+    *,
+    source_year: Any = "",
+    target_period: Any = "",
+    module_name: str = "",
+) -> List[Dict[str, Any]]:
+    """Classify year-like tokens before the resolver decides chronology.
+
+    raw_period remains a backward-compatible source field; downstream chronology
+    should consume these semantic roles rather than treating every four-digit
+    token as an event year.
+    """
+    normalized = _normalize_text(text)
+    if not normalized:
+        return []
+    source_value = _source_year_value(source_year)
+    target_value = _source_year_value(target_period)
+    references: Dict[tuple[int, str], Dict[str, Any]] = {}
+
+    for pattern in (FY_YEAR_RE, YEAR_RE):
+        for match in pattern.finditer(normalized):
+            raw = match.group("year") if "year" in pattern.groupindex else match.group(0)
+            if not raw.isdigit():
+                continue
+            year = _year_value_from_match(raw)
+            role = _role_from_year_context(
+                text=normalized,
+                match=match,
+                year=year,
+                source_value=source_value,
+                target_value=target_value,
+                module_name=module_name,
+            )
+            key = (year, role)
+            if key not in references:
+                references[key] = {
+                    "year": year,
+                    "period": _period_label_from_year(year),
+                    "role": role,
+                    "text": _window(normalized, *match.span()),
+                }
+    return sorted(references.values(), key=lambda item: (item["year"], item["role"]))
+
+
+def temporal_years_from_text(
+    text: str,
+    *,
+    source_year: Any = "",
+    target_period: Any = "",
+    module_name: str = "",
+) -> List[int]:
+    return sorted(
+        {
+            int(item["year"])
+            for item in classify_temporal_references(
+                text,
+                source_year=source_year,
+                target_period=target_period,
+                module_name=module_name,
+            )
+            if item["role"] != "NON_TEMPORAL_REFERENCE"
+        }
+    )
 
 
 def _source_year_value(source_year: Any) -> int | None:
@@ -334,6 +704,27 @@ def normalize_period_label(value: Any) -> str:
     return text
 
 
+def _period_label_from_year(value: int) -> str:
+    return f"fy{str(value)[-2:]}"
+
+
+def _temporal_roles(
+    *,
+    source_value: int,
+    target_value: int | None = None,
+    event_value: int | None = None,
+    historical_values: Sequence[int] = (),
+    references: Sequence[Dict[str, Any]] = (),
+) -> Dict[str, Any]:
+    return {
+        "source_period": _period_label_from_year(source_value),
+        "event_period": _period_label_from_year(event_value or source_value),
+        "target_period": _period_label_from_year(target_value) if target_value is not None else "",
+        "historical_periods": [_period_label_from_year(year) for year in sorted(set(historical_values))],
+        "references": list(references),
+    }
+
+
 def classify_business_relevance(
     text: str,
     *,
@@ -341,6 +732,16 @@ def classify_business_relevance(
     actor_type: str = "",
     source_kind: str = "",
 ) -> Dict[str, Any]:
+    """
+    Four-outcome business relevance contract for investor intelligence:
+    - KEEP: Core investor intelligence (material to economics/operations/capital/regulation/customer/continuity)
+    - DEMOTE: Valid but secondary (contextual, supporting, low materiality) - keep in evidence layer, don't promote
+    - QUARANTINE: Valid content but unsuitable for canonical investor intelligence (civic/CSR/public-interest/generic workforce)
+    - HARD_FAIL: Malformed, contaminated, or fundamentally broken (audit boilerplate, empty, structural defects)
+
+    Uses Company Model generically: offerings, customers, revenue engines, dependencies,
+    economic drivers, operating model — no hardcoded companies/sectors.
+    """
     normalized = _compact_lower(text)
     actor = _compact_lower(actor_type)
     source = _compact_lower(source_kind)
@@ -348,6 +749,7 @@ def classify_business_relevance(
     limitations: List[str] = []
     score = 0
 
+    # HARD_FAIL: structural defects that make the item unusable
     if not normalized:
         return {
             "status": "ambiguous",
@@ -355,23 +757,55 @@ def classify_business_relevance(
             "basis": ["empty text"],
             "limitations": ["no text to classify"],
             "quarantine": True,
+            "outcome": "HARD_FAIL",
+            "outcome_basis": ["empty or whitespace-only text"],
         }
 
+    if any(term in normalized for term in HARD_FAIL_TERMS):
+        return {
+            "status": "out_of_scope",
+            "score": -10,
+            "basis": ["hard-fail term detected"],
+            "limitations": ["audit/boilerplate/contaminated content"],
+            "quarantine": True,
+            "outcome": "HARD_FAIL",
+            "outcome_basis": ["audit or boilerplate terminology indicates contaminated extraction"],
+        }
+
+    # External actor penalty
     if actor in {"government", "industry", "auditor"}:
         score -= 3
         basis.append(f"external actor: {actor}")
 
-    if any(term in normalized for term in NON_CORE_TERMS):
-        score -= 3
-        basis.append("non-core public-interest or civic terms detected")
+    # Civic/public-interest terms: strong QUARANTINE signal (beyond NON_CORE_TERMS)
+    civic_matches = [term for term in CIVIC_PUBLIC_INTEREST_TERMS if term in normalized]
+    if civic_matches:
+        score -= 5
+        basis.append(f"civic/public-interest terms: {', '.join(civic_matches[:3])}")
+        limitations.append("civic or public-interest wording — not core investor intelligence")
 
+    # Non-core terms (existing)
+    non_core_matches = [term for term in NON_CORE_TERMS if term in normalized]
+    if non_core_matches:
+        score -= 3
+        basis.append(f"non-core terms: {', '.join(non_core_matches[:3])}")
+
+    # Business operations terms
     if any(term in normalized for term in BUSINESS_TERMS):
         score += 2
         basis.append("business-operations terms detected")
 
+    # Module-specific risk terms
     if module_name == "risks" and any(term in normalized for term in RISK_TERMS):
         score += 1
         basis.append("risk-disclosure terms detected")
+
+    # Module-specific core terms (Company Model: offerings, customers, revenue engines, dependencies, economic drivers, operating model)
+    module_core = MODULE_CORE_TERMS.get(module_name, ())
+    core_matches = [term for term in module_core if term in normalized]
+    if core_matches:
+        score += 2
+        basis.append(f"module core terms: {', '.join(core_matches[:3])}")
 
     if any(term in normalized for term in COMMENTARY_TERMS) and module_name == "commentary":
         score += 1
@@ -398,10 +832,12 @@ def classify_business_relevance(
         score += 1
         basis.append("management source")
 
+    # Macro/policy penalty (except commentary and risks where policy risk is valid)
     if any(term in normalized for term in ("macro", "industry outlook", "global economy", "policy", "regulatory")) and module_name not in {"commentary", "risks"}:
         score -= 2
         limitations.append("macro or policy context should not drive core intelligence")
 
+    # Status classification (existing scale)
     if score >= 3:
         status = "core"
     elif score >= 1:
@@ -413,15 +849,39 @@ def classify_business_relevance(
     else:
         status = "out_of_scope"
 
-    quarantine = status in {"out_of_scope", "ambiguous"} or (module_name != "commentary" and status == "contextual")
-    if quarantine and not limitations:
-        limitations.append("item does not look like core investor intelligence")
+    # Four-outcome decision
+    # HARD_FAIL already handled above
+    if status == "out_of_scope" or (civic_matches and status != "core"):
+        # Civic/public-interest items that somehow scored >=1 still get QUARANTINED
+        outcome = "QUARANTINE"
+        quarantine = True
+        if not limitations:
+            limitations.append("item does not look like core investor intelligence")
+    elif status == "ambiguous":
+        outcome = "QUARANTINE"
+        quarantine = True
+        if not limitations:
+            limitations.append("ambiguous relevance — cannot confirm investor materiality")
+    elif status == "contextual" and module_name != "commentary":
+        outcome = "DEMOTE"
+        quarantine = True
+        limitations.append("contextual item — not eligible for core intelligence stream")
+    elif status == "supporting":
+        outcome = "DEMOTE"
+        quarantine = False
+        limitations.append("valid but secondary — keep in evidence layer, do not promote to canonical")
+    else:  # core
+        outcome = "KEEP"
+        quarantine = False
+
     return {
         "status": status,
         "score": score,
         "basis": basis,
         "limitations": limitations,
         "quarantine": quarantine,
+        "outcome": outcome,
+        "outcome_basis": [f"four-outcome contract: {outcome}"],
     }
 
 
@@ -444,11 +904,32 @@ def resolve_period_status(
         }
 
     normalized_text = _strip_contextual_example_clauses(_compact_lower(text))
-    years = _extract_year_mentions(normalized_text)
+    temporal_references = classify_temporal_references(
+        normalized_text,
+        source_year=source_year,
+        target_period=target_period,
+        module_name=module_name,
+    )
+    years = [
+        int(item["year"])
+        for item in temporal_references
+        if item["role"] != "NON_TEMPORAL_REFERENCE"
+    ]
     if explicit_year not in (None, ""):
         explicit_text = _normalize_text(explicit_year)
         if explicit_text.lower().startswith("fy") or explicit_text.isdigit():
-            years.extend(_extract_year_mentions(explicit_text))
+            explicit_references = classify_temporal_references(
+                explicit_text,
+                source_year=source_year,
+                target_period=target_period,
+                module_name=module_name,
+            )
+            temporal_references.extend(explicit_references)
+            years.extend(
+                int(item["year"])
+                for item in explicit_references
+                if item["role"] != "NON_TEMPORAL_REFERENCE"
+            )
         elif explicit_text.isdigit() and len(explicit_text) == 4:
             years.append(int(explicit_text))
     target_value = _source_year_value(target_period)
@@ -457,6 +938,7 @@ def resolve_period_status(
     resolved_period = normalize_period_label(source_year)
     basis: List[str] = [f"source period {resolved_period}"]
     limitations: List[str] = []
+    temporal_roles = _temporal_roles(source_value=source_value, references=temporal_references)
 
     if not years:
         if any(cue in normalized_text for cue in HISTORICAL_CUES):
@@ -471,6 +953,7 @@ def resolve_period_status(
             "resolved_period": resolved_period,
             "basis": basis + ["no conflicting explicit year"],
             "limitations": [],
+            "temporal_roles": temporal_roles,
         }
 
     if (
@@ -486,6 +969,7 @@ def resolve_period_status(
             "resolved_period": resolved_period,
             "basis": basis + [f"source period {source_value} and {role_label} {target_value} are both explicitly supported"],
             "limitations": [],
+            "temporal_roles": _temporal_roles(source_value=source_value, target_value=target_value if target_value > source_value else None, event_value=target_value if target_value <= source_value else None, references=temporal_references),
         }
 
     if (
@@ -504,9 +988,65 @@ def resolve_period_status(
             "resolved_period": resolved_period,
             "basis": basis + [f"capacity current-state {source_value + 1} and target period {target_value} are explicitly separated in structured fields"],
             "limitations": [],
+            "temporal_roles": _temporal_roles(source_value=source_value, target_value=target_value, event_value=source_value + 1, references=temporal_references),
         }
 
     if len(years) > 1:
+        target_role_years = sorted(
+            {
+                int(item["year"])
+                for item in temporal_references
+                if item["role"] == "TARGET_PERIOD"
+                and int(item["year"]) > source_value
+                and _has_target_year_context(str(item.get("text") or ""))
+            }
+        )
+        if len(target_role_years) == 1 and all(year <= source_value or year in target_role_years for year in years):
+            historical_values = [year for year in years if year < source_value]
+            return {
+                "status": "RESOLVED",
+                "resolved_period": resolved_period,
+                "basis": basis
+                + [
+                    f"target period {target_role_years[0]} is semantically separated from source-period {module_name.replace('_', ' ') or 'evidence'} observation",
+                    f"historical reference periods {', '.join(str(year) for year in historical_values)} do not replace source-period anchoring",
+                ],
+                "limitations": [],
+                "temporal_roles": _temporal_roles(source_value=source_value, target_value=target_role_years[0], historical_values=historical_values, references=temporal_references),
+            }
+        if (
+            module_name in FORWARD_TARGET_MODULES
+            and target_value is not None
+            and target_value > source_value
+            and target_value in years
+            and all(year < source_value or year == target_value for year in years)
+        ):
+            historical_values = [year for year in years if year < source_value]
+            return {
+                "status": "RESOLVED",
+                "resolved_period": resolved_period,
+                "basis": basis
+                + [
+                    f"target period {target_value} is explicitly separated from source period {source_value}",
+                    f"historical reference periods {', '.join(str(year) for year in historical_values)} do not replace source-period anchoring",
+                ],
+                "limitations": [],
+                "temporal_roles": _temporal_roles(source_value=source_value, target_value=target_value, historical_values=historical_values, references=temporal_references),
+            }
+        if (
+            all(year <= source_value for year in years)
+            and (_has_comparative_year_context(normalized_text) or _has_year_range_context(normalized_text))
+        ):
+            other_years = ", ".join(str(year) for year in years if year != source_value)
+            if other_years:
+                basis.append(f"comparative or historical years {other_years} are context for source period {resolved_period}")
+            return {
+                "status": "RESOLVED",
+                "resolved_period": resolved_period,
+                "basis": basis,
+                "limitations": [],
+                "temporal_roles": _temporal_roles(source_value=source_value, historical_values=[year for year in years if year < source_value], references=temporal_references),
+            }
         if module_name == "capital_allocations" and source_value is not None:
             if source_value in years and all(source_value - 2 <= year <= source_value for year in years):
                 return {
@@ -514,6 +1054,7 @@ def resolve_period_status(
                     "resolved_period": resolved_period,
                     "basis": basis + [f"capital-allocation disclosure spanning {min(years)}-{max(years)} anchored to source year {source_value}"],
                     "limitations": [],
+                    "temporal_roles": _temporal_roles(source_value=source_value, historical_values=[year for year in years if year < source_value], references=temporal_references),
                 }
             if (
                 len(years) == 2
@@ -525,6 +1066,7 @@ def resolve_period_status(
                     "resolved_period": resolved_period,
                     "basis": basis + [f"capital-allocation disclosure spanning historical years {min(years)}-{max(years)} with explicit payout or deployment language"],
                     "limitations": [],
+                    "temporal_roles": _temporal_roles(source_value=source_value, historical_values=years, references=temporal_references),
                 }
         failure_class = "SOURCE_PERIOD_VS_TARGET_PERIOD_CONFLICT" if source_value in years and target_value is not None and target_value in years and target_value != source_value else "PERIOD_RESOLUTION_UNSUPPORTED"
         return {
@@ -533,6 +1075,7 @@ def resolve_period_status(
             "basis": basis + [f"multiple years mentioned: {', '.join(str(year) for year in years)}"],
             "limitations": ["conflicting chronology"],
             "failure_class": failure_class,
+            "temporal_roles": _temporal_roles(source_value=source_value, references=temporal_references),
         }
 
     explicit_value = years[0]
@@ -543,6 +1086,7 @@ def resolve_period_status(
             "resolved_period": resolved_period,
             "basis": basis + [f"explicit year {explicit_value} is within the adjacent analysis window of source year {source_value}"],
             "limitations": [],
+            "temporal_roles": _temporal_roles(source_value=source_value, event_value=explicit_value, references=temporal_references),
         }
     if explicit_value > source_value and module_name in {"projects", "promises", "capacity_expansions", "management_commitments"}:
         return {
@@ -550,6 +1094,18 @@ def resolve_period_status(
             "resolved_period": resolved_period,
             "basis": basis + [f"future-dated explicit year {explicit_value} is valid for forward-looking {module_name.replace('_', ' ')} evidence"],
             "limitations": [],
+            "temporal_roles": _temporal_roles(source_value=source_value, target_value=explicit_value, references=temporal_references),
+        }
+    if explicit_value > source_value and any(
+        item["year"] == explicit_value and item["role"] == "TARGET_PERIOD"
+        for item in temporal_references
+    ):
+        return {
+            "status": "RESOLVED",
+            "resolved_period": resolved_period,
+            "basis": basis + [f"future target period {explicit_value} is separated from source-period {module_name.replace('_', ' ') or 'evidence'} observation"],
+            "limitations": [],
+            "temporal_roles": _temporal_roles(source_value=source_value, target_value=explicit_value, references=temporal_references),
         }
     if explicit_value < source_value:
         return {
@@ -557,6 +1113,7 @@ def resolve_period_status(
             "resolved_period": resolved_period,
             "basis": basis + [f"explicit year {explicit_value} predates source year {source_value}"],
             "limitations": ["historical context should remain evidence, not a new announcement"],
+            "temporal_roles": _temporal_roles(source_value=source_value, historical_values=[explicit_value], references=temporal_references),
         }
     return {
         "status": "OUTSIDE_ANALYSIS_WINDOW",
@@ -574,14 +1131,25 @@ def assess_progression_materiality(
     period_status: str,
     evidence_quality: Dict[str, Any] | None = None,
     status_text: str = "",
+    relevance_outcome: str = "",
 ) -> Dict[str, Any]:
+    """
+    Assess progression materiality respecting the four-outcome contract.
+    Items with QUARANTINE or HARD_FAIL outcomes should not be promoted.
+    """
     normalized = _compact_lower(text)
     status_norm = _compact_lower(status_text)
     score = 0
     basis: List[str] = []
     limitations: List[str] = []
 
-    if relevance_status in {"core", "supporting"}:
+    # Respect four-outcome contract
+    outcome = relevance_outcome.upper() if relevance_outcome else ""
+    if outcome in {"QUARANTINE", "HARD_FAIL"}:
+        # Quarantined or hard-fail items should not drive progression
+        score -= 5
+        limitations.append(f"relevance outcome: {outcome} — not eligible for progression promotion")
+    elif relevance_status in {"core", "supporting"}:
         score += 2 if relevance_status == "core" else 1
         basis.append(f"relevance classified as {relevance_status}")
     else:
@@ -677,8 +1245,16 @@ def semantic_validation(
     relevance_status = str(relevance.get("status") or "").lower()
     period_status = str(period.get("status") or "").upper()
     materiality_level = str((materiality or {}).get("level") or "").lower()
+    relevance_outcome = str(relevance.get("outcome") or "").upper()
 
-    if relevance.get("quarantine"):
+    # Four-outcome contract drives validation
+    if relevance_outcome == "HARD_FAIL":
+        errors.append(f"business relevance outcome: {relevance_outcome} — structurally invalid")
+    elif relevance_outcome == "QUARANTINE":
+        errors.append(f"business relevance outcome: {relevance_outcome} — quarantined from investor intelligence")
+    elif relevance_outcome == "DEMOTE":
+        warnings.append(f"business relevance outcome: {relevance_outcome} — valid but secondary, not for canonical promotion")
+    elif relevance.get("quarantine"):
         errors.append(f"business relevance classified as {relevance_status or 'unknown'}")
     elif relevance_status == "contextual" and module_name != "commentary":
         errors.append("contextual item is not eligible for a core intelligence stream")

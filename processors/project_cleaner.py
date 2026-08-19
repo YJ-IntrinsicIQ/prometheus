@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from core.base_cleaner import BaseCleaner  # noqa: E402
+from knowledge.temporal_event_splitter import PROJECT_SPLITTER  # noqa: E402
 
 
 INPUT_FILE = "extracted_projects.json"
@@ -102,10 +103,25 @@ class ProjectCleaner(BaseCleaner):
         return True
 
     def clean_item(self, project):
+        """Apply temporal event splitting then classify project."""
+        # First, split compound project items
+        split_items = PROJECT_SPLITTER.split(project)
+
+        # If split, return the list of split items
+        if len(split_items) > 1:
+            # Apply classification to each split item
+            for item in split_items:
+                item = dict(item)
+                item["category"] = classify_project(item)
+                if not str(item.get("status") or "").strip():
+                    item["status"] = "UNKNOWN"
+                    if not str(item.get("uncertainty_reason") or "").strip():
+                        item["uncertainty_reason"] = "Project status was not explicit in the source disclosure."
+            return split_items
+
+        # Single item - apply existing logic
         project = dict(project)
-        project["category"] = (
-            classify_project(project)
-        )
+        project["category"] = classify_project(project)
 
         if not str(project.get("status") or "").strip():
             project["status"] = "UNKNOWN"

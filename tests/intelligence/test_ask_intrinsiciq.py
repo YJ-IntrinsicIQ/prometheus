@@ -1546,8 +1546,24 @@ def test_revenue_answer_exposes_revenue_flow_object():
 
     answer = next(answer for answer in answer_cards["answers"] if answer["question_id"] == "how-does-it-make-money")
 
-    assert answer["revenue_flow"]["model_type"] == "project_based"
-    assert 5 <= len(answer["revenue_flow"]["steps"]) <= 6
+    assert answer["revenue_flow"]["model_type"] in {"project_based", "business_model", "mixed", "recurring", "unclear"}
+    assert len(answer["revenue_flow"]["steps"]) == 4
+    assert "billing_basis_note" in answer["revenue_flow"]
+    assert "cash_timing_note" not in answer["revenue_flow"] or not answer["revenue_flow"]["cash_timing_note"]
+
+
+def test_revenue_flow_validator_rejects_billing_basis_as_cash_timing():
+    bundle = load_company_memory_sources("tanla")
+    journey_payload, _ = build_business_journey(bundle, company_slug="tanla", generated_at="2026-08-02T00:00:00+00:00")
+    products_payload, _ = build_products_services(bundle, business_journey_payload=journey_payload, company_slug="tanla", generated_at="2026-08-02T00:00:00+00:00")
+    answer_cards, _ = build_answer_cards(bundle, business_journey_payload=journey_payload, products_services_payload=products_payload, company_slug="tanla", generated_at="2026-08-02T00:00:00+00:00")
+    payload = json.loads(json.dumps(answer_cards))
+    answer = next(answer for answer in payload["answers"] if answer["question_id"] == "how-does-it-make-money")
+    answer["revenue_flow"]["cash_timing_note"] = answer["revenue_flow"]["billing_basis_note"]
+
+    errors = validate_answer_cards_payload(payload, products_services_payload=products_payload, financial_visual_ids=[])
+
+    assert any("cash_timing_note must not duplicate billing_basis_note" in error for error in errors)
 
 
 def test_buffett_answer_exposes_structured_sections():

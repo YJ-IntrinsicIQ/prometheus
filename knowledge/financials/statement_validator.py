@@ -152,7 +152,12 @@ def _basis_checked(payload: Dict[str, Any]) -> str:
     if len(bases) == 1:
         only = next(iter(bases))
         return only if only in {"standalone", "consolidated", "unknown"} else "unknown"
-    return "mixed"
+    explicit_bases = {basis for basis in bases if basis in {"standalone", "consolidated"}}
+    if len(explicit_bases) > 1:
+        return "mixed"
+    if "unknown" in bases:
+        return "unknown"
+    return "unknown"
 
 
 def _append_unique(items: List[str], value: str) -> None:

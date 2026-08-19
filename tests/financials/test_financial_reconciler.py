@@ -176,6 +176,34 @@ def test_reconciler_passes_for_related_sources(tmp_path):
     assert report.checks["fcf"].status == "warning"
 
 
+def test_reconciler_accepts_note_based_revenue_and_eps(tmp_path):
+    normalized_path = tmp_path / "normalized_fundamentals.json"
+    payload = _normalized_payload()
+    payload["profit_and_loss"]["revenue"].update(
+        {
+            "source_line_item": "FY 2019-20 Revenue from Operations",
+            "source_section_type": "financial_note",
+            "statement_type": "revenue",
+        }
+    )
+    payload["profit_and_loss"]["eps_basic"].update(
+        {
+            "source_line_item": "EPS (Basic) (`)",
+            "source_section_type": "financial_note",
+            "statement_type": "eps",
+            "source_value_type": "per_share",
+        }
+    )
+    _write_json(normalized_path, payload)
+
+    report = build_financial_reconciliation_report(company="acme", year="fy25", normalized_path=normalized_path)
+
+    assert report.checks["revenue"].status == "pass"
+    assert report.checks["eps_basic"].status == "pass"
+    assert not any("revenue" in failure for failure in report.hard_failures)
+    assert not any("eps_basic" in failure for failure in report.hard_failures)
+
+
 def test_reconciler_fails_for_disallowed_source_on_critical_field(tmp_path):
     normalized_path = tmp_path / "normalized_fundamentals.json"
     payload = _normalized_payload()

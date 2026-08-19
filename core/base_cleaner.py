@@ -138,7 +138,16 @@ class BaseCleaner:
                 module_name=self.module_name,
             )
             if validation["errors"]:
-                if validation["errors"] == ["business relevance quarantined"]:
+                error_text = "; ".join(validation["errors"])
+                # Quarantine/HARD_FAIL outcomes: remove silently without crashing the cleaner
+                # These are valid-filter decisions per the four-outcome business relevance contract.
+                is_quarantine_decision = (
+                    "business relevance outcome: QUARANTINE" in error_text
+                    or "business relevance outcome: HARD_FAIL" in error_text
+                    or "business relevance quarantined" in error_text
+                    or "source period ownership mismatch" in error_text
+                )
+                if is_quarantine_decision:
                     removed.append(item)
                     continue
                 raise ValueError(

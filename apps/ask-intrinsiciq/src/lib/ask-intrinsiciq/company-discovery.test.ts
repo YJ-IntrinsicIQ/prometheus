@@ -60,6 +60,21 @@ describe("company discovery", () => {
     expect(answer?.title).toMatch(/what does the company do/i);
   });
 
+  it("normalizes revenue-flow steps into displayable objects for the make-money answer", async () => {
+    for (const companySlug of ["tanla", "datapatterns", "tips", "polymatech"]) {
+      const answer = await getResearchAnswerCard(companySlug, "how-does-it-make-money");
+
+      expect(answer).not.toBeNull();
+      expect(answer?.questionId).toBe("how-does-it-make-money");
+      expect(answer?.revenueFlow?.steps.length).toBeGreaterThan(0);
+      expect(
+        answer?.revenueFlow?.steps.every(
+          (step) => typeof step.label === "string" && typeof step.explanation === "string",
+        ),
+      ).toBe(true);
+    }
+  });
+
   it("rejects mismatched company-specific answer artifacts instead of using wrong-company facts", async () => {
     const originalRepoRoot = process.env.ASK_INTRINSICIQ_REPO_ROOT;
     const repoRoot = await mkdtemp(path.join(tmpdir(), "ask-company-mismatch-"));

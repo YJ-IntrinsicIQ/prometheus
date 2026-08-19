@@ -9,6 +9,8 @@ UNIT_FACTORS_TO_CRORE = {
     "rupees": 1 / 10_000_000,
     "inr": 1 / 10_000_000,
     "₹": 1 / 10_000_000,
+    "thousand": 1 / 10_000,
+    "thousands": 1 / 10_000,
     "lakh": 1 / 100,
     "lakhs": 1 / 100,
     "lac": 1 / 100,

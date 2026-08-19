@@ -89,7 +89,7 @@ export function prepareInterpretationForDisplay(text: string): string {
   return truncateWords(normalizeDisplayText(text), 18);
 }
 
-export function cleanPublicText(text: string): string {
+export function cleanPublicText(text: string | undefined): string {
   const normalized = normalizeDisplayText(text);
 
   if (!normalized) {
@@ -185,8 +185,9 @@ function stripKnownPrefixes(text: string, prefixes: RegExp[]) {
   return prefixes.reduce((value, pattern) => value.replace(pattern, ""), text).trim();
 }
 
-function normalizeDisplayText(text: string) {
-  return text
+function normalizeDisplayText(text: string | undefined) {
+  const safeText = text ?? "";
+  return safeText
     .replace(/appearslinked/gi, "appears linked")
     .replace(/canlag/gi, "can lag")
     .replace(/\s+/g, " ")
@@ -386,8 +387,10 @@ export function finalizeResearchAnswerCardForDisplay(
               explanation: cleanPublicText(step.explanation),
             }))
             .filter((step) => step.label || step.explanation),
-          cashTimingNote: cleanPublicText(answer.revenueFlow.cashTimingNote),
-          workingCapitalNote: cleanPublicText(answer.revenueFlow.workingCapitalNote),
+          billingBasisNote: cleanPublicText(answer.revenueFlow.billingBasisNote ?? "") || undefined,
+          revenueRecognitionNote: cleanPublicText(answer.revenueFlow.revenueRecognitionNote ?? "") || undefined,
+          cashTimingNote: cleanPublicText(answer.revenueFlow.cashTimingNote ?? "") || undefined,
+          workingCapitalNote: cleanPublicText(answer.revenueFlow.workingCapitalNote ?? "") || undefined,
           offeringExamples: cleanPublicList(answer.revenueFlow.offeringExamples ?? [], { limit: 4 }),
         }
       : answer.revenueFlow,

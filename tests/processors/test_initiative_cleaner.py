@@ -1,8 +1,37 @@
 import json
+from pathlib import Path
 
 from core.company_context import CompanyContext
 from pipelines.pipeline_context import set_context
 from processors.initiative_cleaner import InitiativeCleaner
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_initiative_cleaner_accepts_award_period_year_range_inside_current_disclosures(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = CompanyContext(company="datapatterns", year="fy23")
+    context.create_directories()
+    set_context(context)
+
+    try:
+        source = ROOT / "companies" / "datapatterns" / "fy23" / "extracted" / "extracted_initiatives.json"
+        items = json.loads(source.read_text(encoding="utf-8"))
+        bundle = next(item for item in items if item.get("item_id") == "initiatives_00018")
+        (context.extracted_dir / "extracted_initiatives.json").write_text(
+            json.dumps([bundle], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        cleaned = InitiativeCleaner("extracted_initiatives.json", "clean_initiatives.json", module_name="initiatives").run()
+
+        assert len(cleaned) == 1
+        assert cleaned[0]["source_year"] == "fy23"
+        assert cleaned[0]["year"] == "2021"
+        assert cleaned[0]["initiative"] == bundle["initiative"]
+    finally:
+        set_context(None)
 
 
 def test_initiative_cleaner_keeps_platform_partnerships(tmp_path, monkeypatch):

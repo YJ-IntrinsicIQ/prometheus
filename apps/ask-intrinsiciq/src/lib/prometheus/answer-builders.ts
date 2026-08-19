@@ -18,6 +18,8 @@ import type {
 
 export type RawSources = {
   pcim: Record<string, unknown> | null;
+  companyModel?: Record<string, unknown> | null;
+  managementProgression?: Record<string, unknown> | null;
   truthPack: Record<string, unknown> | null;
   ownerEarningsBridge: Record<string, unknown> | null;
   workingCapitalQuality: Record<string, unknown> | null;
@@ -125,12 +127,12 @@ function buildKnownAnswer(
     case "what-does-company-do":
       return applyDraft(
         fallback,
-        buildBusinessSummaryAnswer(sources, fallback),
+        buildCanonicalBusinessSummaryAnswer(sources),
       );
     case "who-are-the-customers":
-      return applyDraft(fallback, buildCustomersAnswer(sources));
+      return applyDraft(fallback, buildCanonicalCustomersAnswer(sources));
     case "how-does-it-make-money":
-      return applyDraft(fallback, buildMakeMoneyAnswer(sources));
+      return applyDraft(fallback, buildCanonicalMakeMoneyAnswer(sources));
     case "what-makes-the-offering-important":
       return applyDraft(fallback, buildOfferingImportanceAnswer(sources));
     case "where-is-evidence-thin":
@@ -146,13 +148,19 @@ function buildKnownAnswer(
     case "which-financial-assumption-matters-most":
       return applyDraft(fallback, buildFinancialAssumptionAnswer(sources));
     case "what-has-management-promised":
-      return applyDraft(fallback, buildManagementPromisesAnswer(sources));
+      return applyDraft(fallback, buildCanonicalProgressionAnswer(sources, questionId));
     case "did-past-claims-come-true":
-      return applyDraft(fallback, buildPastClaimsAnswer(sources));
+      return applyDraft(fallback, buildCanonicalProgressionAnswer(sources, questionId));
+    case "what-projects-are-underway":
+      return applyDraft(fallback, buildCanonicalProgressionAnswer(sources, questionId));
+    case "how-is-capacity-changing":
+      return applyDraft(fallback, buildCanonicalProgressionAnswer(sources, questionId));
+    case "what-is-management-commentary-saying":
+      return applyDraft(fallback, buildCanonicalProgressionAnswer(sources, questionId));
     case "how-is-capital-allocated":
-      return applyDraft(fallback, buildCapitalAllocationAnswer(sources));
+      return applyDraft(fallback, buildCanonicalProgressionAnswer(sources, questionId));
     case "what-incentives-matter":
-      return applyDraft(fallback, buildIncentivesAnswer(sources));
+      return applyDraft(fallback, buildCanonicalProgressionAnswer(sources, questionId));
     case "what-should-i-ask-ir":
       return applyDraft(fallback, buildAskIrAnswer(sources));
     case "what-would-graham-worry-about":
@@ -180,6 +188,141 @@ function buildKnownAnswer(
     default:
       return finalizeAnswer(fallback);
   }
+}
+
+function buildCanonicalBusinessSummaryAnswer(sources: RawSources): AnswerDraft {
+  const current = getRecord(sources.companyModel, "current_business_model");
+
+  if (!getString(current, "what_company_does") && !getString(current, "summary")) {
+    return buildNotSupportedAnswer(
+      "The available Company Model does not yet support a business-understanding answer.",
+      "Business understanding should come from Company Model, not from older page fallbacks.",
+      ["Company Model v1 is missing or incomplete for this company."],
+      "Regenerate Company Model v1 before relying on this answer.",
+    );
+  }
+
+  return buildDraft(
+    "sourced",
+    firstAvailableText(getString(current, "what_company_does"), getString(current, "summary")) ?? "",
+    firstAvailableText(getString(current, "economic_mechanism"), "The business should be judged by what it sells, who pays, and how that turns into revenue.") ?? "",
+    buildSupportingPoints([
+      ["What it sells", getStringArray(current, "what_it_sells").join("; ")],
+      ["Who pays", getStringArray(current, "who_pays").join("; ")],
+      ["Revenue mechanism", getString(current, "how_revenue_happens")],
+      ["Source period", getString(current, "source_period")],
+    ]),
+    ["Derived from Company Model v1."],
+    "Offering-level revenue contribution and customer concentration may still be incomplete.",
+  );
+}
+
+function buildCanonicalCustomersAnswer(sources: RawSources): AnswerDraft {
+  const current = getRecord(sources.companyModel, "current_business_model");
+  const customers = getRecordArray(sources.companyModel, "customers");
+  const payers = sanitizeUiList([
+    ...getStringArray(current, "who_pays"),
+    ...customers.map((item) => getString(item, "payer_type")),
+  ]);
+  const users = sanitizeUiList([
+    ...getStringArray(current, "who_uses"),
+    ...customers.map((item) => getString(item, "end_user_type")),
+  ]);
+
+  if (payers.length === 0 && users.length === 0) {
+    return buildNotSupportedAnswer(
+      "The available Company Model does not yet support a reliable customer answer.",
+      "Customer identity matters because payer, user, and concentration patterns shape revenue quality.",
+      ["Company Model v1 does not yet preserve customer-role evidence."],
+      "Customer concentration and named-customer mix remain unavailable.",
+    );
+  }
+
+  return buildDraft(
+    "partially_sourced",
+    `Who pays: ${payers.join("; ") || "not clearly established"}. Who uses: ${users.join("; ") || "not clearly established"}.`,
+    "This matters because the buyer and end user can be different, which changes bargaining power, adoption risk, and revenue durability.",
+    buildSupportingPoints([
+      ["Who pays", payers.join("; ")],
+      ["Who uses", users.join("; ")],
+      ["Concentration", "Customer concentration is not fully established in Company Model."],
+    ]),
+    ["Derived from Company Model v1 customers and current_business_model."],
+    "Customer concentration and named-customer revenue mix remain incomplete unless separately disclosed.",
+  );
+}
+
+function buildCanonicalMakeMoneyAnswer(sources: RawSources): AnswerDraft {
+  const current = getRecord(sources.companyModel, "current_business_model");
+  const revenueEngines = getRecordArray(sources.companyModel, "revenue_engines");
+  const revenue = firstAvailableText(
+    getString(current, "how_revenue_happens"),
+    ...revenueEngines.map((item) => firstAvailableText(getString(item, "mechanism"), getString(item, "description"), getString(item, "name"))),
+  );
+
+  if (!revenue) {
+    return buildNotSupportedAnswer(
+      "The available Company Model does not yet support a reliable revenue-mechanism answer.",
+      "Revenue mechanism matters because it distinguishes recurring, usage-led, project-timed, licensing-led, and capacity-led businesses.",
+      ["Company Model v1 does not yet preserve revenue_engine evidence."],
+      "Pricing detail and offering-level revenue contribution remain unavailable.",
+    );
+  }
+
+  return buildDraft(
+    "sourced",
+    revenue,
+    "This matters because investors need the economic engine, not just the product label.",
+    buildSupportingPoints([
+      ["Revenue mechanism", revenue],
+      ["Economic mechanism", getString(current, "economic_mechanism")],
+      ["Business type", getString(current, "business_model_type")],
+    ]),
+    ["Derived from Company Model v1 revenue_engines and current_business_model."],
+    "Cash conversion must be checked in financial questions, not inferred from the business model alone.",
+  );
+}
+
+function buildCanonicalProgressionAnswer(sources: RawSources, questionId: string): AnswerDraft {
+  const progression = sources.managementProgression;
+  const coverage = getString(progression, "coverage_status");
+  const items = getProgressionItemsForQuestion(progression, questionId);
+
+  if (coverage === "insufficient_evidence" || items.length === 0) {
+    return buildNotSupportedAnswer(
+      "The available Management Progression does not yet support this answer, so Ask will not reconstruct it from legacy sources.",
+      "Progression questions should separate what management said, what it did, what happened later, and what remains unproven.",
+      ["Management Progression v1 is missing, incomplete, or has no matching progression item."],
+      "Regenerate Management Progression v1 or improve upstream progression evidence.",
+    );
+  }
+
+  const first = items[0];
+  const implication = getRecord(first, "investor_implication");
+  const conclusion = firstAvailableText(
+    getString(implication, "conclusion"),
+    `${getString(first, "theme") || "Management progression"} remains visible, but outcome evidence remains incomplete.`,
+  );
+
+  return buildDraft(
+    coverage === "supported" && !usesLegacyStreams(items) ? "sourced" : "partially_sourced",
+    conclusion ?? "",
+    firstAvailableText(
+      getString(implication, "economic_mechanism"),
+      "Management credibility changes only when statements turn into action, outcomes, and economic evidence.",
+    ) ?? "",
+    buildSupportingPoints(
+      items.slice(0, 4).map((item, index) => [
+        ["Progression", "Current state", "Later evidence", "Unresolved"][index] ?? "Progression",
+        `${getString(item, "theme")}: ${getString(item, "current_status") || "unresolved"}.`,
+      ]),
+    ),
+    ["Derived from Management Progression v1 only."],
+    firstAvailableText(
+      getRecordArray(first, "unresolved").map((item) => getString(item, "question")).filter(Boolean)[0],
+      "Outcome evidence remains incomplete.",
+    ) ?? "",
+  );
 }
 
 function buildBusinessSummaryAnswer(
@@ -1030,6 +1173,42 @@ function getBusinessModel(sources: RawSources) {
       "latest_business_view",
     ),
     "business_model",
+  );
+}
+
+function getProgressionItemsForQuestion(
+  progression: Record<string, unknown> | null | undefined,
+  questionId: string,
+) {
+  const items = getRecordArray(progression, "progression_items");
+  return items.filter((item) => {
+    const streams = getStringArray(item, "stream_types");
+    const events = getRecordArray(item, "events");
+    const roles = events.map((event) => getString(event, "role") ?? "");
+    const eventTypes = events.map((event) => getString(event, "event_type") ?? "");
+    switch (questionId) {
+      case "what-has-management-promised":
+      case "did-past-claims-come-true":
+        return streams.some((stream) => stream === "commitment" || stream === "legacy_promise") || roles.includes("commitment");
+      case "what-projects-are-underway":
+        return streams.includes("project") || eventTypes.includes("project_execution");
+      case "how-is-capacity-changing":
+        return streams.includes("capacity") || eventTypes.includes("capacity_expansion");
+      case "what-is-management-commentary-saying":
+        return streams.includes("commentary") || eventTypes.includes("commentary_change");
+      case "how-is-capital-allocated":
+        return streams.some((stream) => stream === "capital_allocation" || stream === "legacy_capital_allocation") || eventTypes.includes("capital_deployment");
+      case "what-incentives-matter":
+        return true;
+      default:
+        return false;
+    }
+  });
+}
+
+function usesLegacyStreams(items: Array<Record<string, unknown>>) {
+  return items.some((item) =>
+    getStringArray(item, "stream_types").some((stream) => stream.startsWith("legacy_")),
   );
 }
 

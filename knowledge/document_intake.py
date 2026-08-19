@@ -9,6 +9,15 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import fitz
 
+try:
+    import pytesseract
+    from PIL import Image
+    PYTESSERACT_AVAILABLE = True
+except ImportError:
+    PYTESSERACT_AVAILABLE = False
+
+from knowledge.document_ownership import infer_document_reporting_period
+
 
 PDF_CLASSIFICATIONS = {
     "TEXT_PDF",
@@ -26,8 +35,7 @@ def _clean_text(text: str) -> str:
 
 def _ocr_dependencies_available() -> bool:
     return bool(
-        importlib.util.find_spec("pytesseract")
-        and importlib.util.find_spec("PIL")
+        PYTESSERACT_AVAILABLE
         and shutil.which("tesseract")
     )
 
@@ -219,6 +227,33 @@ def inspect_pdf_document(pdf_path: Path) -> PdfIntake:
     )
 
 
+def _run_ocr_on_pdf(path: Path) -> str:
+    """Run OCR on an image-only or mixed PDF using tesseract."""
+    if not PYTESSERACT_AVAILABLE or not shutil.which("tesseract"):
+        return ""
+
+    doc = fitz.open(path)
+    try:
+        ocr_texts = []
+        for page_index in range(doc.page_count):
+            page = doc.load_page(page_index)
+            # Render page to image at 300 DPI for good OCR quality
+            pix = page.get_pixmap(dpi=300)
+            img_data = pix.tobytes("png")
+            from io import BytesIO
+            img = Image.open(BytesIO(img_data))
+            # Run tesseract OCR
+            text = pytesseract.image_to_string(img)
+            if text.strip():
+                ocr_texts.append(_clean_text(text))
+        return "\n".join(ocr_texts).strip()
+    except Exception:
+        # On any OCR failure, return empty string to let the pipeline handle gracefully
+        return ""
+    finally:
+        doc.close()
+
+
 def read_document_text(path: Path, *, allow_ocr: bool = True) -> str:
     path = Path(path)
     suffix = path.suffix.lower()
@@ -236,10 +271,8 @@ def read_document_text(path: Path, *, allow_ocr: bool = True) -> str:
             doc.close()
 
     if allow_ocr and intake.ocr_available:
-        # Minimal canonical OCR architecture: the hook exists, but OCR engines are optional.
-        # When OCR dependencies are available in the environment, the caller may extend this
-        # branch to render pages and run OCR without changing pipeline behavior.
-        return ""
+        # Run actual OCR when dependencies are available
+        return _run_ocr_on_pdf(path)
 
     return ""
 
@@ -254,6 +287,7 @@ def build_document_intake_report(paths: Iterable[Path], *, allow_ocr: bool = Tru
             record = intake.to_dict()
             record["extractable_text_char_count"] = len(_clean_text(text))
             record["has_extractable_text"] = bool(_clean_text(text))
+            record["reporting_period_check"] = infer_document_reporting_period(text, filename=path.name)
             records.append(record)
         else:
             text = read_document_text(path, allow_ocr=False)
@@ -275,6 +309,7 @@ def build_document_intake_report(paths: Iterable[Path], *, allow_ocr: bool = Tru
                     "pages": [],
                     "extractable_text_char_count": len(_clean_text(text)),
                     "has_extractable_text": bool(_clean_text(text)),
+                    "reporting_period_check": infer_document_reporting_period(text, filename=path.name),
                 }
             )
 

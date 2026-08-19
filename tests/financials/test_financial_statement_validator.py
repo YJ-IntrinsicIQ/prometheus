@@ -231,6 +231,20 @@ def test_consolidated_standalone_basis_handling(tmp_path):
     assert report.basis_checked == "mixed"
 
 
+def test_unknown_plus_single_explicit_basis_is_unresolved_not_mixed(tmp_path):
+    path = tmp_path / "normalized_fundamentals.json"
+    payload = _payload()
+    for section_name in ("profit_and_loss", "balance_sheet", "cash_flow", "share_data", "corporate_actions", "shareholding_pattern"):
+        for entry in payload.get(section_name, {}).values():
+            if isinstance(entry, dict):
+                entry["basis"] = "unknown"
+    payload["balance_sheet"]["net_worth"]["basis"] = "standalone"
+    _write_json(path, payload)
+
+    report = validate_normalized_fundamentals(company="acme", year="fy25", normalized_path=path)
+    assert report.basis_checked == "unknown"
+
+
 def test_validator_flags_suspicious_ebit_source(tmp_path):
     path = tmp_path / "normalized_fundamentals.json"
     payload = _payload()

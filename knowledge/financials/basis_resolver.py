@@ -68,6 +68,16 @@ BASIS_WARNING_PATTERNS: Tuple[str, ...] = (
     "basis unknown",
 )
 
+PREFERRED_BASIS_FIELD_PATHS = {
+    "profit_and_loss.revenue",
+    "profit_and_loss.pat",
+    "balance_sheet.total_assets",
+    "balance_sheet.net_worth",
+    "balance_sheet.total_liabilities",
+    "cash_flow.cfo",
+    "cash_flow.capex",
+}
+
 FIELD_TO_TABLE_TYPE = {
     "profit_and_loss": "profit_and_loss",
     "balance_sheet": "balance_sheet",
@@ -499,7 +509,12 @@ def _table_related_evidence(
             if item.basis != strong_local[0].basis and item.score < 80:
                 rejected.append(item)
     else:
-        row_evidence.extend(item for item in document_evidence if item.score >= 55)
+        row_evidence.extend(
+            item
+            for item in document_evidence
+            if item.score >= 55
+            and item.category in {"no_subsidiary_evidence", "structural_single_basis_presence"}
+        )
 
     standalone_score = sum(item.score for item in row_evidence if item.basis == "standalone")
     consolidated_score = sum(item.score for item in row_evidence if item.basis == "consolidated")
@@ -670,11 +685,25 @@ def _apply_to_normalized(
             if resolution is None:
                 continue
             current_basis = str(entry.get("basis") or "unknown")
+            current_preferred = str(payload.get("preferred_basis") or "unknown")
+            if (
+                current_preferred in {"standalone", "consolidated"}
+                and current_basis in {"standalone", "consolidated"}
+                and current_basis != current_preferred
+            ):
+                entry["basis"] = "unknown"
+                for comparative in entry.get("comparatives", []):
+                    if isinstance(comparative, dict) and str(comparative.get("basis") or "unknown") == current_basis:
+                        comparative["basis"] = "unknown"
+                updated += 1
+                continue
             if current_basis != "unknown":
                 continue
             if resolution.resolved_basis not in {"standalone", "consolidated"}:
                 continue
             if resolution.confidence not in {"medium", "high"}:
+                continue
+            if current_preferred in {"standalone", "consolidated"} and resolution.resolved_basis != current_preferred:
                 continue
             entry["basis"] = resolution.resolved_basis
             for comparative in entry.get("comparatives", []):
@@ -684,30 +713,74 @@ def _apply_to_normalized(
             updated += 1
 
     current_preferred = str(payload.get("preferred_basis") or "unknown")
-    if (
-        current_preferred == "unknown"
-        and resolution_report.resolved_basis in {"standalone", "consolidated"}
-        and resolution_report.confidence in {"medium", "high"}
-    ):
-        payload["preferred_basis"] = resolution_report.resolved_basis
-        payload["basis_confidence"] = resolution_report.confidence
+    critical_field_bases: List[str] = []
+    for section_name, section_payload in payload.items():
+        if not isinstance(section_payload, dict):
+            continue
+        for field_name, entry in section_payload.items():
+            if not isinstance(entry, dict) or "canonical_field" not in entry:
+                continue
+            if f"{section_name}.{field_name}" not in PREFERRED_BASIS_FIELD_PATHS:
+                continue
+            if not any(
+                isinstance(entry.get(value_key), (int, float))
+                for value_key in ("value_crore", "value_per_share", "value_shares")
+            ) and not entry.get("value_original"):
+                continue
+            basis = str(entry.get("basis") or "unknown")
+            if basis in {"standalone", "consolidated", "unknown"}:
+                critical_field_bases.append(basis)
+
+    explicit_critical_bases = sorted({basis for basis in critical_field_bases if basis in {"standalone", "consolidated"}})
+    has_unknown_critical = "unknown" in critical_field_bases
+    field_preferred_basis = current_preferred
+    field_basis_confidence = str(payload.get("basis_confidence") or "low")
+    field_reason = ""
+    if len(explicit_critical_bases) == 1 and not has_unknown_critical:
+        field_preferred_basis = explicit_critical_bases[0]
+        field_basis_confidence = "high"
+        field_reason = "selected from resolved critical field-level basis ownership"
+    elif len(explicit_critical_bases) > 1:
+        field_preferred_basis = "mixed"
+        field_basis_confidence = "low"
+        field_reason = "critical fields resolve to more than one explicit reporting basis"
+    elif has_unknown_critical:
+        field_preferred_basis = "unknown"
+        field_basis_confidence = "low"
+        if explicit_critical_bases:
+            field_reason = "some critical fields resolved, but other critical fields remain unknown"
+        else:
+            field_reason = "critical field-level basis ownership remains unresolved"
+    else:
+        field_preferred_basis = "unknown"
+        field_basis_confidence = "low"
+        field_reason = "no populated critical field has explicit basis ownership"
+
+    if field_preferred_basis in {"mixed", "standalone", "consolidated", "unknown"}:
+        payload["preferred_basis"] = field_preferred_basis
+        payload["basis_confidence"] = field_basis_confidence
         manifest = payload.get("basis_manifest")
         if not isinstance(manifest, dict):
             manifest = {}
             payload["basis_manifest"] = manifest
-        manifest["preferred_basis"] = resolution_report.resolved_basis
-        manifest["basis_confidence"] = resolution_report.confidence
-        manifest["selected_basis_reason"] = resolution_report.reasoning
+        manifest["preferred_basis"] = field_preferred_basis
+        manifest["basis_confidence"] = field_basis_confidence
+        manifest["selected_basis_reason"] = field_reason or str(manifest.get("selected_basis_reason") or "")
         options = manifest.get("basis_options_available")
         if not isinstance(options, list):
             options = []
-        if resolution_report.resolved_basis not in options:
-            options.append(resolution_report.resolved_basis)
+        for basis in explicit_critical_bases:
+            if basis not in options:
+                options.append(basis)
         manifest["basis_options_available"] = options
         warnings = manifest.get("basis_warnings")
         if not isinstance(warnings, list):
             warnings = []
         payload["warnings"] = list(payload.get("warnings") or [])
+        if field_preferred_basis == "mixed":
+            warnings.append("critical financial fields resolve to mixed standalone/consolidated basis")
+        elif field_preferred_basis == "unknown" and has_unknown_critical:
+            warnings.append("critical financial fields include unresolved basis after financial_basis_resolution")
         manifest["basis_warnings"] = _dedupe_preserve(warnings)
 
     _write_json(normalized_path, payload)

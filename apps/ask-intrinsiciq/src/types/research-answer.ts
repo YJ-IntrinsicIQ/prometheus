@@ -36,8 +36,10 @@ export type ResearchAnswerCard = {
       label: string;
       explanation: string;
     }>;
-    cashTimingNote: string;
-    workingCapitalNote: string;
+    billingBasisNote?: string;
+    revenueRecognitionNote?: string;
+    cashTimingNote?: string;
+    workingCapitalNote?: string;
     evidenceStatus: "direct" | "derived" | "partial" | "missing" | "unreliable";
     offeringExamples?: string[];
   } | null;

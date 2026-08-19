@@ -31,6 +31,13 @@ PRIMARY_HEADING_HINTS: Dict[str, Tuple[str, ...]] = {
     "cash_flow": ("cash flow statement", "statement of cash flows"),
 }
 
+BALANCE_SHEET_SUPPORTING_SOURCE_SECTIONS = {
+    "primary_balance_sheet_statement",
+    "financial_note",
+    "share_capital_note",
+    "statement_of_changes_in_equity",
+}
+
 STOP_PHRASES = (
     "the accompanying notes are an integral part",
     "for deloitte",
@@ -44,15 +51,54 @@ PERCENT_LABEL_HINTS = ("holding", "shareholding", "pledged", "public", "promoter
 NUMBER_TOKEN_RE = re.compile(r"^[\(\[]?-?(?:\d[\d,]*)(?:\.\d+)?[\)\]]?%?$")
 NOTE_TOKEN_RE = re.compile(r"^\d{1,3}[a-z]?(?:\([^)]+\))?$", re.IGNORECASE)
 DATE_PERIOD_RE = re.compile(
-    r"(?:as at|for the year ended|year ended)\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})",
+    r"(?:as at|as on|for the year ended|year ended)\s+("
+    r"(?:[A-Za-z]+\s+\d{1,2},\s+\d{4})"
+    r"|(?:\d{1,2}[/-]\d{1,2}[/-]\d{4})"
+    r"|(?:\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+\d{4})"
+    r")",
     re.IGNORECASE,
 )
 FY_PERIOD_RE = re.compile(r"\bFY\s?(\d{2,4})\b", re.IGNORECASE)
 UNIT_WORD_RE = re.compile(r"\b(units?|shares?)\b", re.IGNORECASE)
 MONTH_ONLY_RE = re.compile(r"^(january|february|march|april|may|june|july|august|september|october|november|december)$", re.IGNORECASE)
+UNIT_HINT_CANDIDATES = (
+    "crores",
+    "crore",
+    "lakhs",
+    "lacs",
+    "lakh",
+    "millions",
+    "million",
+    "mn",
+    "billion",
+    "cr",
+    "inr",
+    "₹",
+    "rupees",
+)
 
 ROUTED_NOTE_TABLES = {
-    "share_capital": ("equity share capital", "share capital", "authorised share capital", "issued subscribed"),
+    "share_capital": (
+        "equity share capital",
+        "share capital",
+        "paid up capital",
+        "paid-up capital",
+        "authorised share capital",
+        "issued subscribed",
+    ),
+    "balance_sheet": (
+        "total assets",
+        "total liabilities",
+        "net worth",
+        "equity share capital",
+        "paid up capital",
+        "reserves and surplus",
+        "capital employed",
+        "segment assets",
+        "segment liabilities",
+        "unallocated assets",
+        "unallocated liabilities",
+    ),
     "eps": ("earnings per share", "eps", "basic earnings per share", "diluted earnings per share", "nominal value of equity shares"),
     "dividend": ("dividend", "dividend per share", "final dividend", "interim dividend"),
     "shareholding_pattern": ("shareholding pattern", "distribution of shareholding", "promoters", "public shareholding"),
@@ -108,14 +154,25 @@ def _basis_from_candidate(*, text: str, item: Any) -> str:
     return basis
 
 
+def _unit_token_present(text: str, candidate: str) -> bool:
+    if candidate == "₹":
+        return "₹" in text
+    escaped = re.escape(candidate)
+    if candidate in {"cr", "mn"}:
+        return bool(re.search(rf"(?<![a-z]){escaped}(?![a-z])", text))
+    if candidate == "millions":
+        return bool(re.search(r"\bmillions\b", text))
+    return bool(re.search(rf"\b{escaped}\b", text))
+
+
 def _unit_hint(text: str, table_type: str) -> str:
     lowered = text.lower()
     if "per share" in lowered or table_type == "eps":
         return "INR per share" if any(token in lowered for token in ("rs", "₹", "inr")) else "per share"
     if "number of shares" in lowered or "weighted average" in lowered or "nominal value per share" in lowered:
         return "shares"
-    if "units" in lowered:
-        return "units"
+    if re.search(r"000(?:[’']s|s)\b", lowered) or "thousand" in lowered or "thousands" in lowered:
+        return "thousands"
     explicit_unit_patterns = (
         r"all figures are in ([a-z₹.\s]+?)(?: unless| specifically| otherwise|\))",
         r"all amounts are in ([a-z₹.\s]+?)(?: unless| specifically| otherwise|\))",
@@ -126,14 +183,18 @@ def _unit_hint(text: str, table_type: str) -> str:
         if not match:
             continue
         explicit_text = match.group(1)
-        for candidate in ("crores", "crore", "cr", "lakhs", "lacs", "lakh", "million", "mn", "billion", "inr", "₹", "rupees"):
-            if candidate in explicit_text:
-                return candidate
-    for candidate in ("crores", "crore", "cr", "lakhs", "lacs", "lakh", "million", "mn", "billion", "inr", "₹", "rupees"):
-        if candidate in lowered:
-            return candidate
+        for candidate in UNIT_HINT_CANDIDATES:
+            if _unit_token_present(explicit_text, candidate):
+                return "million" if candidate == "millions" else candidate
+    for candidate in UNIT_HINT_CANDIDATES:
+        if _unit_token_present(lowered, candidate):
+            return "million" if candidate == "millions" else candidate
     if "%" in text or (table_type == "shareholding_pattern" and any(hint in lowered for hint in PERCENT_LABEL_HINTS)):
         return "%"
+    if re.search(r"\b(?:number of|no\.?\s*of|count of|in)\s+units?\b", lowered) or re.search(
+        r"\bunits?\s+(?:held|sold|produced|available)\b", lowered
+    ):
+        return "units"
     return ""
 
 
@@ -142,6 +203,49 @@ def _currency_hint(text: str) -> str:
     if "inr" in lowered or "₹" in text or "rupees" in lowered or "rs." in lowered or "rs " in lowered:
         return "INR"
     return ""
+
+
+def _row_specific_unit_hint(
+    *,
+    destination_table_type: str,
+    source_section_type: str,
+    table_text: str,
+    line_item_raw: str,
+    value_raw: str,
+    default_unit_hint: str,
+    has_column_plan: bool,
+) -> str:
+    lowered_label = line_item_raw.lower()
+    lowered_table = table_text.lower()
+    lowered_unit = default_unit_hint.lower()
+    numeric = _parse_numeric_token(value_raw)
+    scale_units = {"crores", "crore", "cr", "lakhs", "lacs", "lakh", "million", "mn", "billion"}
+    capital_summary_labels = {
+        "paid up capital",
+        "paid-up capital",
+        "issued, subscribed and called up capital",
+        "issued subscribed and called up capital",
+    }
+
+    if (
+        destination_table_type in {"balance_sheet", "share_capital"}
+        and any(token in lowered_label for token in capital_summary_labels)
+        and numeric is not None
+        and (lowered_unit in scale_units or lowered_unit in {"", "units", "unknown"})
+        and abs(numeric) >= 1_000_000_000
+    ):
+        return "INR"
+
+    if (
+        destination_table_type == "share_capital"
+        and source_section_type == "share_capital_note"
+        and not has_column_plan
+        and "lakhs" in lowered_table
+        and lowered_unit in {"crores", "crore", "cr"}
+    ):
+        return "lakhs"
+
+    return default_unit_hint
 
 
 def _table_score(text: str, table_type: str, source_section_type: str) -> int:
@@ -300,6 +404,23 @@ def _should_skip_label(label: str, table_type: str) -> bool:
     return False
 
 
+def _capital_summary_row_is_salvageable(label: str, values: Sequence[str], table_type: str) -> bool:
+    if table_type not in {"balance_sheet", "share_capital"}:
+        return False
+    normalized = _clean_text(label).lower()
+    if not any(
+        token in normalized
+        for token in (
+            "paid up capital",
+            "paid-up capital",
+            "issued, subscribed and called up capital",
+            "issued subscribed and called up capital",
+        )
+    ):
+        return False
+    return any(_is_number_token(value) for value in values)
+
+
 def _normalize_label(label: str) -> str:
     cleaned = _clean_text(label)
     cleaned = re.sub(
@@ -349,6 +470,8 @@ def _split_rows(table_text: str, table_type: str) -> Tuple[List[Tuple[str, List[
                 index += 1
             if len(values) >= expected_values and _row_values_look_table_like(values):
                 rows.append((label, values))
+            elif _capital_summary_row_is_salvageable(label, values, table_type):
+                rows.append((label, values))
             else:
                 rejected_labels.append(label)
                 warnings.append(f"table appears truncated near line item: {label}")
@@ -373,6 +496,8 @@ def _split_rows(table_text: str, table_type: str) -> Tuple[List[Tuple[str, List[
                 values.append(tokens[index])
                 index += 1
             if len(values) >= expected_values and _row_values_look_table_like(values):
+                rows.append((label, values))
+            elif _capital_summary_row_is_salvageable(label, values, table_type):
                 rows.append((label, values))
             else:
                 rejected_labels.append(label)
@@ -440,7 +565,7 @@ def _share_capital_column_plan(table_text: str, value_count: int) -> Optional[Li
     plan: List[Tuple[str, str, str]] = []
     for period in periods[:group_count]:
         plan.append((period, "share_count", "shares"))
-        plan.append((period, "monetary", ""))
+        plan.append((period, "monetary", "crores"))
     return plan
 
 
@@ -473,17 +598,17 @@ def _route_candidate(source_section_type: str, text: str) -> Optional[Tuple[str,
     if source_section_type in {"share_capital_note", "eps_note", "dividend_note", "shareholding_note", "corporate_action_note", "financial_note"}:
         inferred = _infer_note_table_type(text)
         if inferred:
-            return (inferred, source_section_type, False)
+            return (inferred, inferred, False)
         if source_section_type == "share_capital_note":
-            return ("share_capital", source_section_type, False)
+            return ("share_capital", "share_capital", False)
         if source_section_type == "eps_note":
-            return ("eps", source_section_type, False)
+            return ("eps", "eps", False)
         if source_section_type == "dividend_note":
-            return ("dividend", source_section_type, False)
+            return ("dividend", "dividend", False)
         if source_section_type == "shareholding_note":
-            return ("shareholding_pattern", source_section_type, False)
+            return ("shareholding_pattern", "shareholding_pattern", False)
         if source_section_type == "corporate_action_note":
-            return ("corporate_actions", source_section_type, False)
+            return ("corporate_actions", "corporate_actions", False)
     return None
 
 
@@ -500,7 +625,7 @@ def _detect_value_type(*, table_type: str, line_item_raw: str, raw_value: str, u
         return "unit_count"
     if re.search(r"\bratio[s]?\b", lowered_label):
         return "ratio"
-    if lowered_unit in {"crores", "crore", "cr", "lakhs", "lacs", "lakh", "million", "mn", "billion", "inr", "₹", "rupees"}:
+    if lowered_unit in {"crores", "crore", "cr", "thousand", "thousands", "lakhs", "lacs", "lakh", "million", "mn", "billion", "inr", "₹", "rupees"}:
         return "monetary"
     return "unknown"
 
@@ -559,11 +684,20 @@ def _build_row_objects(
                 if plan_unit_hint:
                     per_value_unit_hint = plan_unit_hint
             else:
+                per_value_unit_hint = _row_specific_unit_hint(
+                    destination_table_type=destination_table_type,
+                    source_section_type=source_section_type,
+                    table_text=table_text,
+                    line_item_raw=label,
+                    value_raw=raw_value,
+                    default_unit_hint=per_value_unit_hint,
+                    has_column_plan=bool(column_plan),
+                )
                 value_type = _detect_value_type(
                     table_type=destination_table_type,
                     line_item_raw=label,
                     raw_value=raw_value,
-                    unit_hint=unit_hint,
+                    unit_hint=per_value_unit_hint,
                 )
                 if value_type == "percentage":
                     per_value_unit_hint = "%"
@@ -643,6 +777,13 @@ def _canonical_fields_from_rows(rows: Sequence[ExtractedFinancialRow]) -> List[s
     return fields
 
 
+def _balance_sheet_equity_path_is_satisfied(matched_fields: Sequence[str]) -> bool:
+    matched = set(matched_fields)
+    if "balance_sheet.net_worth" in matched:
+        return True
+    return "balance_sheet.equity_share_capital" in matched and "balance_sheet.reserves" in matched
+
+
 def _candidate_report(
     *,
     section_name: str,
@@ -651,10 +792,17 @@ def _candidate_report(
     required_fields: Sequence[str],
 ) -> Dict[str, Any]:
     page_numbers = sorted({item.page for item in discovery_items if isinstance(item.page, int)})
+    support_sections = BALANCE_SHEET_SUPPORTING_SOURCE_SECTIONS if section_name == "primary_balance_sheet_statement" else {section_name}
     candidate_rows = [
         row
         for row in extracted_rows
-        if row.source_section_type == section_name and (not page_numbers or row.page in page_numbers)
+        if row.source_section_type in support_sections
+        and (
+            section_name != "primary_balance_sheet_statement"
+            or row.source_section_type != "primary_balance_sheet_statement"
+            or not page_numbers
+            or row.page in page_numbers
+        )
     ]
     basis = "unknown"
     if candidate_rows:
@@ -670,7 +818,14 @@ def _candidate_report(
     if candidate_rows:
         positive_signals.append(f"rows:{len(candidate_rows)}")
     matched_fields = set(_canonical_fields_from_rows(candidate_rows))
-    missing_fields = [field for field in required_fields if field not in matched_fields]
+    if section_name == "primary_balance_sheet_statement":
+        missing_fields = []
+        if "balance_sheet.total_assets" not in matched_fields:
+            missing_fields.append("balance_sheet.total_assets")
+        if not _balance_sheet_equity_path_is_satisfied(matched_fields):
+            missing_fields.append("balance_sheet.net_worth_or_equity_share_capital_and_reserves")
+    else:
+        missing_fields = [field for field in required_fields if field not in matched_fields]
     score = len(candidate_rows) * 10 + len(page_numbers) * 3 + len(matched_fields) * 5
     if basis != "unknown":
         score += 5
@@ -720,15 +875,24 @@ def build_financial_extraction_readiness(discovery: FinancialDiscoveryResult, re
         for table_type in primary_tables.values()
     }
 
-    candidate_reports = [
-        _candidate_report(
-            section_name=section_name,
-            discovery_items=discovery.sections.get(section_name, []),
-            extracted_rows=result.tables.get(primary_tables[section_name], []),
-            required_fields=required_fields,
+    candidate_reports = []
+    for section_name, required_fields in primary_requirements.items():
+        extracted_rows = result.tables.get(primary_tables[section_name], [])
+        if section_name == "primary_balance_sheet_statement":
+            extracted_rows = [
+                *result.tables.get("balance_sheet", []),
+                *result.tables.get("share_capital", []),
+                *result.tables.get("reserves", []),
+                *result.tables.get("statement_of_changes_in_equity", []),
+            ]
+        candidate_reports.append(
+            _candidate_report(
+                section_name=section_name,
+                discovery_items=discovery.sections.get(section_name, []),
+                extracted_rows=extracted_rows,
+                required_fields=required_fields,
+            )
         )
-        for section_name, required_fields in primary_requirements.items()
-    ]
 
     missing_required_metrics: List[str] = []
     blocking_reasons: List[str] = []
@@ -741,12 +905,12 @@ def build_financial_extraction_readiness(discovery: FinancialDiscoveryResult, re
             continue
         matched = set(report["matched_fields"])
         if section_name == "primary_balance_sheet_statement":
-            if not any(field in matched for field in required_fields):
+            if "balance_sheet.total_assets" not in matched:
                 missing_required_metrics.append("balance_sheet.total_assets")
                 blocking_reasons.append("primary_balance_sheet_statement: total assets missing")
-            if not any(field in matched for field in ("balance_sheet.net_worth", "balance_sheet.equity_share_capital")):
-                missing_required_metrics.append("balance_sheet.net_worth_or_equity_share_capital")
-                blocking_reasons.append("primary_balance_sheet_statement: equity / net worth missing")
+            if not _balance_sheet_equity_path_is_satisfied(matched):
+                missing_required_metrics.append("balance_sheet.net_worth_or_equity_share_capital_and_reserves")
+                blocking_reasons.append("primary_balance_sheet_statement: equity / net worth / reserves missing")
         else:
             for required_field in required_fields:
                 if required_field not in matched:

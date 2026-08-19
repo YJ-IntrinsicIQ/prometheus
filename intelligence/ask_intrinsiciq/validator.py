@@ -423,6 +423,14 @@ def validate_answer_cards_payload(
         revenue_flow = answer.get("revenue_flow")
         if revenue_flow is not None and not isinstance(revenue_flow, dict):
             errors.append(f"answer {answer_id} revenue_flow must be an object or null")
+        if isinstance(revenue_flow, dict):
+            billing_basis_note = str(revenue_flow.get("billing_basis_note") or "").strip()
+            revenue_recognition_note = str(revenue_flow.get("revenue_recognition_note") or "").strip()
+            cash_timing_note = str(revenue_flow.get("cash_timing_note") or "").strip()
+            if billing_basis_note and cash_timing_note and _normalize_semantic_note(billing_basis_note) == _normalize_semantic_note(cash_timing_note):
+                errors.append(f"answer {answer_id} revenue_flow cash_timing_note must not duplicate billing_basis_note")
+            if billing_basis_note and revenue_recognition_note and _normalize_semantic_note(billing_basis_note) == _normalize_semantic_note(revenue_recognition_note):
+                errors.append(f"answer {answer_id} revenue_flow revenue_recognition_note must not duplicate billing_basis_note")
         errors.extend(validate_question_uncertainty_alignment(answer))
         errors.extend(_validate_public_answer_consistency(answer, answer_id))
         errors.extend(_validate_public_value_strings(answer, f"answer_cards.answers[{answer_id}]"))
@@ -480,6 +488,10 @@ def _validate_public_answer_consistency(answer: Dict[str, Any], answer_id: str) 
     ):
         errors.append(f"answer {answer_id} contains stale or non-customer-facing wording")
     return errors
+
+
+def _normalize_semantic_note(value: str) -> str:
+    return " ".join(str(value or "").lower().split()).strip(" .,!?:;")
 
 
 def _looks_unresolved_like(text: str) -> bool:

@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from core.base_cleaner import BaseCleaner  # noqa: E402
+from knowledge.temporal_event_splitter import RISK_SPLITTER  # noqa: E402
 
 
 INPUT_FILE = "extracted_risks.json"
@@ -27,6 +28,19 @@ def normalize(text):
 
 class RiskCleaner(BaseCleaner):
     def clean_item(self, risk):
+        """Apply temporal event splitting for compound risk items."""
+        # First, split compound risk items
+        split_items = RISK_SPLITTER.split(risk)
+
+        # If split, return the list of split items
+        if len(split_items) > 1:
+            for item in split_items:
+                context = get_context()
+                if context is not None and not item.get("source_year"):
+                    item["source_year"] = context.year
+            return split_items
+
+        # Single item - apply existing logic
         cleaned = dict(risk)
         context = get_context()
         if context is not None and not cleaned.get("source_year"):

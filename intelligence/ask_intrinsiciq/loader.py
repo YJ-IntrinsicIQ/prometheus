@@ -10,6 +10,8 @@ from typing import Any, Dict, List
 SOURCE_REGISTRY = {
     "cim": "company_memory/cim_v1.json",
     "pcim": "company_memory/pcim_v1.json",
+    "company_model": "company_memory/company_model/company_model.json",
+    "management_progression": "company_memory/management_progression/management_progression.json",
     "financial_truth_pack": "company_memory/financials/financial_truth_pack.json",
     "financial_trends": "company_memory/financials/financial_trends.json",
     "investor_financial_modules_manifest": "company_memory/financials/investor_financial_modules/investor_financial_modules_manifest.json",
