@@ -165,6 +165,32 @@ def _committee_response(*, include_normalization: bool = True, include_disagreem
                 "dominant_tension": "Growth ambition versus balance-sheet resilience.",
             },
             "financial_committee_view": _financial_committee_view(),
+            "financial_warning_manifest": {
+                "fcf_missing": False,
+                "capex_missing": False,
+                "payables_missing": False,
+                "weighted_avg_shares_missing": False,
+                "diluted_shares_missing": True,
+                "basis_unknown": False,
+                "committee_financial_truth": {
+                    "cfo_available": True,
+                    "capex_available": True,
+                    "fcf_available": True,
+                    "owner_earnings_estimate_available": True,
+                    "conservative_fcf_available": True,
+                    "maintenance_growth_split_available": False,
+                    "maintenance_growth_split_missing": True,
+                    "working_capital_metrics_available": True,
+                    "payables_available": True,
+                    "share_count_available": True,
+                    "weighted_average_shares_available": False,
+                    "basis_status": "consolidated",
+                    "fcf_missing": False,
+                    "capex_missing": False,
+                    "owner_earnings_status": "available_derived_precision_limited",
+                    "truth_detected": True,
+                },
+            },
             "areas_of_agreement": [
                 {
                     "theme": "capex-heavy business",
@@ -419,15 +445,15 @@ def test_build_committee_synthesis_skeleton_is_deterministic():
         {
             "uncertainty_id": "graham_u001",
             "analyst": "graham",
-            "category": "financials",
-            "text": "Cash-flow evidence remains limited.",
+            "category": "management",
+            "text": "whether current capital allocation will generate acceptable incremental returns",
             "source_path": "graham_analysis.json#open_uncertainties",
         },
         {
             "uncertainty_id": "buffett_u001",
             "analyst": "buffett",
-            "category": "financials",
-            "text": "Free cash flow cannot be assessed cleanly.",
+            "category": "management",
+            "text": "can management execute reinvestment commitments and translate them to durable growth",
             "source_path": "buffett_analysis.json#financial_interpretation_limits",
         },
     ]
@@ -453,10 +479,14 @@ def test_build_committee_synthesis_skeleton_is_deterministic():
     assert skeleton["excluded_analysts"] == ["munger"]
     assert skeleton["financial_warning_manifest"]["fcf_missing"] is True
     assert skeleton["critical_unknowns"]
-    assert all(
-        item["grounding_status"] == "registry_grounded"
-        for item in skeleton["critical_unknowns"]
-    )
+    for item in skeleton["critical_unknowns"]:
+        assert "unknown" in item
+        assert "raised_by" in item
+        assert "why_it_matters" in item
+        assert "source_uncertainty_ids" in item
+        assert "evidence_limit" in item
+        assert "grounding_status" not in item
+        assert "source_path" not in item
 
 
 @pytest.mark.parametrize(
@@ -489,7 +519,11 @@ def test_normalize_known_analyst_reference_removes_unknown_values():
     assert any(repair["reason"] == "unknown_analyst_reference_removed" for repair in repairs)
 
 
-def test_committee_synthesizer_grounds_critical_unknowns_from_registry_not_llm_raised_by_variants(tmp_path, monkeypatch):
+def test_committee_synthesizer_grounds_unknowns_from_registry_not_llm_raised_by_variants(tmp_path, monkeypatch):
+    # The fixture's open_uncertainties ("X wants more cash flow evidence") are DATA_GAP text,
+    # so they land in evidence_gaps rather than critical_unknowns. The structural property
+    # being tested — that raised_by is grounded from the registry, not LLM hallucination —
+    # applies equally to evidence_gaps items.
     _write_analysis(tmp_path, "graham", _analysis_payload("graham"))
     _write_analysis(tmp_path, "buffett", _analysis_payload("buffett"))
     _write_analysis(tmp_path, "fisher", _analysis_payload("fisher"))
@@ -508,12 +542,16 @@ def test_committee_synthesizer_grounds_critical_unknowns_from_registry_not_llm_r
     )
     output_path = synthesizer.run()
     saved = json.loads(output_path.read_text(encoding="utf-8"))
-    assert set(saved["critical_unknowns"][0]["raised_by"]).issubset({"graham", "buffett", "fisher"})
-    assert saved["critical_unknowns"][0]["source_uncertainty_ids"]
-    assert saved["critical_unknowns"][0]["evidence_limit"] == "Grounded in analyst uncertainty registry."
+    # DATA_GAP unknowns land in evidence_gaps; check that field's grounding structure
+    unknown_items = saved.get("evidence_gaps") or saved.get("critical_unknowns") or []
+    assert unknown_items, "At least one unknown item must be present (in evidence_gaps or critical_unknowns)"
+    item = unknown_items[0]
+    assert set(item["raised_by"]).issubset({"graham", "buffett", "fisher"})
+    assert item["source_uncertainty_ids"]
+    assert item["evidence_limit"] == "Grounded in analyst uncertainty registry."
 
 
-def test_committee_synthesizer_ignores_unknown_llm_raised_by_when_registry_grounds_critical_unknowns(tmp_path, monkeypatch):
+def test_committee_synthesizer_ignores_unknown_llm_raised_by_when_registry_grounds_unknowns(tmp_path, monkeypatch):
     _write_analysis(tmp_path, "graham", _analysis_payload("graham"))
     _write_analysis(tmp_path, "buffett", _analysis_payload("buffett"))
     _write_analysis(tmp_path, "fisher", _analysis_payload("fisher"))
@@ -532,7 +570,10 @@ def test_committee_synthesizer_ignores_unknown_llm_raised_by_when_registry_groun
     )
     output_path = synthesizer.run()
     saved = json.loads(output_path.read_text(encoding="utf-8"))
-    assert set(saved["critical_unknowns"][0]["raised_by"]).issubset({"graham", "buffett", "fisher"})
+    unknown_items = saved.get("evidence_gaps") or saved.get("critical_unknowns") or []
+    assert unknown_items, "At least one unknown item must be present"
+    item = unknown_items[0]
+    assert set(item["raised_by"]).issubset({"graham", "buffett", "fisher"})
     diagnostics = json.loads(
         (output_path.parent / "committee_synthesis_diagnostics.json").read_text(encoding="utf-8")
     )
@@ -2089,6 +2130,8 @@ def test_committee_validator_allows_owner_earnings_limitation_when_analyst_limit
     payload["financial_committee_view"]["financial_interpretation_limits"] = [
         "Owner earnings cannot be assessed because FCF/capex data is missing."
     ]
+    payload["financial_warning_manifest"]["committee_financial_truth"]["fcf_missing"] = True
+    payload["financial_warning_manifest"]["committee_financial_truth"]["capex_missing"] = True
     graham = _analysis_payload("graham")
     graham["financial_assessment"]["financial_interpretation_limits"] = [
         "Owner earnings cannot be assessed because FCF/capex data is missing."
@@ -2124,6 +2167,8 @@ def test_committee_validator_allows_owner_earnings_limitation_from_fcf_capex_war
     payload["financial_committee_view"]["financial_interpretation_limits"] = [
         "Owner-earnings analysis is limited by missing capex and FCF."
     ]
+    payload["financial_warning_manifest"]["committee_financial_truth"]["fcf_missing"] = True
+    payload["financial_warning_manifest"]["committee_financial_truth"]["capex_missing"] = True
     graham = _analysis_payload("graham")
     graham["financial_warnings_carried_forward"] = [
         "Free cash flow is missing; FCF-based conclusions cannot be assessed.",
@@ -2165,6 +2210,8 @@ def test_committee_validator_allows_owner_earnings_limitation_from_fcf_capex_war
 def test_committee_validator_allows_owner_earnings_limitation_variants(claim):
     payload = json.loads(_committee_response())
     payload["financial_committee_view"]["financial_interpretation_limits"] = [claim]
+    payload["financial_warning_manifest"]["committee_financial_truth"]["fcf_missing"] = True
+    payload["financial_warning_manifest"]["committee_financial_truth"]["capex_missing"] = True
     graham = _analysis_payload("graham")
     graham["reasoning_limits"] = [
         "Owner earnings could not be assessed because FCF/capex is missing."
@@ -2231,6 +2278,8 @@ def test_committee_validator_allows_owner_earnings_question_or_limitation_with_m
     payload = json.loads(_committee_response())
     payload["financial_committee_view"]["investor_questions_from_financials"] = [claim]
     payload["financial_committee_view"]["financial_interpretation_limits"] = []
+    payload["financial_warning_manifest"]["committee_financial_truth"]["fcf_missing"] = True
+    payload["financial_warning_manifest"]["committee_financial_truth"]["capex_missing"] = True
     graham = _analysis_payload("graham")
     graham["financial_warnings_carried_forward"] = [
         "Free cash flow is missing; FCF-based conclusions cannot be assessed."
@@ -2354,6 +2403,8 @@ def test_committee_validator_owner_earnings_failure_diagnostic_includes_path_and
     payload["financial_committee_view"]["financial_strengths"] = [
         "Owner earnings yield is attractive."
     ]
+    payload["financial_warning_manifest"]["committee_financial_truth"]["fcf_missing"] = True
+    payload["financial_warning_manifest"]["committee_financial_truth"]["capex_missing"] = True
     graham = _analysis_payload("graham")
     graham["financial_warnings_carried_forward"] = [
         "Free cash flow is missing; FCF-based conclusions cannot be assessed.",
@@ -2419,6 +2470,7 @@ def test_committee_validator_allows_derived_owner_earnings_with_precision_limit(
             "fcf_missing": False,
             "capex_missing": False,
             "owner_earnings_status": "available_derived_precision_limited",
+            "truth_detected": True,
         },
     }
     graham = _analysis_payload("graham")
@@ -3347,7 +3399,11 @@ def test_committee_validator_rejects_fake_source_uncertainty_id():
         )
 
 
-def test_committee_validator_generates_deterministic_critical_unknowns_when_missing():
+def test_committee_validator_flags_missing_critical_unknowns_when_synthesis_omits_them():
+    """
+    Validator no longer generates critical_unknowns (ownership contract: synthesizer owns synthesis).
+    It validates grounding of what the synthesizer produced, and warns if synthesis omitted them.
+    """
     payload = _committee_payload_dict()
     payload["critical_unknowns"] = []
     parsed = validate_committee_output(
@@ -3369,9 +3425,9 @@ def test_committee_validator_generates_deterministic_critical_unknowns_when_miss
         ],
         mode="final",
     )
-    assert parsed["critical_unknowns"]
-    assert all(item["source_uncertainty_ids"] for item in parsed["critical_unknowns"])
-    assert any("critical_unknowns generated deterministically" in item for item in parsed["schema_warnings"])
+    # Validator warns about missing critical_unknowns but does not generate them
+    assert parsed["critical_unknowns"] == []
+    assert any("critical_unknowns absent from synthesis" in item for item in parsed["schema_warnings"])
 
 
 def test_committee_cleanup_canonicalizes_nested_ids_and_warning_counts(tmp_path, monkeypatch):

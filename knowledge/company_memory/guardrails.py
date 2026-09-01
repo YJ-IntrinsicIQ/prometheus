@@ -28,11 +28,112 @@ TEMPORAL_ROLE_VALUES = (
 
 COMPANY_ACTORS = {"company_management", "company_board", "company"}
 EXTERNAL_ACTORS = {"government", "regulator", "customer", "supplier", "industry", "market", "analyst", "third_party"}
-ELIGIBLE_COMMITMENT_STATEMENTS = {"explicit_commitment", "target", "guidance", "strategic_priority", "planned_action"}
+ELIGIBLE_COMMITMENT_STATEMENTS = {
+    "explicit_commitment", "target", "guidance", "strategic_priority", "planned_action", "future_action",
+}
+
+# Stable codes for quarantine reason — appear in artifact output so audits can produce distributions.
+QUARANTINE_REASON_CODES = frozenset({
+    "EXTERNAL_ACTOR",
+    "NOT_FUTURE_ORIENTED",
+    "NO_ACTIONABLE_INTENT",
+    "GENERIC_ASPIRATION",
+    "HISTORICAL_FACT",
+    "NON_INVESTOR_MATERIAL",
+    "AMBIGUOUS_ACTOR",
+    "UNCLASSIFIED_STATEMENT",
+    "OTHER",
+})
 
 
 FY_YEAR_RE = re.compile(r"\bfy(?P<year>\d{2,4})\b", re.IGNORECASE)
 YEAR_RE = re.compile(r"\b(?P<year>(?:19|20)\d{2})\b")
+
+# ── Statement-type detection patterns (generic, not sector-specific) ──────────
+
+# Gerund openers: present-participle verbs used as strategy-list bullets
+# where the company actor is implied from context.
+_GERUND_PREFIX_RE = re.compile(
+    r"^(?:targeting|building|expanding|evaluating|ramping(?:\s+up)?|increasing|strengthening"
+    r"|developing|entering|growing|investing|launching|commerciali[sz]ing"
+    r"|accelerating|deploying|scaling|capturing|diversifying|advancing"
+    r"|rolling(?:\s+out)?|driving|leveraging|establishing|implementing|creating"
+    r"|extending|broadening|deepening|continuing(?:\s+to)?|focusing|focussing"
+    r"|consolidating|integrating|transforming|delivering|executing|pursuing"
+    r"|stepping(?:\s+up)?|ramping|modernising|modernizing|digitali[sz]ing"
+    r"|streamlining|augmenting|deepening|nurturing|commissioning|acquiring"
+    r"|upgrading|completing|constructing|operationalizing|operationalising"
+    r"|enhancing|maintaining|ensuring|assessing|monitoring|sustaining|fostering"
+    r"|migrating|validating|filing|using|reducing|planning)\b",
+    re.IGNORECASE,
+)
+
+# Imperative / infinitive forms used as strategy bullets
+_IMPERATIVE_PREFIX_RE = re.compile(
+    r"^(?:enhance|build|expand|enter|develop|continue|increase|accelerate|strengthen"
+    r"|optimi[sz]e|scale|capture|deliver|execute|achieve|establish|improve"
+    r"|maximi[sz]e|diversify|leverage|unlock|drive|grow|advance|ramp(?:\s+up)?"
+    r"|invest|launch|deploy|commerciali[sz]e|consolidate|extend|broaden|deepen"
+    r"|maintain|preserve|retain|secure|gain|generate|monetize|monetise|integrate"
+    r"|modernise|modernize|digitali[sz]e|streamline|augment|identify|pursue"
+    r"|ensure|evaluate|target|use|file|plan|assess|monitor|co-process|co-develop"
+    r"|replicate|reduce|divest|migrate|validate|sustain|foster)\b",
+    re.IGNORECASE,
+)
+
+# Explicit subject-verb future action: "We will / plan to / intend to / continue to / seek to"
+_SUBJECT_FUTURE_RE = re.compile(
+    r"\b(?:we|the company|management|management team|the board|company)\s+"
+    r"(?:will|plan(?:s)?(?: to)?|intend(?:s)? to|continue(?:s)? to|seek(?:s)? to|aim(?:s)? to"
+    r"|expect(?:s)? to|propose(?:s)? to|commit(?:s)? to)\b",
+    re.IGNORECASE,
+)
+
+# Generic aspirational language — future-sounding but no trackable action/object
+_GENERIC_ASPIRATION_RE = re.compile(
+    r"\b(?:remain(?:ing)? committed to|continue to (?:remain|be)|"
+    r"(?:become|be) (?:a|the) (?:global\s+|world\s+)?(?:leader|leading|best)\b|"
+    r"pursue (?:excellence|quality|value\b)|"
+    r"(?:create|deliver|build|unlock) (?:stakeholder|shareholder) value|"
+    r"committed to (?:excellence|quality)\b|"
+    r"strive to be|dedicated to being|aspire to be|"
+    r"achieve (?:excellence|the highest)|remain at the (?:forefront|vanguard|cutting edge))\b",
+    re.IGNORECASE,
+)
+
+# Specific business-trackable nouns: presence of these makes a gerund/imperative statement trackable
+_TRACKABLE_NOUNS = frozenset({
+    "pipeline", "facility", "facilities", "plant", "plants", "platform", "platforms",
+    "capacity", "portfolio", "manufacturing", "distribution", "partnership", "partnerships",
+    "acquisition", "acquisitions", "contract", "contracts", "r&d", "research",
+    "indication", "indications", "technology", "segment", "segments", "geography", "geographies",
+    "network", "infrastructure", "capability", "capabilities",
+    "product", "products", "channel", "channels", "market", "markets",
+    "presence", "footprint", "customer", "customers",
+})
+
+
+def _has_specific_action_object(text: str) -> bool:
+    """Return True when a future-action form has a specific enough object to track over time."""
+    lower = text.lower()
+    # Named proper nouns — two+ consecutive capitalized words signal geography, brand, product
+    if re.search(r"(?<![A-Za-z])[A-Z][a-zA-Z]{2,}(?:\s+(?:and\s+)?[A-Z][a-zA-Z]{2,})+", text):
+        return True
+    # Fiscal-year or calendar-year targets
+    if re.search(r"\bfy\d{2,4}\b|\bby\s+(?:fy|\d{4})\b", lower):
+        return True
+    # Numeric quantities with business units.  Use (?!\w) not \b after the unit
+    # symbol because symbols like % are non-word chars — \b never fires after them.
+    if re.search(
+        r"\b\d+(?:[.,]\d+)?\s*(?:%|x|cr|crore|mn|million|bn|billion|units?|beds?|stores?"
+        r"|outlets?|mt|mw|kl|liter|litre|tonne|ton)(?!\w)",
+        lower,
+    ):
+        return True
+    # Trackable business nouns
+    words = set(re.findall(r"[a-z][a-z0-9&]+", lower))
+    return bool(words & _TRACKABLE_NOUNS)
+
 
 HISTORICAL_CUES = (
     "since ",
@@ -321,50 +422,186 @@ def classify_actor(text: str, *, actor_hint: Any = "", source_section: Any = "")
 
 
 def classify_statement_type(text: str, *, category_hint: Any = "", status_hint: Any = "") -> Dict[str, Any]:
+    """Classify a management statement into a semantic type.
+
+    Returns a dict with:
+      statement_type  — classification (see ELIGIBLE_COMMITMENT_STATEMENTS for eligible types)
+      future_orientation — True when the statement describes intended future action
+      actionability   — "specific" | "directional" | "generic" | "none"
+      basis           — list of evidence strings
+      confidence      — "high" | "low"
+    """
     normalized = _compact_lower(text)
     hint = _compact_lower(category_hint)
     basis: List[str] = []
     statement_type = "unknown"
-    if any(term in normalized for term in ("csr", "community", "school", "classroom", "charitable")):
+    future_orientation = False
+    actionability = "none"
+
+    # ── 1. Hard excludes — checked first regardless of future language ──────
+
+    if any(term in normalized for term in ("csr", "community", "school", "classroom", "charitable", "education system", "teacher training", "malnutrition", "child nutrition", "hunger alleviation")):
         statement_type = "CSR_activity"
         basis.append("social or community activity")
-    elif any(term in normalized for term in ("government target", "government aims", "defence production of", "annual defence production", "country intends", "ministry of defence")):
-        statement_type = "external_target" if any(term in normalized for term in ("target", "aim", "production of")) else "policy_statement"
-        basis.append("government or policy objective")
-    elif any(term in normalized for term in ("developed in ", "launched in ", "delivered in ", "successful launch", "substantial investments", "invested heavily", "built in ", "introduced in ")):
-        statement_type = "historical_accomplishment"
-        basis.append("historical accomplishment rather than a forward commitment")
-    elif any(term in normalized for term in ("industry is projected", "industry is expected", "industry is anticipated", "sector is projected", "sector anticipated", "cagr", "market is projected")):
-        statement_type = "forecast"
-        basis.append("industry or market forecast")
-    elif any(term in normalized for term in ("possess", "possesses", "has in-house", "existing facility", "existing capability", "is an ", "is a ")) and not any(term in normalized for term in ("will", "plan", "target", "intend", "aim")):
-        statement_type = "existing_capability" if any(term in normalized for term in ("capability", "facility", "in-house", "manufacturing")) else "descriptive_fact"
-        basis.append("present-tense description without future action")
-    elif any(term in normalized for term in ("during the year", "delivered", "completed", "achieved", "increased", "stood at", "attracted")) and not any(term in normalized for term in ("will", "plan", "target", "intend", "aim")):
-        statement_type = "historical_fact"
-        basis.append("completed or historical observation")
-    elif any(term in normalized for term in ("we commit", "the company commits", "committed to")):
-        statement_type = "explicit_commitment"
-        basis.append("explicit commitment language")
-    elif "guidance" in normalized or re.search(r"\btarget(?:s|ed|ing)?\s+(?:of|to|for|revenue|profit|margin|capacity|growth|large contracts|market share)", normalized):
-        statement_type = "guidance" if "guidance" in normalized else "target"
-        basis.append("explicit target or guidance")
-    elif re.search(r"\b(?:we|the company|management)\s+(?:will|plan(?:s)?(?: to)?|intend(?:s)? to)\b", normalized) or re.search(r"^(?:setting up|acquire|expand)\b", normalized):
-        statement_type = "planned_action"
-        basis.append("specific future company action")
-    elif any(term in normalized for term in ("continue to focus", "our priority", "strategic priority", "our strategy", "focus on")):
-        statement_type = "strategic_priority"
-        basis.append("continuing strategic priority")
-    elif any(term in normalized for term in ("expect", "anticipate")):
-        statement_type = "expectation"
-        basis.append("expectation without firm commitment")
-    elif any(term in normalized for term in ("aspire", "seek to", "aim to")):
-        statement_type = "aspiration"
-        basis.append("aspirational language")
     elif hint in {"csr", "community", "education"}:
         statement_type = "CSR_activity"
         basis.append("source category identifies non-core activity")
-    return {"statement_type": statement_type, "basis": basis, "confidence": "high" if basis else "low"}
+
+    # Pension/gratuity/employee-benefit mechanics — non-investor administrative
+    elif any(term in normalized for term in ("pension plan", "gratuity fund", "provident fund", "pension to employees", "contribution to the gratuity", "pension fund")):
+        statement_type = "non_investor_material"
+        basis.append("employee benefit administration")
+
+    # Government / policy statements (not the company's own action)
+    elif any(term in normalized for term in ("government target", "government aims", "defence production of", "annual defence production", "country intends", "ministry of defence")) \
+            or re.search(r"\bunder (?:the )?[a-z][a-z\s]+ scheme\b", normalized):
+        statement_type = "external_statement"
+        basis.append("government or policy objective")
+
+    # Historical accomplishments — past tense + accomplishment signals, no forward language
+    elif any(term in normalized for term in ("developed in ", "launched in ", "delivered in ", "successful launch", "substantial investments", "invested heavily", "built in ", "introduced in ")):
+        statement_type = "historical_accomplishment"
+        basis.append("historical accomplishment rather than a forward commitment")
+
+    # Historical facts (past performance) — no future language override
+    elif (
+        any(term in normalized for term in ("during the year", "stood at", "attracted", "ensured adequate", "donated", "awarded",
+                                            "has continued to improve", "has improved", "has grown", "has increased to"))
+        and not any(term in normalized for term in ("will", "plan", "target", "intend", "aim", "expect"))
+    ):
+        statement_type = "historical_fact"
+        basis.append("completed or historical observation")
+
+    # Industry/market forecasts — external, not a company commitment
+    elif any(term in normalized for term in (
+        "industry is projected", "industry is expected", "industry is anticipated",
+        "sector is projected", "sector anticipated", "cagr", "market is projected",
+        "market is expected", "likely to change", "likely to continue",
+        "are expected to grow", "industry forecast",
+    )):
+        statement_type = "forecast"
+        basis.append("industry or market forecast")
+
+    # Present-state capability descriptions without forward language
+    elif (
+        any(term in normalized for term in ("possess", "possesses", "has in-house", "existing facility", "existing capability"))
+        and not any(term in normalized for term in ("will", "plan", "target", "intend", "aim"))
+    ):
+        statement_type = "existing_capability" if any(term in normalized for term in ("capability", "facility", "in-house", "manufacturing")) else "descriptive_fact"
+        basis.append("present-tense description without future action")
+
+    # Generic aspiration — future-sounding language with no trackable object
+    elif _GENERIC_ASPIRATION_RE.search(normalized):
+        statement_type = "generic_aspiration"
+        basis.append("aspirational language without specific trackable action")
+
+    # ── 2. Genuine commitment forms ──────────────────────────────────────────
+
+    # Explicit commitment — strongest signal
+    elif any(term in normalized for term in ("we commit", "the company commits", "committed to achieving", "committed to delivering")):
+        statement_type = "explicit_commitment"
+        future_orientation = True
+        actionability = "specific"
+        basis.append("explicit commitment language")
+
+    # Guidance / numerical target
+    elif "guidance" in normalized or re.search(
+        r"\btarget(?:s|ed|ing)?\s+(?:of|to|for|revenue|profit|margin|capacity|growth|large contracts|market share)",
+        normalized,
+    ):
+        statement_type = "guidance" if "guidance" in normalized else "target"
+        future_orientation = True
+        actionability = "specific"
+        basis.append("explicit target or guidance")
+
+    # Subject-explicit future action: "We will / plan to / intend to / continue to / seek to"
+    elif _SUBJECT_FUTURE_RE.search(normalized) or re.search(r"^(?:setting up|acquire|expand)\b", normalized):
+        statement_type = "planned_action"
+        future_orientation = True
+        actionability = "specific" if _has_specific_action_object(text) else "directional"
+        basis.append("explicit subject-verb future action")
+
+    # Gerund opener — present-participle bullet implying company actor
+    elif _GERUND_PREFIX_RE.match(normalized):
+        future_orientation = True
+        if _has_specific_action_object(text):
+            statement_type = "future_action"
+            actionability = "specific"
+            basis.append("gerund-form future action with specific object")
+        else:
+            statement_type = "strategic_priority"
+            actionability = "directional"
+            basis.append("gerund-form strategic direction without specific object")
+
+    # Imperative / infinitive opener — strategy-list form
+    elif _IMPERATIVE_PREFIX_RE.match(normalized):
+        future_orientation = True
+        if _has_specific_action_object(text):
+            statement_type = "future_action"
+            actionability = "specific"
+            basis.append("imperative-form future action with specific object")
+        else:
+            statement_type = "strategic_priority"
+            actionability = "directional"
+            basis.append("imperative-form strategic direction without specific object")
+
+    # Attribution frame: "Management [identifies|emphasizes|…] [gerund/commitment]"
+    # Strip the attribution prefix and re-classify the embedded action (one level only).
+    # Only rescued when the inner text resolves to an eligible commitment type; otherwise
+    # the outer result stays unknown so a non-commitment attribution doesn't become eligible.
+    elif re.match(
+        r"^(?:management|the company|the board)\s+(?:identifies?|emphasizes?|emphasises?|highlights?|states? that|confirms?|indicates?|reaffirms?|notes? that|signals?)\s+",
+        normalized,
+    ):
+        inner = re.sub(
+            r"^(?:management|the company|the board)\s+(?:identifies?|emphasizes?|emphasises?|highlights?|states? that|confirms?|indicates?|reaffirms?|notes? that|signals?)\s+",
+            "",
+            normalized,
+        ).strip()
+        inner_result = classify_statement_type(inner, category_hint=category_hint, status_hint=status_hint)
+        if inner_result["statement_type"] in ELIGIBLE_COMMITMENT_STATEMENTS:
+            statement_type = inner_result["statement_type"]
+            future_orientation = inner_result["future_orientation"]
+            actionability = inner_result["actionability"]
+            basis = ["management attribution frame → " + b for b in inner_result["basis"]]
+        # If inner is unknown/non-commitment, leave statement_type as "unknown" — do not
+        # admit a non-commitment just because it starts with "Management identifies".
+
+    # Noun-phrase intent: "conscious/deliberate/stated effort to [verb]"
+    elif re.match(r"^(?:a\s+)?(?:conscious|deliberate|stated|proactive)\s+effort\s+to\b", normalized):
+        statement_type = "planned_action"
+        future_orientation = True
+        actionability = "specific" if _has_specific_action_object(text) else "directional"
+        basis.append("noun-phrase commitment form: effort-to-verb")
+
+    # Strategic priority — broad ongoing direction
+    elif any(term in normalized for term in ("continue to focus", "our priority", "strategic priority", "our strategy", "focus on", "our approach")):
+        statement_type = "strategic_priority"
+        future_orientation = True
+        actionability = "directional"
+        basis.append("continuing strategic priority")
+
+    # Expectation without firm commitment
+    elif any(term in normalized for term in ("expect", "anticipate")):
+        statement_type = "expectation"
+        future_orientation = True
+        actionability = "directional"
+        basis.append("expectation without firm commitment")
+
+    # Aspiration — weaker forward signal
+    elif any(term in normalized for term in ("aspire", "seek to", "aim to")):
+        statement_type = "aspiration"
+        future_orientation = True
+        actionability = "generic"
+        basis.append("aspirational language")
+
+    return {
+        "statement_type": statement_type,
+        "future_orientation": future_orientation,
+        "actionability": actionability,
+        "basis": basis,
+        "confidence": "high" if basis else "low",
+    }
 
 
 def build_semantic_quality(
@@ -376,7 +613,17 @@ def build_semantic_quality(
     eligibility: str | None = None,
     exclusion_reason: str = "",
     evidence_confidence: Any = "medium",
+    commitment_eligible: bool = False,
 ) -> Dict[str, Any]:
+    """Build the semantic quality assessment for a candidate.
+
+    commitment_eligible — when True, DEMOTE or QUARANTINE relevance outcomes do
+    not veto admission.  Both signal reduced materiality or neutral scoring, not
+    "not a real commitment."  HARD_FAIL still excludes regardless: those cases
+    have structural defects (empty text, audit boilerplate) that make the item
+    unusable.  CSR/external-actor items are already excluded upstream by setting
+    commitment_eligible=False before this function is called.
+    """
     relevance_status = str(relevance.get("status") or "unknown").lower()
     investor_relevance = {
         "core": "core", "supporting": "supporting", "contextual": "low",
@@ -388,9 +635,14 @@ def build_semantic_quality(
     if outcome == "KEEP":
         resolved_eligibility = "eligible"
     elif outcome == "DEMOTE":
-        resolved_eligibility = "quarantined"  # valid but secondary - don't promote
+        # DEMOTE means 'valid but lower materiality'.  For genuine commitments
+        # (commitment_eligible=True) lower materiality does not mean quarantine.
+        resolved_eligibility = "eligible" if commitment_eligible else "quarantined"
     elif outcome == "QUARANTINE":
-        resolved_eligibility = "quarantined"
+        # QUARANTINE can mean "neutral score" (no matching BUSINESS_TERMS) just
+        # as often as "civic/CSR content."  For genuine commitments
+        # (commitment_eligible=True) a neutral score does not mean quarantine.
+        resolved_eligibility = "eligible" if commitment_eligible else "quarantined"
     elif outcome == "HARD_FAIL":
         resolved_eligibility = "excluded"
     else:

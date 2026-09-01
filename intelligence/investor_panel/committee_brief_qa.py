@@ -134,10 +134,8 @@ class CommitteeBriefQAGate:
             raise FileNotFoundError(
                 f"committee_synthesis.json not found or unreadable: {self.synthesis_path}"
             )
-        synthesis = finalize_committee_brief_for_user(
-            synthesis,
-            synthesis.get("committee_financial_truth") if isinstance(synthesis, dict) else {},
-        )
+        # committee_synthesis.json is already finalized by the synthesizer (_finalize_payload).
+        # QA consumes the already-finalized synthesis — no re-finalization.
         brief = _load_text(self.brief_path)
         if not brief:
             raise FileNotFoundError(
@@ -470,9 +468,9 @@ class CommitteeBriefQAGate:
             or truth.get("diluted_shares_missing")
             or truth.get("maintenance_growth_split_missing")
             or truth.get("multi_year_bridge_history_incomplete")
-        ) and "no material missing financial data was recorded." in lowered:
+        ) and "no material missing or incomplete inputs were recorded" in lowered:
             contradictions.append(
-                'precision_limited_financial_data present but brief says "No material missing financial data was recorded."'
+                'precision_limited_financial_data present but brief says "No material missing or incomplete inputs were recorded."'
             )
         strengths = financial.get("financial_strengths") or []
         if len(strengths) <= 1 and (

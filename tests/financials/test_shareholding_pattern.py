@@ -72,6 +72,40 @@ def _raw_row(line_item_raw: str, current: str, previous: str | None = None, *, p
     }
 
 
+def _raw_shareholding_dual_column_row(line_item_raw: str, shares: str, percent: str, *, page: int = 4, period: str = "March 31, 2025"):
+    return {
+        "statement_type": "shareholding_pattern",
+        "table_type": "shareholding_pattern",
+        "basis": "consolidated",
+        "line_item_raw": line_item_raw,
+        "values": [
+            {
+                "period": period,
+                "value_raw": shares,
+                "unit_hint": "%",
+                "currency_hint": "",
+                "value_crore": None,
+                "value_type": "percentage",
+                "raw_number": float(shares.replace(",", "")),
+            },
+            {
+                "period": "PERIOD_COLUMN_UNRESOLVED",
+                "value_raw": percent,
+                "unit_hint": "%",
+                "currency_hint": "",
+                "value_crore": None,
+                "value_type": "percentage",
+                "raw_number": float(percent),
+            },
+        ],
+        "source_artifact": "raw_financial_tables.json",
+        "page": page,
+        "chunk_id": f"chunk-{page}",
+        "confidence": "high",
+        "warnings": [],
+    }
+
+
 def _raw_payload(rows):
     return {
         "company": "acme",
@@ -288,3 +322,64 @@ def test_pledge_data_separated_from_promoter_holding(tmp_path):
     item_map = {item.holder_category: item for item in report.items}
     assert item_map["promoter_holding_percent"].holding_percent == 57.0
     assert item_map["pledged_promoter_holding_percent"].holding_percent == 2.5
+
+
+def test_shareholding_public_subcategory_does_not_become_total_public_holding(tmp_path):
+    normalized_path = tmp_path / "normalized_fundamentals.json"
+    raw_path = tmp_path / "raw_financial_tables.json"
+    _write_json(normalized_path, {"company": "acme", "year": "fy25", "generated_at": "2026-07-17T00:00:00Z", "shareholding_pattern": {}})
+    _write_json(
+        raw_path,
+        _raw_payload(
+            [
+                _raw_shareholding_dual_column_row("No. of Shares Percentage 1. Promoters & Promoter Group", "1,307,134,535", "54.48"),
+                _raw_shareholding_dual_column_row("4. Indian Public", "135,055,794", "5.63"),
+                _raw_shareholding_dual_column_row("Total Public Shareholding (B)=(B)(1)+(B)(2)", "1,092,200,435", "45.52"),
+            ]
+        ),
+    )
+
+    report = extract_shareholding_pattern(
+        company="acme",
+        year="fy25",
+        raw_tables_path=raw_path,
+        normalized_path=normalized_path,
+    )
+    item_map = {item.holder_category: item for item in report.items}
+
+    assert item_map["promoter_holding_percent"].holding_percent == 54.48
+    assert item_map["promoter_holding_percent"].shares_held == 1_307_134_535.0
+    assert item_map["retail_holding_percent"].holding_percent == 5.63
+    assert item_map["retail_holding_percent"].shares_held == 135_055_794.0
+    assert item_map["public_holding_percent"].holding_percent == 45.52
+    assert item_map["public_holding_percent"].shares_held == 1_092_200_435.0
+    assert "categories do not sum near 100%" not in report.warnings
+
+
+def test_shareholding_derives_public_holding_from_promoter_when_total_public_row_absent(tmp_path):
+    normalized_path = tmp_path / "normalized_fundamentals.json"
+    raw_path = tmp_path / "raw_financial_tables.json"
+    _write_json(normalized_path, {"company": "acme", "year": "fy25", "generated_at": "2026-07-17T00:00:00Z", "shareholding_pattern": {}})
+    _write_json(
+        raw_path,
+        _raw_payload(
+            [
+                _raw_shareholding_dual_column_row("No. of Shares Percentage 1. Promoters & Promoter Group", "1,307,134,535", "54.48"),
+                _raw_shareholding_dual_column_row("4. Indian Public", "135,055,794", "5.63"),
+            ]
+        ),
+    )
+
+    report = extract_shareholding_pattern(
+        company="acme",
+        year="fy25",
+        raw_tables_path=raw_path,
+        normalized_path=normalized_path,
+    )
+    item_map = {item.holder_category: item for item in report.items}
+
+    assert item_map["retail_holding_percent"].holding_percent == 5.63
+    assert item_map["public_holding_percent"].holding_percent == 45.52
+    assert item_map["public_holding_percent"].confidence == "low"
+    assert "derived from promoter holding" in item_map["public_holding_percent"].warnings[0]
+    assert "categories do not sum near 100%" not in report.warnings

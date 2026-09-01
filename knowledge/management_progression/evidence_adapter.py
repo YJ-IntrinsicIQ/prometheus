@@ -17,6 +17,9 @@ DEDICATED_SOURCES = {
     "commentary_themes": "company_memory/management_commentary/commentary_themes.json",
     "capital_allocation_outcomes": "company_memory/capital_allocation_outcomes/capital_allocation_outcomes.json",
     "risk_registry": "company_memory/risks/risk_registry.json",
+    # Financial time series — used by the synthesis layer to link management actions
+    # to observable metric movements. Loaded read-only; never written back.
+    "financial_trends": "company_memory/financials/financial_trends.json",
 }
 
 LEGACY_SOURCES = {
@@ -24,6 +27,7 @@ LEGACY_SOURCES = {
     "strategy_timeline": "company_memory/multi_year/strategy_timeline.json",
     "capital_allocation_timeline": "company_memory/multi_year/capital_allocation_timeline.json",
     "risk_evolution": "company_memory/multi_year/risk_evolution.json",
+    "management_consistency": "company_memory/multi_year/management_consistency.json",
 }
 
 
@@ -115,7 +119,7 @@ def artifact_company_slug(payload: Dict[str, Any]) -> str:
     for candidate in candidates:
         value = str(candidate or "").strip().lower()
         if re.fullmatch(r"[a-z0-9_-]+", value or ""):
-            return value.replace("_", "-")
+            return value
     return ""
 
 

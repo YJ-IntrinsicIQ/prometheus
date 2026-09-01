@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import re
 import time
 from pathlib import Path
@@ -10,6 +11,7 @@ from .basis import choose_preferred_basis
 from .extraction_schema import FinancialExtractionResult
 from .line_item_mapper import MappingMatch, map_line_item
 from .mapping_registry import CANONICAL_SECTION_FIELDS
+from .schema import DerivationState, ReconciliationStatus
 from .units import convert_to_crore
 
 
@@ -28,6 +30,29 @@ SOURCE_PRIORITY = {
     "financial_note": 3,
     "statement_of_changes_in_equity": 2,
     "management_discussion_financial_summary": 1,
+}
+
+PRIMARY_SECTION_SOURCE_TYPES = {
+    "profit_and_loss": "primary_profit_and_loss_statement",
+    "balance_sheet": "primary_balance_sheet_statement",
+    "cash_flow": "primary_cash_flow_statement",
+}
+
+PRIMARY_OWNED_FIELDS = {
+    ("profit_and_loss", "revenue"),
+    ("profit_and_loss", "pat"),
+    ("profit_and_loss", "pbt"),
+    ("profit_and_loss", "tax"),
+    # total_assets is intentionally excluded: banking-format balance sheets (RBI Schedule III)
+    # carry no explicit "Total Assets" label in the primary statement — the correct value
+    # lives in a financial_note segment table.  _entry_rank already deprioritizes non-primary
+    # sources when a primary source competes, so hard-filtering here would silently drop the
+    # only correct candidate for banking companies.
+    ("balance_sheet", "total_liabilities"),
+    ("balance_sheet", "net_worth"),
+    ("cash_flow", "cfo"),
+    ("cash_flow", "cfi"),
+    ("cash_flow", "cff"),
 }
 
 _SHARES_OUTSTANDING_ALLOWED_SECTION_TYPES = {
@@ -81,6 +106,10 @@ _DILUTED_SHARES_ALLOWED_LABEL_TOKENS = (
     "diluted weighted average shares",
     "number of shares used for diluted eps",
     "number of shares used in diluted eps calculation",
+    "weighted average number of shares used in computing diluted earnings per share",
+    "weighted average number of shares used for diluted earnings per share",
+    "weighted average number of shares used in computing basic and diluted earnings per share",
+    "weighted average number of shares used for basic and diluted earnings per share",
 )
 
 _FACE_VALUE_ALLOWED_SECTION_TYPES = {
@@ -144,6 +173,15 @@ def _empty_entry(field_name: str) -> Dict[str, Any]:
         "source_section_type": "",
         "table_confidence": "missing",
         "is_primary_statement": False,
+        # Derivation tracking (new fields for canonical metric resolution)
+        "derivation_state": None,  # EXPLICIT, DERIVED_FROM_LINKED_PRIMARY_SCHEDULES, UNAVAILABLE
+        "derivation_formula": "",
+        "derivation_inputs": {},
+        "derivation_source_pages": [],
+        "derivation_source_artifacts": [],
+        "reconciliation_status": None,  # PASS, FAIL, UNRECONCILED
+        "reconciliation_reference_value": None,
+        "reconciliation_tolerance_crore": None,
     }
 
 
@@ -176,7 +214,9 @@ _PAYABLES_OTHER_TOKENS = (
 
 _PAYABLES_DIRECT_TOKENS = (
     "trade payables",
+    "trade payable",
     "total trade payables",
+    "total trade payable",
     "accounts payable",
     "supplier payables",
     "dues to suppliers",
@@ -204,6 +244,31 @@ def _entry_has_value(entry: Dict[str, Any]) -> bool:
     return entry.get("value_original") not in (None, "", [])
 
 
+def _is_primary_unknown_basis_entry(entry: Dict[str, Any], *, section_name: str) -> bool:
+    expected_source = PRIMARY_SECTION_SOURCE_TYPES.get(section_name)
+    return (
+        _entry_has_value(entry)
+        and str(entry.get("basis") or "unknown") == "unknown"
+        and str(entry.get("source_section_type") or "") == expected_source
+        and bool(entry.get("is_primary_statement", False))
+    )
+
+
+def _has_explicit_cash_flow_basis_conflict(
+    *,
+    basis_views: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]],
+    preferred_basis: str,
+    field_name: str,
+) -> bool:
+    alternate_basis = "standalone" if preferred_basis == "consolidated" else "consolidated"
+    alternate_entry = (
+        basis_views.get(alternate_basis, {})
+        .get("cash_flow", {})
+        .get(field_name, _empty_entry(field_name))
+    )
+    return _entry_has_value(alternate_entry)
+
+
 def _build_preferred_sections(
     *,
     basis_views: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]],
@@ -214,12 +279,33 @@ def _build_preferred_sections(
     selection_records: List[Dict[str, Any]] = []
 
     for section_name, field_names in CANONICAL_SECTION_FIELDS.items():
+        # Determine whether the preferred_basis bucket has ANY populated entry for this
+        # section.  When it has none (e.g. all balance-sheet rows carry basis="unknown"
+        # because the extractor could not detect consolidated/standalone), every field in
+        # the section should fall back to the "unknown" bucket rather than be left empty
+        # (which would trigger a RuntimeError downstream for mandatory fields).
+        # Cash-flow is excluded here because it has its own targeted promotion path
+        # below that re-labels the basis correctly.
+        preferred_section_entries = basis_views.get(preferred_basis, {}).get(section_name, {})
+        preferred_section_has_data = any(
+            _entry_has_value(preferred_section_entries.get(f, _empty_entry(f)))
+            for f in field_names
+        )
+
         for field_name in field_names:
             preferred_entry = basis_views.get(preferred_basis, {}).get(section_name, {}).get(field_name, _empty_entry(field_name))
             selected_entry = preferred_entry
             selected_basis = preferred_basis if _entry_has_value(preferred_entry) else ""
 
-            if not _entry_has_value(selected_entry):
+            # Fall back to the "unknown" bucket when:
+            #   (a) preferred_basis is already "unknown" (direct match), OR
+            #   (b) the entire section is absent from the preferred bucket AND the
+            #       section is not cash_flow (cash_flow has its own promotion path).
+            _section_level_unknown_fallback = (
+                preferred_basis == "unknown"
+                or (not preferred_section_has_data and section_name != "cash_flow")
+            )
+            if not _entry_has_value(selected_entry) and _section_level_unknown_fallback:
                 unknown_entry = basis_views.get("unknown", {}).get(section_name, {}).get(field_name, _empty_entry(field_name))
                 if _entry_has_value(unknown_entry):
                     selected_entry = unknown_entry
@@ -238,6 +324,31 @@ def _build_preferred_sections(
                     basis_warnings.append(
                         f"{section_name}.{field_name} is available only in {alternate_basis} basis and was not promoted into preferred {preferred_basis} view"
                     )
+                elif section_name == "cash_flow":
+                    unknown_entry = (
+                        basis_views.get("unknown", {})
+                        .get(section_name, {})
+                        .get(field_name, _empty_entry(field_name))
+                    )
+                    if (
+                        _is_primary_unknown_basis_entry(unknown_entry, section_name=section_name)
+                        and not _has_explicit_cash_flow_basis_conflict(
+                            basis_views=basis_views,
+                            preferred_basis=preferred_basis,
+                            field_name=field_name,
+                        )
+                    ):
+                        selected_entry = copy.deepcopy(unknown_entry)
+                        selected_entry["basis"] = preferred_basis
+                        selected_basis = preferred_basis
+                        warning = (
+                            f"{section_name}.{field_name} inherited preferred {preferred_basis} basis "
+                            "from a primary cash-flow statement whose basis was not explicitly labelled"
+                        )
+                        entry_warnings = selected_entry.setdefault("warnings", [])
+                        if warning not in entry_warnings:
+                            entry_warnings.append(warning)
+                        basis_warnings.append(warning)
 
             preferred_sections[section_name][field_name] = selected_entry
             available_in = [
@@ -266,6 +377,69 @@ def _load_json(path: Path) -> Any:
 
 def _load_raw_financials(path: Path) -> FinancialExtractionResult:
     return FinancialExtractionResult.from_dict(_load_json(path))
+
+
+def _cash_flow_availability(
+    *,
+    preferred_sections: Dict[str, Dict[str, Dict[str, Any]]],
+    raw: FinancialExtractionResult,
+) -> Dict[str, Any]:
+    cash_flow = preferred_sections.get("cash_flow", {})
+    explicit_fields: List[str] = []
+    derived_fields: List[str] = []
+    source_pages: List[int] = []
+    source_artifacts: List[str] = []
+
+    for field_name, entry in cash_flow.items():
+        if not isinstance(entry, dict) or not _entry_has_value(entry):
+            continue
+        if bool(entry.get("derived", False)):
+            derived_fields.append(field_name)
+        else:
+            explicit_fields.append(field_name)
+        if isinstance(entry.get("source_page"), int):
+            source_pages.append(entry["source_page"])
+        if str(entry.get("source_artifact") or ""):
+            source_artifacts.append(str(entry["source_artifact"]))
+
+    primary_cash_rows = [
+        row
+        for row in raw.tables.get("cash_flow", [])
+        if row.values
+        and row.source_section_type == "primary_cash_flow_statement"
+        and row.is_primary_statement
+    ]
+
+    if explicit_fields:
+        status = "EXPLICIT"
+        reason = "cash-flow facts were mapped from extracted cash-flow statement rows"
+    elif derived_fields:
+        status = "DERIVED"
+        reason = "cash-flow facts were derived from governed inputs"
+    elif primary_cash_rows:
+        status = "UNAVAILABLE"
+        reason = "primary cash-flow statement rows were extracted but no canonical cash-flow facts survived normalization"
+    else:
+        status = "UNAVAILABLE"
+        reason = "no usable published cash-flow statement rows were available to normalization"
+
+    basis = next(
+        (
+            str(entry.get("basis") or "unknown")
+            for entry in cash_flow.values()
+            if isinstance(entry, dict) and _entry_has_value(entry)
+        ),
+        "unknown",
+    )
+    return {
+        "status": status,
+        "basis": basis,
+        "explicit_fields": sorted(set(explicit_fields)),
+        "derived_fields": sorted(set(derived_fields)),
+        "source_pages": sorted(set(source_pages)),
+        "source_artifacts": sorted(set(source_artifacts)),
+        "reason": reason,
+    }
 
 
 def _fy_year_from_slug(year: str) -> Optional[str]:
@@ -608,7 +782,25 @@ def _filtered_values_for_field(
         if filtered:
             return filtered
         unit_filtered = [item for item in values if str(item.get("unit_hint", "") or "").lower() == "shares"]
-        return unit_filtered or filtered
+        if unit_filtered:
+            return unit_filtered
+        normalized_label = _normalize_label(line_item_raw)
+        if (
+            table_type == "eps"
+            and field_name in {"weighted_avg_shares", "diluted_shares"}
+            and (
+                _weighted_avg_shares_source_allowed(
+                    {"source_section_type": "eps", "line_item_raw": line_item_raw}
+                )
+                if field_name == "weighted_avg_shares"
+                else _diluted_shares_source_allowed(
+                    {"source_section_type": "eps", "line_item_raw": line_item_raw}
+                )
+            )
+            and "per share" not in normalized_label.replace("earnings per share", "")
+        ):
+            return values
+        return filtered
     if field_name in {"promoter_holding", "pledged_promoter_holding", "fii_holding", "dii_holding", "mutual_fund_holding", "public_holding"}:
         filtered = [item for item in values if str(item.get("value_type", "") or "") == "percentage"]
         return filtered or values
@@ -617,9 +809,16 @@ def _filtered_values_for_field(
         return monetary_values
     if field_name == "revenue":
         normalized_line_item = _normalize_label(line_item_raw)
+        # Accept standard revenue tokens OR banking schedule tokens (Schedule 13: Interest Earned)
         if not any(
             token in normalized_line_item
-            for token in ("revenue from operations", "revenue", "income from operations", "total operating revenue")
+            for token in (
+                "revenue from operations", "revenue", "income from operations", "total operating revenue",
+                # Banking P&L (RBI Schedule III - Schedule 13) tokens
+                "interest earned", "income interest earned", "interest income", "interest on advances",
+                "interest on loans", "interest on investments", "income on investments",
+                "interest discount on advance bills", "interest earned i", "ii income on investments",
+            )
         ):
             return []
         revenue_like_values = [
@@ -798,7 +997,7 @@ def _build_normalized_entry(
     return entry
 
 
-def _entry_rank(entry: Dict[str, Any], target_year: str) -> Tuple[int, int, int, int, int, int, int, int, float]:
+def _entry_rank(entry: Dict[str, Any], target_year: str) -> Tuple[int, int, int, int, int, int, int, int, int, float]:
     tax_specificity = 0
     schedule_specificity = 0
     pat_specificity = 0
@@ -806,6 +1005,24 @@ def _entry_rank(entry: Dict[str, Any], target_year: str) -> Tuple[int, int, int,
     canonical_field = str(entry.get("canonical_field", "") or "")
     statement_type = str(entry.get("statement_type", "") or "")
     source_section_type = str(entry.get("source_section_type", "") or "")
+    is_primary = bool(entry.get("is_primary_statement", False))
+
+    # PRIMARY STATEMENT DOMINANCE: Strongly prefer primary statement sources
+    # for canonical metrics to prevent note-table contamination
+    primary_statement_bonus = 0
+    wrong_scope_penalty = 0
+
+    if is_primary:
+        primary_statement_bonus = 100  # Massive boost for primary statement sources
+    else:
+        # Penalize note-table fallback for key canonical fields when primary statement exists
+        if canonical_field in {
+            "total_assets", "net_worth", "equity_share_capital", "reserves", "total_liabilities",
+            "revenue", "pat", "pbt", "tax", "ebit", "ebitda", "finance_cost", "non_controlling_interests",
+            "cfo", "capex", "fcf"
+        }:
+            wrong_scope_penalty = -50  # Strong penalty for wrong-scope sources on canonical fields
+
     if canonical_field == "reserves":
         if any(token in normalized_line_item for token in ("total i ii iii iv v", "total equity", "net worth")):
             schedule_specificity = 3
@@ -818,7 +1035,8 @@ def _entry_rank(entry: Dict[str, Any], target_year: str) -> Tuple[int, int, int,
             schedule_specificity = 1
     if canonical_field == "tax":
         # Semantic ranking for tax: prefer explicit total tax expense in primary P&L
-        # Reject cash_flow tax_paid, tax_adjustment; reject balance_sheet deferred tax / tax expenses
+        # Cash flow tax_adjustment is a bridge row for P&L tax (penalize less than tax_paid)
+        # Balance sheet tax expenses / deferred tax should rank lowest
         if statement_type == "profit_and_loss":
             if any(
                 token in normalized_line_item
@@ -837,13 +1055,31 @@ def _entry_rank(entry: Dict[str, Any], target_year: str) -> Tuple[int, int, int,
             else:
                 tax_specificity = 0
         elif statement_type == "cash_flow":
-            # Cash flow tax_paid / tax_adjustment should rank lowest
-            if any(token in normalized_line_item for token in ("tax paid", "tax adjustment", "taxes paid", "income taxes paid")):
-                tax_specificity = -10  # Strongly penalize cash_flow tax entries for P&L tax field
+            # Cash flow tax_paid should rank lowest; tax_adjustment is a bridge row for P&L tax
+            if any(token in normalized_line_item for token in ("tax paid", "taxes paid", "income taxes paid")):
+                tax_specificity = -10  # Strongly penalize tax_paid for P&L tax field
+            elif "tax adjustment" in normalized_line_item:
+                tax_specificity = -5  # Less penalized bridge row (cash_flow tax_adjustment links to P&L tax)
         elif statement_type == "balance_sheet":
-            # Balance sheet tax expenses / deferred tax should rank low
+            # Balance sheet tax expenses / deferred tax should rank lowest
             if any(token in normalized_line_item for token in ("deferred tax", "tax expense", "tax expenses")):
                 tax_specificity = -10  # Strongly penalize balance_sheet tax entries for P&L tax field
+    # NCI semantic specificity: prioritize explicit non-controlling interests line
+    if canonical_field == "non_controlling_interests":
+        # Tier 1: Explicit NCI labels in primary P&L with Roman numeral (main P&L flow)
+        if any(token in normalized_line_item for token in (
+            "non controlling interests", "non-controlling interests", "minority interest", "minority interests",
+        )) and "before" not in normalized_line_item and str(entry.get("statement_type", "")) == "profit_and_loss":
+            # Check for Roman numeral prefix (i, ii, iii, iv, v, vi, vii, viii, ix, x, xi, xii, xiii, xiv)
+            # After _normalize_label, Roman numerals appear as 'xii', 'xiii', etc. without parentheses
+            if re.match(r'^[ivx]+', normalized_line_item.strip()):
+                schedule_specificity = 4
+            else:
+                schedule_specificity = 3
+        # Tier 2: Explicit but with "before" (intermediate calc) - penalize
+        elif "before" in normalized_line_item and "non controlling" in normalized_line_item:
+            schedule_specificity = -10
+
     # PAT semantic specificity: prioritize true PAT over related profit fields
     if canonical_field == "pat":
         # Tier 1: Explicit PAT labels in primary P&L
@@ -865,8 +1101,22 @@ def _entry_rank(entry: Dict[str, Any], target_year: str) -> Tuple[int, int, int,
         # Tier 4: Generic profit labels (lower priority)
         elif "profit" in normalized_line_item:
             pat_specificity = 1
+
+    # Total Assets: strongly prefer primary balance sheet "Total Assets" row
+    if canonical_field == "total_assets":
+        if is_primary and "total assets" in normalized_line_item:
+            schedule_specificity = 5  # Maximum for primary BS Total Assets
+        elif not is_primary and "total assets" in normalized_line_item:
+            # Note table with "Total Assets" (e.g., Business Combinations note) - heavily penalize
+            wrong_scope_penalty = -80
+
+    # CFO: strongly prefer primary cash flow "Net cash from operating activities"
+    if canonical_field == "cfo":
+        if is_primary and ("net cash generated from operating" in normalized_line_item or "net cash from operating" in normalized_line_item):
+            schedule_specificity = 5
+
     return (
-        1 if entry.get("is_primary_statement") else 0,
+        primary_statement_bonus + (1 if is_primary else 0),
         SOURCE_PRIORITY.get(str(entry.get("source_section_type", "")), 0),
         BASIS_ORDER.get(entry.get("basis", "unknown"), 0),
         schedule_specificity,
@@ -874,6 +1124,7 @@ def _entry_rank(entry: Dict[str, Any], target_year: str) -> Tuple[int, int, int,
         _period_match_score(str(entry.get("period", "")), target_year),
         pat_specificity,
         CONFIDENCE_ORDER.get(str(entry.get("table_confidence", entry.get("confidence", "low"))), 0),
+        wrong_scope_penalty,
         _entry_value_magnitude(entry),
     )
 
@@ -885,6 +1136,47 @@ def _choose_best(entries: Iterable[Dict[str, Any]], target_year: str) -> Dict[st
 def _append_if_missing(items: List[str], value: str) -> None:
     if value and value not in items:
         items.append(value)
+
+
+def _primary_statement_basis_available(raw: FinancialExtractionResult) -> set[Tuple[str, str]]:
+    available: set[Tuple[str, str]] = set()
+    for table_type, rows in raw.tables.items():
+        source_section = PRIMARY_SECTION_SOURCE_TYPES.get(table_type)
+        if not source_section:
+            continue
+        for row_obj in rows:
+            row = row_obj.to_dict()
+            if (
+                row.get("source_section_type") == source_section
+                and bool(row.get("is_primary_statement", False))
+                and row.get("basis") in {"consolidated", "standalone", "unknown"}
+            ):
+                available.add((table_type, str(row.get("basis") or "unknown")))
+    return available
+
+
+def _is_wrong_scope_primary_metric_fallback(
+    *,
+    row: Dict[str, Any],
+    section_name: str,
+    field_name: str,
+    primary_statement_bases: set[Tuple[str, str]],
+) -> bool:
+    if (section_name, field_name) not in PRIMARY_OWNED_FIELDS:
+        return False
+    expected_source = PRIMARY_SECTION_SOURCE_TYPES.get(section_name)
+    if not expected_source:
+        return False
+    # Only apply wrong-scope check for rows from the same table_type as the section.
+    # Cross-table mappings (e.g., balance_sheet row -> profit_and_loss field) are valid fallbacks
+    # when the primary statement has no data for that field.
+    row_table_type = row.get("table_type", "")
+    if row_table_type != section_name:
+        return False
+    if row.get("source_section_type") == expected_source and bool(row.get("is_primary_statement", False)):
+        return False
+    basis = str(row.get("basis") or "unknown")
+    return (section_name, basis) in primary_statement_bases
 
 
 def _choose_entry_for_period(entries: List[Dict[str, Any]], period: str) -> Optional[Dict[str, Any]]:
@@ -1039,6 +1331,9 @@ def _derived_entry(
     inputs_used: Dict[str, Any],
     comparatives: List[Dict[str, Any]],
     warnings: Optional[List[str]] = None,
+    derivation_state: str = "DERIVED_FROM_LINKED_PRIMARY_SCHEDULES",
+    derivation_source_pages: Optional[List[int]] = None,
+    derivation_source_artifacts: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     entry = _empty_entry(field_name)
     entry.update(
@@ -1056,6 +1351,9 @@ def _derived_entry(
             "derived": True,
             "formula": formula,
             "inputs_used": dict(inputs_used),
+            "derivation_state": derivation_state,
+            "derivation_source_pages": derivation_source_pages or [],
+            "derivation_source_artifacts": derivation_source_artifacts or [],
         }
     )
     entry["current"] = {
@@ -1155,6 +1453,190 @@ def _apply_derived_fallbacks(preferred_sections: Dict[str, Any]) -> None:
             ),
         )
 
+    if (
+        fcf_entry.get("value_crore") is None
+        and isinstance(cfo_entry.get("value_crore"), (int, float))
+        and isinstance(capex_entry.get("value_crore"), (int, float))
+    ):
+        fcf_value, fcf_warnings = _derive_fcf_value(
+            float(cfo_entry["value_crore"]),
+            float(capex_entry["value_crore"]),
+            sign_convention=str(capex_entry.get("sign_convention") or ""),
+        )
+        cash_flow["fcf"] = _derived_entry(
+            field_name="fcf",
+            current_value=round(fcf_value, 4),
+            period=str(cfo_entry.get("period") or capex_entry.get("period") or ""),
+            basis=str(cfo_entry.get("basis") or capex_entry.get("basis") or "unknown"),
+            source_page=cfo_entry.get("source_page") or capex_entry.get("source_page"),
+            source_artifact=str(cfo_entry.get("source_artifact") or capex_entry.get("source_artifact") or ""),
+            formula="cfo + capex (cash-flow-signed capex) or cfo - capex (positive-outflow capex)",
+            inputs_used={
+                "cfo": cfo_entry.get("value_crore"),
+                "capex": capex_entry.get("value_crore"),
+                "capex_sign_convention": capex_entry.get("sign_convention") or _capex_sign_convention(capex_entry.get("value_crore")),
+            },
+            comparatives=_build_derived_comparatives(
+                left_entry=cfo_entry,
+                right_entry=capex_entry,
+                operator="+"
+                if (capex_entry.get("sign_convention") == "cash_flow_signed" or float(capex_entry["value_crore"]) <= 0)
+                else "-",
+            ),
+            warnings=fcf_warnings,
+            derivation_state="DERIVED_FROM_CFO_AND_CAPEX",
+            derivation_source_pages=[
+                item
+                for item in [cfo_entry.get("source_page"), capex_entry.get("source_page")]
+                if item is not None
+            ],
+            derivation_source_artifacts=[
+                item
+                for item in [cfo_entry.get("source_artifact"), capex_entry.get("source_artifact")]
+                if item
+            ],
+        )
+
+    # Derive total_assets from linked primary schedules when explicit row is missing
+    # This handles distributed primary statements (e.g., banking format with Schedule 6-11)
+    _derive_total_assets_from_schedules(balance_sheet, preferred_sections)
+
+    # Derive total_liabilities from balance sheet equation when possible
+    # This should run regardless of how total_assets was obtained (explicit or derived)
+    _derive_total_liabilities_from_equation(balance_sheet)
+
+
+def _derive_total_assets_from_schedules(balance_sheet: Dict[str, Any], preferred_sections: Dict[str, Any]) -> None:
+    """
+    Derive total_assets from asset schedule components when no explicit 'Total Assets' row exists.
+
+    For banking/NBFC formats (RBI Schedule III), the main balance sheet references
+    separate schedules for each asset category. When all schedules are present and
+    reconciled, total_assets can be derived deterministically.
+
+    The component schedules are:
+    - cash_and_equivalents (Schedule 6: Cash & RBI)
+    - investments (Schedule 8: Investments)
+    - receivables/advances (Schedule 9: Advances) - mapped to receivables or a new field
+    - fixed_assets (Schedule 10: Fixed Assets)
+    - other_assets (Schedule 11: Other Assets)
+    - cwip (part of Schedule 10)
+
+    Also includes: balances_with_banks (Schedule 7) for banking entities
+    """
+    total_assets_entry = balance_sheet["total_assets"]
+
+    # Skip if already explicitly extracted FROM PRIMARY BALANCE SHEET
+    # If total_assets came from a banking schedule (e.g., schedule_7_balances_banks),
+    # it's likely a subset (merger-related), not the consolidated total.
+    # We should derive from primary balance sheet components instead.
+    source_section = total_assets_entry.get("source_section_type", "")
+    is_banking_schedule_source = source_section.startswith("schedule_") and "balance" in source_section.lower()
+    is_primary_balance_sheet = source_section == "primary_balance_sheet_statement"
+
+    if total_assets_entry.get("value_crore") is not None and not total_assets_entry.get("derived", False):
+        if is_primary_balance_sheet or not is_banking_schedule_source:
+            # Explicit value from any non-banking-schedule source is authoritative.
+            # Only continue to derive when the source is a banking sub-schedule
+            # (schedule_*_balance*) because those carry partial schedule sub-totals,
+            # not the consolidated balance-sheet total.
+            total_assets_entry["derivation_state"] = "EXPLICIT"
+            return
+
+    # Identify available asset schedule components
+    # These are the standard balance sheet asset components that map to banking schedules
+    asset_components = {
+        "cash_and_equivalents": balance_sheet.get("cash_and_equivalents"),
+        "investments": balance_sheet.get("investments"),
+        "receivables": balance_sheet.get("receivables"),  # Advances for banks
+        "fixed_assets": balance_sheet.get("fixed_assets"),
+        "cwip": balance_sheet.get("cwip"),
+        "inventories": balance_sheet.get("inventories"),
+        "other_assets": balance_sheet.get("other_assets"),  # Not in current schema but may exist
+    }
+
+    # Filter to only components with valid values
+    available_components = {}
+    for name, entry in asset_components.items():
+        if entry and isinstance(entry.get("value_crore"), (int, float)):
+            available_components[name] = entry
+
+    # Need minimum components for a meaningful derivation
+    # At minimum: cash + investments + fixed_assets + other_assets (banking core)
+    required_for_banking = {"cash_and_equivalents", "investments", "fixed_assets", "other_assets"}
+    has_core_banking = required_for_banking.issubset(available_components.keys())
+
+    # Also accept if we have receivables (advances) as a major component
+    has_advances = "receivables" in available_components
+
+    if not has_core_banking and not (has_core_banking or (has_advances and len(available_components) >= 4)):
+        # Not enough components for reliable derivation
+        total_assets_entry["derivation_state"] = "UNAVAILABLE"
+        return
+
+    # Build formula and sum components
+    formula_parts = []
+    inputs_used = {}
+    derivation_pages = []
+    derivation_artifacts = []
+
+    for name, entry in available_components.items():
+        if entry.get("value_crore") is not None:
+            formula_parts.append(name)
+            inputs_used[name] = entry.get("value_crore")
+            if entry.get("source_page") is not None:
+                derivation_pages.append(entry.get("source_page"))
+            if entry.get("source_artifact"):
+                derivation_artifacts.append(entry.get("source_artifact"))
+
+    if not formula_parts:
+        total_assets_entry["derivation_state"] = "UNAVAILABLE"
+        return
+
+    # Sum the components
+    total_value = sum(inputs_used.values())
+    formula = " + ".join(formula_parts)
+
+    # Use period and basis from the first available component
+    first_entry = available_components[formula_parts[0]]
+    period = first_entry.get("period", "")
+    basis = first_entry.get("basis", "unknown")
+    source_page = first_entry.get("source_page")
+    source_artifact = first_entry.get("source_artifact", "")
+
+    # Build comparatives if available
+    comparatives = []
+    # For simplicity, we'll skip comparative derivation for now
+    # A full implementation would align comparatives by period
+
+    # Create derived entry
+    derived_entry = _derived_entry(
+        field_name="total_assets",
+        current_value=total_value,
+        period=period,
+        basis=basis,
+        source_page=source_page,
+        source_artifact=source_artifact,
+        formula=formula,
+        inputs_used=inputs_used,
+        comparatives=comparatives,
+        warnings=[f"total_assets derived from {len(formula_parts)} linked schedule components"],
+    )
+
+    # Add derivation tracking fields
+    derived_entry["derivation_state"] = "DERIVED_FROM_LINKED_PRIMARY_SCHEDULES"
+    derived_entry["derivation_source_pages"] = list(set(derivation_pages))
+    derived_entry["derivation_source_artifacts"] = list(set(derivation_artifacts))
+
+    # Update the entry in place
+    balance_sheet["total_assets"] = derived_entry
+
+
+def _derive_total_liabilities_from_equation(balance_sheet: Dict[str, Any]) -> None:
+    """
+    Derive total_liabilities from the balance sheet equation: total_assets = total_liabilities + net_worth.
+    This should run whenever we have both total_assets and net_worth available, regardless of how they were obtained.
+    """
     total_assets_entry = balance_sheet["total_assets"]
     total_liabilities_entry = balance_sheet["total_liabilities"]
     net_worth_entry = balance_sheet["net_worth"]
@@ -1184,97 +1666,6 @@ def _apply_derived_fallbacks(preferred_sections: Dict[str, Any]) -> None:
             warnings=["total liabilities derived from the balance-sheet equation"],
         )
 
-    if ebit_entry.get("value_crore") is None and isinstance(pbt_entry.get("value_crore"), (int, float)) and isinstance(finance_entry.get("value_crore"), (int, float)):
-        current_value = float(pbt_entry["value_crore"]) + float(finance_entry["value_crore"])
-        pnl["ebit"] = _derived_entry(
-            field_name="ebit",
-            current_value=current_value,
-            period=str(pbt_entry.get("period") or finance_entry.get("period") or ""),
-            basis=str(pbt_entry.get("basis") or finance_entry.get("basis") or "unknown"),
-            source_page=pbt_entry.get("source_page") or finance_entry.get("source_page"),
-            source_artifact=str(pbt_entry.get("source_artifact") or finance_entry.get("source_artifact") or ""),
-            formula="pbt + finance_cost",
-            inputs_used={
-                "pbt": pbt_entry.get("value_crore"),
-                "finance_cost": finance_entry.get("value_crore"),
-            },
-            comparatives=_build_derived_comparatives(left_entry=pbt_entry, right_entry=finance_entry, operator="+"),
-        )
-        ebit_entry = pnl["ebit"]
-
-    if ebitda_entry.get("value_crore") is None and isinstance(ebit_entry.get("value_crore"), (int, float)) and isinstance(depreciation_entry.get("value_crore"), (int, float)):
-        current_value = float(ebit_entry["value_crore"]) + float(depreciation_entry["value_crore"])
-        pnl["ebitda"] = _derived_entry(
-            field_name="ebitda",
-            current_value=current_value,
-            period=str(ebit_entry.get("period") or depreciation_entry.get("period") or ""),
-            basis=str(ebit_entry.get("basis") or depreciation_entry.get("basis") or "unknown"),
-            source_page=ebit_entry.get("source_page") or depreciation_entry.get("source_page"),
-            source_artifact=str(ebit_entry.get("source_artifact") or depreciation_entry.get("source_artifact") or ""),
-            formula="ebit + depreciation",
-            inputs_used={
-                "ebit": ebit_entry.get("value_crore"),
-                "depreciation": depreciation_entry.get("value_crore"),
-            },
-            comparatives=_build_derived_comparatives(left_entry=ebit_entry, right_entry=depreciation_entry, operator="+"),
-        )
-
-    if (
-        fcf_entry.get("value_crore") is None
-        and isinstance(cfo_entry.get("value_crore"), (int, float))
-        and isinstance(capex_entry.get("value_crore"), (int, float))
-    ):
-        current_value, current_warnings = _derive_fcf_value(
-            float(cfo_entry["value_crore"]),
-            float(capex_entry["value_crore"]),
-            sign_convention=str(capex_entry.get("sign_convention", "") or ""),
-        )
-        comparatives: List[Dict[str, Any]] = []
-        for comparative in cfo_entry.get("comparatives", []):
-            period = str(comparative.get("period", ""))
-            if not period:
-                continue
-            capex_comparative = _choose_entry_for_period(capex_entry.get("comparatives", []), period)
-            if capex_comparative is None:
-                continue
-            cfo_value = comparative.get("value_crore")
-            capex_value = capex_comparative.get("value_crore")
-            if not isinstance(cfo_value, (int, float)) or not isinstance(capex_value, (int, float)):
-                continue
-            capex_sign_convention = str(capex_comparative.get("sign_convention", "") or "")
-            value, comparative_warnings = _derive_fcf_value(
-                float(cfo_value),
-                float(capex_value),
-                sign_convention=capex_sign_convention,
-            )
-            comparatives.append(
-                {
-                    "period": period,
-                    "value_original": f"{value:.2f}",
-                    "value_crore": round(value, 4),
-                    "source_page": comparative.get("source_page") or capex_comparative.get("source_page"),
-                    "source_artifact": comparative.get("source_artifact") or capex_comparative.get("source_artifact"),
-                    "confidence": "medium",
-                    "warnings": list(comparative_warnings),
-                }
-            )
-        cash_flow["fcf"] = _derived_entry(
-            field_name="fcf",
-            current_value=current_value,
-            period=str(cfo_entry.get("period") or capex_entry.get("period") or ""),
-            basis=str(cfo_entry.get("basis") or capex_entry.get("basis") or "unknown"),
-            source_page=cfo_entry.get("source_page") or capex_entry.get("source_page"),
-            source_artifact=str(cfo_entry.get("source_artifact") or capex_entry.get("source_artifact") or ""),
-            formula="cfo + capex (or cfo - capex when capex sign is positive outflow)",
-            inputs_used={
-                "cfo": cfo_entry.get("value_crore"),
-                "capex": capex_entry.get("value_crore"),
-                "capex_sign_convention": capex_entry.get("sign_convention"),
-            },
-            comparatives=comparatives,
-            warnings=current_warnings,
-        )
-
 
 def _validate_normalized_payload(payload: Dict[str, Any]) -> List[str]:
     errors: List[str] = []
@@ -1301,6 +1692,46 @@ def _validate_normalized_payload(payload: Dict[str, Any]) -> List[str]:
     return errors
 
 
+def _extract_published_references(raw_tables_path: Path, preferred_sections: Dict[str, Any]) -> Dict[str, float]:
+    """
+    Extract published consolidated reference values from primary financial statements.
+    Used for reconciliation validation of derived fields.
+    """
+    references = {}
+    raw = _load_raw_financials(raw_tables_path)
+
+    # Look for "TOTAL" row in primary balance sheet statement that has the grand total
+    candidate_totals = []
+    for table_type, rows in raw.tables.items():
+        if table_type != "balance_sheet":
+            continue
+        for row_obj in rows:
+            row = row_obj.to_dict()
+            source_section = row.get("source_section_type", "")
+            line_item = row.get("line_item_raw", "").strip()
+            line_lower = line_item.lower()
+
+            # Look for primary balance sheet total (not banking schedule subsets)
+            if source_section == "primary_balance_sheet_statement" or \
+               (source_section == "schedule_6_cash_rbi" and line_lower == "total"):
+                for value in row.get("values", []):
+                    if value.get("period") and isinstance(value.get("value_crore"), (int, float)):
+                        if value["value_crore"] > 1000:  # Significant total
+                            candidate_totals.append({
+                                "value_crore": value["value_crore"],
+                                "source_section": source_section,
+                                "line_item": line_item,
+                                "period": value.get("period"),
+                            })
+
+    # Pick the largest total as the grand consolidated assets figure
+    if candidate_totals:
+        best = max(candidate_totals, key=lambda x: x["value_crore"])
+        references["total_consolidated_assets"] = best["value_crore"]
+
+    return references
+
+
 def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path) -> Dict[str, Any]:
     raw = _load_raw_financials(raw_tables_path)
     target_year = _fy_year_from_slug(year) or ""
@@ -1311,6 +1742,7 @@ def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path
     candidates: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
     unmapped_rows: List[Dict[str, Any]] = []
     warnings: List[str] = []
+    primary_statement_bases = _primary_statement_basis_available(raw)
 
     for table_type, rows in raw.tables.items():
         for row_obj in rows:
@@ -1354,6 +1786,23 @@ def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path
                 )
                 continue
             for match in matches:
+                if _is_wrong_scope_primary_metric_fallback(
+                    row=row,
+                    section_name=match.canonical_section,
+                    field_name=match.canonical_field,
+                    primary_statement_bases=primary_statement_bases,
+                ):
+                    unmapped_rows.append(
+                        {
+                            "table_type": table_type,
+                            "basis": row.get("basis", "unknown"),
+                            "source_line_item": row.get("line_item_raw", ""),
+                            "source_page": row.get("page"),
+                            "source_artifact": row.get("source_artifact", ""),
+                            "reason": f"{match.canonical_section}.{match.canonical_field}_requires_primary_statement_scope",
+                        }
+                    )
+                    continue
                 filtered_values = _filtered_values_for_field(
                     match.canonical_field,
                     row_values,
@@ -1463,6 +1912,7 @@ def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path
     )
 
     _apply_derived_fallbacks(preferred_sections)
+    cash_flow_availability = _cash_flow_availability(preferred_sections=preferred_sections, raw=raw)
 
     basis_manifest = {
         "preferred_basis": preferred_basis,
@@ -1472,6 +1922,10 @@ def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path
         "field_basis_selection": field_basis_selection,
         "basis_warnings": list(basis_selection_warnings),
     }
+
+    # Extract published consolidated assets reference from primary balance sheet
+    # This is used for reconciliation validation of derived total_assets
+    published_references = _extract_published_references(raw_tables_path, preferred_sections)
 
     payload: Dict[str, Any] = {
         "company": company,
@@ -1485,12 +1939,14 @@ def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path
         "profit_and_loss": preferred_sections["profit_and_loss"],
         "balance_sheet": preferred_sections["balance_sheet"],
         "cash_flow": preferred_sections["cash_flow"],
+        "cash_flow_availability": cash_flow_availability,
         "share_data": preferred_sections["share_data"],
         "corporate_actions": preferred_sections["corporate_actions"],
         "shareholding_pattern": preferred_sections["shareholding_pattern"],
         "basis_views": basis_views,
         "unmapped_rows": unmapped_rows,
         "warnings": warnings,
+        "_published_references": published_references,
         "limitations": [
             "Financial normalization maps raw extracted rows into canonical fundamentals without using LLMs or calculating ratios.",
             "Unmapped rows are preserved for review instead of being discarded silently.",

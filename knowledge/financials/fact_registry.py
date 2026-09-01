@@ -563,6 +563,96 @@ def _add_raw_capex_classification_facts(
             )
 
 
+def _derive_fcf_ratio(
+    *,
+    metric_id: str,
+    metric_name: str,
+    unit: str,
+    formula: str,
+    fcf: "FinancialFact",
+    denominator: "FinancialFact",
+    multiplier: float = 1.0,
+    fiscal_year: str,
+) -> "FinancialFact":
+    value = round(fcf.value / denominator.value * multiplier, 4)  # type: ignore[operator]
+    usable = fcf.usable_downstream and denominator.usable_downstream
+    return FinancialFact(
+        metric_id=metric_id,
+        metric_name=metric_name,
+        fiscal_year=fiscal_year,
+        period=fiscal_year,
+        value=value,
+        unit=unit,
+        basis=fcf.basis if fcf.basis == denominator.basis else "unknown",
+        source_statement="derived_from_financial_truth_registry",
+        source_artifact="financial_truth_registry.json",
+        source_line_item=f"derived:{metric_id}",
+        source_page=None,
+        confidence="medium",
+        availability_status="present_derived" if usable else "partial",
+        derived=True,
+        formula=formula,
+        inputs_used=["fcf", denominator.metric_id],
+        warnings=["Derived from canonical FCF and normalized fundamentals; financial_ratios.json not used as input."],
+        reconciliation_status="warning",
+        usable_downstream=usable,
+        notes=["Canonical FCF-derived ratio — consistent with ratio_calculator sign contract."],
+    )
+
+
+def _derive_fcf_to_pat(facts_by_metric: Dict[str, List[FinancialFact]], fiscal_year: str) -> FinancialFact | None:
+    if facts_by_metric.get("fcf_to_pat"):
+        best = _pick_best_fact(facts_by_metric["fcf_to_pat"])
+        if best.availability_status in {"present_direct", "present_derived"}:
+            return None
+    fcf_facts = facts_by_metric.get("fcf", [])
+    pat_facts = facts_by_metric.get("pat", [])
+    if not fcf_facts or not pat_facts:
+        return None
+    fcf = _pick_best_fact(fcf_facts)
+    pat = _pick_best_fact(pat_facts)
+    if fcf.value is None or pat.value is None or pat.value == 0:
+        return None
+    if not fcf.usable_downstream or not pat.usable_downstream:
+        return None
+    return _derive_fcf_ratio(
+        metric_id="fcf_to_pat",
+        metric_name="FCF to PAT",
+        unit="x",
+        formula="fcf / pat",
+        fcf=fcf,
+        denominator=pat,
+        fiscal_year=fiscal_year,
+    )
+
+
+def _derive_fcf_margin(facts_by_metric: Dict[str, List[FinancialFact]], fiscal_year: str) -> FinancialFact | None:
+    if facts_by_metric.get("fcf_margin"):
+        best = _pick_best_fact(facts_by_metric["fcf_margin"])
+        if best.availability_status in {"present_direct", "present_derived"}:
+            return None
+    fcf_facts = facts_by_metric.get("fcf", [])
+    revenue_facts = facts_by_metric.get("revenue", [])
+    if not fcf_facts or not revenue_facts:
+        return None
+    fcf = _pick_best_fact(fcf_facts)
+    revenue = _pick_best_fact(revenue_facts)
+    if fcf.value is None or revenue.value is None or revenue.value == 0:
+        return None
+    if not fcf.usable_downstream or not revenue.usable_downstream:
+        return None
+    return _derive_fcf_ratio(
+        metric_id="fcf_margin",
+        metric_name="FCF Margin",
+        unit="%",
+        formula="fcf / revenue * 100",
+        fcf=fcf,
+        denominator=revenue,
+        multiplier=100.0,
+        fiscal_year=fiscal_year,
+    )
+
+
 def _derive_fcf_variants(facts_by_metric: Dict[str, List[FinancialFact]], fiscal_year: str) -> List[FinancialFact]:
     cfo_facts = facts_by_metric.get("cfo", [])
     if not cfo_facts:
@@ -953,8 +1043,7 @@ def _parse_shareholding_facts(payload: Dict[str, Any], year: str) -> Dict[str, L
         rows.extend(item for item in payload.get("shareholding", []) if isinstance(item, dict))
     if not rows:
         return facts
-    valid_percent_sum = 0.0
-    percent_count = 0
+    valid_percent_by_category: Dict[str, float] = {}
     for row in rows:
         category = str(row.get("holder_category") or row.get("category") or "").strip().lower().replace(" ", "_")
         if not category:
@@ -967,13 +1056,13 @@ def _parse_shareholding_facts(payload: Dict[str, Any], year: str) -> Dict[str, L
         availability = "present_direct" if value is not None else "missing"
         usable = value is not None
         if value is not None:
-            percent_count += 1
-            valid_percent_sum += value
             if value < 0 or value > 100:
                 confidence = "invalid"
                 availability = "invalid"
                 usable = False
                 _append_unique(warnings, "Shareholding percentage is outside sane bounds.")
+            else:
+                valid_percent_by_category[category] = value
         facts.setdefault(metric_id, []).append(
             FinancialFact(
                 metric_id=metric_id,
@@ -998,14 +1087,41 @@ def _parse_shareholding_facts(payload: Dict[str, Any], year: str) -> Dict[str, L
                 notes=[],
             )
         )
-    if percent_count >= 2 and not (95.0 <= valid_percent_sum <= 105.0):
+
+    sum_check_value: Optional[float] = None
+    sum_check_inputs: List[str] = []
+    promoter_value = valid_percent_by_category.get("promoter_holding_percent")
+    public_value = valid_percent_by_category.get("public_holding_percent")
+    if promoter_value is not None and public_value is not None:
+        sum_check_value = promoter_value + public_value
+        sum_check_inputs = ["promoter_holding_percent", "public_holding_percent"]
+    elif promoter_value is None and public_value is None:
+        ownership_components = [
+            "fii_holding_percent",
+            "dii_holding_percent",
+            "mutual_fund_holding_percent",
+            "insurance_holding_percent",
+            "body_corporates_percent",
+            "retail_holding_percent",
+            "others_percent",
+        ]
+        component_values = [
+            valid_percent_by_category[category]
+            for category in ownership_components
+            if category in valid_percent_by_category
+        ]
+        if len(component_values) >= 4:
+            sum_check_value = sum(component_values)
+            sum_check_inputs = [category for category in ownership_components if category in valid_percent_by_category]
+
+    if sum_check_value is not None and not (95.0 <= sum_check_value <= 105.0):
         facts.setdefault("shareholding_sum_check", []).append(
             FinancialFact(
                 metric_id="shareholding_sum_check",
                 metric_name="Shareholding Category Sum Check",
                 fiscal_year=year,
                 period=year,
-                value=valid_percent_sum,
+                value=sum_check_value,
                 unit="percent",
                 basis="not_applicable",
                 source_statement="shareholding_pattern",
@@ -1016,7 +1132,7 @@ def _parse_shareholding_facts(payload: Dict[str, Any], year: str) -> Dict[str, L
                 availability_status="invalid",
                 derived=True,
                 formula="sum(shareholding category percentages)",
-                inputs_used=["shareholding percentages"],
+                inputs_used=sum_check_inputs or ["shareholding percentages"],
                 warnings=["Shareholding category percentages do not sum near 100."],
                 reconciliation_status="not_applicable",
                 usable_downstream=False,
@@ -1055,7 +1171,7 @@ def _collect_shareholding_quarantine(
     quarantined_facts: List[FinancialFact] = []
     valid_percent_count = 0
     invalid_percent_count = 0
-    total_percent_sum = 0.0
+    valid_percent_by_category: Dict[str, float] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -1066,7 +1182,7 @@ def _collect_shareholding_quarantine(
         if isinstance(value, (int, float)):
             if _is_valid_percentage(float(value)):
                 valid_percent_count += 1
-                total_percent_sum += float(value)
+                valid_percent_by_category[category] = float(value)
             else:
                 invalid_percent_count += 1
                 reason = "Percentage field is outside sane 0-100 bounds; likely share-count/percentage mixup."
@@ -1135,7 +1251,29 @@ def _collect_shareholding_quarantine(
         artifact_status = "partial"
         usable_downstream = False
         warnings_to_block.append("some ownership categories quarantined")
-    if valid_percent_count >= 2 and not (95.0 <= total_percent_sum <= 105.0):
+    top_level_sum: Optional[float] = None
+    promoter_value = valid_percent_by_category.get("promoter_holding_percent")
+    public_value = valid_percent_by_category.get("public_holding_percent")
+    if promoter_value is not None and public_value is not None:
+        top_level_sum = promoter_value + public_value
+    elif promoter_value is None and public_value is None:
+        component_categories = (
+            "fii_holding_percent",
+            "dii_holding_percent",
+            "mutual_fund_holding_percent",
+            "insurance_holding_percent",
+            "body_corporates_percent",
+            "retail_holding_percent",
+            "others_percent",
+        )
+        component_values = [
+            valid_percent_by_category[category]
+            for category in component_categories
+            if category in valid_percent_by_category
+        ]
+        if len(component_values) >= 4:
+            top_level_sum = sum(component_values)
+    if top_level_sum is not None and not (95.0 <= top_level_sum <= 105.0):
         if invalid_percent_count >= max(2, valid_percent_count):
             artifact_status = "quarantined"
             usable_downstream = False
@@ -1409,6 +1547,8 @@ def build_financial_fact_registry(
 
     for derivation in (
         _derive_fcf_if_possible,
+        _derive_fcf_to_pat,
+        _derive_fcf_margin,
         _derive_payable_days_from_turnover,
         _derive_payables_proxy,
         _derive_cash_conversion_cycle,

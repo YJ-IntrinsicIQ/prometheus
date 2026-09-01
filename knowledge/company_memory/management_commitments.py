@@ -17,9 +17,10 @@ from intelligence.progression import (
 )
 from intelligence.progression.manifest import PROGRESSION_CONTRACT_VERSION, PROGRESSION_ENGINE_VERSION
 
-from .company_layer import _normalize_text, _promises_match, _promise_theme_key, _write_json, parse_financial_year
+from .company_layer import _normalize_text, _promises_match, _promise_theme_key, _significant_tokens, _write_json, parse_financial_year
 from .guardrails import (
     ELIGIBLE_COMMITMENT_STATEMENTS,
+    QUARANTINE_REASON_CODES,
     COMPANY_ACTORS,
     assess_progression_materiality,
     build_semantic_quality,
@@ -53,6 +54,7 @@ GENERATOR_VERSION = "management_commitments_builder.v1"
 
 ALLOWED_STATUSES = (
     "Announced",
+    "Reconfirmed",
     "In Progress",
     "Partially Delivered",
     "Delivered",
@@ -231,6 +233,55 @@ PRIORITY_BY_CATEGORY = {
     "Other": "low",
 }
 
+# Topic labels that are too generic to serve as sole merge identity.
+# When both a candidate and an existing group share one of these topics,
+# same_topic alone does not authorize a merge — the original statements must
+# also be genuinely similar (via _promises_match on the raw text).
+# Missing linkage is safer than false linkage.
+_GENERIC_FALLBACK_TOPICS = frozenset({
+    "Management commitment",  # Other catch-all: always too broad
+    "Capital deployment",     # Capex catch-all: "investment" appears in unrelated items
+    "Growth target",          # Growth catch-all: "growth/goals" appear broadly
+    "Business expansion",     # Expansion catch-all
+    "Acquisition",            # Category label: acquire ≠ divest, both land here
+})
+
+# Generic management vocabulary that does not distinguish one initiative from
+# another.  Used by _derive_specific_topic to strip noise before extracting a
+# meaningful topic label for Other-category items.
+_INITIATIVE_NOISE_WORDS = frozenset({
+    "management", "commit", "commitment", "committed", "commitments",
+    "continue", "continuing", "continued", "focus", "focused", "focusing",
+    "ensure", "remain", "remaining", "remains", "maintain", "maintaining",
+    "leverage", "enhance", "enhancing", "strengthen", "strengthening",
+    "improve", "improving", "improvement",
+    "build", "building", "built",
+    "develop", "developing", "development",
+    "investment", "invest", "investing", "investments",
+    "initiative", "strategy", "strategic", "approach",
+    "goal", "goals", "objective", "objectives",
+    "achieve", "achieving", "achievement", "aim", "aiming",
+    "value", "values", "mission", "vision", "purpose",
+    "performance", "business",
+    "create", "creating", "creation",
+    "provide", "providing", "provision",
+    "deliver", "delivering",
+    "drive", "driving", "driven",
+    "lead", "leading", "leader",
+    "make", "grow", "growing",
+    "increase", "increasing", "increased",
+    "sustain", "sustaining", "sustained",
+    "company", "organisation", "organization",
+    "stakeholder", "stakeholders", "shareholder", "shareholders",
+    "sustainable", "sustainability",
+    "program", "programmes", "programs",
+    "high", "new", "key", "core", "strong",
+    "global", "long", "term", "future", "current",
+    "also", "well", "that", "this", "have", "has", "will", "our", "its",
+    "more", "most", "all", "each", "both", "such", "than", "then",
+    "use", "using", "used",
+})
+
 
 def _load_json(path: Path) -> Dict[str, Any]:
     if not path.exists():
@@ -351,6 +402,21 @@ def _clean_label(value: Any) -> str:
     return _normalize_text(value)
 
 
+def _derive_specific_topic(statement: str) -> str:
+    """Extract an initiative-specific topic label from a statement.
+
+    Removes generic management vocabulary so that two different initiatives
+    (e.g. 'R&D investment' vs 'social investment evaluation') produce distinct
+    topic labels and are not falsely merged in _build_groups.
+    """
+    tokens = _significant_tokens(statement)
+    specific = [t for t in tokens if t not in _INITIATIVE_NOISE_WORDS and len(t) > 2]
+    chosen = specific[:3] if len(specific) >= 2 else [t for t in tokens if len(t) > 3][:3]
+    if not chosen:
+        return ""
+    return " ".join(chosen).title()
+
+
 def _derive_topic(statement: str, category: str) -> str:
     text = _normalize_text(statement)
     if category == "Manufacturing":
@@ -409,6 +475,12 @@ def _derive_topic(statement: str, category: str) -> str:
             return "Plant investment"
         if "facility" in text:
             return "Facility investment"
+    # For Other: always derive a statement-specific topic rather than the
+    # generic "Management commitment" catch-all.  This prevents every
+    # Other-category item from collapsing into a single false mega-group.
+    if category == "Other":
+        specific = _derive_specific_topic(statement)
+        return specific if specific else "Management commitment"
     return TOPIC_BY_CATEGORY.get(category, "Management commitment")
 
 
@@ -641,16 +713,33 @@ def _extract_source_item_years(year_record: Dict[str, Any]) -> List[Dict[str, An
                 status_text=str(status_hint or ""),
             )
             exclusion_reason = ""
+            quarantine_reason = ""
             if actor_type not in COMPANY_ACTORS:
                 exclusion_reason = f"statement belongs to {actor_type}, not the company"
+                quarantine_reason = "EXTERNAL_ACTOR"
             elif broad_employee_welfare:
                 exclusion_reason = "broad employee-welfare statement is not a bounded investor commitment"
+                quarantine_reason = "NON_INVESTOR_MATERIAL"
             elif broad_sustainability_pledge:
                 exclusion_reason = "broad sustainability pledge lacks a bounded action, target, or timeframe"
+                quarantine_reason = "GENERIC_ASPIRATION"
             elif historical_accomplishment:
                 exclusion_reason = "historical accomplishment belongs in business history, not management commitments"
+                quarantine_reason = "HISTORICAL_FACT"
             elif not can_initiate_commitment and not lifecycle_update:
                 exclusion_reason = f"{statement_type} is not an eligible commitment speech act"
+                if statement_type in ("historical_fact", "historical_accomplishment", "existing_capability", "descriptive_fact"):
+                    quarantine_reason = "HISTORICAL_FACT" if "historical" in statement_type else "NOT_FUTURE_ORIENTED"
+                elif statement_type in ("CSR_activity", "non_investor_material"):
+                    quarantine_reason = "NON_INVESTOR_MATERIAL"
+                elif statement_type in ("forecast", "external_statement", "external_target", "policy_statement"):
+                    quarantine_reason = "EXTERNAL_ACTOR"
+                elif statement_type in ("generic_aspiration", "aspiration"):
+                    quarantine_reason = "GENERIC_ASPIRATION"
+                elif statement_type == "unknown":
+                    quarantine_reason = "UNCLASSIFIED_STATEMENT"
+                else:
+                    quarantine_reason = "NO_ACTIONABLE_INTENT"
             semantic_quality = build_semantic_quality(
                 classification="MANAGEMENT_COMMITMENT" if commitment_eligible else statement_type.upper(),
                 relevance=relevance,
@@ -659,7 +748,18 @@ def _extract_source_item_years(year_record: Dict[str, Any]) -> List[Dict[str, An
                 eligibility="eligible" if commitment_eligible and period_resolution.get("status") == "RESOLVED" else "quarantined",
                 exclusion_reason=exclusion_reason,
                 evidence_confidence=item_payload.get("confidence") or "medium",
+                commitment_eligible=commitment_eligible,
             )
+            # Derive quarantine_reason from semantic_quality for DEMOTE/QUARANTINE cases
+            # not already covered by the explicit exclusion checks above.
+            if not quarantine_reason and semantic_quality.get("eligibility") != "eligible":
+                rel_outcome = semantic_quality.get("relevance_outcome", "")
+                if rel_outcome == "HARD_FAIL":
+                    quarantine_reason = "NON_INVESTOR_MATERIAL"
+                elif rel_outcome in ("QUARANTINE", "DEMOTE"):
+                    quarantine_reason = "NO_ACTIONABLE_INTENT"
+                else:
+                    quarantine_reason = "OTHER"
             evidence_status, event_type = _evidence_status_for_text(original_statement, status_hint)
             source_item_id = item_payload.get("id") or item_payload.get("source_item_id") or f"{artifact_name}:{index}"
             source_ref = {
@@ -702,6 +802,7 @@ def _extract_source_item_years(year_record: Dict[str, Any]) -> List[Dict[str, An
                     "statement_type": statement_type,
                     "statement_classification": statement_semantics,
                     "semantic_quality": semantic_quality,
+                    "quarantine_reason": quarantine_reason,
                     "commitment_role": "announcement" if can_initiate_commitment else "follow_up",
                 }
             )
@@ -736,7 +837,15 @@ def _merge_group(base: Dict[str, Any], candidate: Dict[str, Any]) -> None:
         base["confidence_votes"].append("low")
     base["original_statements"].append(candidate["original_statement"])
     base["source_references"].append(candidate["source_reference"])
-    base["supporting_evidence"].extend(candidate["supporting_evidence"])
+    # Detect reconfirmation: same normalized text in a later year → tag as reconfirmation
+    announcement_norm = _normalize_text(base["original_statements"][0]) if base["original_statements"] else ""
+    candidate_evidence = list(candidate["supporting_evidence"])
+    if announcement_norm and _normalize_text(candidate["original_statement"]) == announcement_norm:
+        candidate_evidence = [
+            dict(ev, event_type="reconfirmation", status="Reconfirmed") if ev.get("event_type") in ("announcement", None) else ev
+            for ev in candidate_evidence
+        ]
+    base["supporting_evidence"].extend(candidate_evidence)
     base["updates"].append(candidate)
 
 
@@ -766,30 +875,25 @@ def _determine_status(group: Dict[str, Any]) -> str:
     if len(updates) <= 1:
         return "Unable To Verify"
 
+    announcement_norm = _normalize_text(updates[0]["original_statement"])
     latest_status = "Unable To Verify"
     decisive_seen = False
+    reconfirmed_seen = False
     for update in updates[1:]:
         status, _ = _evidence_status_for_text(update["original_statement"], update.get("status_hint"))
         if status == "Announced":
-            status = "In Progress"
+            # Distinguish reconfirmation (same text) from genuine progress (different text)
+            if _normalize_text(update["original_statement"]) == announcement_norm:
+                reconfirmed_seen = True
+            # Same-text repetitions are reconfirmations, NOT progress signals — skip
+            continue
         if status in {"Delivered", "Partially Delivered", "Delayed", "Superseded", "Abandoned", "In Progress"}:
             latest_status = status
             decisive_seen = True
-    if not decisive_seen:
-        return "Unable To Verify"
-
-    if latest_status == "Delivered":
-        return "Delivered"
-    if latest_status == "Partially Delivered":
-        return "Partially Delivered"
-    if latest_status == "Delayed":
-        return "Delayed"
-    if latest_status == "Superseded":
-        return "Superseded"
-    if latest_status == "Abandoned":
-        return "Abandoned"
-    if latest_status == "In Progress":
-        return "In Progress"
+    if decisive_seen:
+        return latest_status
+    if reconfirmed_seen:
+        return "Reconfirmed"
     return "Unable To Verify"
 
 
@@ -808,6 +912,8 @@ def _build_delivery_assessment(status: str, group: Dict[str, Any]) -> str:
         return f"Later evidence indicates management stopped pursuing the {announcement} commitment."
     if status == "In Progress":
         return f"Later evidence shows the {announcement} commitment remains underway, but completion is not yet proven."
+    if status == "Reconfirmed":
+        return f"Management reconfirmed the {announcement} commitment in later reports, but no execution evidence has been found."
     return f"No later evidence was found to confirm or overturn the commitment announced in {announcement}."
 
 
@@ -832,6 +938,7 @@ def _investor_implication(status: str) -> str:
         "In Progress": "The commitment is in motion, but completion is not yet proven.",
         "Unable To Verify": "There is not enough later evidence to judge execution.",
         "Announced": "The commitment has been announced, but follow-through is still unproven.",
+        "Reconfirmed": "Management has reconfirmed this commitment but no execution evidence is visible yet.",
     }
     return mapping.get(status, "There is not enough later evidence to judge execution.")
 
@@ -844,6 +951,7 @@ def _latest_evidence_period(group: Dict[str, Any]) -> str:
 
 _COMMITMENT_STATUS_ORDER = {
     "Announced": 0,
+    "Reconfirmed": 0,
     "In Progress": 1,
     "Partially Delivered": 2,
     "Delayed": 2,
@@ -855,6 +963,7 @@ _COMMITMENT_STATUS_ORDER = {
 
 _PROGRESSION_STATUS_TO_EVENT_TYPE = {
     "Announced": "announcement",
+    "Reconfirmed": "reconfirmation",
     "In Progress": "progress",
     "Partially Delivered": "progress",
     "Delivered": "confirmation",
@@ -915,7 +1024,10 @@ class ManagementCommitmentProgressionAdapter:
         current_state = "Unable To Verify"
         for event in events:
             status = event.get("metadata", {}).get("domain_status") or event.get("evidence_status")
-            if status in {"Announced", None, "", "Unknown"}:
+            if status in {"Announced", "Reconfirmed", None, "", "Unknown"}:
+                # Reconfirmations don't advance the lifecycle state — track separately
+                if status == "Reconfirmed" and current_state == "Unable To Verify":
+                    current_state = "Reconfirmed"
                 continue
             current_state = str(status)
         return current_state
@@ -931,6 +1043,7 @@ class ManagementCommitmentProgressionAdapter:
             "In Progress": ("unchanged", "The commitment is in motion, but completion is not yet proven.", "Evidence shows movement but not a final outcome."),
             "Unable To Verify": ("unclear", "There is not enough later evidence to judge execution.", "The current evidence set does not support a confident conclusion."),
             "Announced": ("unchanged", "The commitment has been announced, but follow-through is still unproven.", "Only the original announcement is visible."),
+            "Reconfirmed": ("unchanged", "Management has reconfirmed this commitment but no execution evidence is visible yet.", "Reconfirmation signals intent but not action."),
         }
         direction, summary, reason = mapping.get(current_state, ("unclear", "The evidence remains incomplete.", "The commitment state is not yet decisive."))
         confidence = build_confidence(
@@ -949,7 +1062,9 @@ _PROGRESSION_ADAPTER = ManagementCommitmentProgressionAdapter()
 
 def _progression_event_from_evidence(commitment_id: str, evidence: Dict[str, Any], sequence: int, *, is_announcement: bool = False) -> Dict[str, Any]:
     status = str(evidence.get("status") or "Announced")
-    event_type = "announcement" if is_announcement else _PROGRESSION_STATUS_TO_EVENT_TYPE.get(status, "update")
+    # Preserve explicit event_type from evidence (e.g. "reconfirmation") if present
+    explicit_event_type = evidence.get("event_type") if not is_announcement else None
+    event_type = "announcement" if is_announcement else (explicit_event_type or _PROGRESSION_STATUS_TO_EVENT_TYPE.get(status, "update"))
     source_reference = dict(evidence.get("source_reference") or {})
     basis = ["management statement"]
     if source_reference.get("source_artifact"):
@@ -1104,7 +1219,7 @@ def _build_commitment_record(company: str, group: Dict[str, Any], commitment_id:
                 "source_reference": item["source_reference"],
             }
             for item in supporting_evidence
-            if item["event_type"] != "announcement"
+            if item["event_type"] not in ("announcement",)
         ],
         "latest_status": status,
         "latest_period": _latest_evidence_period(group),
@@ -1119,6 +1234,26 @@ def _build_commitment_record(company: str, group: Dict[str, Any], commitment_id:
     original_statement = group["original_statements"][0]
     if not original_statement:
         original_statement = supporting_evidence[0]["statement"]
+    all_periods = sorted(set(group["periods_seen"]), key=_year_sort_key)
+    announcement_period = group["announcement_period"]
+    check_years = [p for p in all_periods if p != announcement_period]
+    last_checked_year = max(all_periods, key=_year_sort_key) if all_periods else announcement_period
+    lifecycle_events = []
+    for ev in supporting_evidence:
+        ev_type = ev.get("event_type", "announcement")
+        lifecycle_events.append({
+            "period": ev.get("period"),
+            "event_type": ev_type,
+            "status": ev.get("status"),
+            "source_reference": ev.get("source_reference"),
+        })
+    lifecycle = {
+        "source_year": announcement_period,
+        "target_year": group.get("expected_timeframe") or None,
+        "check_years": check_years,
+        "last_checked_year": last_checked_year,
+        "lifecycle_events": lifecycle_events,
+    }
     return {
         "id": commitment_id,
         "topic": group["topic"],
@@ -1134,6 +1269,7 @@ def _build_commitment_record(company: str, group: Dict[str, Any], commitment_id:
         "confidence": _confidence_for_group(group),
         "investor_implication": _investor_implication(status),
         "source_references": group["source_references"],
+        "lifecycle": lifecycle,
         "progression": progression,
         "progression_validation": progression_validation,
         "actor_type": group.get("actor_type"),
@@ -1143,15 +1279,14 @@ def _build_commitment_record(company: str, group: Dict[str, Any], commitment_id:
 
 
 def _has_duplicate_source_statements(candidates: Sequence[Dict[str, Any]]) -> bool:
-    seen: set[str] = set()
-    duplicate = False
+    # Cross-year repetitions are expected reconfirmations — only flag same-period duplicates.
+    seen: set[tuple[str, str]] = set()
     for candidate in candidates:
-        key = candidate["normalized_source_statement"]
+        key = (candidate.get("period", ""), candidate["normalized_source_statement"])
         if key in seen:
-            duplicate = True
-            continue
+            return True
         seen.add(key)
-    return duplicate
+    return False
 
 
 def _validate_commitment_record(commitment: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1168,7 +1303,7 @@ def _validate_commitment_record(commitment: Dict[str, Any]) -> List[Dict[str, An
 
     if actor_type not in COMPANY_ACTORS:
         issues.append({"code": "external_actor_promoted", "severity": "fail", "commitment_id": commitment.get("id"), "message": f"Actor {actor_type} cannot create a management commitment."})
-    if statement_type not in ELIGIBLE_COMMITMENT_STATEMENTS | {"expectation"}:
+    if statement_type not in ELIGIBLE_COMMITMENT_STATEMENTS | {"expectation", "unknown"}:
         issues.append({"code": "invalid_commitment_statement_type", "severity": "fail", "commitment_id": commitment.get("id"), "message": f"Statement type {statement_type} is not commitment-eligible."})
     if (commitment.get("semantic_quality") or {}).get("eligibility") != "eligible":
         issues.append({"code": "ineligible_commitment_promoted", "severity": "fail", "commitment_id": commitment.get("id"), "message": "A quarantined candidate was promoted."})
@@ -1326,7 +1461,9 @@ def _validate_commitment_record(commitment: Dict[str, Any]) -> List[Dict[str, An
             }
         )
 
-    if status == "Unable To Verify" and len(evidence) > 1:
+    decisive_event_types = {"progress", "progress_update", "confirmation", "delay_signal", "abandonment_signal", "superseded", "delivery_confirmation"}
+    decisive_evidence = [ev for ev in evidence if ev.get("event_type") in decisive_event_types]
+    if status == "Unable To Verify" and decisive_evidence:
         issues.append(
             {
                 "code": "overstated_verification",
@@ -1500,6 +1637,34 @@ class ManagementCommitmentsBuilder:
                     candidate["original_statement"], group["original_statements"][0]
                 )
                 if same_category and compatible_topic:
+                    # Guard: a generic fallback topic (e.g. "Management commitment",
+                    # "Capital deployment") is NOT sufficient merge identity on its own.
+                    # When same_topic holds only because both share a broad label,
+                    # require the original statements to also be genuinely similar.
+                    # Missing linkage is safer than false linkage.
+                    candidate_topic = candidate.get("topic", "")
+                    group_topic = group.get("topic", "")
+                    if same_topic and (
+                        candidate_topic in _GENERIC_FALLBACK_TOPICS
+                        or group_topic in _GENERIC_FALLBACK_TOPICS
+                    ):
+                        # Follow-up evidence references back to a prior commitment
+                        # using different phrasing (e.g. "abandoned the southern
+                        # market entry" vs "expand into the southern market").
+                        # Require any shared significant token — strong enough to
+                        # block unrelated items, loose enough to accept lifecycle
+                        # evidence.  For announcements, the full _promises_match
+                        # threshold applies.
+                        if candidate.get("commitment_role") == "follow_up":
+                            left_sig = set(_significant_tokens(candidate["original_statement"]))
+                            right_sig = set(_significant_tokens(group["original_statements"][0]))
+                            if not (left_sig & right_sig):
+                                continue
+                        elif not _promises_match(
+                            candidate["original_statement"],
+                            group["original_statements"][0],
+                        ):
+                            continue  # different initiatives behind same generic label
                     matched_group = group
                     break
             if matched_group is None:
@@ -1557,6 +1722,7 @@ class ManagementCommitmentsBuilder:
                 "original_statement": candidate.get("original_statement"),
                 "actor_type": candidate.get("actor_type"),
                 "statement_type": candidate.get("statement_type"),
+                "quarantine_reason": candidate.get("quarantine_reason") or "OTHER",
                 "semantic_quality": candidate.get("semantic_quality"),
             }
             for candidate in candidates

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from knowledge.financials.quality_summary import (
     build_financial_quality_summary,
@@ -465,3 +466,193 @@ def test_legacy_company_memory_financial_quality_summary_still_works(tmp_path: P
 
     assert report.company == "acme"
     assert report.overall_financial_quality in {"strong", "adequate", "mixed"}
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — blocked_downstream warning injection bug
+# ---------------------------------------------------------------------------
+
+_MINIMAL_TRENDS = {
+    "company": "testco",
+    "generated_at": "2026-08-01T00:00:00Z",
+    "years_covered": ["fy24", "fy25"],
+    "basis": "consolidated",
+    "metric_trends": {
+        "revenue": {"series": [{"year": "fy24", "value": 100.0}, {"year": "fy25", "value": 120.0}]},
+        "pat": {"series": [{"year": "fy24", "value": 10.0}, {"year": "fy25", "value": 14.0}]},
+    },
+    "growth_summary": {
+        "revenue": [{"growth_percent": 20.0}],
+        "pat": [{"growth_percent": 40.0}],
+        "eps_basic": [{"growth_percent": 20.0}],
+        "book_value_per_share": [{"growth_percent": 10.0}],
+    },
+    "margin_trends": {
+        "opm": {"series": [{"year": "fy24", "value": 10.0}, {"year": "fy25", "value": 12.0}]},
+        "npm": {"series": [{"year": "fy24", "value": 8.0}, {"year": "fy25", "value": 9.0}]},
+    },
+    "return_trends": {},
+    "cash_conversion_trends": {},
+    "balance_sheet_trends": {
+        "reserves": {"series": [{"year": "fy24", "value": 50.0}, {"year": "fy25", "value": 60.0}]},
+    },
+    "per_share_trends": {},
+    "ownership_trends": {},
+    "corporate_actions_timeline": [],
+    "warnings": [],
+    "limitations": [],
+}
+
+_EMPTY_TRUTH_PACK: dict = {
+    "usable_current_metrics": [],
+    "usable_derived_metrics": [],
+    "precise_missing_metrics": [],
+    "unreliable_metrics": [],
+    "invalid_or_quarantined_metrics": [],
+    "financial_warnings_blocked_downstream": [],
+    "financial_warnings_allowed_downstream": [],
+    "financial_warnings_rewritten": [],
+}
+
+_PATCH_TRUTH = "knowledge.financials.quality_summary.build_financial_truth_pack"
+_PATCH_MANIFEST = "knowledge.financials.quality_summary.build_financial_memory_manifest"
+
+
+def _run_legacy_with_truth_pack(tmp_path: Path, trends: dict, truth_pack: dict) -> object:
+    trends_path = tmp_path / "company_memory" / "financials" / "financial_trends.json"
+    trends_path.parent.mkdir(parents=True, exist_ok=True)
+    trends_path.write_text(json.dumps(trends), encoding="utf-8")
+    with patch(_PATCH_TRUTH, return_value=truth_pack), \
+         patch(_PATCH_MANIFEST, return_value={}):
+        return build_financial_quality_summary(company="testco", trends_path=trends_path)
+
+
+def test_blocked_downstream_warning_absent_from_trends_is_not_injected(tmp_path: Path):
+    truth_pack = dict(_EMPTY_TRUTH_PACK)
+    truth_pack["financial_warnings_blocked_downstream"] = [
+        {
+            "original_warning": "cfo: previous-year data missing",
+            "normalized_warning": "cfo: previous-year data missing",
+            "affected_metric": "cfo",
+            "resolution_status": "resolved",
+        }
+    ]
+    report = _run_legacy_with_truth_pack(tmp_path, _MINIMAL_TRENDS, truth_pack)
+
+    assert "cfo: previous-year data missing" not in report.warnings
+
+
+def test_blocked_downstream_warning_present_and_same_normalized_is_removed(tmp_path: Path):
+    trends = dict(_MINIMAL_TRENDS)
+    trends["warnings"] = ["cfo: previous-year data missing"]
+    truth_pack = dict(_EMPTY_TRUTH_PACK)
+    truth_pack["financial_warnings_blocked_downstream"] = [
+        {
+            "original_warning": "cfo: previous-year data missing",
+            "normalized_warning": "cfo: previous-year data missing",
+            "affected_metric": "cfo",
+            "resolution_status": "resolved",
+        }
+    ]
+    report = _run_legacy_with_truth_pack(tmp_path, trends, truth_pack)
+
+    assert "cfo: previous-year data missing" not in report.warnings
+
+
+def test_blocked_downstream_warning_replaced_with_distinct_normalized_form(tmp_path: Path):
+    trends = dict(_MINIMAL_TRENDS)
+    trends["warnings"] = ["fcf: previous-year data missing"]
+    truth_pack = dict(_EMPTY_TRUTH_PACK)
+    truth_pack["financial_warnings_blocked_downstream"] = [
+        {
+            "original_warning": "fcf: previous-year data missing",
+            "normalized_warning": "FCF derived, not explicitly disclosed.",
+            "affected_metric": "fcf",
+            "resolution_status": "resolved",
+        }
+    ]
+    report = _run_legacy_with_truth_pack(tmp_path, trends, truth_pack)
+
+    assert "fcf: previous-year data missing" not in report.warnings
+    assert "FCF derived, not explicitly disclosed." in report.warnings
+
+
+def test_blocked_downstream_100_stale_entries_add_zero_spurious_warnings(tmp_path: Path):
+    stale_metrics = [
+        "cfo", "npm", "reserves", "receivables", "gross_margin",
+        "ebitda", "ebit", "capex", "payables", "inventory",
+    ]
+    blocked = []
+    for metric in stale_metrics:
+        for suffix in ["previous-year data missing", "5-year base data missing", "missing reconciliation check"]:
+            blocked.append({
+                "original_warning": f"{metric}: {suffix}",
+                "normalized_warning": f"{metric}: {suffix}",
+                "affected_metric": metric,
+                "resolution_status": "resolved",
+            })
+    truth_pack = dict(_EMPTY_TRUTH_PACK)
+    truth_pack["financial_warnings_blocked_downstream"] = blocked
+    report = _run_legacy_with_truth_pack(tmp_path, _MINIMAL_TRENDS, truth_pack)
+
+    for blocked_entry in blocked:
+        assert blocked_entry["normalized_warning"] not in report.warnings, (
+            f"Stale warning injected spuriously: {blocked_entry['normalized_warning']!r}"
+        )
+
+
+def test_blocked_downstream_only_matched_entries_are_replaced(tmp_path: Path):
+    trends = dict(_MINIMAL_TRENDS)
+    trends["warnings"] = ["reserves: previous-year data missing"]
+    truth_pack = dict(_EMPTY_TRUTH_PACK)
+    truth_pack["financial_warnings_blocked_downstream"] = [
+        {
+            "original_warning": "reserves: previous-year data missing",
+            "normalized_warning": "reserves: previous-year data missing",
+            "affected_metric": "reserves",
+            "resolution_status": "resolved",
+        },
+        {
+            "original_warning": "npm: previous-year data missing",
+            "normalized_warning": "npm: previous-year data missing",
+            "affected_metric": "npm",
+            "resolution_status": "resolved",
+        },
+    ]
+    report = _run_legacy_with_truth_pack(tmp_path, trends, truth_pack)
+
+    assert "reserves: previous-year data missing" not in report.warnings
+    assert "npm: previous-year data missing" not in report.warnings
+
+
+def test_trends_top_level_warnings_pass_through_when_no_blocked_match(tmp_path: Path):
+    trends = dict(_MINIMAL_TRENDS)
+    trends["warnings"] = [
+        "FCF derived, not explicitly disclosed.",
+        "corporate actions affect per-share comparability in fy24: buyback",
+    ]
+    report = _run_legacy_with_truth_pack(tmp_path, trends, _EMPTY_TRUTH_PACK)
+
+    assert "FCF derived, not explicitly disclosed." in report.warnings
+    assert "corporate actions affect per-share comparability in fy24: buyback" in report.warnings
+
+
+def test_blocked_downstream_fix_is_company_agnostic(tmp_path: Path):
+    for company_name in ("widgetco", "pharmaltd", "infra_corp"):
+        trends = dict(_MINIMAL_TRENDS)
+        trends["company"] = company_name
+        truth_pack = dict(_EMPTY_TRUTH_PACK)
+        truth_pack["financial_warnings_blocked_downstream"] = [
+            {
+                "original_warning": "cfo: previous-year data missing",
+                "normalized_warning": "cfo: previous-year data missing",
+                "affected_metric": "cfo",
+                "resolution_status": "resolved",
+            }
+        ]
+        sub_path = tmp_path / company_name
+        sub_path.mkdir(exist_ok=True)
+        report = _run_legacy_with_truth_pack(sub_path, trends, truth_pack)
+        assert "cfo: previous-year data missing" not in report.warnings, (
+            f"Stale warning injected for company {company_name!r}"
+        )

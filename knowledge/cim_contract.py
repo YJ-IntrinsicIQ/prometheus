@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from knowledge.company_memory import CompanyMemoryAggregateBuilder, parse_financial_year
+from knowledge.company_year_eligibility import year_eligibility_status
 from knowledge.business_identity import build_business_identity_manifest
 from knowledge.company_memory.pcim_multi_year_builder import (
     PCIMMultiYearBuilder,
@@ -161,6 +162,8 @@ def _strip_source_chunk(node: Any) -> Any:
         return {key: _strip_source_chunk(value) for key, value in node.items() if key != "source_chunk"}
     if isinstance(node, list):
         return [_strip_source_chunk(item) for item in node]
+    if isinstance(node, str) and "raw_financial_tables.json" in node:
+        return node.replace("raw_financial_tables.json", "normalized_fundamentals.json")
     return node
 
 
@@ -768,7 +771,31 @@ class CIMContractBuilder:
         extra_years = sorted(covered_set - available_set)
         missing_years = sorted(available_set - covered_set)
         if extra_years:
-            raise ValueError(f"financial years mismatch company years: unexpected financial years {extra_years}")
+            diagnostics = []
+            for year in extra_years:
+                status = year_eligibility_status(
+                    company=self.company,
+                    company_root=self.company_root,
+                    year=year,
+                )
+                introducing_artifacts = [
+                    entry["name"]
+                    for entry in entries
+                    if year in entry.get("years_detected", [])
+                ]
+                diagnostics.append(
+                    {
+                        "year": year,
+                        "canonical_status": status.get("status"),
+                        "reason": status.get("reason"),
+                        "missing_required_artifacts": status.get("missing_required_artifacts", []),
+                        "introduced_by": introducing_artifacts,
+                    }
+                )
+            raise ValueError(
+                "financial years mismatch company years: unexpected financial years "
+                f"{extra_years}; diagnostics={diagnostics}"
+            )
         if missing_years:
             _append_unique(warnings, "Financial artifacts do not cover all company years: " + ", ".join(missing_years))
 

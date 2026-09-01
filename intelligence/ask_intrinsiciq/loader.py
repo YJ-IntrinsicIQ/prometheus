@@ -47,6 +47,12 @@ SOURCE_REGISTRY = {
     "multi_year_company_year_index": "company_memory/multi_year/company_year_index.json",
     "multi_year_strategy_timeline": "company_memory/multi_year/strategy_timeline.json",
     "multi_year_business_dna_evolution": "company_memory/multi_year/business_dna_evolution.json",
+    # Gold intelligence layers
+    "gold_promise_tracker": "company_memory/gold/management_promise_tracker.json",
+    "gold_capital_allocation": "company_memory/gold/capital_allocation_outcome_tracker.json",
+    "gold_strategy_evolution": "company_memory/gold/strategy_evolution_timeline.json",
+    "gold_risk_evolution": "company_memory/gold/risk_evolution_timeline.json",
+    "gold_credibility": "company_memory/gold/management_credibility_synthesis.json",
 }
 
 
@@ -54,6 +60,16 @@ def _iso_from_timestamp(timestamp: float | None) -> str:
     if timestamp is None:
         return ""
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _canonical_company_slug(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    text = text.replace("-", "_")
+    if re.fullmatch(r"[a-z0-9_]+", text):
+        return text
+    return ""
 
 
 def _artifact_company_slug(payload: Dict[str, Any]) -> str:
@@ -64,16 +80,14 @@ def _artifact_company_slug(payload: Dict[str, Any]) -> str:
         (payload.get("company_identity") or {}).get("company_slug") if isinstance(payload.get("company_identity"), dict) else None,
     ]
     for candidate in candidates:
-        value = str(candidate or "").strip().lower()
+        value = _canonical_company_slug(candidate)
         if value:
             return value
-    company = str(payload.get("company") or "").strip().lower()
-    if re.fullmatch(r"[a-z0-9_-]+", company):
-        return company.replace("_", "-")
-    return ""
+    return _canonical_company_slug(payload.get("company"))
 
 
 def load_company_memory_sources(company_slug: str) -> Dict[str, Any]:
+    company_slug = _canonical_company_slug(company_slug)
     company_root = Path("companies") / company_slug
     sources: Dict[str, Any] = {}
     found: List[str] = []

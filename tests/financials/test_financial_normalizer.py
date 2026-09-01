@@ -74,7 +74,12 @@ def _row(
         "page": page,
         "chunk_id": f"CHK-{page:03d}",
         "confidence": confidence,
-        "source_section_type": table_type if table_type != "management_discussion_financial_summary" else "management_discussion_financial_summary",
+        "source_section_type": (
+            "primary_profit_and_loss_statement" if table_type == "profit_and_loss"
+            else "primary_balance_sheet_statement" if table_type == "balance_sheet"
+            else "primary_cash_flow_statement" if table_type == "cash_flow"
+            else table_type
+        ) if table_type != "management_discussion_financial_summary" else "management_discussion_financial_summary",
         "table_confidence": confidence,
         "table_rejection_risk": [],
         "is_primary_statement": table_type in {"profit_and_loss", "balance_sheet", "cash_flow"},
@@ -153,7 +158,7 @@ def test_balance_sheet_revenue_row_normalizes_to_profit_and_loss_revenue(tmp_pat
     payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
 
     assert payload["profit_and_loss"]["revenue"]["value_crore"] == 500.0
-    assert payload["profit_and_loss"]["revenue"]["source_section_type"] == "balance_sheet"
+    assert payload["profit_and_loss"]["revenue"]["source_section_type"] == "primary_balance_sheet_statement"
     assert payload["profit_and_loss"]["revenue"]["source_line_item"] == "Revenue"
 
 
@@ -261,7 +266,7 @@ def test_balance_sheet_pat_label_normalizes_to_pat(tmp_path):
     payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
 
     assert payload["profit_and_loss"]["pat"]["value_crore"] == 8.3
-    assert payload["profit_and_loss"]["pat"]["source_section_type"] == "balance_sheet"
+    assert payload["profit_and_loss"]["pat"]["source_section_type"] == "primary_balance_sheet_statement"
     assert payload["profit_and_loss"]["pat"]["statement_type"] == "balance_sheet"
 
 
@@ -282,7 +287,7 @@ def test_balance_sheet_net_profit_row_normalizes_to_pat(tmp_path):
     payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
 
     assert payload["profit_and_loss"]["pat"]["value_crore"] == 8.3
-    assert payload["profit_and_loss"]["pat"]["source_section_type"] == "balance_sheet"
+    assert payload["profit_and_loss"]["pat"]["source_section_type"] == "primary_balance_sheet_statement"
     assert payload["profit_and_loss"]["pat"]["source_line_item"] == "Net Profit (5-6-8-9)"
 
 
@@ -349,6 +354,10 @@ def test_debt_and_reserves_mapping(tmp_path):
 def test_numeric_date_period_labels_still_select_current_balance_sheet_values(tmp_path):
     path = tmp_path / "raw_financial_tables.json"
     sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)], basis="consolidated"),
+        _row("profit_and_loss", "Profit for the year", [("March 31, 2025", "120.00", 120.0)], basis="consolidated"),
+    ]
     sections["balance_sheet"] = [
         _row("balance_sheet", "Total Assets", [("31/03/2025", "1000.00", 1000.0), ("31/03/2024", "900.00", 900.0)]),
         _row("balance_sheet", "Total Equity", [("31/03/2025", "600.00", 600.0), ("31/03/2024", "550.00", 550.0)]),
@@ -383,6 +392,40 @@ def test_cash_flow_mapping(tmp_path):
     assert payload["cash_flow"]["fcf"]["value_crore"] == 95.0
     assert payload["cash_flow"]["fcf"]["derived"] is True
     assert payload["cash_flow"]["fcf"]["inputs_used"]["capex_sign_convention"] == "cash_flow_signed"
+
+
+def test_wrapped_cash_capex_row_maps_to_capex_and_fcf(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = {
+        "profit_and_loss": [
+            _row("profit_and_loss", "Revenue from operations", [("March 31, 2023", "500.00", 500.0)], basis="consolidated"),
+            _row("profit_and_loss", "Profit for the year", [("March 31, 2023", "120.00", 120.0)], basis="consolidated"),
+        ],
+        "balance_sheet": [
+            _row("balance_sheet", "Total Assets", [("March 31, 2023", "1000.00", 1000.0)], basis="consolidated"),
+            _row("balance_sheet", "Total Equity", [("March 31, 2023", "600.00", 600.0)], basis="consolidated"),
+            _row("balance_sheet", "Total Liabilities", [("March 31, 2023", "400.00", 400.0)], basis="consolidated"),
+        ],
+    }
+    sections["cash_flow"] = [
+        _row("cash_flow", "Net cash generated from operating activities (A)", [("March 31, 2023", "49,593.3", 4959.33)], basis="consolidated", unit_hint="million"),
+        _row(
+            "cash_flow",
+            "B. Cash flow from investing activities Payments for purchase of property, plant and equipment "
+            "(including capital work-in- progress, other intangible assets and intangible assets under development)",
+            [("March 31, 2023", "(20,855.8)", -2085.58)],
+            basis="consolidated",
+            unit_hint="million",
+        ),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy23", raw_tables_path=path)
+
+    assert payload["cash_flow"]["capex"]["value_crore"] == -2085.58
+    assert payload["cash_flow"]["capex"]["sign_convention"] == "cash_flow_signed"
+    assert payload["cash_flow"]["fcf"]["value_crore"] == 2873.75
+    assert payload["cash_flow"]["fcf"]["formula"] == "cfo + capex (cash-flow-signed capex) or cfo - capex (positive-outflow capex)"
 
 
 def test_purchase_of_intangible_assets_maps_to_capex(tmp_path):
@@ -504,6 +547,87 @@ def test_eps_and_share_data_mapping(tmp_path):
     assert payload["share_data"]["face_value"]["value_per_share"] == 2.0
     assert payload["share_data"]["face_value"]["value_crore"] is None
     assert payload["share_data"]["book_value_per_share"]["value_original"] == "120.00"
+
+
+def test_eps_denominator_row_does_not_become_reported_eps(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)], basis="consolidated"),
+        _row("profit_and_loss", "Profit for the year", [("March 31, 2025", "120.00", 120.0)], basis="consolidated"),
+    ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "1000.00", 1000.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Equity", [("March 31, 2025", "600.00", 600.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Liabilities", [("March 31, 2025", "400.00", 400.0)], basis="consolidated"),
+    ]
+    sections["eps"] = [
+        _row(
+            "eps",
+            "Weighted average number of shares used in computing basic earnings per share",
+            [("March 31, 2025", "2,399,334,970", None, "per_share", "INR per share")],
+            basis="consolidated",
+            unit_hint="INR per share",
+        ),
+        _row(
+            "eps",
+            "Weighted average number of shares used in computing diluted earnings per share",
+            [("March 31, 2025", "2,399,335,257", None, "per_share", "INR per share")],
+            basis="consolidated",
+            unit_hint="INR per share",
+        ),
+        _row(
+            "eps",
+            "Basic earnings per share (in `)",
+            [("March 31, 2025", "15.7", None)],
+            basis="consolidated",
+            unit_hint="INR per share",
+        ),
+        _row(
+            "eps",
+            "Diluted earnings per share (in `)",
+            [("March 31, 2025", "15.6", None)],
+            basis="consolidated",
+            unit_hint="INR per share",
+        ),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["eps_basic"]["value_per_share"] == 15.7
+    assert payload["profit_and_loss"]["eps_basic"]["source_line_item"] == "Basic earnings per share (in `)"
+    assert payload["profit_and_loss"]["eps_diluted"]["value_per_share"] == 15.6
+    assert payload["profit_and_loss"]["eps_diluted"]["source_line_item"] == "Diluted earnings per share (in `)"
+    assert payload["share_data"]["weighted_avg_shares"]["value_shares"] == 2399334970.0
+    assert payload["share_data"]["weighted_avg_shares"]["value_type"] == "share_count"
+    assert payload["share_data"]["weighted_avg_shares"]["source_value_type"] == "share_count"
+    assert payload["share_data"]["diluted_shares"]["value_shares"] == 2399335257.0
+    assert payload["share_data"]["diluted_shares"]["value_type"] == "share_count"
+    assert payload["share_data"]["diluted_shares"]["source_value_type"] == "share_count"
+
+
+def test_combined_basic_and_diluted_share_denominator_maps_to_both_fields(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["eps"] = [
+        _row(
+            "eps",
+            "Weighted average number of shares used in computing basic and diluted earnings per share",
+            [("March 31, 2025", "2,399,334,970", None, "per_share", "INR per share")],
+            unit_hint="INR per share",
+        ),
+        _row("eps", "Basic earnings per share", [("March 31, 2025", "15.7", None)], unit_hint="INR per share"),
+        _row("eps", "Diluted earnings per share", [("March 31, 2025", "15.7", None)], unit_hint="INR per share"),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["eps_basic"]["value_per_share"] == 15.7
+    assert payload["profit_and_loss"]["eps_diluted"]["value_per_share"] == 15.7
+    assert payload["share_data"]["weighted_avg_shares"]["value_shares"] == 2399334970.0
+    assert payload["share_data"]["diluted_shares"]["value_shares"] == 2399334970.0
 
 
 def test_weighted_and_diluted_shares_only_map_from_eps_note_rows(tmp_path):
@@ -910,6 +1034,11 @@ def test_consolidated_preferred_over_standalone(tmp_path):
         _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)], basis="consolidated"),
         _row("profit_and_loss", "Profit for the year", [("March 31, 2025", "120.00", 120.0)], basis="consolidated"),
     ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "1000.00", 1000.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Equity", [("March 31, 2025", "600.00", 600.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Liabilities", [("March 31, 2025", "400.00", 400.0)], basis="consolidated"),
+    ]
     _write_json(path, _raw_payload(sections))
 
     payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
@@ -918,6 +1047,82 @@ def test_consolidated_preferred_over_standalone(tmp_path):
     assert payload["preferred_basis"] == "consolidated"
     assert payload["basis_confidence"] in {"medium", "high"}
     assert payload["basis_views"]["standalone"]["profit_and_loss"]["revenue"]["value_crore"] == 400.0
+
+
+def test_note_total_assets_fills_gap_when_primary_bs_lacks_explicit_row(tmp_path):
+    """
+    When the primary balance sheet statement has no 'Total Assets' row (e.g. banking
+    RBI-Schedule format) but a financial_note carries the correct total, the normalizer
+    must use the note value rather than crashing.  The note is the only candidate and
+    wins by default — _entry_rank's wrong_scope_penalty keeps it lower than a primary
+    BS entry whenever one exists, but here there is no competing candidate.
+    """
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)], basis="consolidated"),
+        _row("profit_and_loss", "Profit for the year", [("March 31, 2025", "120.00", 120.0)], basis="consolidated"),
+    ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Equity",
+             [("March 31, 2025", "600.00", 600.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Liabilities",
+             [("March 31, 2025", "400.00", 400.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Assets",
+             [("March 31, 2025", "1000.00", 1000.0)], basis="consolidated", page=52),
+    ]
+    sections["balance_sheet"][0]["source_section_type"] = "primary_balance_sheet_statement"
+    sections["balance_sheet"][0]["is_primary_statement"] = True
+    sections["balance_sheet"][1]["source_section_type"] = "primary_balance_sheet_statement"
+    sections["balance_sheet"][1]["is_primary_statement"] = True
+    # Total Assets only in financial_note, not primary BS
+    sections["balance_sheet"][2]["source_section_type"] = "financial_note"
+    sections["balance_sheet"][2]["is_primary_statement"] = False
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    ta = payload["balance_sheet"]["total_assets"]
+    assert ta["value_crore"] == 1000.0
+    assert ta["source_section_type"] == "financial_note"
+
+
+def test_primary_bs_total_assets_beats_financial_note_when_both_present(tmp_path):
+    """
+    When both primary_balance_sheet_statement and financial_note carry 'Total Assets',
+    the primary statement entry must win (higher _entry_rank score).
+    """
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)], basis="consolidated"),
+        _row("profit_and_loss", "Profit for the year", [("March 31, 2025", "120.00", 120.0)], basis="consolidated"),
+    ]
+    primary_ta = _row("balance_sheet", "Total Assets",
+                      [("March 31, 2025", "2000.00", 2000.0)], basis="consolidated", page=10)
+    primary_ta["source_section_type"] = "primary_balance_sheet_statement"
+    primary_ta["is_primary_statement"] = True
+
+    note_ta = _row("balance_sheet", "Total Assets",
+                   [("March 31, 2025", "999.00", 999.0)], basis="consolidated", page=55)
+    note_ta["source_section_type"] = "financial_note"
+    note_ta["is_primary_statement"] = False
+
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Equity",
+             [("March 31, 2025", "1200.00", 1200.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Liabilities",
+             [("March 31, 2025", "800.00", 800.0)], basis="consolidated"),
+        primary_ta,
+        note_ta,
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    ta = payload["balance_sheet"]["total_assets"]
+    assert ta["value_crore"] == 2000.0
+    assert ta["source_section_type"] == "primary_balance_sheet_statement"
 
 
 def test_cash_flow_from_alternate_basis_is_not_promoted(tmp_path):
@@ -958,6 +1163,119 @@ def test_cash_flow_from_alternate_basis_is_not_promoted(tmp_path):
         for warning in payload["warnings"]
     )
 
+
+def test_primary_unknown_basis_cash_flow_inherits_preferred_basis_when_unconflicted(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)], basis="consolidated"),
+        _row("profit_and_loss", "Profit for the year", [("March 31, 2025", "120.00", 120.0)], basis="consolidated"),
+    ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "1000.00", 1000.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Equity", [("March 31, 2025", "600.00", 600.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Liabilities", [("March 31, 2025", "400.00", 400.0)], basis="consolidated"),
+    ]
+    sections["cash_flow"] = [
+        _row(
+            "cash_flow",
+            "Net Cash Flow generated from Operating Activities (A)",
+            [("March 31, 2025", "20,281,998", 2028.1998)],
+            basis="unknown",
+            unit_hint="thousands",
+            page=259,
+        ),
+        _row(
+            "cash_flow",
+            "Purchase of Fixed Assets including WIP",
+            [("March 31, 2025", "(1,672,079)", -167.2079)],
+            basis="unknown",
+            unit_hint="thousands",
+            page=259,
+        ),
+    ]
+    for row in sections["cash_flow"]:
+        row["source_section_type"] = "primary_cash_flow_statement"
+        row["is_primary_statement"] = True
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["preferred_basis"] == "consolidated"
+    assert payload["cash_flow"]["cfo"]["value_crore"] == 2028.1998
+    assert payload["cash_flow"]["cfo"]["basis"] == "consolidated"
+    assert payload["cash_flow"]["capex"]["value_crore"] == -167.2079
+    assert payload["cash_flow_availability"]["status"] == "EXPLICIT"
+    assert payload["cash_flow_availability"]["source_pages"] == [259]
+    assert any(
+        "cash_flow.cfo inherited preferred consolidated basis from a primary cash-flow statement" in warning
+        for warning in payload["warnings"]
+    )
+
+
+def test_unknown_primary_cash_flow_does_not_override_conflicting_explicit_basis(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)], basis="consolidated"),
+        _row("profit_and_loss", "Profit for the year", [("March 31, 2025", "120.00", 120.0)], basis="consolidated"),
+    ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "1000.00", 1000.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Equity", [("March 31, 2025", "600.00", 600.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Liabilities", [("March 31, 2025", "400.00", 400.0)], basis="consolidated"),
+    ]
+    unknown_primary = _row(
+        "cash_flow",
+        "Net Cash Flow generated from Operating Activities (A)",
+        [("March 31, 2025", "140.00", 140.0)],
+        basis="unknown",
+    )
+    unknown_primary["source_section_type"] = "primary_cash_flow_statement"
+    unknown_primary["is_primary_statement"] = True
+    sections["cash_flow"] = [
+        unknown_primary,
+        _row(
+            "cash_flow",
+            "Net cash generated from operating activities",
+            [("March 31, 2025", "40.00", 40.0)],
+            basis="standalone",
+        ),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["preferred_basis"] == "consolidated"
+    assert payload["cash_flow"]["cfo"]["value_crore"] is None
+    assert payload["basis_views"]["unknown"]["cash_flow"]["cfo"]["value_crore"] == 140.0
+    assert payload["basis_views"]["standalone"]["cash_flow"]["cfo"]["value_crore"] == 40.0
+    assert any("cash_flow.cfo is available only in standalone basis" in warning for warning in payload["warnings"])
+
+
+def test_unknown_basis_field_is_not_promoted_into_explicit_preferred_basis(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["profit_and_loss"] = [
+        _row("profit_and_loss", "Revenue from operations", [("March 31, 2025", "500.00", 500.0)], basis="consolidated"),
+        _row("profit_and_loss", "Profit for the year", [("March 31, 2025", "120.00", 120.0)], basis="consolidated"),
+    ]
+    sections["balance_sheet"] = [
+        _row("balance_sheet", "Total Assets", [("March 31, 2025", "1000.00", 1000.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Equity", [("March 31, 2025", "600.00", 600.0)], basis="consolidated"),
+        _row("balance_sheet", "Total Liabilities", [("March 31, 2025", "400.00", 400.0)], basis="consolidated"),
+        _row("balance_sheet", "Cash and cash equivalents", [("March 31, 2025", "25.00", 25.0)], basis="unknown"),
+    ]
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["preferred_basis"] == "consolidated"
+    assert payload["balance_sheet"]["cash_and_equivalents"]["value_crore"] is None
+    assert payload["basis_views"]["unknown"]["balance_sheet"]["cash_and_equivalents"]["value_crore"] == 25.0
+    assert not any("fell back to unknown basis" in warning for warning in payload["warnings"])
+
+
 def test_preferred_basis_does_not_silently_borrow_other_explicit_basis(tmp_path):
     path = tmp_path / "raw_financial_tables.json"
     sections = _minimum_required_sections()
@@ -996,6 +1314,51 @@ def test_trade_payables_maps_to_payables(tmp_path):
     assert payload["balance_sheet"]["payables"]["value_crore"] == 30.0
     assert payload["balance_sheet"]["payables"]["source_line_item"] == "Trade payables"
     assert payload["balance_sheet"]["payables"]["comparatives"][0]["value_crore"] == 24.0
+
+
+def test_liabilities_prefixed_trade_payable_note_does_not_map_to_group_payables(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    note_row = _row(
+        "balance_sheet",
+        "Liabilities Trade payable",
+        [("March 31, 2025", "113.30", 11.33)],
+        basis="consolidated",
+        page=298,
+    )
+    note_row["source_section_type"] = "financial_note"
+    note_row["is_primary_statement"] = False
+    sections["balance_sheet"].append(note_row)
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["balance_sheet"]["payables"]["value_crore"] is None
+    assert payload["balance_sheet"]["payables"]["source_line_item"] == ""
+
+
+def test_clean_trade_payables_wins_over_liabilities_prefixed_note_shape(tmp_path):
+    path = tmp_path / "raw_financial_tables.json"
+    sections = _minimum_required_sections()
+    sections["balance_sheet"].append(
+        _row("balance_sheet", "Trade payables", [("March 31, 2025", "3000.00", 3000.0)], page=250)
+    )
+    note_row = _row(
+        "balance_sheet",
+        "Liabilities Trade payable",
+        [("March 31, 2025", "113.30", 11.33)],
+        basis="consolidated",
+        page=298,
+    )
+    note_row["source_section_type"] = "financial_note"
+    note_row["is_primary_statement"] = False
+    sections["balance_sheet"].append(note_row)
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["balance_sheet"]["payables"]["value_crore"] == 3000.0
+    assert payload["balance_sheet"]["payables"]["source_line_item"] == "Trade payables"
 
 
 def test_msme_and_other_creditors_aggregate_to_payables(tmp_path):
@@ -1089,7 +1452,7 @@ def test_primary_statement_preferred_over_management_summary(tmp_path):
 
     payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
     assert payload["profit_and_loss"]["revenue"]["value_crore"] == 500.0
-    assert payload["profit_and_loss"]["revenue"]["source_section_type"] == "profit_and_loss"
+    assert payload["profit_and_loss"]["revenue"]["source_section_type"] == "primary_profit_and_loss_statement"
 
 
 def test_write_normalized_fundamentals(tmp_path):
@@ -1209,3 +1572,255 @@ def test_placeholder_period_labels_are_ignored_in_value_selection():
 
     assert selected is not None
     assert selected["period"] == "March 31, 2025"
+
+
+# ---------------------------------------------------------------------------
+# Regression: unknown-basis fallback in _build_preferred_sections
+#
+# When preferred_basis is "consolidated" (driven by P&L rows) but balance-sheet
+# rows carry basis="unknown", the normalizer must still populate balance_sheet
+# fields rather than crashing with a RuntimeError.  The fix removed the spurious
+# `and preferred_basis == "unknown"` guard that blocked the fallback.
+# ---------------------------------------------------------------------------
+
+def _consolidated_pl_unknown_bs_sections(*, revenue=500.0, pat=120.0, total_assets=1000.0, net_worth=600.0):
+    """
+    Helper: P&L rows are consolidated-basis; balance-sheet rows are unknown-basis.
+    This is the exact pattern that triggered the RuntimeError before the fix.
+    """
+    return {
+        "profit_and_loss": [
+            _row("profit_and_loss", "Revenue from operations",
+                 [("March 31, 2025", str(revenue), revenue)], basis="consolidated"),
+            _row("profit_and_loss", "Profit for the year",
+                 [("March 31, 2025", str(pat), pat)], basis="consolidated"),
+        ],
+        "balance_sheet": [
+            _row("balance_sheet", "Total Assets",
+                 [("March 31, 2025", str(total_assets), total_assets)], basis="unknown"),
+            _row("balance_sheet", "Total Equity",
+                 [("March 31, 2025", str(net_worth), net_worth)], basis="unknown"),
+            _row("balance_sheet", "Total Liabilities",
+                 [("March 31, 2025", "400.00", 400.0)], basis="unknown"),
+        ],
+    }
+
+
+def test_consolidated_pl_unknown_bs_does_not_crash(tmp_path):
+    """Core failing case: P&L=consolidated + BS=unknown must not raise RuntimeError."""
+    path = tmp_path / "raw_financial_tables.json"
+    _write_json(path, _raw_payload(_consolidated_pl_unknown_bs_sections()))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["revenue"]["value_crore"] == 500.0
+    assert payload["balance_sheet"]["total_assets"]["value_crore"] == 1000.0
+
+
+def test_consolidated_pl_unknown_bs_populates_all_balance_sheet_fields(tmp_path):
+    """All balance-sheet canonical fields are present when BS rows are unknown-basis."""
+    path = tmp_path / "raw_financial_tables.json"
+    _write_json(path, _raw_payload(_consolidated_pl_unknown_bs_sections(
+        total_assets=2500.0, net_worth=1500.0
+    )))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["balance_sheet"]["total_assets"]["value_crore"] == 2500.0
+    assert payload["balance_sheet"]["net_worth"]["value_crore"] == 1500.0
+
+
+def test_unknown_pl_unknown_bs_still_works(tmp_path):
+    """
+    Valid nearby variant: when both P&L and BS are unknown-basis the normalizer
+    must still populate fields (regression guard — must not become collateral damage).
+    """
+    path = tmp_path / "raw_financial_tables.json"
+    sections = {
+        "profit_and_loss": [
+            _row("profit_and_loss", "Revenue from operations",
+                 [("March 31, 2025", "800.00", 800.0)], basis="unknown"),
+            _row("profit_and_loss", "Profit for the year",
+                 [("March 31, 2025", "200.00", 200.0)], basis="unknown"),
+        ],
+        "balance_sheet": [
+            _row("balance_sheet", "Total Assets",
+                 [("March 31, 2025", "3000.00", 3000.0)], basis="unknown"),
+            _row("balance_sheet", "Total Equity",
+                 [("March 31, 2025", "1800.00", 1800.0)], basis="unknown"),
+            _row("balance_sheet", "Total Liabilities",
+                 [("March 31, 2025", "1200.00", 1200.0)], basis="unknown"),
+        ],
+    }
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["profit_and_loss"]["revenue"]["value_crore"] == 800.0
+    assert payload["balance_sheet"]["total_assets"]["value_crore"] == 3000.0
+
+
+def test_consolidated_pl_standalone_bs_extra_field_not_promoted_via_unknown_fallback(tmp_path):
+    """
+    Wrong-basis near-neighbor: when consolidated BS is present and an additional
+    field exists only in the standalone bucket, it must NOT leak into consolidated
+    preferred_sections via the unknown fallback — the fallback only reads the unknown
+    bucket, not standalone.
+    """
+    path = tmp_path / "raw_financial_tables.json"
+    sections = {
+        "profit_and_loss": [
+            _row("profit_and_loss", "Revenue from operations",
+                 [("March 31, 2025", "500.00", 500.0)], basis="consolidated"),
+            _row("profit_and_loss", "Profit for the year",
+                 [("March 31, 2025", "100.00", 100.0)], basis="consolidated"),
+        ],
+        "balance_sheet": [
+            # consolidated core entries — must be used
+            _row("balance_sheet", "Total Assets",
+                 [("March 31, 2025", "1000.00", 1000.0)], basis="consolidated"),
+            _row("balance_sheet", "Total Equity",
+                 [("March 31, 2025", "600.00", 600.0)], basis="consolidated"),
+            _row("balance_sheet", "Total Liabilities",
+                 [("March 31, 2025", "400.00", 400.0)], basis="consolidated"),
+            # standalone-only cash entry — must NOT leak into consolidated preferred view
+            _row("balance_sheet", "Cash and cash equivalents",
+                 [("March 31, 2025", "9999.00", 9999.0)], basis="standalone"),
+        ],
+    }
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    # Standalone cash entry must not appear in consolidated preferred_sections
+    cash = payload["balance_sheet"]["cash_and_equivalents"]
+    assert cash.get("value_crore") != 9999.0
+
+
+def test_preferred_basis_entry_blocks_unknown_fallback(tmp_path):
+    """
+    When the preferred_basis bucket already has an entry, the unknown fallback
+    must NOT override it with the unknown-bucket entry.
+    """
+    path = tmp_path / "raw_financial_tables.json"
+    sections = {
+        "profit_and_loss": [
+            _row("profit_and_loss", "Revenue from operations",
+                 [("March 31, 2025", "700.00", 700.0)], basis="consolidated"),
+            _row("profit_and_loss", "Profit for the year",
+                 [("March 31, 2025", "150.00", 150.0)], basis="consolidated"),
+        ],
+        "balance_sheet": [
+            # consolidated entry — should win
+            _row("balance_sheet", "Total Assets",
+                 [("March 31, 2025", "5000.00", 5000.0)], basis="consolidated"),
+            _row("balance_sheet", "Total Equity",
+                 [("March 31, 2025", "3000.00", 3000.0)], basis="consolidated"),
+            _row("balance_sheet", "Total Liabilities",
+                 [("March 31, 2025", "2000.00", 2000.0)], basis="consolidated"),
+            # unknown entry for same field — must NOT win over consolidated
+            _row("balance_sheet", "Total Assets",
+                 [("March 31, 2025", "9999.00", 9999.0)], basis="unknown"),
+        ],
+    }
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    assert payload["balance_sheet"]["total_assets"]["value_crore"] == 5000.0
+
+
+def test_fallback_entry_records_unknown_basis_in_output(tmp_path):
+    """
+    Provenance: when the unknown fallback is used, the output entry must record
+    basis='unknown' (not the preferred_basis), so investors can audit the source.
+    """
+    path = tmp_path / "raw_financial_tables.json"
+    _write_json(path, _raw_payload(_consolidated_pl_unknown_bs_sections()))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    ta = payload["balance_sheet"]["total_assets"]
+    assert ta.get("basis") == "unknown", (
+        f"Fallback entry must retain basis='unknown', got {ta.get('basis')!r}"
+    )
+
+
+def test_standalone_pl_unknown_bs_does_not_crash(tmp_path):
+    """
+    Second company pattern: standalone preferred_basis + unknown BS must also work.
+    Validates the fix is not limited to consolidated.
+    """
+    path = tmp_path / "raw_financial_tables.json"
+    sections = {
+        "profit_and_loss": [
+            _row("profit_and_loss", "Revenue from operations",
+                 [("March 31, 2024", "350.00", 350.0)], basis="standalone"),
+            _row("profit_and_loss", "Profit for the year",
+                 [("March 31, 2024", "70.00", 70.0)], basis="standalone"),
+        ],
+        "balance_sheet": [
+            _row("balance_sheet", "Total Assets",
+                 [("March 31, 2024", "1200.00", 1200.0)], basis="unknown"),
+            _row("balance_sheet", "Total Equity",
+                 [("March 31, 2024", "700.00", 700.0)], basis="unknown"),
+            _row("balance_sheet", "Total Liabilities",
+                 [("March 31, 2024", "500.00", 500.0)], basis="unknown"),
+        ],
+    }
+    _write_json(path, _raw_payload(sections))
+
+    payload = normalize_financial_tables(company="acme", year="fy24", raw_tables_path=path)
+
+    assert payload["balance_sheet"]["total_assets"]["value_crore"] == 1200.0
+    assert payload["profit_and_loss"]["revenue"]["value_crore"] == 350.0
+
+
+def test_unknown_basis_fallback_basis_warning_emitted(tmp_path):
+    """
+    When the unknown fallback is triggered, a basis warning must appear in
+    payload['warnings'] so the reconciliation report can surface the provenance gap.
+    """
+    path = tmp_path / "raw_financial_tables.json"
+    _write_json(path, _raw_payload(_consolidated_pl_unknown_bs_sections()))
+
+    payload = normalize_financial_tables(company="acme", year="fy25", raw_tables_path=path)
+
+    all_warnings = payload.get("warnings", [])
+    assert any(
+        "fell back to unknown basis" in str(w) or "basis unclear" in str(w)
+        for w in all_warnings
+    ), f"Expected a fallback/basis warning in payload warnings, got: {all_warnings}"
+
+
+def test_no_company_or_sector_hardcoding_in_normalizer():
+    """Normalizer must contain no company- or sector-specific string literals."""
+    text = (ROOT / "knowledge/financials/normalizer.py").read_text(encoding="utf-8").lower()
+    forbidden = {"ujjivan", "sun_pharma", "sunpharma", "cipla", "drreddy", "lupin", "zydus", "hdfc", "icici"}
+    for name in forbidden:
+        assert name not in text, f"Company name {name!r} found in normalizer.py — remove hardcoding"
+
+
+def test_sun_pharma_fy23_revenue_unaffected_by_unknown_basis_fix(tmp_path):
+    """
+    Regression guard: the Sun Pharma FY23 production path must remain intact
+    after restoring the unknown-basis fallback.
+    """
+    import importlib.util, sys
+
+    raw_path = ROOT / "companies/sun_pharma/fy23/financials/raw_financial_tables.json"
+    if not raw_path.exists():
+        pytest.skip("Sun Pharma FY23 raw tables not present")
+
+    payload = normalize_financial_tables(
+        company="sun_pharma", year="fy23", raw_tables_path=raw_path
+    )
+
+    revenue = payload["profit_and_loss"]["revenue"]["value_crore"]
+    pat = payload["profit_and_loss"]["pat"]["value_crore"]
+
+    assert revenue is not None, "Sun Pharma FY23 revenue must not be None after fix"
+    assert pat is not None, "Sun Pharma FY23 PAT must not be None after fix"
+    # Values within 1% of expected (43 885.68 crore revenue, 8 473.58 crore PAT)
+    assert abs(revenue - 43885.68) / 43885.68 < 0.01, f"Revenue regression: {revenue}"
+    assert abs(pat - 8473.58) / 8473.58 < 0.01, f"PAT regression: {pat}"

@@ -19,6 +19,12 @@ def _context(tmp_path: Path, company: str = "acme", year: str = "fy25") -> Compa
     return context
 
 
+def _seed_company_memory_year(tmp_path: Path, company: str, year: str = "fy25") -> None:
+    intelligence_dir = tmp_path / "companies" / company / year / "intelligence"
+    _write_json(intelligence_dir / "company_intelligence.json", {"company_id": company})
+    _write_json(intelligence_dir / "business_classification.json", {"business_dnas": ["Manufacturing"]})
+
+
 def test_run_all_executes_stages_in_dependency_order(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = _context(tmp_path)
@@ -207,6 +213,313 @@ def test_production_sequence_is_deterministic_and_ask_intrinsiciq_runs_last():
     assert run_company_pipeline.PRODUCTION_STAGE_SEQUENCE.index("panel") > run_company_pipeline.PRODUCTION_STAGE_SEQUENCE.index("financial_pcim_validation")
 
 
+def test_company_year_sequence_is_deterministic():
+    assert run_company_pipeline.STAGE_SEQUENCE_PROFILES["company_year"] == [
+        "preflight",
+        "discovery",
+        "extraction",
+        "cleaning",
+        "business_understanding",
+        "business_intelligence",
+        "intelligence",
+        "financials",
+        "financial_quality",
+        "financial_basis_resolution",
+        "financial_truth_registry",
+        "financial_pcim_validation",
+    ]
+    assert len(run_company_pipeline.COMPANY_YEAR_STAGE_SEQUENCE) == len(set(run_company_pipeline.COMPANY_YEAR_STAGE_SEQUENCE))
+    assert run_company_pipeline.COMPANY_YEAR_STAGE_SEQUENCE.index("financials") < run_company_pipeline.COMPANY_YEAR_STAGE_SEQUENCE.index("financial_quality")
+
+
+def test_company_memory_sequence_is_deterministic():
+    assert run_company_pipeline.STAGE_SEQUENCE_PROFILES["company_memory"] == [
+        "company_memory",
+        "multi_year_memory",
+        "financial_trends",
+        "financial_attribution",
+        "financial_memory",
+        "investor_financials",
+        "cim",
+        "pcim",
+        "company_model",
+        "management_progression",
+        "management_commitments",
+        "management_commentary",
+        "capital_allocation_outcomes",
+        "projects",
+        "capacity_evolution",
+        "risk_evolution",
+        "management_quality",
+        "audit",
+        "panel",
+        "panel_doctor",
+        "investor_briefs",
+        "ask_intrinsiciq",
+    ]
+    assert len(run_company_pipeline.COMPANY_MEMORY_STAGE_SEQUENCE) == len(set(run_company_pipeline.COMPANY_MEMORY_STAGE_SEQUENCE))
+    assert run_company_pipeline.COMPANY_MEMORY_STAGE_SEQUENCE.index("panel") < run_company_pipeline.COMPANY_MEMORY_STAGE_SEQUENCE.index("panel_doctor")
+    assert run_company_pipeline.COMPANY_MEMORY_STAGE_SEQUENCE.index("panel") < run_company_pipeline.COMPANY_MEMORY_STAGE_SEQUENCE.index("ask_intrinsiciq")
+
+
+def test_company_year_sequence_dispatches_every_stage(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+    calls = []
+
+    monkeypatch.setattr(run_company_pipeline, "_run_preflight", lambda ctx: calls.append("preflight") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_discovery", lambda context=None: calls.append("discovery") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_extraction", lambda context=None: calls.append("extraction") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_cleaning", lambda context=None: calls.append("cleaning") or {})
+
+    def fake_bu(context=None):
+        calls.append("business_understanding")
+        _write_json(context.intelligence_dir / "business_blueprint.json", {"business_understanding": {"business_summary": "x"}})
+        classification = {
+            "business_dnas": ["Manufacturing"],
+            "question_modules": ["capital_allocation"],
+            "rationale": ["Synthetic manufacturing evidence is present."],
+            "evidence_used": ["business_summary=x"],
+        }
+        _write_json(context.intelligence_dir / "business_classification.json", classification)
+        return {"business_classification": classification}
+
+    monkeypatch.setattr(run_company_pipeline, "run_business_understanding_stage", fake_bu)
+
+    def fake_bi(context=None, bundle=None):
+        calls.append("business_intelligence")
+        _write_json(context.intelligence_dir / "discovery_plan.json", {"questions": []})
+        _write_json(context.intelligence_dir / "module_results.json", {"module_results": [{"module": "x"}]})
+        _write_json(context.intelligence_dir / "discovery_runtime.json", {"statistics": {"questions_answered": 1}})
+        return {}
+
+    monkeypatch.setattr(run_company_pipeline, "run_business_intelligence_stage", fake_bi)
+    monkeypatch.setattr(run_company_pipeline, "run_intelligence", lambda context=None: calls.append("intelligence") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_financials_stage", lambda context=None: calls.append("financials") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_financial_quality_stage", lambda company, context=None: calls.append("financial_quality") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_financial_basis_resolution", lambda context=None: calls.append("financial_basis_resolution") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_financial_truth_registry", lambda context=None: calls.append("financial_truth_registry") or {})
+
+    summary = run_company_pipeline.run_stage_sequence(
+        "acme",
+        run_company_pipeline.COMPANY_YEAR_STAGE_SEQUENCE,
+        context=context,
+        profile_name="company_year",
+    )
+
+    assert calls == [
+        "preflight",
+        "discovery",
+        "extraction",
+        "cleaning",
+        "business_understanding",
+        "business_intelligence",
+        "intelligence",
+        "financials",
+        "financial_quality",
+        "financial_basis_resolution",
+        "financial_truth_registry",
+    ]
+    assert [stage["stage"] for stage in summary["stages"]] == run_company_pipeline.COMPANY_YEAR_STAGE_SEQUENCE
+
+
+def test_company_memory_sequence_dispatches_every_stage(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = _context(tmp_path)
+    calls = []
+    cim_labels = iter(["cim", "pcim"])
+
+    monkeypatch.setattr(run_company_pipeline, "run_company_memory_stage", lambda company, context=None: calls.append("company_memory") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_multi_year_memory_stage", lambda company, context=None: calls.append("multi_year_memory") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_financial_trends_stage", lambda company, context=None: calls.append("financial_trends") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_financial_attribution_stage", lambda company, context=None: calls.append("financial_attribution") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_financial_memory_stage", lambda company, context=None: calls.append("financial_memory") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_investor_financials_stage", lambda company, context=None: calls.append("investor_financials") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_company_model_stage", lambda company, context=None: calls.append("company_model") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_management_progression_stage", lambda company, context=None: calls.append("management_progression") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_management_commitments_stage", lambda company, context=None: calls.append("management_commitments") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_management_commentary_stage", lambda company, context=None: calls.append("management_commentary") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_capital_allocation_outcomes_stage", lambda company, context=None: calls.append("capital_allocation_outcomes") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_projects_stage", lambda company, context=None: calls.append("projects") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_capacity_evolution_stage", lambda company, context=None: calls.append("capacity_evolution") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_risk_evolution_stage", lambda company, context=None: calls.append("risk_evolution") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_management_quality_stage", lambda company, context=None: calls.append("management_quality") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_audit_stage", lambda company, context=None, fix_safe=False: calls.append("audit") or {})
+    monkeypatch.setattr(run_company_pipeline, "_load_audit_payload", lambda company: {"status": "pass"})
+    monkeypatch.setattr(run_company_pipeline, "run_panel_stage", lambda company, context=None, include_evidence_ids=False, regenerate_analysts=False: calls.append("panel") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_panel_doctor_stage", lambda company, context=None: calls.append("panel_doctor") or {})
+    monkeypatch.setattr(run_company_pipeline, "run_investor_briefs_stage", lambda company, context=None: calls.append("investor_briefs") or {})
+    monkeypatch.setattr(run_company_pipeline, "_ensure_audit_allows_customer_output", lambda company: None)
+    monkeypatch.setattr(run_company_pipeline, "_require_company_level_intelligence", lambda company, stage_name: (["fy25"], []))
+
+    def fake_cim(company, context=None):
+        calls.append(next(cim_labels))
+        return {}
+
+    monkeypatch.setattr(run_company_pipeline, "run_cim_stage", fake_cim)
+    monkeypatch.setattr(run_company_pipeline, "run_ask_intrinsiciq_stage", lambda company, context=None, force=False: calls.append("ask_intrinsiciq") or {})
+
+    summary = run_company_pipeline.run_stage_sequence(
+        "acme",
+        run_company_pipeline.COMPANY_MEMORY_STAGE_SEQUENCE,
+        context=context,
+        profile_name="company_memory",
+    )
+
+    assert calls == [
+        "company_memory",
+        "multi_year_memory",
+        "financial_trends",
+        "financial_attribution",
+        "financial_memory",
+        "investor_financials",
+        "cim",
+        "company_model",
+        "management_progression",
+        "management_commitments",
+        "management_commentary",
+        "capital_allocation_outcomes",
+        "projects",
+        "capacity_evolution",
+        "risk_evolution",
+        "management_quality",
+        "audit",
+        "panel",
+        "panel_doctor",
+        "investor_briefs",
+        "ask_intrinsiciq",
+    ]
+    assert [stage["stage"] for stage in summary["stages"]] == run_company_pipeline.COMPANY_MEMORY_STAGE_SEQUENCE
+
+
+def test_financial_quality_stage_dispatches_through_main(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    calls = []
+
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "run_financial_quality_stage",
+        lambda company, context=None: calls.append((company, getattr(context, "year", None))) or {},
+    )
+    monkeypatch.setattr(sys, "argv", ["run_company_pipeline.py", "acme", "fy25", "--stage", "financial_quality"])
+    run_company_pipeline.main()
+
+    assert calls == [("acme", "fy25")]
+
+
+def test_company_year_and_memory_profiles_dispatch_via_main(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    calls = []
+
+    def fake_run_stage_sequence(company_slug, stages, options=None, context=None, profile_name="custom"):
+        calls.append(
+            {
+                "company": company_slug,
+                "stages": list(stages),
+                "options": dict(options or {}),
+                "profile": profile_name,
+                "year": getattr(context, "year", None),
+            }
+        )
+        return {"status": "pass", "stages": []}
+
+    monkeypatch.setattr(run_company_pipeline, "run_stage_sequence", fake_run_stage_sequence)
+
+    monkeypatch.setattr(sys, "argv", ["run_company_pipeline.py", "acme", "fy25", "--stage", "company_year"])
+    run_company_pipeline.main()
+    monkeypatch.setattr(sys, "argv", ["run_company_pipeline.py", "acme", "--stage", "company_memory"])
+    run_company_pipeline.main()
+
+    assert calls[0]["profile"] == "company_year"
+    assert calls[0]["stages"] == run_company_pipeline.COMPANY_YEAR_STAGE_SEQUENCE
+    assert calls[0]["year"] == "fy25"
+    assert calls[1]["profile"] == "company_memory"
+    assert calls[1]["stages"] == run_company_pipeline.COMPANY_MEMORY_STAGE_SEQUENCE
+    assert calls[1]["year"] is None
+
+
+def test_company_memory_stage_sequence_builds_company_only_context(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _seed_company_memory_year(tmp_path, "acme", "fy25")
+    calls = []
+
+    def fake_company_memory_stage(company, context=None):
+        calls.append(
+            (
+                "company_memory",
+                company,
+                getattr(context, "year", None),
+                tuple(getattr(context, "eligible_years", ())),
+            )
+        )
+        return {}
+
+    monkeypatch.setattr(run_company_pipeline, "run_company_memory_stage", fake_company_memory_stage)
+    monkeypatch.setattr(run_company_pipeline, "run_multi_year_memory_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_financial_trends_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_financial_attribution_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_financial_memory_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_investor_financials_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_cim_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_company_model_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_management_progression_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_management_commitments_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_management_commentary_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_capital_allocation_outcomes_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_projects_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_capacity_evolution_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_risk_evolution_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_management_quality_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_audit_stage", lambda company, context=None, fix_safe=False: {})
+    monkeypatch.setattr(run_company_pipeline, "_load_audit_payload", lambda company: {"status": "pass"})
+    monkeypatch.setattr(run_company_pipeline, "run_panel_stage", lambda company, context=None, include_evidence_ids=False, regenerate_analysts=False: {})
+    monkeypatch.setattr(run_company_pipeline, "run_panel_doctor_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_investor_briefs_stage", lambda company, context=None: {})
+    monkeypatch.setattr(run_company_pipeline, "run_ask_intrinsiciq_stage", lambda company, context=None, force=False: {})
+    monkeypatch.setattr(run_company_pipeline, "_require_company_level_intelligence", lambda company, stage_name: (["fy25"], []))
+
+    summary = run_company_pipeline.run_stage_sequence(
+        "acme",
+        run_company_pipeline.COMPANY_MEMORY_STAGE_SEQUENCE,
+        context=None,
+        profile_name="company_memory",
+    )
+
+    assert calls[0] == ("company_memory", "acme", None, ("fy25",))
+    assert summary["stages"][0]["stage"] == "company_memory"
+
+
+def test_company_memory_rejects_year_argument(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_company_pipeline.py", "acme", "fy25", "--stage", "company_memory"],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        run_company_pipeline.main()
+    assert excinfo.value.code == 2
+
+
+def test_pipeline_stage_registry_is_fully_classified():
+    registry = set(run_company_pipeline.STAGE_CATALOG)
+    year_sequence = set(run_company_pipeline.PIPELINE_SCOPE_CLASSIFICATION["company_year"]["sequence"])
+    year_subsumed = set(run_company_pipeline.PIPELINE_SCOPE_CLASSIFICATION["company_year"]["subsumed"])
+    memory_sequence = set(run_company_pipeline.PIPELINE_SCOPE_CLASSIFICATION["company_memory"]["sequence"])
+    memory_subsumed = set(run_company_pipeline.PIPELINE_SCOPE_CLASSIFICATION["company_memory"]["subsumed"])
+    meta_only = set(run_company_pipeline.PIPELINE_SCOPE_CLASSIFICATION["meta_only"])
+
+    covered = year_sequence | year_subsumed | memory_sequence | memory_subsumed | meta_only
+
+    assert registry == covered
+    assert year_sequence.isdisjoint(memory_sequence)
+    assert year_subsumed.isdisjoint(memory_sequence)
+    assert memory_subsumed.isdisjoint(year_sequence)
+    assert len(year_sequence) == len(run_company_pipeline.COMPANY_YEAR_STAGE_SEQUENCE)
+    assert len(memory_sequence) == len(run_company_pipeline.COMPANY_MEMORY_STAGE_SEQUENCE)
+
+
 def test_production_stops_after_failed_stage_and_marks_skipped(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     context = _context(tmp_path)
@@ -370,6 +683,11 @@ def test_discovery_fails_when_chunk_generation_is_empty(tmp_path, monkeypatch):
 
     monkeypatch.setattr(run_company_pipeline, "_iter_raw_document_candidates", lambda ctx: [pdf_path])
     monkeypatch.setattr(run_company_pipeline, "_read_text_from_document", lambda path: "extractable text")
+    monkeypatch.setattr(
+        run_company_pipeline,
+        "build_document_intake_report",
+        lambda raw_docs, allow_ocr=True: {"documents": [], "ocr_available": True},
+    )
 
     def fake_clean_chunks(ctx):
         chunk_path = ctx.extracted_dir / "clean_chunks.json"
@@ -850,3 +1168,81 @@ def test_multi_year_warning_when_only_one_valid_year(tmp_path, monkeypatch):
     years, warnings = run_company_pipeline._require_company_level_intelligence("acme", "multi_year_memory")
     assert years == ["fy25"]
     assert warnings
+
+
+def test_company_memory_handlers_accept_company_only_context(tmp_path, monkeypatch):
+    """
+    Invariant test: Every company-memory stage handler must NOT crash with
+    a scope leak (PosixPath / NoneType) when called with CompanyMemoryContext (year=None).
+
+    This catches hidden year dependencies that would cause the original bug:
+    TypeError: unsupported operand type(s) for /: 'PosixPath' and 'NoneType'
+
+    Legitimate validation failures, missing prerequisites, or data quality issues
+    are expected and allowed - we only check for scope leaks.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    # Seed minimal company memory data to pass pre-requisite checks
+    _seed_company_memory_year(tmp_path, "acme", "fy25")
+    _seed_company_memory_year(tmp_path, "acme", "fy24")
+
+    from core.company_context import CompanyMemoryContext
+
+    # Build a company-only context (year=None, eligible_years populated)
+    mem_context = CompanyMemoryContext(company="acme")
+    mem_context.create_directories()
+
+    # List of all company-memory stage handlers to test
+    # These are the functions that run in COMPANY_MEMORY_STAGE_SEQUENCE
+    company_memory_handlers = {
+        "company_memory": run_company_pipeline.run_company_memory_stage,
+        "multi_year_memory": run_company_pipeline.run_multi_year_memory_stage,
+        "financial_trends": run_company_pipeline.run_financial_trends_stage,
+        "financial_attribution": run_company_pipeline.run_financial_attribution_stage,
+        "financial_memory": run_company_pipeline.run_financial_memory_stage,
+        "investor_financials": run_company_pipeline.run_investor_financials_stage,
+        "cim": run_company_pipeline.run_cim_stage,
+        "pcim": run_company_pipeline.run_cim_stage,  # same function
+        "company_model": run_company_pipeline.run_company_model_stage,
+        "management_progression": run_company_pipeline.run_management_progression_stage,
+        "management_commitments": run_company_pipeline.run_management_commitments_stage,
+        "management_commentary": run_company_pipeline.run_management_commentary_stage,
+        "capital_allocation_outcomes": run_company_pipeline.run_capital_allocation_outcomes_stage,
+        "projects": run_company_pipeline.run_projects_stage,
+        "capacity_evolution": run_company_pipeline.run_capacity_evolution_stage,
+        "risk_evolution": run_company_pipeline.run_risk_evolution_stage,
+        "management_quality": run_company_pipeline.run_management_quality_stage,
+        "audit": run_company_pipeline.run_audit_stage,
+        "panel": run_company_pipeline.run_panel_stage,
+        "panel_doctor": run_company_pipeline.run_panel_doctor_stage,
+        "investor_briefs": run_company_pipeline.run_investor_briefs_stage,
+        "ask_intrinsiciq": run_company_pipeline.run_ask_intrinsiciq_stage,
+    }
+
+    # Verify each handler does NOT have a scope leak (PosixPath / NoneType TypeError)
+    scope_leaks = []
+    for stage_name, handler in company_memory_handlers.items():
+        try:
+            # Call with CompanyMemoryContext (year=None)
+            result = handler(company="acme", context=mem_context)
+        except TypeError as e:
+            error_str = str(e)
+            # Catch the specific scope leak pattern: PosixPath / NoneType
+            if ("PosixPath" in error_str and "NoneType" in error_str) or \
+               ("unsupported operand" in error_str and "NoneType" in error_str and "/" in error_str):
+                scope_leaks.append((stage_name, f"SCOPE LEAK: {e}"))
+            # Other TypeErrors are not scope leaks - they're legitimate bugs
+            else:
+                raise
+        except Exception:
+            # All other exceptions (RuntimeError, ValueError, FileNotFoundError, etc.)
+            # are legitimate validation/prerequisite failures, NOT scope leaks.
+            # We only care about the specific TypeError from year=None being used in path construction.
+            pass
+
+    assert not scope_leaks, (
+        "Company-memory handlers have SCOPE LEAKS with company-only context (year=None):\n" +
+        "\n".join(f"  {name}: {error}" for name, error in scope_leaks) +
+        "\n\nThese are bugs where year=None is used in path construction (e.g., Path / year)."
+    )

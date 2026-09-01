@@ -595,6 +595,26 @@ def build_evidence_quality(item: Dict[str, Any], *, module_name: str) -> Dict[st
     source_proximity = derive_source_proximity(text, actor_type=actor_type)
     time_specificity = derive_time_specificity(text)
     business_relevance = classify_business_relevance(text, module_name=module_name, actor_type=actor_type)
+    structured_capacity_signal = module_name == "capacity_expansions" and any(
+        _normalize_text(item.get(field)) for field in ("current_capacity", "target_capacity")
+    )
+    if structured_capacity_signal and str(business_relevance.get("outcome") or "").upper() == "QUARANTINE":
+        business_relevance = deepcopy(business_relevance)
+        business_relevance["status"] = "supporting"
+        business_relevance["outcome"] = "DEMOTE"
+        business_relevance["quarantine"] = False
+        business_relevance["limitations"] = _dedupe_preserve(
+            [
+                *(business_relevance.get("limitations") or []),
+                "structured capacity disclosure is business-operational despite civic wording",
+            ]
+        )
+        business_relevance["outcome_basis"] = _dedupe_preserve(
+            [
+                *(business_relevance.get("outcome_basis") or []),
+                "structured capacity evidence overrides civic/public-interest quarantine",
+            ]
+        )
     source_period = item.get("source_year") or item.get("year") or ""
     source_period_ownership = assess_source_period_ownership(
         source_year=source_period,
@@ -610,6 +630,8 @@ def build_evidence_quality(item: Dict[str, Any], *, module_name: str) -> Dict[st
     if module_name == "capacity_expansions":
         if item.get("current_capacity") and item.get("target_capacity"):
             temporal_role = "current_target"
+        elif item.get("current_capacity"):
+            temporal_role = "current_state"
         if item.get("year"):
             target_period = item.get("year") or ""
     source_value = _financial_year_value(source_period)

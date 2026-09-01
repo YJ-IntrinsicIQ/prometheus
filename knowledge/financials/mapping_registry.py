@@ -18,6 +18,9 @@ CANONICAL_SECTION_FIELDS: Dict[str, List[str]] = {
         "pbt",
         "tax",
         "pat",
+        "share_of_profit_associates",
+        "share_of_profit_jv",
+        "non_controlling_interests",
         "eps_basic",
         "eps_diluted",
     ],
@@ -35,6 +38,7 @@ CANONICAL_SECTION_FIELDS: Dict[str, List[str]] = {
         "payables",
         "fixed_assets",
         "cwip",
+        "other_assets",
         "total_assets",
         "total_liabilities",
     ],
@@ -79,27 +83,66 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
     "profit_and_loss": {
         "revenue": {
             "table_types": ["profit_and_loss", "balance_sheet", "revenue"],
-            "aliases": ["revenue from operations", "revenue", "income from operations"],
+            "aliases": [
+                "revenue from operations", "revenue", "income from operations",
+                # Banking schedule aliases (RBI Schedule III - Schedule 13: Interest Earned)
+                "interest earned", "interest income", "interest on advances", "interest on loans",
+                "interest on investments", "interest on balances with rbi", "interest on deposits with rbi",
+                "interest on money at call", "discount on bills", "income from interest",
+                "interest discount on advance bills", "income on investments",
+            ],
         },
         "other_income": {
             "table_types": ["profit_and_loss", "revenue"],
-            "aliases": ["other income", "non operating income"],
+            "aliases": [
+                "other income", "non operating income",
+                # Banking schedule aliases (RBI Schedule III - Schedule 14: Other Income)
+                "commission exchange and brokerage", "commission, exchange and brokerage",
+                "profit on sale of investments", "profit on revaluation of investments",
+                "profit on sale of land buildings and other assets", "profit on exchange transactions",
+                "miscellaneous income", "rent received", "dividend income",
+            ],
         },
         "total_income": {
             "table_types": ["profit_and_loss", "revenue"],
-            "aliases": ["total income"],
+            "aliases": ["total income", "total income (i+ii)", "total of interest earned and other income"],
         },
         "cost_of_materials": {
-            "table_types": ["profit_and_loss"],
-            "aliases": ["cost of materials consumed", "material cost", "materials consumed"],
+            "table_types": ["profit_and_loss", "tax"],
+            "aliases": [
+                "cost of materials consumed",
+                "material cost",
+                "materials consumed",
+                "consumption of materials stores and spare parts",
+                "consumption of materials, stores and spare parts",
+            ],
         },
         "employee_cost": {
             "table_types": ["profit_and_loss"],
-            "aliases": ["employee benefits expense", "employee cost", "staff cost", "personnel cost"],
+            "aliases": [
+                "employee benefits expense", "employee cost", "staff cost", "personnel cost",
+                # Banking schedule aliases (RBI Schedule III - Schedule 16: Operating Expenses)
+                "payments to and provision for employees", "payments to employees",
+                "payments to and provision for employee", "payment to and provision for employees",
+                "salaries and allowances", "contribution to provident fund", "staff welfare",
+            ],
         },
         "other_expenses": {
             "table_types": ["profit_and_loss"],
-            "aliases": ["other expenses", "operating expenses"],
+            "aliases": [
+                "other expenses", "operating expenses",
+                # Banking schedule aliases (RBI Schedule III - Schedule 16: Operating Expenses)
+                "rent taxes and lighting", "rent, taxes and lighting",
+                "printing and stationery", "printing, stationery",
+                "advertisement and publicity", "advertisement",
+                "depreciation on banks property", "depreciation on bank's property",
+                "directors fees", "directors' fees", "auditors fees", "auditors' fees",
+                "law charges", "legal expenses",
+                "postage telegrams and telephone", "postage, telegrams and telephone",
+                "repairs and maintenance", "repairs",
+                "insurance", "other expenditure", "miscellaneous expenses",
+                "operating expenses (i to x)", "total operating expenses",
+            ],
         },
         "ebitda": {
             "table_types": ["profit_and_loss"],
@@ -115,26 +158,77 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
         },
         "finance_cost": {
             "table_types": ["profit_and_loss", "cash_flow", "borrowings"],
-            "aliases": ["finance cost", "finance costs", "interest expense"],
+            "aliases": [
+                "finance cost", "finance costs", "interest expense",
+                # Banking schedule aliases (RBI Schedule III - Schedule 15: Interest Expended)
+                "interest expended", "interest expense", "interest paid",
+                "interest on deposits", "interest on borrowings", "interest on rbi borrowings",
+                "interest on inter-bank borrowings", "discount on bills", "other interest",
+            ],
         },
         "pbt": {
             "table_types": ["profit_and_loss", "cash_flow"],
-            "aliases": ["profit before tax", "profit before taxation", "net profit before tax"],
+            "aliases": [
+                "profit before tax",
+                "profit before taxation",
+                "net profit before tax",
+                "profit before tax after exceptional items",
+                "profit before tax (after exceptional items)",
+                "profit before tax (v-vi)",
+                "profit before tax (vi-vii)",
+                "profit before tax after exceptional item",
+                "profit before tax (after exceptional items)",
+                "pbt",
+            ],
         },
         "tax": {
             "table_types": ["profit_and_loss", "tax", "balance_sheet", "cash_flow"],
-            "aliases": ["total tax expense", "tax expense", "tax expenses", "income tax expense", "tax"],
+            "aliases": ["total tax expense", "tax expense", "tax expenses", "income tax expense", "tax", "tax adjustment"],
         },
         "pat": {
             "table_types": ["profit_and_loss", "balance_sheet", "cash_flow"],
             "aliases": [
                 "profit for the year",
+                "profit for the year attributable to owners of the company",
+                "profit attributable to owners of the company",
                 "profit after tax",
                 "profit after taxation",
                 "net profit after taxation",
                 "net profit 5 6 8 9",
                 "pat",
                 "profit for the period",
+            ],
+        },
+        "share_of_profit_associates": {
+            "table_types": ["profit_and_loss"],
+            "aliases": [
+                "share of profit/(loss) of associates (net of tax)",
+                "share of profit of associates (net of tax)",
+                "share of profit/(loss) of associates",
+                "share of profit of associates",
+                "share in profit of associates",
+                "profit/(loss) from associates",
+                "share of profit / (loss) of associates",
+            ],
+        },
+        "share_of_profit_jv": {
+            "table_types": ["profit_and_loss"],
+            "aliases": [
+                "share of profit/(loss) of joint venture (net of tax)",
+                "share of profit of joint venture (net of tax)",
+                "share of profit/(loss) of joint venture",
+                "share of profit of joint venture",
+                "share in profit of joint venture",
+                "profit/(loss) from joint ventures",
+            ],
+        },
+        "non_controlling_interests": {
+            "table_types": ["profit_and_loss"],
+            "aliases": [
+                "non-controlling interests",
+                "non controlling interests",
+                "minority interest",
+                "minority interests",
             ],
         },
         "eps_basic": {
@@ -202,13 +296,28 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
         },
         "receivables": {
             "table_types": ["balance_sheet"],
-            "aliases": ["trade receivables", "receivables", "accounts receivable"],
+            "aliases": [
+                "trade receivables",
+                "receivables",
+                "accounts receivable",
+                # Banking schedule aliases (RBI Schedule III - Schedule 9 Advances)
+                "advances",
+                "advances (net of provisions)",
+                "bills purchased and discounted",
+                "cash credits overdrafts and loans repayable on demand",
+                "term loans",
+                "secured by tangible assets",
+                "covered by bank government guarantees",
+                "unsecured",
+            ],
         },
         "payables": {
-            "table_types": ["balance_sheet"],
+            "table_types": ["balance_sheet", "borrowings", "dividend"],
             "aliases": [
                 "trade payables",
+                "trade payable",
                 "total trade payables",
+                "total trade payable",
                 "accounts payable",
                 "supplier payables",
                 "dues to suppliers",
@@ -226,13 +335,49 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
             "table_types": ["balance_sheet", "fixed_assets"],
             "aliases": ["capital work in progress", "cwip"],
         },
+        "other_assets": {
+            "table_types": ["balance_sheet"],
+            "aliases": [
+                "other assets",
+                # Banking schedule aliases (RBI Schedule III - Schedule 11)
+                "total other assets",
+                "inter office adjustment",
+                "interest accrued",
+                "tax paid in advance",
+                "stationery and stamps",
+                "non-banking assets acquired",
+                "deferred tax assets",
+                "others",
+            ],
+            "forbidden": [
+                "deposits",
+                "term deposits",
+                "demand deposits",
+                "savings bank deposits",
+                "borrowings",
+                "liabilities",
+                "capital",
+                "reserves",
+            ],
+        },
         "total_assets": {
             "table_types": ["balance_sheet"],
-            "aliases": ["total assets"],
+            "aliases": [
+                "total assets",
+                "total equity and liabilities",
+            ],
         },
         "total_liabilities": {
             "table_types": ["balance_sheet"],
-            "aliases": ["total liabilities"],
+            "aliases": [
+                "total liabilities",
+                # Banking schedule aliases (RBI Schedule III)
+                "total liabilities reserves and surplus",
+                "total liabilities reserves and surplus b",
+                "total i ii iii",
+                "total i + ii + iii",
+                "total (i + ii + iii)",
+            ],
         },
     },
     "cash_flow": {
@@ -283,7 +428,6 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
             "aliases": [
                 "income taxes paid", "taxes paid", "tax paid",
                 "direct taxes paid net of funds",
-                "tax adjustment", "tax adjustments",
             ],
         },
     },
@@ -339,6 +483,10 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
                 "diluted weighted average shares",
                 "number of shares used for diluted eps",
                 "number of shares used in diluted eps calculation",
+                "weighted average number of shares used in computing diluted earnings per share",
+                "weighted average number of shares used for diluted earnings per share",
+                "weighted average number of shares used in computing basic and diluted earnings per share",
+                "weighted average number of shares used for basic and diluted earnings per share",
             ],
         },
         "book_value_per_share": {

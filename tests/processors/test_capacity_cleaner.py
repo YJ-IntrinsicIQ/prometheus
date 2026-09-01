@@ -78,6 +78,78 @@ def test_capacity_cleaner_handles_example_years_inside_current_disclosures(tmp_p
         set_context(None)
 
 
+def test_non_promotable_ambiguous_historical_capacity_is_quarantined_with_diagnostics(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = CompanyContext(company="sun_pharma", year="fy22")
+    context.create_directories()
+    set_context(context)
+
+    try:
+        source = ROOT / "companies" / "sun_pharma" / "fy22" / "extracted" / "extracted_capacity.json"
+        items = json.loads(source.read_text(encoding="utf-8"))
+        bundle = next(item for item in items if item.get("item_id") == "capacity_expansions_00003")
+        (context.extracted_dir / "extracted_capacity.json").write_text(
+            json.dumps([bundle], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        cleaned = create_cleaner().run()
+
+        assert cleaned == []
+        output = json.loads((context.extracted_dir / "clean_capacity.json").read_text(encoding="utf-8"))
+        assert output == []
+        rejections = json.loads((context.extracted_dir / "clean_capacity_rejections.json").read_text(encoding="utf-8"))
+        assert rejections["rejection_count"] == 1
+        rejection = rejections["rejections"][0]
+        assert rejection["source_item_id"] == "capacity_expansions_00003"
+        assert rejection["failure_class"] == "PERIOD_RESOLUTION_UNSUPPORTED"
+        assert rejection["diagnostics"]["period_status"] == "AMBIGUOUS"
+        assert rejection["diagnostics"]["should_promote"] is False
+        assert rejection["cleaned_period_fields"]["progression_materiality"]["should_promote"] is False
+    finally:
+        set_context(None)
+
+
+def test_generic_non_promotable_ambiguous_capacity_variant_is_quarantined(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = CompanyContext(company="acme", year="fy25")
+    context.create_directories()
+    set_context(context)
+
+    try:
+        items = [
+            {
+                "capacity_type": "Medical rep expansion history",
+                "current_capacity": "",
+                "target_capacity": "",
+                "timeline": "2021 and 2022",
+                "location": "India",
+                "status": "Expansion happened in 2021 and 2022; final status is truncated before conclusion.",
+                "source_chunk": "In 2021 the field force expanded. In 2022 the report referenced continued productivity effects, but the excerpt is truncated.",
+                "page": 44,
+                "value": "Medical rep expansion history",
+                "category": "",
+                "actor": "company",
+                "time_reference": "dated",
+                "year": "2022",
+                "amount": "",
+                "currency": "",
+                "uncertainty_reason": "final status not fully specified in the provided excerpt",
+                "evidence_ids": ["ev_capacity_p44_00001"],
+            }
+        ]
+        (context.extracted_dir / "extracted_capacity.json").write_text(json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        cleaned = create_cleaner().run()
+
+        assert cleaned == []
+        rejections = json.loads((context.extracted_dir / "clean_capacity_rejections.json").read_text(encoding="utf-8"))
+        assert rejections["rejections"][0]["diagnostics"]["company"] == "acme"
+        assert rejections["rejections"][0]["diagnostics"]["failure_class"] == "PERIOD_RESOLUTION_UNSUPPORTED"
+    finally:
+        set_context(None)
+
+
 def test_capacity_cleaner_derives_status_from_source_text_when_missing(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = CompanyContext(company="ujjivan", year="fy24")

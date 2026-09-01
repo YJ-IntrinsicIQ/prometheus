@@ -664,10 +664,11 @@ def _build_legacy_financial_quality_summary(*, company: str, trends_path: Path) 
         normalized_warning = str(blocked.get("normalized_warning") or "")
         metric = str(blocked.get("affected_metric") or "")
         lowered = original_warning.lower()
-        if original_warning and original_warning in warnings:
+        original_was_present = original_warning and original_warning in warnings
+        if original_was_present:
             warnings = [item for item in warnings if item != original_warning]
-        if normalized_warning:
-            _append_unique(warnings, normalized_warning)
+            if normalized_warning and normalized_warning != original_warning:
+                _append_unique(warnings, normalized_warning)
         if metric == "fcf":
             missing_data = [item for item in missing_data if "fcf" not in item.lower()]
         if metric == "cfo_to_pat":

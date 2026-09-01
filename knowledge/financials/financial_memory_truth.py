@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from knowledge.company_memory import parse_financial_year
+from knowledge.company_year_eligibility import build_company_year_eligibility_manifest
 
 
 TRUTH_PRIORITY_FILES = (
@@ -330,15 +331,31 @@ def _first_numeric(*values: Any) -> Optional[float]:
     return None
 
 
+def _fact_has_numeric_value(fact: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(fact, dict):
+        return False
+    return any(
+        isinstance(fact.get(key), (int, float))
+        for key in ("value", "value_crore", "value_per_share", "raw_number", "value_shares", "crore_shares", "amount_crore")
+    )
+
+
 def _bundle_fact_lookup(bundle: Dict[str, Any], *metric_ids: str) -> Optional[Dict[str, Any]]:
     fact_map = bundle.get("fact_map") or {}
+    candidates: List[Dict[str, Any]] = []
     for metric_id in metric_ids:
         items = fact_map.get(metric_id) or fact_map.get(_normalize_metric_token(metric_id)) or []
         if items:
             first = items[0]
             if isinstance(first, dict):
-                return first
-    return None
+                candidates.append(first)
+    for fact in candidates:
+        if bool(fact.get("usable_downstream")) and _fact_has_numeric_value(fact):
+            return fact
+    for fact in candidates:
+        if _fact_has_numeric_value(fact):
+            return fact
+    return candidates[0] if candidates else None
 
 
 def _fact_crore_value(fact: Optional[Dict[str, Any]]) -> Optional[float]:
@@ -531,7 +548,7 @@ def resolve_share_count_for_per_share_metric(
     analysis: Dict[str, Any],
     prefer_diluted: bool = False,
 ) -> Dict[str, Any]:
-    weighted_fact = _bundle_fact_lookup(bundle, "weighted_avg_shares")
+    weighted_fact = _bundle_fact_lookup(bundle, "weighted_avg_shares", "weighted_average_basic_shares")
     diluted_fact = _bundle_fact_lookup(bundle, "weighted_average_diluted_shares", "diluted_shares")
     closing_fact = _bundle_fact_lookup(bundle, "closing_shares")
 
@@ -1023,8 +1040,17 @@ def _fallback_fact_map(bundle: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return fallback
 
 
-def load_financial_truth_by_year(*, company_root: Path) -> Dict[str, Dict[str, Any]]:
-    years = _sort_years(child.name for child in company_root.iterdir() if child.is_dir() and child.name.lower().startswith("fy")) if company_root.exists() else []
+def _eligible_years_for_company_memory(company_root: Path) -> List[str]:
+    if not company_root.exists():
+        return []
+    manifest = build_company_year_eligibility_manifest(company=company_root.name, company_root=company_root)
+    return _sort_years(manifest.get("eligible_years", []))
+
+
+def load_financial_truth_by_year(*, company_root: Path, years: Optional[Sequence[str]] = None) -> Dict[str, Dict[str, Any]]:
+    if years is None:
+        years = _eligible_years_for_company_memory(company_root)
+    years = _sort_years(years)
     bundles: Dict[str, Dict[str, Any]] = {}
     for year in years:
         financial_root = company_root / year / "financials"
@@ -1048,8 +1074,10 @@ def load_financial_truth_by_year(*, company_root: Path) -> Dict[str, Dict[str, A
 
 
 def build_financial_memory_manifest(*, company: str, company_root: Path) -> Dict[str, Any]:
-    bundles = load_financial_truth_by_year(company_root=company_root)
-    years_scanned = _sort_years(bundles.keys())
+    eligibility = build_company_year_eligibility_manifest(company=company, company_root=company_root)
+    eligible_years = _sort_years(eligibility.get("eligible_years", []))
+    years_scanned = _sort_years((eligibility.get("years") or {}).keys())
+    bundles = load_financial_truth_by_year(company_root=company_root, years=eligible_years)
     years_with_registry: List[str] = []
     years_with_partial: List[str] = []
     years_missing: List[str] = []
@@ -1059,6 +1087,17 @@ def build_financial_memory_manifest(*, company: str, company_root: Path) -> Dict
     unreliable_metrics_by_year: Dict[str, List[str]] = {}
     warnings: List[str] = []
     limitations: List[str] = []
+    excluded_company_years: Dict[str, Dict[str, Any]] = {}
+
+    for year, item in (eligibility.get("years") or {}).items():
+        if year in eligible_years:
+            continue
+        excluded_company_years[year] = {
+            "status": item.get("status"),
+            "reason": item.get("reason"),
+            "missing_required_artifacts": list(item.get("missing_required_artifacts", [])),
+            "available_artifacts": list(item.get("available_artifacts", [])),
+        }
 
     for year, bundle in bundles.items():
         if bundle.get("registry"):
@@ -1106,6 +1145,12 @@ def build_financial_memory_manifest(*, company: str, company_root: Path) -> Dict
         _append_unique(limitations, "Only one year has a financial truth registry, so multi-year comparability is limited.")
     if not years_with_registry:
         _append_unique(limitations, "No year has a financial truth registry yet; company-memory is using partial yearly financial artifacts.")
+    if excluded_company_years:
+        _append_unique(
+            limitations,
+            "Some fiscal-year folders were excluded by canonical company-year eligibility: "
+            + ", ".join(_sort_years(excluded_company_years.keys())),
+        )
 
     readiness = {
         "usable_registry_years": years_with_registry,
@@ -1121,6 +1166,8 @@ def build_financial_memory_manifest(*, company: str, company_root: Path) -> Dict
         "years_with_financial_truth_registry": years_with_registry,
         "years_with_partial_financials": years_with_partial,
         "years_missing_financials": years_missing,
+        "company_year_eligibility": eligibility,
+        "excluded_company_years": excluded_company_years,
         "source_artifacts_used_by_year": source_artifacts_used_by_year,
         "source_artifacts_missing_by_year": source_artifacts_missing_by_year,
         "quarantined_domains_by_year": quarantined_domains_by_year,

@@ -199,6 +199,42 @@ def test_missing_cfo_warning(tmp_path):
     assert "CFO missing" in report.warnings
 
 
+def test_not_published_cash_flow_is_warning_not_hard_failure(tmp_path):
+    path = tmp_path / "normalized_fundamentals.json"
+    payload = _payload()
+    for entry in payload["cash_flow"].values():
+        entry["value_original"] = ""
+        entry["value_crore"] = None
+    payload["cash_flow_availability"] = {
+        "status": "NOT_PUBLISHED",
+        "basis": "consolidated",
+        "reason": "source statement inventory indicates cash flow was not published",
+    }
+    _write_json(path, payload)
+
+    report = validate_normalized_fundamentals(company="acme", year="fy25", normalized_path=path)
+
+    assert report.status == "warning"
+    assert "cash flow statement entirely missing" not in report.hard_failures
+    assert "cash flow statement not published; CFO/FCF unavailable" in report.warnings
+    assert "cash_flow" in report.missing_fields
+
+
+def test_unavailable_cash_flow_without_not_published_contract_still_fails(tmp_path):
+    path = tmp_path / "normalized_fundamentals.json"
+    payload = _payload()
+    for entry in payload["cash_flow"].values():
+        entry["value_original"] = ""
+        entry["value_crore"] = None
+    payload["cash_flow_availability"] = {"status": "UNAVAILABLE"}
+    _write_json(path, payload)
+
+    report = validate_normalized_fundamentals(company="acme", year="fy25", normalized_path=path)
+
+    assert report.status == "fail"
+    assert "cash flow statement entirely missing" in report.hard_failures
+
+
 def test_unit_missing_warning(tmp_path):
     path = tmp_path / "normalized_fundamentals.json"
     payload = _payload()

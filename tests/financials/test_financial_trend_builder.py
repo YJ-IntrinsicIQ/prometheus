@@ -3,6 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from knowledge.company_year_eligibility import (
+    ELIGIBLE,
+    INELIGIBLE,
+    PARTIAL,
+    build_company_year_eligibility_manifest,
+)
 from knowledge.financials.trend_builder import build_financial_trends, write_financial_trends
 
 
@@ -232,6 +240,13 @@ def _write_year(company_root: Path, year: str, normalized, ratios=None, growth=N
         _write_json(fin / "corporate_actions.json", actions)
     if shareholding is not None:
         _write_json(fin / "shareholding_pattern.json", shareholding)
+    # Write stub intelligence artifacts so this year is ELIGIBLE (not PARTIAL).
+    # The eligibility contract requires company_intelligence.json and
+    # business_classification.json to be present and non-empty in
+    # {year}/intelligence/. Financial data alone is insufficient.
+    intel = company_root / year / "intelligence"
+    _write_json(intel / "company_intelligence.json", {"stub": True, "company": str(company_root.name), "year": year})
+    _write_json(intel / "business_classification.json", {"stub": True, "company": str(company_root.name), "year": year})
 
 
 def test_build_financial_trends_multi_year_revenue_pat_and_margin(tmp_path):
@@ -360,3 +375,132 @@ def test_write_financial_trends_persists_company_level_artifact(tmp_path):
     saved = json.loads(output_path.read_text(encoding="utf-8"))
     assert saved["company"] == "acme"
     assert saved["years_covered"] == report.years_covered
+
+
+# ---------------------------------------------------------------------------
+# Eligibility contract regression tests
+# ---------------------------------------------------------------------------
+
+def test_eligible_year_is_included_in_financial_trends(tmp_path):
+    """A year with both intelligence artifacts + financial data must appear in trends."""
+    company_root = tmp_path / "companies" / "acme"
+    _write_year(
+        company_root, "fy25",
+        _normalized_payload("fy25", revenue=100, ebitda=20, ebit=15, pat=10, assets=90, net_worth=50, debt=20, cash=5, reserves=30, cfo=12, capex=-6, receivables=14, inventory=9, payables=7),
+    )
+    manifest = build_company_year_eligibility_manifest(company="acme", company_root=company_root)
+    assert manifest["eligible_years"] == ["fy25"]
+    report = build_financial_trends(company="acme", company_root=company_root)
+    assert "fy25" in report.years_covered
+
+
+def test_incomplete_year_missing_intelligence_artifacts_is_excluded_from_trends(tmp_path):
+    """A year that has financial data but no intelligence artifacts must be PARTIAL (not ELIGIBLE)."""
+    company_root = tmp_path / "companies" / "acme"
+    # Write financial data for fy24 WITHOUT intelligence artifacts
+    fin = company_root / "fy24" / "financials"
+    _write_json(fin / "normalized_fundamentals.json",
+        _normalized_payload("fy24", revenue=80, ebitda=16, ebit=12, pat=8, assets=70, net_worth=40, debt=15, cash=4, reserves=22, cfo=10, capex=-5, receivables=10, inventory=7, payables=5))
+    # Write a complete eligible fy25 for revenue/PAT trend to succeed
+    _write_year(
+        company_root, "fy25",
+        _normalized_payload("fy25", revenue=100, ebitda=20, ebit=15, pat=10, assets=90, net_worth=50, debt=20, cash=5, reserves=30, cfo=12, capex=-6, receivables=14, inventory=9, payables=7),
+    )
+    manifest = build_company_year_eligibility_manifest(company="acme", company_root=company_root)
+    assert "fy24" in manifest["partial_years"], "fy24 has financial data but is not ELIGIBLE without intelligence artifacts"
+    assert "fy24" not in manifest["eligible_years"]
+    report = build_financial_trends(company="acme", company_root=company_root)
+    assert "fy24" not in report.years_covered
+
+
+def test_partial_year_status_is_explicit_in_eligibility_manifest(tmp_path):
+    """A year with only financial artifacts must show status=PARTIAL (not INELIGIBLE)."""
+    company_root = tmp_path / "companies" / "acme"
+    fin = company_root / "fy24" / "financials"
+    _write_json(fin / "normalized_fundamentals.json",
+        _normalized_payload("fy24", revenue=80, ebitda=16, ebit=12, pat=8, assets=70, net_worth=40, debt=15, cash=4, reserves=22, cfo=10, capex=-5, receivables=10, inventory=7, payables=5))
+    manifest = build_company_year_eligibility_manifest(company="acme", company_root=company_root)
+    year_entry = manifest["years"]["fy24"]
+    assert year_entry["status"] == PARTIAL
+    assert len(year_entry["missing_required_artifacts"]) == 2  # both intelligence artifacts missing
+    assert "intelligence/company_intelligence.json" in year_entry["missing_required_artifacts"]
+    assert "intelligence/business_classification.json" in year_entry["missing_required_artifacts"]
+
+
+def test_financial_data_alone_cannot_bypass_eligibility(tmp_path):
+    """build_financial_trends must not produce a trend series from a PARTIAL year when no ELIGIBLE year exists."""
+    company_root = tmp_path / "companies" / "acme"
+    fin = company_root / "fy24" / "financials"
+    _write_json(fin / "normalized_fundamentals.json",
+        _normalized_payload("fy24", revenue=80, ebitda=16, ebit=12, pat=8, assets=70, net_worth=40, debt=15, cash=4, reserves=22, cfo=10, capex=-5, receivables=10, inventory=7, payables=5))
+    manifest = build_company_year_eligibility_manifest(company="acme", company_root=company_root)
+    assert manifest["eligible_years"] == [], "financial data alone must not produce an eligible year"
+    with pytest.raises(RuntimeError, match="financial_trends could not build revenue or PAT trend"):
+        build_financial_trends(company="acme", company_root=company_root)
+
+
+def test_test_fixtures_mirror_production_eligibility_prerequisites(tmp_path):
+    """_write_year in tests must satisfy the same eligibility prerequisites as production."""
+    company_root = tmp_path / "companies" / "acme"
+    _write_year(
+        company_root, "fy25",
+        _normalized_payload("fy25", revenue=100, ebitda=20, ebit=15, pat=10, assets=90, net_worth=50, debt=20, cash=5, reserves=30, cfo=12, capex=-6, receivables=14, inventory=9, payables=7),
+    )
+    # Verify exactly what production checks: intelligence artifacts exist and are non-empty
+    intel_ci = company_root / "fy25" / "intelligence" / "company_intelligence.json"
+    intel_bc = company_root / "fy25" / "intelligence" / "business_classification.json"
+    assert intel_ci.exists(), "_write_year must create company_intelligence.json"
+    assert intel_bc.exists(), "_write_year must create business_classification.json"
+    assert json.loads(intel_ci.read_text()), "company_intelligence.json must be non-empty"
+    assert json.loads(intel_bc.read_text()), "business_classification.json must be non-empty"
+    manifest = build_company_year_eligibility_manifest(company="acme", company_root=company_root)
+    assert "fy25" in manifest["eligible_years"], "_write_year must produce ELIGIBLE years"
+
+
+def test_sun_pharma_fy22_excluded_when_intelligence_artifacts_absent(tmp_path):
+    """Regression: Sun Pharma FY22 was excluded from trends because intelligence artifacts
+    were never generated (pipeline failed at cleaning). A year without intelligence artifacts
+    must remain PARTIAL/excluded even when financial data exists."""
+    company_root = tmp_path / "companies" / "sun_pharma"
+    # FY21 + FY23 are eligible (simulate post-fix pipeline success)
+    _write_year(
+        company_root, "fy21",
+        _normalized_payload("fy21", revenue=250, ebitda=55, ebit=48, pat=38, assets=450, net_worth=320, debt=30, cash=20, reserves=280, cfo=45, capex=-20, receivables=40, inventory=35, payables=22),
+    )
+    _write_year(
+        company_root, "fy23",
+        _normalized_payload("fy23", revenue=310, ebitda=72, ebit=63, pat=50, assets=520, net_worth=370, debt=25, cash=30, reserves=335, cfo=55, capex=-22, receivables=48, inventory=38, payables=25),
+    )
+    # FY22: financial data present but intelligence artifacts absent (pipeline failed at cleaning)
+    fin22 = company_root / "fy22" / "financials"
+    _write_json(fin22 / "normalized_fundamentals.json",
+        _normalized_payload("fy22", revenue=280, ebitda=61, ebit=53, pat=43, assets=480, net_worth=340, debt=28, cash=25, reserves=305, cfo=50, capex=-21, receivables=44, inventory=36, payables=23))
+
+    manifest = build_company_year_eligibility_manifest(company="sun_pharma", company_root=company_root)
+    assert manifest["years"]["fy22"]["status"] == PARTIAL, "FY22 must be PARTIAL, not ELIGIBLE"
+    assert "fy22" not in manifest["eligible_years"]
+    report = build_financial_trends(company="sun_pharma", company_root=company_root)
+    assert "fy22" not in report.years_covered
+    assert "fy21" in report.years_covered
+    assert "fy23" in report.years_covered
+
+
+def test_no_company_or_year_hardcoding_in_eligibility_or_trend_code():
+    """No production module should reference a specific company name or year."""
+    import re
+    company_names = ["sun_pharma", "ujjivan", "tanla", "datapatterns", "polymatech"]
+    for module_path in [
+        "knowledge/company_year_eligibility.py",
+        "knowledge/financials/trend_builder.py",
+    ]:
+        text = Path(module_path).read_text(encoding="utf-8").lower()
+        for name in company_names:
+            assert name not in text, (
+                f"{module_path} must not hardcode company name '{name}'"
+            )
+    # Years like "fy22", "fy23" etc. must not appear as literals (they may appear in docstrings / comments,
+    # but not in conditional logic — check that no year-keyed dict literal or comparison exists)
+    trend_text = Path("knowledge/financials/trend_builder.py").read_text(encoding="utf-8")
+    assert not re.search(r'==\s*["\']fy\d{2}["\']', trend_text), (
+        "trend_builder.py must not hardcode year comparisons like == 'fy22'"
+    )

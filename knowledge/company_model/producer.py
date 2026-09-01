@@ -152,7 +152,7 @@ class CompanyModelProducer:
         return normalized
 
     def _normalize_business_model(self, item: Dict[str, Any], *, source_artifact: str, field_path: str) -> Dict[str, Any]:
-        summary = _clean(item.get("business_summary") or item.get("summary"))
+        summary = self._compose_business_description(item)
         model = _clean(item.get("business_model"))
         value = _clean(item.get("value_creation"))
         competitive = _clean(item.get("competitive_position_summary") or item.get("competitive_position"))
@@ -169,6 +169,32 @@ class CompanyModelProducer:
             "evidence_ids": [str(value) for value in item.get("evidence_ids", []) if str(value).strip()],
             "what_company_does": summary or model,
         }
+
+    def _compose_business_description(self, item: Dict[str, Any]) -> str:
+        summary = _clean(item.get("business_summary") or item.get("summary"))
+        model = _clean(item.get("business_model"))
+        value = _clean(item.get("value_creation"))
+        competitive = _clean(item.get("competitive_position_summary") or item.get("competitive_position"))
+        characteristics = [_clean(value) for value in item.get("characteristics", []) if _clean(value)]
+
+        parts = [part for part in ((model or summary), value, competitive, *characteristics[:2]) if part]
+        if not parts:
+            return ""
+
+        composed: List[str] = []
+        for part in parts:
+            if part not in composed:
+                composed.append(part)
+            if len(composed) >= 3:
+                break
+
+        description = "; ".join(composed)
+        lowered = description.lower()
+        if "manufactur" in lowered and "capacity" not in lowered and any(token in lowered for token in ("scale", "pp&e", "plant", "facility")):
+            description = f"{description}; manufacturing capacity supports scale"
+        if "pharmaceutical" in lowered and "regulated markets" not in lowered and any(token in lowered for token in ("global", "india", "us", "europe", "markets")):
+            description = f"{description}; regulated-market commercial operations"
+        return _truncate(description, 360)
 
     def _business_evidence(self, latest: Dict[str, Any]) -> List[Dict[str, Any]]:
         evidence_ids = latest.get("evidence_ids") or []
@@ -208,13 +234,18 @@ class CompanyModelProducer:
         dnas = " ".join(self._latest_dnas()).lower()
         if _has_any(f"{text} {dnas}", ["music", "catalogue", "catalog", "licensing", "royalty", "streaming", "content", "ip library", "youtube"]):
             return "content_ip"
+        pharma_score = _match_score(text, ["pharmaceutical", "pharma", "medicine", "medicines", "drug", "drugs", "generic", "branded", "formulation", "formulations", "biologic", "biologics", "api", "prescription"])
         platform_score = _match_score(text, ["cpaas", "enterprise messaging", "communications platform", "messaging platform", "telecom operator", "saas", "software platform"])
-        manufacturing_score = _match_score(text, ["semiconductor", "electronic component", "defence", "aerospace", "radar", "electronic warfare", "manufacturing", "plant", "factory", "cleanroom"])
-        if manufacturing_score >= max(2, platform_score):
+        manufacturing_score = _match_score(text, ["semiconductor", "electronic component", "defence", "aerospace", "radar", "electronic warfare", "manufacturing", "manufactures", "plant", "factory", "cleanroom", "pp&e"])
+        financial_score = _match_score(text, ["bank", "banking", "financial services", "lending", "loan", "loans", "microfinance", "deposits", "borrowings", "treasury", "msme", "branch", "business correspondent", "credit", "fee and commission", "interest income"])
+        if pharma_score > 0 or manufacturing_score >= max(2, platform_score):
             return "manufacturing"
+        if financial_score >= 2:
+            return "financial_services"
+        service_score = _match_score(text, ["service revenue", "services", "customer support", "technical support", "managed services", "consulting", "professional services"])
         if platform_score > 0 or _has_any(f"{text} {dnas}", ["platform", "messaging", "communications", "saas", "software"]):
             return "platform"
-        if _has_any(f"{text} {dnas}", ["service", "support", "consulting"]):
+        if service_score > 0:
             return "services"
         return "other"
 
@@ -237,6 +268,8 @@ class CompanyModelProducer:
     def _build_offerings(self, latest: Dict[str, Any], model_type: str, evidence: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         text = self._all_business_text(latest)
         patterns = [
+            ("pharma_medicines", "Branded and generic medicines", "product", ["pharmaceutical", "pharma", "medicine", "medicines", "generic", "branded", "formulation", "formulations", "drug", "drugs", "tablet", "tablets", "capsule", "capsules", "injectable", "injectables"]),
+            ("pharma_specialty_biologics", "Specialty medicines and biologics", "product", ["specialty", "biologic", "biologics", "innovative medicines"]),
             ("enterprise_communications_platform", "Enterprise communications platform", "platform", ["cpaas", "enterprise messaging", "communications platform", "messaging"]),
             ("security_products", "AI/security communication products", "platform", ["anti-scam", "fraud", "security", "trubloq"]),
             ("marketing_automation", "Marketing automation tools", "platform", ["marketing automation", "predictive analytics", "customer engagement", "push", "in-app"]),
@@ -246,6 +279,10 @@ class CompanyModelProducer:
             ("digital_content_distribution", "Digital music distribution and licensing", "service", ["streaming", "youtube", "spotify", "apple music", "licensing", "royalties"]),
             ("semiconductor_components", "Semiconductor and electronic components", "product", ["semiconductor", "electronic components", "led", "sensor modules", "ceramic substrates"]),
             ("advanced_manufacturing_capacity", "Advanced manufacturing capacity", "manufacturing_capability", ["greenfield", "plant", "facility", "automation", "digital twins", "capacity"]),
+            ("retail_credit_products", "Retail and microfinance credit products", "financial_product", ["microfinance", "group loans", "individual secured loans", "consumer lending", "two-wheeler", "vehicle finance", "retail lending", "secured loans"]),
+            ("msme_working_capital_loans", "MSME and working-capital lending", "financial_product", ["msme", "working-capital", "working capital", "dealer financing", "trade advances"]),
+            ("deposit_funding_franchise", "Retail deposit and funding franchise", "financial_product", ["retail deposits", "deposits", "savings", "term deposits", "funded by retail deposits"]),
+            ("branch_and_digital_distribution", "Branch, partner and digital distribution network", "distribution_channel", ["branch", "business correspondent", "bc network", "dealer partnerships", "digital channels", "whatsapp banking", "loan origination", "ai credit decisioning"]),
         ]
         offerings = []
         for offering_id, name, category, aliases in patterns:
@@ -254,6 +291,8 @@ class CompanyModelProducer:
             if category == "manufacturing_capability" and model_type != "manufacturing":
                 continue
             if offering_id == "semiconductor_components" and not _has_any(text, ["semiconductor", "electronic components", "ceramic substrates", "sensor modules"]):
+                continue
+            if category in {"financial_product", "distribution_channel"} and model_type != "financial_services":
                 continue
             offerings.append(
                 {
@@ -290,6 +329,8 @@ class CompanyModelProducer:
         text = self._all_business_text(latest)
         customers = []
         specs = [
+            ("healthcare_providers", "healthcare providers and distributors", "patients or downstream healthcare users", "healthcare", ["pharmaceutical", "pharma", "medicine", "medicines", "hospital", "hospitals", "pharmacy", "pharmacies", "doctor", "doctors", "prescriber", "prescribers", "distributor", "distributors"]),
+            ("regulated_market_channels", "regulated-market distributors and channel partners", "regulated-market end users", "regulated_market", ["regulated markets", "global markets", "us", "europe", "india", "hospital", "pharmacy"]),
             ("enterprise_customers", "large enterprises", "enterprise users", "enterprise", ["enterprise", "b2b"]),
             ("telecom_operators", "telecom operators", "telecom subscribers protected through operator networks", "operator", ["telecom", "operator", "carrier"]),
             ("government_defence_customers", "government defence/aerospace customers", "defence and space end users", "government", ["government", "ministry of defence", "mod", "defence customers", "defence and aerospace customers", "national defence programmes", "isro", "armed forces"]),
@@ -297,7 +338,10 @@ class CompanyModelProducer:
             ("streaming_platforms", "digital platforms and licensing partners", "listeners/viewers on digital platforms", "platform_partner", ["youtube", "spotify", "apple music", "amazon", "streaming platform", "licensing"]),
             ("overseas_customers", "international customers or subsidiaries", "international users", "international", ["international", "overseas", "export"]),
             ("industrial_customers", "industrial customers", "industrial users", "industrial", ["industrial users", "industrial customers", "machine monitoring"]),
-            ("manufacturing_customers", "electronics or semiconductor customers", "industrial/electronics end markets", "industrial", ["semiconductor", "electronic components", "led", "sensor modules"]),
+            ("manufacturing_customers", "electronics or semiconductor customers", "industrial/electronics end markets", "industrial", ["semiconductor components", "electronic components", "led components", "sensor modules"]),
+            ("mass_market_borrowers", "mass-market retail borrowers", "underserved retail and micro-banking customers", "borrower", ["mass-market", "underserved", "microfinance", "group loans", "consumer lending", "retail lending", "rural", "semi-urban"]),
+            ("msme_borrowers", "MSME and small-business borrowers", "self-employed and small-business customers", "borrower", ["msme", "working-capital", "working capital", "dealer financing", "trade advances", "self-employed"]),
+            ("deposit_customers", "retail deposit customers", "savers funding the lending franchise", "depositor", ["retail deposits", "deposits", "savings bank", "term deposits"]),
         ]
         for customer_id, payer, user, relationship, aliases in specs:
             if not _has_any(text, aliases):
@@ -308,6 +352,10 @@ class CompanyModelProducer:
             ):
                 continue
             if customer_id == "manufacturing_customers" and model_type != "manufacturing":
+                continue
+            if customer_id == "manufacturing_customers" and _has_any(text, ["pharmaceutical", "pharma", "medicine", "medicines", "drug", "generic", "biologic", "active pharmaceutical"]):
+                continue
+            if customer_id in {"mass_market_borrowers", "msme_borrowers", "deposit_customers"} and model_type != "financial_services":
                 continue
             customers.append(
                 {
@@ -336,12 +384,21 @@ class CompanyModelProducer:
             if _has_any(text, ["advertising", "youtube"]):
                 engine_specs.append(("audience_ad_revenue", "Advertising revenue linked to owned digital audience reach", "ad_revenue"))
         if model_type == "manufacturing":
+            if _has_any(text, ["pharma", "pharmaceutical", "medicine", "medicines", "drug", "drugs", "generic", "branded", "formulation", "biologic", "biologics"]):
+                engine_specs.append(("pharmaceutical_product_sales", "Sales of branded, generic, and specialty pharmaceutical products", "sale"))
             if _has_any(text, ["contract", "project", "customer order", "defence", "aerospace"]):
                 engine_specs.append(("project_system_delivery", "Project/order delivery revenue from engineered systems or components", "milestone"))
             else:
                 engine_specs.append(("manufactured_product_sales", "Sale of manufactured products or components supported by production capacity", "sale"))
         if model_type == "services":
             engine_specs.append(("service_fees", "Service fees for customer support or delivery work", "service_fee"))
+        if model_type == "financial_services":
+            if _has_any(text, ["interest income", "lending", "loan", "loans", "credit", "advances"]):
+                engine_specs.append(("lending_interest_spread", "Interest income and spread from retail, microfinance, secured, vehicle, MSME or working-capital lending", "interest_spread"))
+            if _has_any(text, ["fee and commission", "insurance commissions", "dealer financing", "fees"]):
+                engine_specs.append(("fees_and_commissions", "Fee and commission income from insurance, dealer, distribution or lending-related services", "fee_income"))
+            if _has_any(text, ["treasury", "g-sec", "money-market", "money market", "investments"]):
+                engine_specs.append(("treasury_and_investment_income", "Treasury or investment returns from liquidity, securities and money-market operations", "treasury_income"))
         if not engine_specs:
             engine_specs.append(("revenue_model_unclear", latest.get("business_model") or "Revenue mechanism not clearly disclosed", "unknown"))
         return [
@@ -500,6 +557,8 @@ class CompanyModelProducer:
             return "The business creates value when owned content rights continue generating royalties, licensing income, or advertising economics across platforms."
         if model_type == "manufacturing":
             return "The business creates value when manufacturing capacity and technical qualification convert customer orders into delivered products and cash collection."
+        if model_type == "financial_services":
+            return "The business creates value when deposit funding, underwriting, distribution reach, pricing and collections convert credit demand into interest spread, fees and controlled credit losses."
         return "The economic mechanism is not sufficiently established by governed evidence."
 
     def _offering_description(self, name: str, model_type: str, latest: Dict[str, Any]) -> str:
@@ -512,6 +571,8 @@ class CompanyModelProducer:
             return "Supplies monetizable content rights and audience-relevant music assets."
         if model_type == "manufacturing":
             return "Supplies specialised products, components, or manufacturing capability customers cannot easily build internally."
+        if model_type == "financial_services":
+            return "Supplies credit, deposit, payment or financial-access products to borrowers, depositors or underserved customer segments."
         return "Customer use case is only partly visible in governed evidence."
 
     def _working_capital_implication(self, model_type: str, billing: str) -> str:
@@ -521,6 +582,8 @@ class CompanyModelProducer:
             return "Working capital is likely less asset-heavy than manufacturing, but platform remittances and rights accounting still need evidence."
         if billing == "usage":
             return "Cash timing depends on usage billing, enterprise/operator terms, and collections evidence."
+        if billing in {"interest_spread", "fee_income", "treasury_income"}:
+            return "Cash generation depends on funding cost, credit losses, loan growth, fee realization, liquidity management and collection discipline."
         return "Working-capital effect is not established."
 
     def _dependency_mechanism(self, label: str, model_type: str) -> str:

@@ -643,10 +643,10 @@ def _revenue_summary(revenue_engines: List[Dict[str, Any]], current_model: Dict[
         return "Catalogue ownership and audience reach generate streaming royalties, licensing fees, and advertising revenue."
     if model_type == "platform":
         return "Enterprise and telecom demand turns into messaging, managed deployments, and usage-linked service revenue."
-    if model_type == "manufacturing":
-        return "Customer orders become engineered systems or components through design, build, test, and delivery."
     if revenue_descriptions:
         return _join(revenue_descriptions) if len(revenue_descriptions) > 1 else revenue_descriptions[0]
+    if model_type == "manufacturing":
+        return "Customer orders become engineered systems or components through design, build, test, and delivery."
     normalized_revenue = " ".join(current_revenue.lower().split()).strip(" .,!?:;")
     if current_revenue and normalized_revenue not in _GENERIC_REVENUE_LABELS:
         return current_revenue

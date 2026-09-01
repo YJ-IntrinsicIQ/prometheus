@@ -1,6 +1,7 @@
 import path from "node:path";
 
 const VALID_SEGMENT_PATTERN = /^[a-z0-9-]+$/;
+const VALID_INTERNAL_KEY_PATTERN = /^[-a-z0-9_]+$/;
 
 export type AskIntrinsicIqPaths = {
   repoRoot: string;
@@ -27,14 +28,14 @@ export function isValidRouteSegment(value: string) {
 }
 
 export function getAskIntrinsicIqPaths(
-  companySlug: string,
+  internalKey: string,
   repoRoot = getRepoRoot(),
 ): AskIntrinsicIqPaths | null {
-  if (!isValidRouteSegment(companySlug)) {
+  if (!VALID_INTERNAL_KEY_PATTERN.test(internalKey)) {
     return null;
   }
 
-  const companyRoot = path.join(repoRoot, "companies", companySlug);
+  const companyRoot = path.join(repoRoot, "companies", internalKey);
   const outputRoot = path.join(
     companyRoot,
     "company_memory",

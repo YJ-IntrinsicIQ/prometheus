@@ -101,6 +101,11 @@ _FORBIDDEN_BY_FIELD = {
         "aum",
         "assets under management",
         "assets under insurance",
+        "form aoc",
+        "aoc-1",
+        "aoc 1",
+        "subsidiary",
+        "subsidiaries",
     ),
     "net_worth": (
         "tranche",
@@ -129,6 +134,43 @@ _FORBIDDEN_BY_FIELD = {
         "operating profit",
         "operating loss",
         "cash flow",
+        "before exceptional items and tax",
+        "before exceptional item and tax",
+        "profit before exceptional",
+        "profit before exceptional item",
+        "profit before exceptional items",
+        "before share of profit",
+        "before share of profit/(loss)",
+        "before associates",
+        "before joint venture",
+        "profit for the year before share",
+        "profit for the year before non",
+        "before non-controlling",
+        "before non controlling",
+    ),
+    "share_of_profit_associates": (
+        "before share of profit",
+        "before share of profit/(loss)",
+        "before associates",
+        "profit before share",
+        "profit for the year before share",
+        "profit for the year before share of profit",
+    ),
+    "share_of_profit_jv": (
+        "before share of profit",
+        "before share of profit/(loss)",
+        "before joint venture",
+        "profit before share",
+        "profit for the year before share",
+        "profit for the year before share of profit",
+    ),
+    "non_controlling_interests": (
+        "before non-controlling",
+        "before non controlling",
+        "profit for the year before non",
+        "profit before non-controlling interests",
+        "attributable to owners",
+        "profit for the year attributable",
     ),
     "tax": (
         "paid",
@@ -136,6 +178,17 @@ _FORBIDDEN_BY_FIELD = {
         "refunds",
         "payment",
         "payments",
+    ),
+    "other_assets": (
+        "deposits",
+        "demand deposits",
+        "savings bank",
+        "term deposits",
+        "borrowings",
+        "liabilities",
+        "capital",
+        "reserves",
+        "surplus",
     ),
 }
 
@@ -206,6 +259,24 @@ _DILUTED_SHARES_EXPLICIT_TOKENS = (
     "diluted weighted average shares",
     "number of shares used for diluted eps",
     "number of shares used in diluted eps calculation",
+    "weighted average number of shares used in computing diluted earnings per share",
+    "weighted average number of shares used for diluted earnings per share",
+    "weighted average number of shares used in computing basic and diluted earnings per share",
+    "weighted average number of shares used for basic and diluted earnings per share",
+)
+
+_SHARE_DENOMINATOR_LABEL_TOKENS = (
+    "weighted average number of equity shares",
+    "weighted average shares outstanding",
+    "weighted average shares",
+    "weighted average number of shares",
+    "number of shares used in computing basic earnings per share",
+    "number of shares used in computing diluted earnings per share",
+    "number of shares used for basic earnings per share",
+    "number of shares used for diluted earnings per share",
+    "shares used in computing basic earnings per share",
+    "shares used in computing diluted earnings per share",
+    "shares used in computing basic and diluted earnings per share",
 )
 
 _FACE_VALUE_EXPLICIT_TOKENS = (
@@ -293,7 +364,9 @@ _CAPEX_DISALLOWED_TOKENS = (
 
 _PAYABLES_ALLOWED_TOKENS = (
     "trade payables",
+    "trade payable",
     "total trade payables",
+    "total trade payable",
     "accounts payable",
     "supplier payables",
     "dues to suppliers",
@@ -305,6 +378,8 @@ _PAYABLES_ALLOWED_TOKENS = (
 
 _PAYABLES_DISALLOWED_TOKENS = (
     "total liabilities",
+    "liabilities trade payables",
+    "liabilities trade payable",
     "other financial liabilities",
     "borrowings",
     "lease liabilities",
@@ -315,8 +390,10 @@ _PAYABLES_DISALLOWED_TOKENS = (
     "contract liabilities",
     "employee liabilities",
     "employee related payables",
-    "statutory dues",
-    "current liabilities",
+    "payables to employee",
+    "payable to employee",
+    "payables on purchase",
+    "payable on purchase",
     "capital creditors",
     "advance to suppliers",
     "turnover ratio",
@@ -389,15 +466,55 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
         return False
 
     if canonical_field == "total_assets":
-        if "total assets" not in normalized_label:
+        if "total assets" not in normalized_label and "total equity and liabilities" not in normalized_label:
             return False
 
     if canonical_field == "total_liabilities":
-        if "total liabilities" not in normalized_label:
+        # Accept standard "total liabilities" OR banking schedule aliases
+        # REJECT banking "TOTAL (I + II + III)" which is Deposits (Schedule 3), not total liabilities
+        if "deposits" in normalized_label and "total" in normalized_label:
             return False
+        if "total i ii iii" in normalized_label or "total (i + ii + iii)" in normalized_label:
+            return False
+        # REJECT "Total Liabilities, Reserves and surplus" from truncated banking merger schedules (Schedule 7)
+        if "total liabilities" in normalized_label and "reserves" in normalized_label and "surplus" in normalized_label:
+            return False
+        if not any(
+            token in normalized_label
+            for token in (
+                "total liabilities",
+                "total liabilities reserves and surplus",
+                "total liabilities reserves and surplus b",
+            )
+        ):
+            return False
+
+    if canonical_field == "other_assets":
+        # REJECT deposits, borrowings, and other liability-side items
+        if any(
+            token in normalized_label
+            for token in (
+                "deposits", "demand deposits", "savings bank", "term deposits",
+                "borrowings", "liabilities", "capital", "reserves", "surplus",
+                "from others",
+            )
+        ):
+            return False
+        # Accept banking "Other Assets" (Schedule 11) or standard "other assets"
+        # Must contain "other assets" or start/end with "others" (not "from others")
+        if "other assets" not in normalized_label:
+            if "others" not in normalized_label:
+                return False
+            # Reject "from others" or similar patterns
+            if "from others" in normalized_label or "to others" in normalized_label:
+                return False
 
     if canonical_field == "net_worth":
         if "liabilities" in normalized_label:
+            return False
+
+    if canonical_section == "profit_and_loss" and canonical_field in {"eps_basic", "eps_diluted"}:
+        if _contains_any(normalized_label, _SHARE_DENOMINATOR_LABEL_TOKENS):
             return False
 
     if canonical_section == "profit_and_loss" and canonical_field == "total_income":
@@ -412,12 +529,24 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
         if table_type == "cash_flow" and "tax adjustment" in normalized_label:
             return True
         if "deferred tax" in normalized_label and not any(
-            token in normalized_label for token in ("tax expense", "income tax expense", "total tax expense", "current tax")
+            token in normalized_label for token in ("tax expense", "tax expenses", "income tax expense", "total tax expense", "current tax")
         ):
             return False
         if not any(
             token in normalized_label
-            for token in ("tax expense", "income tax expense", "total tax expense", "current tax")
+            for token in ("tax expense", "tax expenses", "income tax expense", "total tax expense", "current tax")
+        ):
+            return False
+
+    if canonical_section == "profit_and_loss" and canonical_field == "pat":
+        if any(
+            token in normalized_label
+            for token in (
+                "before non-controlling interests",
+                "before non controlling interests",
+                "before share of profit",
+                "before share in profit",
+            )
         ):
             return False
 
@@ -426,9 +555,16 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
             return False
         if _contains_any(normalized_label, _REVENUE_CONTAMINATION_TOKENS):
             return False
+        # Accept standard revenue tokens OR banking revenue tokens (Schedule 13)
         if not any(
             token in normalized_label
-            for token in ("revenue from operations", "revenue", "income from operations", "total operating revenue")
+            for token in (
+                "revenue from operations", "revenue", "income from operations", "total operating revenue",
+                "interest earned", "interest income", "interest on advances", "interest on loans",
+                "interest on investments", "interest on balances with rbi", "interest on deposits with rbi",
+                "interest on money at call", "discount on bills", "income from interest",
+                "interest discount on advance bills", "income on investments",
+            )
         ):
             return False
 
@@ -440,12 +576,16 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
                 "margin",
                 "per share",
                 "comprehensive income",
-                "attributable",
                 "associate",
                 "before tax",
                 "profit before tax",
                 "pbt",
             )
+        ):
+            return False
+        if "attributable" in normalized_label and not _contains_any(
+            normalized_label,
+            ("attributable to owners", "attributable to equity holders", "attributable to shareholders"),
         ):
             return False
         if not (
@@ -456,6 +596,9 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
                     "profit after taxation",
                     "profit for the year",
                     "profit for the period",
+                    "profit attributable to owners",
+                    "profit attributable to equity holders",
+                    "profit attributable to shareholders",
                     "profit loss for the period",
                     "profit loss for the year",
                     "pat",
@@ -527,12 +670,12 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
             return False
 
     if canonical_field == "capex":
-        if _contains_any(normalized_label, _CAPEX_DISALLOWED_TOKENS):
-            return False
         if _contains_any(normalized_label, _CAPEX_ALLOWED_TOKENS):
             return True
         if _contains_any(normalized_label, _CAPEX_CWIP_ALLOWED_TOKENS):
             return table_type == "cash_flow"
+        if _contains_any(normalized_label, _CAPEX_DISALLOWED_TOKENS):
+            return False
         return False
 
     if canonical_field == "payables":
@@ -583,10 +726,8 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
             return False
         if table_type == "cash_flow" and "tax expense" in normalized_label and "tax paid" not in normalized_label:
             return False  # tax expense in cash_flow should not map to P&L tax
-        if table_type == "balance_sheet" and (
-            "tax expense" in normalized_label or "tax expenses" in normalized_label or "deferred tax" in normalized_label
-        ):
-            return False  # tax expense/deferred tax in balance_sheet should not map to P&L tax
+        # Allow balance_sheet table_type for tax since mapping_registry explicitly includes
+        # "balance_sheet" in table_types for profit_and_loss.tax (e.g., deferred tax notes)
     if canonical_section == "balance_sheet" and canonical_field in {"total_assets", "total_liabilities", "net_worth", "equity_share_capital", "reserves"}:
         if table_type in {"profit_and_loss", "eps", "dividend", "shareholding_pattern", "corporate_actions"}:
             return False
@@ -614,7 +755,20 @@ _EXACT_ALIASES: Dict[str, Dict[str, List[str]]] = {
             "vii profit loss for the period", "vii profit loss for the period",
             "add profit after tax", "profit after tax for the year", "profit after taxation rs in crores",
         ],
-        "pbt": ["profit before tax", "profit before taxation", "net profit before tax"],
+        "pbt": [
+        "profit before tax",
+        "profit before taxation",
+        "net profit before tax",
+        "profit before tax after exceptional items",
+        "profit before tax (after exceptional items)",
+        "profit before tax (v-vi)",
+        "profit before tax (vi-vii)",
+        "profit before tax after exceptional item",
+        "vii profit before tax",
+        "vii profit before taxation",
+        "profit before tax (after exceptional)",
+        "profit before tax (post exceptional)",
+    ],
         "tax": [
             "total tax expense", "tax expense", "income tax expense", "current tax",
             # Negative exact aliases for tax rows that should NOT map to P&L tax
@@ -622,7 +776,7 @@ _EXACT_ALIASES: Dict[str, Dict[str, List[str]]] = {
         ],
     },
     "balance_sheet": {
-        "total_assets": ["total assets"],
+        "total_assets": ["total assets", "total equity and liabilities"],
         "total_liabilities": ["total liabilities"],
         "net_worth": ["total equity", "net worth", "shareholders funds", "shareholders equity", "equity attributable to owners"],
         "equity_share_capital": ["equity share capital", "paid up capital", "paid-up capital", "issued subscribed and paid up equity shares"],
@@ -632,7 +786,6 @@ _EXACT_ALIASES: Dict[str, Dict[str, List[str]]] = {
         "tax_paid": [
             "income taxes paid", "taxes paid", "tax paid",
             "direct taxes paid net of funds",
-            "tax adjustment", "tax adjustments",
         ],
         "cfo": ["net cash generated from operating activities", "net cash from operating activities", "operating cash flow"],
         "pat": [
@@ -718,6 +871,33 @@ def _resolve_ambiguity(matches: List[MappingMatch], normalized_label: str, table
 def map_line_item(*, table_type: str, line_item_raw: str) -> List[MappingMatch]:
     normalized_label = normalize_label(line_item_raw)
     matches: List[MappingMatch] = []
+
+    if (
+        table_type == "eps"
+        and _contains_any(
+            normalized_label,
+            (
+                "weighted average number of shares used in computing basic and diluted earnings per share",
+                "weighted average number of shares used for basic and diluted earnings per share",
+            ),
+        )
+    ):
+        return [
+            MappingMatch(
+                canonical_section="share_data",
+                canonical_field="weighted_avg_shares",
+                score=100,
+                confidence="high",
+                reason="combined_basic_diluted_share_denominator",
+            ),
+            MappingMatch(
+                canonical_section="share_data",
+                canonical_field="diluted_shares",
+                score=100,
+                confidence="high",
+                reason="combined_basic_diluted_share_denominator",
+            ),
+        ]
 
     special_fields = SPECIAL_MULTI_FIELD_ALIASES.get(normalized_label)
     if special_fields:

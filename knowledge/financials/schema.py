@@ -1,12 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from enum import Enum
+from typing import Any, Dict, List, Optional
 
 
 FINANCIAL_SCHEMA_VERSION = "1.0"
 DEFAULT_CURRENCY = "INR"
 DEFAULT_CONFIDENCE = "missing"
+
+
+class DerivationState(str, Enum):
+    """State of canonical metric resolution."""
+    EXPLICIT = "EXPLICIT"
+    DERIVED_FROM_LINKED_PRIMARY_SCHEDULES = "DERIVED_FROM_LINKED_PRIMARY_SCHEDULES"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class ReconciliationStatus(str, Enum):
+    """Reconciliation status for derived metrics."""
+    PASS = "PASS"
+    FAIL = "FAIL"
+    UNRECONCILED = "UNRECONCILED"
 
 
 @dataclass
@@ -20,6 +35,16 @@ class MonetaryValue:
     source_artifact: str = ""
     confidence: str = DEFAULT_CONFIDENCE
     notes: list[str] = field(default_factory=list)
+    # Derivation tracking
+    derived: bool = False
+    derivation_state: Optional[DerivationState] = None
+    derivation_formula: str = ""
+    derivation_inputs: Dict[str, float] = field(default_factory=dict)
+    derivation_source_pages: List[int] = field(default_factory=list)
+    derivation_source_artifacts: List[str] = field(default_factory=list)
+    reconciliation_status: Optional[ReconciliationStatus] = None
+    reconciliation_reference_value: Optional[float] = None
+    reconciliation_tolerance_crore: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -32,10 +57,21 @@ class MonetaryValue:
             "source_artifact": self.source_artifact,
             "confidence": self.confidence,
             "notes": list(self.notes),
+            "derived": self.derived,
+            "derivation_state": self.derivation_state.value if self.derivation_state else None,
+            "derivation_formula": self.derivation_formula,
+            "derivation_inputs": dict(self.derivation_inputs),
+            "derivation_source_pages": list(self.derivation_source_pages),
+            "derivation_source_artifacts": list(self.derivation_source_artifacts),
+            "reconciliation_status": self.reconciliation_status.value if self.reconciliation_status else None,
+            "reconciliation_reference_value": self.reconciliation_reference_value,
+            "reconciliation_tolerance_crore": self.reconciliation_tolerance_crore,
         }
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "MonetaryValue":
+        derivation_state = payload.get("derivation_state")
+        reconciliation_status = payload.get("reconciliation_status")
         return cls(
             value_original=payload.get("value_original"),
             unit_original=payload.get("unit_original", ""),
@@ -46,6 +82,15 @@ class MonetaryValue:
             source_artifact=payload.get("source_artifact", ""),
             confidence=payload.get("confidence", DEFAULT_CONFIDENCE),
             notes=[str(item) for item in payload.get("notes", [])],
+            derived=payload.get("derived", False),
+            derivation_state=DerivationState(derivation_state) if derivation_state else None,
+            derivation_formula=payload.get("derivation_formula", ""),
+            derivation_inputs=payload.get("derivation_inputs", {}),
+            derivation_source_pages=payload.get("derivation_source_pages", []),
+            derivation_source_artifacts=payload.get("derivation_source_artifacts", []),
+            reconciliation_status=ReconciliationStatus(reconciliation_status) if reconciliation_status else None,
+            reconciliation_reference_value=payload.get("reconciliation_reference_value"),
+            reconciliation_tolerance_crore=payload.get("reconciliation_tolerance_crore"),
         )
 
 
@@ -148,6 +193,9 @@ class ProfitAndLoss:
     tax: MonetaryValue = field(default_factory=_money_field)
     pat: MonetaryValue = field(default_factory=_money_field)
     exceptional_items: MonetaryValue = field(default_factory=_money_field)
+    share_of_profit_associates: MonetaryValue = field(default_factory=_money_field)
+    share_of_profit_jv: MonetaryValue = field(default_factory=_money_field)
+    non_controlling_interests: MonetaryValue = field(default_factory=_money_field)
     eps_basic: MonetaryValue = field(default_factory=_money_field)
     eps_diluted: MonetaryValue = field(default_factory=_money_field)
 

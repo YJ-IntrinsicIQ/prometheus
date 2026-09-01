@@ -615,3 +615,88 @@ def test_rejects_dividend_income_reference(tmp_path):
     )
     assert report.actions == []
     assert any("Rejected dividend reference" in reason for reason in report.rejection_reasons)
+
+
+# ---------------------------------------------------------------------------
+# Face-value regression tests
+# Requirement: a plain disclosure of the current face value must NOT become a
+# corporate action. Only explicit from→to transition evidence qualifies.
+# ---------------------------------------------------------------------------
+
+def test_static_face_value_disclosure_is_not_a_corporate_action(tmp_path):
+    """'Face value per share ₹1' is a metadata disclosure, not a change event."""
+    report = _extract_single(
+        tmp_path,
+        {"eps": [_row("Face value per share (in ₹)", "1", table_type="eps", unit_hint="inr")]},
+    )
+    fv_actions = [a for a in report.actions if a.action_type == "face_value_change"]
+    assert fv_actions == [], (
+        f"Static face-value disclosure should not create a face_value_change action; got {fv_actions}"
+    )
+
+
+def test_same_face_value_repeated_across_table_not_a_change(tmp_path):
+    """Two rows with the same face value amount must not be interpreted as a change."""
+    report = _extract_single(
+        tmp_path,
+        {"eps": [
+            _row("Face value per share", "2", table_type="eps", unit_hint="inr", page=1),
+            _row("Face value per equity share", "2", table_type="eps", unit_hint="inr", page=2),
+        ]},
+    )
+    fv_actions = [a for a in report.actions if a.action_type == "face_value_change"]
+    assert fv_actions == []
+
+
+def test_explicit_face_value_change_emits_action(tmp_path):
+    """An explicit 'Face value changed from Rs 10 to Rs 2' row must produce an action."""
+    report = _extract_single(
+        tmp_path,
+        {"corporate_actions": [_row("Face value changed from Rs 10 to Rs 2", "0", table_type="corporate_actions")]},
+    )
+    fv_actions = [a for a in report.actions if a.action_type == "face_value_change"]
+    assert len(fv_actions) == 1, f"Expected 1 face_value_change action, got {fv_actions}"
+    assert fv_actions[0].face_value_before == 10.0
+    assert fv_actions[0].face_value_after == 2.0
+
+
+def test_stock_split_wording_emits_action_not_face_value_change(tmp_path):
+    """'Sub-division of equity shares from Rs 10 to Rs 1' should produce a stock_split action."""
+    report = _extract_single(
+        tmp_path,
+        {"corporate_actions": [_row("Sub-division of equity shares from Rs 10 to Rs 1", "0", table_type="corporate_actions")]},
+    )
+    action_types = {a.action_type for a in report.actions}
+    assert "stock_split" in action_types, f"Expected stock_split in actions; got {action_types}"
+    assert "face_value_change" not in action_types
+
+
+def test_ambiguous_face_value_text_rejected_not_fabricated(tmp_path):
+    """'Face value' in isolation without transition language must be rejected, not fabricated."""
+    report = _extract_single(
+        tmp_path,
+        {"corporate_actions": [_row("Face value (in Rs)", "5", table_type="corporate_actions", unit_hint="inr")]},
+    )
+    fv_actions = [a for a in report.actions if a.action_type == "face_value_change"]
+    assert fv_actions == [], (
+        "Ambiguous face-value row should not fabricate a face_value_change action"
+    )
+
+
+def test_genuine_face_value_change_produces_eps_comparability_warning(tmp_path):
+    """A confirmed face_value_change must still carry per_share_comparability_warnings."""
+    report = _extract_single(
+        tmp_path,
+        {"corporate_actions": [_row("Face value changed from Rs 10 to Rs 5", "0", table_type="corporate_actions")]},
+    )
+    assert "face value changed" in report.per_share_comparability_warnings, (
+        "Genuine face_value_change must produce per-share comparability warning"
+    )
+
+
+def test_no_hardcoding_for_face_value_fix():
+    """The corporate_actions module must not contain company-specific hardcoding."""
+    text = Path("knowledge/financials/corporate_actions.py").read_text(encoding="utf-8").lower()
+    assert "sun pharma" not in text
+    assert "sunpharma" not in text
+    assert "sun_pharma" not in text

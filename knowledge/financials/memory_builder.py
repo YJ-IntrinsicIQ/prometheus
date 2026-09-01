@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from knowledge.company_memory import parse_financial_year
+from knowledge.company_year_eligibility import build_company_year_eligibility_manifest
 
 from .memory_schema import (
     validate_capital_allocation_financial_timeline_payload,
@@ -52,12 +53,73 @@ def _sort_years(years: Iterable[str]) -> List[str]:
     return sorted(unique, key=parse_financial_year)
 
 
+_MISSING_CLAIM_CHECKS: List[Tuple[Tuple[str, ...], str]] = [
+    # (text patterns in lowercased missing-data string, metric key in trends containers)
+    (("eps exists but weighted average shares", "weighted average shares are missing"), "weighted_avg_shares"),
+    (("fcf missing",), "fcf"),
+    (("capex missing",), "capex"),
+]
+
+
+def _build_trends_presence(trends_payload: Dict[str, Any]) -> Dict[str, Set[str]]:
+    """Return {metric_name: {year, ...}} for metrics with non-null, usable_downstream=True points."""
+    presence: Dict[str, Set[str]] = {}
+    for container in trends_payload.values():
+        if not isinstance(container, dict):
+            continue
+        for metric_name, metric in container.items():
+            if not isinstance(metric, dict):
+                continue
+            for point in (metric.get("series") or []):
+                if isinstance(point, dict) and point.get("value") is not None:
+                    if point.get("usable_downstream", True):
+                        presence.setdefault(metric_name, set()).add(str(point.get("year", "")))
+    return presence
+
+
+def _reconcile_canonical_presence(items: List[str], presence: Dict[str, Set[str]]) -> List[str]:
+    """Remove missing-data / warning strings contradicted by the canonical trends presence map.
+
+    A claim is contradicted when:
+    - it matches a known "metric X is missing" pattern, AND
+    - the canonical trends show that metric as present (non-null, usable_downstream) for the
+      year named in the claim prefix (e.g. "fy23:") — or for at least one year if no prefix.
+
+    Genuine missing items (metric absent in trends) are preserved.
+    """
+    result = []
+    for item in items:
+        lowered = item.lower()
+        year: Optional[str] = None
+        if ":" in lowered:
+            prefix = lowered.split(":")[0].strip()
+            if prefix.startswith("fy"):
+                year = prefix
+        keep = True
+        for patterns, metric_key in _MISSING_CLAIM_CHECKS:
+            if any(p in lowered for p in patterns):
+                present_years = presence.get(metric_key, set())
+                if year and year in present_years:
+                    keep = False
+                    break
+                elif not year and present_years:
+                    keep = False
+                    break
+        if keep:
+            result.append(item)
+    return result
+
+
 def _detect_years(company_root: Path) -> List[str]:
     years: List[str] = []
     for child in company_root.iterdir() if company_root.exists() else []:
         if child.is_dir() and child.name.lower().startswith("fy"):
             years.append(child.name)
     return _sort_years(years)
+
+
+def _company_year_eligibility(company: str, company_root: Path) -> Dict[str, Any]:
+    return build_company_year_eligibility_manifest(company=company, company_root=company_root)
 
 
 def _safe_status(payload: Optional[Dict[str, Any]]) -> str:
@@ -100,6 +162,9 @@ def _year_is_usable(payloads: Dict[str, Optional[Dict[str, Any]]]) -> bool:
 
 def build_financial_year_index(*, company: str, company_root: Path) -> Dict[str, Any]:
     years_discovered = _detect_years(company_root)
+    eligibility = _company_year_eligibility(company, company_root)
+    eligible_years = set(eligibility.get("eligible_years", []))
+    eligibility_by_year = eligibility.get("years", {}) if isinstance(eligibility.get("years"), dict) else {}
     years_used: List[str] = []
     years_skipped: List[str] = []
     year_status: Dict[str, Any] = {}
@@ -114,6 +179,8 @@ def build_financial_year_index(*, company: str, company_root: Path) -> Dict[str,
         basis_used = _basis_used(payloads.get("normalized_fundamentals.json"))
         entry_warnings: List[str] = []
         entry_limitations: List[str] = []
+        year_eligibility = eligibility_by_year.get(year, {})
+        eligibility_status = str(year_eligibility.get("status") or "INELIGIBLE")
         for filename in YEAR_LEVEL_REQUIRED:
             if payloads.get(filename) is None:
                 _append_unique(entry_warnings, f"missing {filename}")
@@ -125,12 +192,20 @@ def build_financial_year_index(*, company: str, company_root: Path) -> Dict[str,
             _append_unique(entry_limitations, "financial reconciliation failed")
         if quality_status == "fail":
             _append_unique(entry_limitations, "financial quality failed")
+        if eligibility_status != "ELIGIBLE":
+            _append_unique(
+                entry_limitations,
+                "excluded from company-memory financial synthesis because canonical company-year status is "
+                + eligibility_status,
+            )
         usable = _year_is_usable(payloads)
-        if usable:
+        if usable and year in eligible_years:
             years_used.append(year)
         else:
             years_skipped.append(year)
         year_status[year] = {
+            "company_year_status": eligibility_status,
+            "missing_required_company_year_artifacts": list(year_eligibility.get("missing_required_artifacts", [])),
             "financials_available": _year_available(payloads),
             "validation_status": validation_status,
             "reconciliation_status": reconciliation_status,
@@ -152,6 +227,7 @@ def build_financial_year_index(*, company: str, company_root: Path) -> Dict[str,
         "years_used": years_used,
         "years_skipped": years_skipped,
         "year_status": year_status,
+        "company_year_eligibility": eligibility,
         "warnings": warnings,
         "limitations": limitations,
     }
@@ -298,7 +374,17 @@ def build_capital_allocation_financial_timeline(*, company: str, company_root: P
         ratio_map = ratios.get("ratios") or {}
         debt_entry = ((normalized.get("balance_sheet") or {}).get("total_debt") or {})
         capex_entry = ((normalized.get("cash_flow") or {}).get("capex") or {})
-        fcf_entry = ratio_map.get("fcf") or {}
+        cfo_entry = ((normalized.get("cash_flow") or {}).get("cfo") or {})
+        # Prefer ratio-computed FCF; fall back to deriving from normalized cfo+capex
+        # using the same formula as the trend_builder (capex is cash-flow-signed).
+        ratio_fcf = (ratio_map.get("fcf") or {}).get("value")
+        fcf_value = ratio_fcf
+        if fcf_value is None:
+            cfo_val = cfo_entry.get("value_crore")
+            capex_val = capex_entry.get("value_crore")
+            if cfo_val is not None and capex_val is not None:
+                fcf_value = round(cfo_val + capex_val, 2)
+        fcf_source = "normalized_fundamentals.json" if (ratio_fcf is None and fcf_value is not None) else "financial_ratios.json"
         timeline.append(
             {
                 "year": year,
@@ -311,8 +397,8 @@ def build_capital_allocation_financial_timeline(*, company: str, company_root: P
                     "source_artifact": capex_entry.get("source_artifact") or "normalized_fundamentals.json",
                 },
                 "fcf": {
-                    "value": fcf_entry.get("value"),
-                    "source_artifact": "financial_ratios.json",
+                    "value": fcf_value,
+                    "source_artifact": fcf_source,
                 },
                 "debt": {
                     "value": debt_entry.get("value_crore"),
@@ -330,7 +416,7 @@ def build_capital_allocation_financial_timeline(*, company: str, company_root: P
             capex_pattern["years"].append(year)
         else:
             _append_unique(limitations, f"{year}: capex missing")
-        if fcf_entry.get("value") is not None:
+        if fcf_value is not None:
             fcf_pattern["years"].append(year)
         else:
             _append_unique(limitations, f"{year}: FCF missing")
@@ -462,6 +548,16 @@ def build_financial_memory_summary(
     key_concerns = list(quality_evolution_payload.get("recurring_concerns", []))[:8]
     missing_data = list(quality_evolution_payload.get("missing_data_patterns", []))
     missing_data.extend([item for item in limitations if item not in missing_data])
+
+    # Reconcile warnings, limitations, and missing_data against the canonical trend presence.
+    # Per the invariant: if a metric is present (non-null, usable_downstream=True) in the
+    # canonical financial_trends source, the summary must not simultaneously report it missing.
+    # Stale lower-priority artifacts (financial_ratios.json, financial_quality_summary.json,
+    # corporate_actions.json) may carry "missing" claims that contradict the canonical fact.
+    canonical_presence = _build_trends_presence(trends_payload)
+    warnings = _reconcile_canonical_presence(warnings, canonical_presence)
+    limitations = _reconcile_canonical_presence(limitations, canonical_presence)
+    missing_data = _reconcile_canonical_presence(missing_data, canonical_presence)
 
     summary = {
         "scale_pattern": _trend_series_lines(trends_payload, "metric_trends", ("revenue", "ebitda", "ebit", "pat", "net_worth", "total_assets")),

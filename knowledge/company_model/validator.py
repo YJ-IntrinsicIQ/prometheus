@@ -38,6 +38,22 @@ SPECIFICITY_TOKENS = (
     "plant",
     "content",
     "ip",
+    "bank",
+    "banking",
+    "lending",
+    "loan",
+    "loans",
+    "microfinance",
+    "deposits",
+    "borrowings",
+    "treasury",
+    "msme",
+    "branch",
+    "credit",
+    "interest income",
+    "fee and commission",
+    "underwriting",
+    "collections",
 )
 
 
@@ -150,4 +166,3 @@ def _validate_specificity(payload: Dict[str, Any], errors: List[str], warnings: 
 def _important_terms(text: str) -> List[str]:
     words = re.findall(r"[a-z0-9]+", text.lower())
     return [word for word in words if len(word) >= 5 and word not in {"customer", "customers", "revenue", "business", "company", "through", "service", "services"}][:20]
-

@@ -9,6 +9,7 @@ from pipelines import run_company_pipeline
 
 
 def _committee_payload():
+    """Post-finalization committee synthesis payload (as produced by synthesizer's _finalize_payload)."""
     return {
         "company": "polymatech",
         "analysis_mode": "committee_synthesis_v1",
@@ -27,8 +28,18 @@ def _committee_payload():
             "financial_consensus": [
                 "Revenue, PAT, and cash-conversion evidence support the business, but leverage still needs scrutiny."
             ],
-            "financial_strengths": ["Revenue, PAT, and EPS are directionally supportive."],
-            "financial_concerns": ["Debt and funding pressure remain important constraints."],
+            # Post-finalization strengths (canonical phrases, no business-only, no limitations)
+            "financial_strengths": [
+                "Revenue, PAT, and EPS are directionally supportive.",
+                "Current-year CFO and working-capital metrics are available, improving visibility.",
+                "Payables and payable-days evidence are available for the current usable year.",
+                "Derived FCF / owner-earnings estimate is available for the current usable year, but precision is limited because maintenance-versus-growth capex split and multi-year bridge history are incomplete.",
+                "Financial basis is identified as consolidated.",
+            ],
+            "financial_concerns": [
+                "Debt and funding pressure remain important constraints.",
+                "Severe working-capital intensity and stretched cash-conversion metrics remain a real concern.",
+            ],
             "financial_disagreements": [
                 {
                     "disagreement_type": "risk_weighting_difference",
@@ -38,13 +49,23 @@ def _committee_payload():
                     "uncertainty": "Cash-flow durability still needs more evidence.",
                 }
             ],
-            "missing_financial_data": ["Share-count comparability remains limited."],
+            "missing_financial_data": [
+                "Share-count comparability remains limited.",
+                "Maintenance versus growth capex split remains unavailable.",
+                "Weighted-average share count remains unavailable.",
+                "Diluted share-count data remains unavailable.",
+                "Basis consistency remains unclear across reported financials.",
+                "Multi-year CFO/capex bridge history remains incomplete.",
+            ],
             "financial_red_flags": ["Debt and funding pressure remain important constraints."],
             "financial_interpretation_limits": [
                 "No new ratios were calculated beyond supplied financial inputs."
             ],
             "investor_questions_from_financials": [
-                "How sustainable are CFO and FCF as expansion continues?"
+                "How sustainable are CFO and FCF as expansion continues?",
+            ],
+            "precision_limited_financial_data": [
+                "Derived FCF / owner-earnings estimate is available for the current usable year, but precision is limited because maintenance-versus-growth capex split and multi-year bridge history are incomplete."
             ],
         },
         "areas_of_agreement": [
@@ -352,9 +373,9 @@ def test_committee_brief_qa_passes_without_duplicate_or_empty_supported_by(tmp_p
     payload = _committee_payload()
     payload["strongest_positive_signals"] = [
         {
-            "signal": "Owner earnings estimate in-…",
+            "signal": "Owner earnings estimate available",
             "supported_by": ["buffett"],
-            "summary": "Owner earnings estimate in-…",
+            "summary": "Derived FCF / owner-earnings estimate is available for the current usable year, but precision is limited.",
             "evidence_ids": ["ev_x"],
         },
         {
@@ -402,7 +423,7 @@ def test_committee_brief_qa_fails_missing_data_default_when_precision_gaps_exist
     brief_path = _write_committee_files(tmp_path, payload)
     text = brief_path.read_text(encoding="utf-8").replace(
         "- Standalone versus consolidated basis remains unclear, limiting comparability.",
-        "- No material missing financial data was recorded.",
+        "- No material missing or incomplete inputs were recorded.",
     )
     brief_path.write_text(text, encoding="utf-8")
 
@@ -411,7 +432,7 @@ def test_committee_brief_qa_fails_missing_data_default_when_precision_gaps_exist
 
     assert result["status"] == "fail"
     assert any(
-        "No material missing financial data was recorded." in item
+        "No material missing or incomplete inputs were recorded." in item
         for item in result["checks"]["quality_contradictions"]["contradictions"]
     )
 

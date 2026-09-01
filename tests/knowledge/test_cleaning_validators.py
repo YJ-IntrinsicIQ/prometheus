@@ -64,7 +64,7 @@ def test_validator_blocks_uncertain_external_context():
 
     validation = validate_cleaned_item(item, module_name="risks")
 
-    assert "business relevance outcome: QUARANTINE" in validation["errors"]
+    assert any("business relevance outcome: QUARANTINE" in err for err in validation["errors"])
 
 
 def test_source_year_metadata_does_not_create_period_conflicts_for_risks():

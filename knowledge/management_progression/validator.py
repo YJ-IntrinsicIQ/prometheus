@@ -4,10 +4,12 @@ import re
 from typing import Any, Dict, List
 
 from .contract import (
+    CHAIN_STATUSES,
     COVERAGE_STATUSES,
     CURRENT_STATUSES,
     EVENT_ROLES,
     EVENT_TYPES,
+    FINANCIAL_LINK_STATUSES,
     SCHEMA_VERSION,
     THESIS_IMPACTS,
     VERIFICATION_STATUSES,
@@ -51,6 +53,7 @@ def validate_management_progression(payload: Dict[str, Any]) -> Dict[str, Any]:
             errors.append(f"progression_items[{item_index}] must be an object")
             continue
         _validate_item(item, item_index, errors, warnings)
+        _validate_synthesis_chain(item.get("synthesis_chain"), item_index, errors, warnings)
         for event in item.get("events", []) or []:
             marker = _event_marker(event)
             if marker in seen_events:
@@ -65,6 +68,40 @@ def validate_management_progression(payload: Dict[str, Any]) -> Dict[str, Any]:
         "errors": errors,
         "warnings": warnings,
     }
+
+
+def _validate_synthesis_chain(
+    chain: Any, index: int, errors: List[str], warnings: List[str]
+) -> None:
+    if chain is None:
+        return
+    if not isinstance(chain, dict):
+        errors.append(f"progression_items[{index}].synthesis_chain must be an object")
+        return
+    status = chain.get("chain_status")
+    if status not in CHAIN_STATUSES:
+        errors.append(
+            f"progression_items[{index}].synthesis_chain.chain_status is invalid: {status!r}"
+        )
+    fc = chain.get("financial_consequence")
+    if not isinstance(fc, dict):
+        errors.append(
+            f"progression_items[{index}].synthesis_chain.financial_consequence must be an object"
+        )
+    elif fc.get("link_status") not in FINANCIAL_LINK_STATUSES:
+        errors.append(
+            f"progression_items[{index}].synthesis_chain.financial_consequence.link_status is invalid"
+        )
+    elif status == "FINANCIAL_IMPACT_CONFIRMED" and not fc.get("metrics_observed"):
+        errors.append(
+            f"progression_items[{index}]: FINANCIAL_IMPACT_CONFIRMED requires at least one"
+            " metric in metrics_observed"
+        )
+    ii = chain.get("investor_implication")
+    if not isinstance(ii, dict) or not ii.get("conclusion"):
+        errors.append(
+            f"progression_items[{index}].synthesis_chain.investor_implication.conclusion is required"
+        )
 
 
 def _validate_item(item: Dict[str, Any], index: int, errors: List[str], warnings: List[str]) -> None:

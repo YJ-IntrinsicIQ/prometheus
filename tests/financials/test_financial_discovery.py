@@ -48,6 +48,65 @@ def test_profit_and_loss_discovery(tmp_path):
     assert result.sections["primary_profit_and_loss_statement"][0].confidence in {"high", "medium"}
 
 
+def test_profit_and_loss_note_schedule_does_not_become_primary_statement(tmp_path):
+    chunk_path = _write_chunks(
+        tmp_path / "clean_chunks.json",
+        [
+            _chunk(
+                "CHK-RD-NOTE",
+                171,
+                "NOTES TO THE CONSOLIDATED FINANCIAL STATEMENTS FOR THE YEAR ENDED MARCH 31, 2025 "
+                "NOTE : 37 RESEARCH AND DEVELOPMENT EXPENDITURE INCLUDED IN THE CONSOLIDATED STATEMENT OF PROFIT AND LOSS "
+                "` in Million Year ended March 31, 2025 Year ended March 31, 2024 "
+                "Salaries, wages and bonus 6,551.5 6,535.3 Staff welfare expenses 226.0 255.3 "
+                "Professional, legal and consultancy 6,882.2 8,554.4 NOTE : 38 TAX RECONCILIATION "
+                "Reconciliation of tax expense Profit before tax 44,813.2 27,993.7",
+            )
+        ],
+    )
+
+    result = discover_financial_sections(company="syntheticco", year="fy25", chunk_path=chunk_path)
+
+    assert not result.sections["primary_profit_and_loss_statement"]
+    assert result.sections["financial_note"]
+
+
+def test_profit_and_loss_continuation_without_repeated_heading_is_discovered(tmp_path):
+    chunk_path = _write_chunks(
+        tmp_path / "clean_chunks.json",
+        [
+            _chunk(
+                "CHK-PNL-1",
+                186,
+                "Consolidated Statement of Profit and Loss for the year ended March 31, 2025 "
+                "Particulars Notes Year ended March 31, 2025 Year ended March 31, 2024 "
+                "Revenue from operations 1,000.0 900.0 Profit before tax 220.0 180.0 Tax expense",
+            ),
+            _chunk(
+                "CHK-PNL-2",
+                186,
+                "Deferred tax (5.0) (3.0) Total tax expense 40.0 30.0 "
+                "Profit for the year before non-controlling interests 180.0 150.0 "
+                "Non-controlling interests 10.0 8.0 "
+                "Profit for the year attributable to owners of the Company 170.0 142.0",
+            ),
+            _chunk(
+                "CHK-PNL-3",
+                187,
+                "Consolidated Statement of Profit and Loss for the year ended March 31, 2025 "
+                "Other comprehensive income 12.0 8.0 Earnings per equity share Basic 7.1 5.9",
+            ),
+        ],
+    )
+
+    result = discover_financial_sections(company="syntheticco", year="fy25", chunk_path=chunk_path)
+
+    ids = {item.chunk_id: item for item in result.sections["primary_profit_and_loss_statement"]}
+    assert "CHK-PNL-2" in ids
+    assert "continuation:primary_statement" in ids["CHK-PNL-2"].signals
+    assert ids["CHK-PNL-2"].basis == "consolidated"
+
+
 def test_balance_sheet_discovery(tmp_path):
     chunk_path = _write_chunks(
         tmp_path / "clean_chunks.json",
@@ -105,6 +164,35 @@ def test_titleless_ifrs_statement_of_financial_position_structure_is_discovered(
     result = discover_financial_sections(company="syntheticco", year="fy25", chunk_path=chunk_path)
 
     assert result.sections["primary_balance_sheet_statement"]
+
+
+def test_aoc_subsidiary_total_assets_table_is_not_primary_balance_sheet_continuation(tmp_path):
+    chunk_path = _write_chunks(
+        tmp_path / "clean_chunks.json",
+        [
+            _chunk(
+                "CHK-BS",
+                184,
+                "Consolidated Balance Sheet As at March 31, 2025 ₹ in Million "
+                "Particulars Notes As at March 31, 2025 As at March 31, 2024 "
+                "ASSETS Total current assets 700.0 650.0 TOTAL ASSETS 1,000.0 900.0",
+            ),
+            _chunk(
+                "CHK-AOC",
+                268,
+                "FORM AOC - 1 Statement containing salient features of the financial statement "
+                "of subsidiaries ₹ in Million Sr No Name of the Subsidiary Company Date of acquisition "
+                "Reporting Currency Rate Capital Reserve Total Assets Total Liabilities Turnover "
+                "Example Subsidiary 01.04.2020 INR 1.00 7.0 1.5 99.0 40.0 20.0",
+            ),
+        ],
+    )
+
+    result = discover_financial_sections(company="syntheticco", year="fy25", chunk_path=chunk_path)
+
+    primary_ids = {item.chunk_id for item in result.sections["primary_balance_sheet_statement"]}
+    assert "CHK-BS" in primary_ids
+    assert "CHK-AOC" not in primary_ids
 
 
 def test_cash_flow_with_working_capital_and_equity_rows_is_not_stolen_by_balance_sheet_structure(tmp_path):
@@ -305,3 +393,40 @@ def test_no_sections_discovered_fails(tmp_path):
 
     with pytest.raises(RuntimeError, match="found no financial sections"):
         discover_financial_sections(company="syntheticco", year="fy25", chunk_path=chunk_path)
+
+
+def test_board_report_pat_not_classified_as_primary_pl(tmp_path):
+    """Board Report / MD&A narrative mentioning PAT must not become a primary P&L candidate."""
+    chunk_path = _write_chunks(
+        tmp_path / "clean_chunks.json",
+        [
+            _chunk(
+                "CHK-BOARD-RPT",
+                5,
+                "BOARD OF DIRECTORS' REPORT "
+                "Your Directors are pleased to present the Annual Report and the audited financial statements. "
+                "During FY2023, the Company achieved consolidated revenue of Rs. 438,856.8 million and "
+                "profit after tax (PAT) of Rs. 84,735.8 million, representing a growth of 13.9% and 103.6% "
+                "respectively over the previous year. Earnings per share stood at Rs. 35.4. "
+                "The Board recommends a final dividend of Rs. 3.50 per equity share.",
+            ),
+            _chunk(
+                "CHK-PL-ANCHOR",
+                207,
+                "Consolidated Statement of Profit and Loss ` in Million "
+                "Particulars Year ended March 31, 2023 Year ended March 31, 2022 "
+                "Revenue from operations 438,856.8 385,246.7 "
+                "Profit for the year attributable to owners of the Company 84,735.8 41,611.0",
+            ),
+        ],
+    )
+
+    result = discover_financial_sections(company="syntheticco", year="fy23", chunk_path=chunk_path)
+
+    pl_ids = {item.chunk_id for item in result.sections["primary_profit_and_loss_statement"]}
+    # Board report chunk must not appear as a primary P&L candidate
+    assert "CHK-BOARD-RPT" not in pl_ids, (
+        "Board report narrative must not be classified as primary_profit_and_loss_statement"
+    )
+    # Actual P&L must still be discovered
+    assert "CHK-PL-ANCHOR" in pl_ids

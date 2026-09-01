@@ -19,6 +19,8 @@ type CompanyPageProps = {
   }>;
 };
 
+export const dynamicParams = true;
+
 export async function generateStaticParams() {
   return (await getCompanySlugs()).map((companySlug) => ({ companySlug }));
 }

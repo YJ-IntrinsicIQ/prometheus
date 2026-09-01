@@ -6,6 +6,8 @@ import pytest
 from knowledge.financials.extractor import extract_financial_tables, write_financial_extraction
 from knowledge.financials.extraction_schema import FinancialExtractionResult
 from knowledge.financials.extractor import _parse_discovery, build_financial_extraction_readiness
+from knowledge.financials.discovery import discover_financial_sections
+from knowledge.financials.line_item_mapper import map_line_item
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -108,6 +110,190 @@ def test_profit_and_loss_table_extraction(tmp_path):
     assert revenue_row.values[0].value_type == "monetary"
     assert revenue_row.basis == "unknown"
     assert revenue_row.is_primary_statement is True
+
+
+def test_profit_and_loss_continuation_extracts_owner_attributable_pat(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    output_path = tmp_path / "raw_financial_tables.json"
+    chunks = [
+        {
+            "chunk_id": "CHK-PNL-1",
+            "page": 186,
+            "text": (
+                "Consolidated Statement of Profit and Loss for the year ended March 31, 2025 "
+                "` in Million Particulars Notes Year ended March 31, 2025 Year ended March 31, 2024 "
+                "Revenue from operations 30 328,375.0 290,659.1 Other income 31 6,359.8 10,254.9 "
+                "Total income 334,734.8 300,914.0 Profit before tax 50,095.9 38,102.0"
+            ),
+            "metadata": {},
+        },
+        {
+            "chunk_id": "CHK-PNL-2",
+            "page": 186,
+            "text": (
+                "Total tax expense 49 8,228.0 6,008.8 "
+                "Profit for the year before non-controlling interests 41,719.6 32,078.6 "
+                "Non-controlling interests 71 4,070.3 5,424.4 "
+                "Profit for the year attributable to owners of the Company 37,649.3 26,654.2"
+            ),
+            "metadata": {},
+        },
+        {
+            "chunk_id": "CHK-PNL-3",
+            "page": 187,
+            "text": (
+                "Consolidated Statement of Profit and Loss for the year ended March 31, 2025 "
+                "Other comprehensive income 21,208.3 16,799.9 Earnings per equity share Basic 15.7 11.1"
+            ),
+            "metadata": {},
+        },
+    ]
+    _write_chunks(chunk_path, chunks)
+    discovery = discover_financial_sections(company="acme", year="fy25", chunk_path=chunk_path)
+    _write_json(discovery_path, discovery.to_dict())
+
+    result = write_financial_extraction(
+        company="acme",
+        year="fy25",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+        output_path=output_path,
+    )
+
+    rows = result.tables["profit_and_loss"]
+    owner_pat = next(row for row in rows if row.line_item_raw == "Profit for the year attributable to owners of the Company")
+    assert owner_pat.basis == "consolidated"
+    assert owner_pat.is_primary_statement is True
+    assert owner_pat.values[0].period == "March 31, 2025"
+    assert owner_pat.values[0].value_crore == 3764.93
+    pre_nci_row = next(row for row in rows if row.line_item_raw == "Profit for the year before non-controlling interests")
+    assert all(
+        match.canonical_field != "profit_and_loss.pat"
+        for match in map_line_item(table_type="profit_and_loss", line_item_raw=pre_nci_row.line_item_raw)
+    )
+
+
+def test_balance_sheet_continuation_preserves_total_assets_from_tail_titled_chunk(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    output_path = tmp_path / "raw_financial_tables.json"
+    chunks = [
+        {
+            "chunk_id": "CHK-BS-1",
+            "page": 184,
+            "text": (
+                "Consolidated Balance Sheet as at March 31, 2025 ` in Million "
+                "Particulars Notes As at March 31, 2025 As at March 31, 2024 "
+                "ASSETS (1) Non-current assets "
+                "(a) Property, plant and equipment 3 105,674.3 100,274.2 "
+                "Total non-current assets 365,983.0 336,246.2"
+            ),
+            "metadata": {},
+        },
+        {
+            "chunk_id": "CHK-BS-2",
+            "page": 184,
+            "text": (
+                "(2) Current assets (a) Inventories 11 78,749.9 78,859.8 "
+                "(b) Financial assets (i) Trade receivables 12 120,000.0 110,000.0 "
+                "Total current assets 316,541.6 310,691.9 "
+                "TOTAL ASSETS 682,524.6 646,938.1 "
+                "Consolidated Balance Sheet"
+            ),
+            "metadata": {},
+        },
+        {
+            "chunk_id": "CHK-BS-3",
+            "page": 185,
+            "text": (
+                "Consolidated Balance Sheet as at March 31, 2025 ` in Million "
+                "Particulars Notes As at March 31, 2025 As at March 31, 2024 "
+                "EQUITY AND LIABILITIES Equity Share capital 19 2,399.3 2,399.3 "
+                "Other equity 20 450,245.2 411,691.3 "
+                "Total equity 491,246.9 447,226.0 "
+                "Total liabilities 191,277.7 199,712.1 "
+                "TOTAL EQUITY AND LIABILITIES 682,524.6 646,938.1"
+            ),
+            "metadata": {},
+        },
+    ]
+    _write_chunks(chunk_path, chunks)
+    discovery = discover_financial_sections(company="acme", year="fy25", chunk_path=chunk_path)
+    _write_json(discovery_path, discovery.to_dict())
+
+    result = write_financial_extraction(
+        company="acme",
+        year="fy25",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+        output_path=output_path,
+    )
+
+    rows = result.tables["balance_sheet"]
+    total_assets = next(row for row in rows if row.line_item_raw == "TOTAL ASSETS")
+    assert total_assets.basis == "consolidated"
+    assert total_assets.source_section_type == "primary_balance_sheet_statement"
+    assert total_assets.is_primary_statement is True
+    assert total_assets.chunk_id == "CHK-BS-2"
+    assert total_assets.values[0].period == "March 31, 2025"
+    assert total_assets.values[0].value_crore == 68252.46
+
+    total_equity_liabilities = next(row for row in rows if row.line_item_raw == "TOTAL EQUITY AND LIABILITIES")
+    assert total_equity_liabilities.chunk_id == "CHK-BS-3"
+
+
+def test_balance_sheet_note_total_assets_does_not_become_primary_statement(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    output_path = tmp_path / "raw_financial_tables.json"
+    note_text = (
+        "Note 52 Financial instruments ` in Million As at March 31, 2025 As at March 31, 2024 "
+        "Total Assets by fair value level 100.0 90.0 Total liabilities by fair value level 40.0 35.0"
+    )
+    primary_text = (
+        "Consolidated Balance Sheet as at March 31, 2025 ` in Million "
+        "Particulars Notes As at March 31, 2025 As at March 31, 2024 "
+        "ASSETS Cash and bank balances 10 1,000.0 900.0 "
+        "TOTAL ASSETS 1,000.0 900.0 EQUITY AND LIABILITIES "
+        "Total equity 600.0 550.0 Total liabilities 400.0 350.0 "
+        "TOTAL EQUITY AND LIABILITIES 1,000.0 900.0"
+    )
+    _write_chunks(
+        chunk_path,
+        [
+            {"chunk_id": "CHK-NOTE", "page": 250, "text": note_text, "metadata": {}},
+            {"chunk_id": "CHK-PRIMARY", "page": 180, "text": primary_text, "metadata": {}},
+        ],
+    )
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={
+                "financial_note": [_candidate("financial_note", "CHK-NOTE", 250, note_text)],
+                "primary_balance_sheet_statement": [
+                    _candidate("primary_balance_sheet_statement", "CHK-PRIMARY", 180, primary_text)
+                ],
+            }
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy25",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    primary_total_assets = [
+        row
+        for row in result.tables["balance_sheet"]
+        if row.line_item_raw == "TOTAL ASSETS" and row.is_primary_statement
+    ]
+    assert primary_total_assets
+    assert primary_total_assets[0].chunk_id == "CHK-PRIMARY"
+    note_rows = [row for row in result.tables["balance_sheet"] if row.chunk_id == "CHK-NOTE"]
+    assert all(not row.is_primary_statement for row in note_rows)
 
 
 def test_profit_and_loss_table_extraction_recognizes_year_ended_periods(tmp_path):
@@ -598,15 +784,14 @@ def test_balance_sheet_readiness_accepts_equity_plus_reserves_path(tmp_path):
         ),
     )
 
-    result = write_financial_extraction(
+    result = extract_financial_tables(
         company="acme",
         year="fy25",
         chunk_path=chunk_path,
         discovery_path=discovery_path,
-        output_path=output_path,
     )
 
-    readiness_payload = json.loads((tmp_path / "financial_extraction_readiness.json").read_text(encoding="utf-8"))
+    readiness_payload = build_financial_extraction_readiness(_parse_discovery(discovery_path), result)
     assert readiness_payload["status"] == "READY"
     report = next(item for item in readiness_payload["candidate_reports"] if item["section_type"] == "primary_balance_sheet_statement")
     assert report["selected"] is True
@@ -657,6 +842,206 @@ def test_cash_flow_table_extraction_with_negative_values(tmp_path):
     purchase_row = next(row for row in result.tables["cash_flow"] if row.line_item_raw == "Purchase of investments")
     assert purchase_row.values[0].value_raw == "(393.10)"
     assert purchase_row.values[0].value_crore == -39.31
+
+
+def test_tail_titled_cash_flow_continuation_extracts_real_rows_without_footer_cfo(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    output_path = tmp_path / "raw_financial_tables.json"
+    context_text = (
+        "` in Million Particulars Year ended March 31, 2025 Year ended March 31, 2024 "
+        "Consolidated Statement of Cash Flow"
+    )
+    tail_text = (
+        "Payments for purchase of property, plant and equipment (including capital work-in-progress) "
+        "(21,285.8) (22,018.1) Cash and cash equivalents at the end of the year 102,687.7 92,856.5 "
+        "Consolidated Statement of Cash Flow for the year ended March 31, 2025"
+    )
+    _write_chunks(
+        chunk_path,
+        [
+            {"chunk_id": "CHK-CF-CONTEXT", "page": 229, "text": context_text, "metadata": {}},
+            {"chunk_id": "CHK-CF-TAIL", "page": 230, "text": tail_text, "metadata": {}},
+        ],
+    )
+
+    discovery = discover_financial_sections(company="acme", year="fy25", chunk_path=chunk_path)
+    _write_json(discovery_path, discovery.to_dict())
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy25",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    cash_rows = result.tables["cash_flow"]
+    purchase = next(row for row in cash_rows if "purchase of property" in row.line_item_raw.lower())
+    assert purchase.basis == "consolidated"
+    assert purchase.values[0].period == "March 31, 2025"
+    assert purchase.values[0].unit_hint == "million"
+    assert purchase.values[0].value_crore == -2128.58
+    assert not any("statement of cash flow for the year ended march" in row.line_item_raw.lower() for row in cash_rows)
+
+
+def test_cash_flow_assembly_prefers_complete_unit_span_over_basis_only_tail(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    header_text = (
+        "` in Million Particulars Year ended March 31, 2025 Year ended March 31, 2024 "
+        "A. Cash flow from operating activities Profit before tax 137,521.3 110,878.9 "
+        "Operating profit before working capital changes 148,724.9 126,422.9 "
+        "(Increase) / Decrease in trade receivables (16,020.5) 3,528.9"
+    )
+    continuation_text = (
+        "(Increase) / Decrease in other assets (593.2) (3,839.0) "
+        "Cash generated from operations 145,489.3 137,044.2 "
+        "Net Income tax (paid) / refund received (4,768.4) (15,694.4) "
+        "Net cash generated from / (used in) operating activities (A) 140,720.9 121,349.8 "
+        "B. Cash flow from investing activities "
+        "Payments for purchase of property, plant and equipment (21,285.8) (22,018.1) "
+        "Net cash flow from / (used in) investing activities (B) (53,061.6) (6,902.0)"
+    )
+    tail_text = (
+        "Dividend paid (36,139.7) (28,981.7) "
+        "Net cash flow from / (used in) financing activities (C) (79,058.2) (67,101.6) "
+        "Cash and cash equivalents at the end of the year 102,687.7 92,856.5 "
+        "Consolidated Statement of Cash Flow for the year ended March 31, 2025"
+    )
+    _write_chunks(
+        chunk_path,
+        [
+            {"chunk_id": "CHK-CF-HEAD", "page": 230, "text": header_text, "metadata": {}},
+            {"chunk_id": "CHK-CF-MID", "page": 230, "text": continuation_text, "metadata": {}},
+            {"chunk_id": "CHK-CF-TAIL", "page": 230, "text": tail_text, "metadata": {}},
+        ],
+    )
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={
+                "primary_cash_flow_statement": [
+                    {**_candidate("primary_cash_flow_statement", "CHK-CF-HEAD", 230, header_text), "basis": "unknown"},
+                    {**_candidate("primary_cash_flow_statement", "CHK-CF-MID", 230, continuation_text), "basis": "unknown"},
+                    {**_candidate("primary_cash_flow_statement", "CHK-CF-TAIL", 230, tail_text), "basis": "consolidated"},
+                ]
+            }
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy25",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    cfo = next(row for row in result.tables["cash_flow"] if "net cash generated from / (used in) operating activities" in row.line_item_raw.lower())
+    capex = next(row for row in result.tables["cash_flow"] if "purchase of property" in row.line_item_raw.lower())
+    assert cfo.basis == "consolidated"
+    assert cfo.values[0].unit_hint == "million"
+    assert cfo.values[0].value_crore == 14072.09
+    assert capex.values[0].unit_hint == "million"
+    assert capex.values[0].value_crore == -2128.58
+
+
+def test_wrapped_primary_cash_capex_row_survives_cash_flow_extraction(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = (
+        "` in Million Particulars Year ended March 31, 2023 Year ended March 31, 2022 "
+        "A. Cash flow from operating activities Profit before tax 94,084.3 44,813.2 "
+        "Net cash generated from operating activities (A) 49,593.3 89,845.4 "
+        "B. Cash flow from investing activities "
+        "Payments for purchase of property, plant and equipment (including capital work-in- "
+        "progress, other intangible assets and intangible assets under development) "
+        "(20,855.8) (14,950.4) "
+        "Proceeds from disposal of property, plant and equipment and other intangible assets 210.1 606.1 "
+        "Purchase of investments Others (218,087.4) (241,353.5) "
+        "Net cash used in investing activities (B) (79,436.8) (57,247.4) "
+        "Consolidated Cash Flow Statement for the year ended March 31, 2023"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-SUN-CF", "page": 210, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={
+                "primary_cash_flow_statement": [
+                    {**_candidate("primary_cash_flow_statement", "CHK-SUN-CF", 210, text), "basis": "consolidated"}
+                ]
+            }
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy23",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    capex = next(row for row in result.tables["cash_flow"] if "payments for purchase of property" in row.line_item_raw.lower())
+    assert capex.basis == "consolidated"
+    assert capex.source_section_type == "primary_cash_flow_statement"
+    assert capex.is_primary_statement is True
+    assert capex.values[0].period == "March 31, 2023"
+    assert capex.values[0].value_crore == -2085.58
+    assert capex.values[1].period == "March 31, 2022"
+    assert capex.values[1].value_crore == -1495.04
+
+
+def test_primary_statement_assembly_prefers_consolidated_over_slightly_longer_standalone(tmp_path):
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    standalone_text = (
+        "STANDALONE STATEMENT OF PROFIT AND LOSS ` in Million "
+        "Particulars Year ended March 31, 2025 Year ended March 31, 2024 "
+        "Revenue from operations 1,000.0 900.0 Other income 50.0 40.0 Total income 1,050.0 940.0 "
+        "Employee benefits expense 100.0 90.0 Other expenses 200.0 180.0 Finance costs 10.0 8.0 "
+        "Depreciation and amortisation expense 20.0 18.0 Total expenses 330.0 296.0 "
+        "Profit before tax 720.0 644.0 Current tax 100.0 90.0 Deferred tax 20.0 10.0 "
+        "Total tax expense 120.0 100.0 Profit for the year 600.0 544.0"
+    )
+    consolidated_text = (
+        "CONSOLIDATED STATEMENT OF PROFIT AND LOSS ` in Million "
+        "Particulars Year ended March 31, 2025 Year ended March 31, 2024 "
+        "Revenue from operations 3,000.0 2,700.0 Other income 100.0 90.0 Total income 3,100.0 2,790.0 "
+        "Employee benefits expense 300.0 280.0 Other expenses 500.0 460.0 Total expenses 800.0 740.0 "
+        "Profit before tax 2,300.0 2,050.0 Total tax expense 400.0 350.0 "
+        "Profit for the year attributable to owners of the Company 1,900.0 1,700.0"
+    )
+    _write_chunks(
+        chunk_path,
+        [
+            {"chunk_id": "CHK-STANDALONE-PL", "page": 10, "text": standalone_text, "metadata": {}},
+            {"chunk_id": "CHK-CONSOLIDATED-PL", "page": 20, "text": consolidated_text, "metadata": {}},
+        ],
+    )
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={
+                "primary_profit_and_loss_statement": [
+                    {**_candidate("primary_profit_and_loss_statement", "CHK-STANDALONE-PL", 10, standalone_text), "basis": "standalone"},
+                    {**_candidate("primary_profit_and_loss_statement", "CHK-CONSOLIDATED-PL", 20, consolidated_text), "basis": "consolidated"},
+                ]
+            }
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy25",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    revenue = next(row for row in result.tables["profit_and_loss"] if row.line_item_raw == "Revenue from operations")
+    pat = next(row for row in result.tables["profit_and_loss"] if "attributable to owners" in row.line_item_raw.lower())
+    assert revenue.basis == "consolidated"
+    assert revenue.values[0].value_crore == 300.0
+    assert pat.basis == "consolidated"
+    assert pat.values[0].value_crore == 190.0
 
 
 def test_multi_year_columns_are_preserved(tmp_path):
@@ -962,3 +1347,448 @@ def test_rejected_rows_are_written_to_rejection_audit(tmp_path):
     readiness_payload = json.loads((tmp_path / "financial_extraction_readiness.json").read_text(encoding="utf-8"))
     assert readiness_payload["status"] == "BLOCKED"
     assert "profit_and_loss.pat" in " ".join(readiness_payload["blocking_reasons"])
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — Sun Pharma FY23 fix (2026-08-28)
+# Covers: wrapped rows, cross-chunk assembly, note vs primary ranking,
+# basis/period isolation, semantic mapping, and no-hardcoding invariants.
+# ---------------------------------------------------------------------------
+
+
+def test_wrapped_revenue_row_roman_numeral_prefix(tmp_path):
+    """Roman-numeral-prefixed revenue label extracted from primary P&L."""
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    output_path = tmp_path / "raw_financial_tables.json"
+    text = (
+        "Consolidated Statement of Profit and Loss for the year ended March 31, 2023 "
+        "` in Million Particulars Notes Year ended March 31, 2023 Year ended March 31, 2022 "
+        "(I) Revenue from operations 30 438,856.8 385,246.7 "
+        "(II) Other income 31 4,988.9 7,197.2 "
+        "(III) Total income (I+II) 443,845.7 392,443.9 "
+        "(XII) Profit before tax (X-XI) 94,084.3 44,813.2 "
+        "(XIV) Profit for the year attributable to owners of the Company (XII-XIII) 84,735.8 41,611.0"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-PL-ROMAN", "page": 207, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={
+                "primary_profit_and_loss_statement": [
+                    {**_candidate("primary_profit_and_loss_statement", "CHK-PL-ROMAN", 207, text), "basis": "consolidated"}
+                ]
+            }
+        ),
+    )
+
+    result = write_financial_extraction(
+        company="acme",
+        year="fy23",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+        output_path=output_path,
+    )
+
+    rows = result.tables["profit_and_loss"]
+    # Extractor may strip the "(I)" roman-numeral prefix when normalising revenue labels
+    revenue = next(r for r in rows if "Revenue from operations" in r.line_item_raw)
+    assert revenue.basis == "consolidated"
+    assert revenue.is_primary_statement is True
+    assert revenue.values[0].period == "March 31, 2023"
+    assert revenue.values[0].value_crore == pytest.approx(43885.68, rel=1e-3)
+
+    pat = next(r for r in rows if "attributable to owners of the Company" in r.line_item_raw)
+    assert pat.basis == "consolidated"
+    assert pat.is_primary_statement is True
+    assert pat.values[0].value_crore == pytest.approx(8473.58, rel=1e-3)
+
+
+def test_wrapped_pat_row_roman_numeral_prefix_maps_to_pat(tmp_path):
+    """Long Roman-numeral PAT label maps to profit_and_loss.pat, not a sub-metric."""
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    text = (
+        "Consolidated Statement of Profit and Loss ` in Million "
+        "Particulars Year ended March 31, 2023 Year ended March 31, 2022 "
+        "(I) Revenue from operations 300,000.0 270,000.0 "
+        "(X) Profit for the year before non-controlling interests 80,000.0 60,000.0 "
+        "(XI) Non-controlling interests 5,000.0 4,000.0 "
+        "(XII) Profit for the year attributable to owners of the Company (X-XI) 75,000.0 56,000.0"
+    )
+    _write_chunks(chunk_path, [{"chunk_id": "CHK-PAT-ROMAN", "page": 50, "text": text, "metadata": {}}])
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={
+                "primary_profit_and_loss_statement": [
+                    {**_candidate("primary_profit_and_loss_statement", "CHK-PAT-ROMAN", 50, text), "basis": "consolidated"}
+                ]
+            }
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy23",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    rows = result.tables["profit_and_loss"]
+    # map_line_item returns canonical_field as a bare name ("pat"), not "profit_and_loss.pat"
+    pat_rows = [
+        r for r in rows
+        if any(m.canonical_field == "pat" for m in map_line_item(table_type="profit_and_loss", line_item_raw=r.line_item_raw))
+    ]
+    assert pat_rows, "Expected at least one row mapped to profit_and_loss.pat"
+    assert all(r.is_primary_statement for r in pat_rows)
+
+    # Pre-NCI profit must NOT be mapped to pat
+    pre_nci = next(r for r in rows if "before non-controlling interests" in r.line_item_raw.lower())
+    assert all(
+        m.canonical_field != "pat"
+        for m in map_line_item(table_type="profit_and_loss", line_item_raw=pre_nci.line_item_raw)
+    )
+
+
+def test_revenue_and_pat_split_across_adjacent_chunks(tmp_path):
+    """P&L split across two chunks: revenue in chunk-1, PAT in chunk-2; assembly extracts both."""
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    output_path = tmp_path / "raw_financial_tables.json"
+    chunk1_text = (
+        "Consolidated Statement of Profit and Loss ` in Crores "
+        "Particulars Year ended March 31, 2023 Year ended March 31, 2022 "
+        "Revenue from operations 50,000.0 45,000.0 "
+        "Other income 500.0 400.0 Total income 50,500.0 45,400.0 "
+        "Total expenses 40,000.0 36,000.0 Profit before tax 10,500.0 9,400.0"
+    )
+    chunk2_text = (
+        "Tax expense 2,000.0 1,800.0 "
+        "Profit for the year 8,500.0 7,600.0 "
+        "Non-controlling interests 200.0 150.0 "
+        "Profit for the year attributable to owners of the Company 8,300.0 7,450.0"
+    )
+    _write_chunks(
+        chunk_path,
+        [
+            {"chunk_id": "CHK-PL-A", "page": 100, "text": chunk1_text, "metadata": {}},
+            {"chunk_id": "CHK-PL-B", "page": 100, "text": chunk2_text, "metadata": {}},
+        ],
+    )
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={
+                "primary_profit_and_loss_statement": [
+                    {**_candidate("primary_profit_and_loss_statement", "CHK-PL-A", 100, chunk1_text), "basis": "consolidated"},
+                    {**_candidate("primary_profit_and_loss_statement", "CHK-PL-B", 100, chunk2_text), "basis": "consolidated"},
+                ]
+            }
+        ),
+    )
+
+    result = write_financial_extraction(
+        company="acme",
+        year="fy23",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+        output_path=output_path,
+    )
+
+    rows = result.tables["profit_and_loss"]
+    revenue = next(r for r in rows if r.line_item_raw == "Revenue from operations")
+    assert revenue.values[0].value_crore == pytest.approx(50000.0)
+
+    pat_row = next(
+        r for r in rows if "attributable to owners of the Company" in r.line_item_raw
+    )
+    assert pat_row.values[0].value_crore == pytest.approx(8300.0)
+    assert pat_row.is_primary_statement is True
+
+
+def test_note_dense_expense_rows_do_not_outrank_pl_with_semantic_hints(tmp_path):
+    """A note table with many expense rows (no revenue/PAT semantics) loses to a proper P&L."""
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    # Dense expense-only note — many rows, no semantic hint keywords
+    note_text = (
+        "` in Million Year ended March 31, 2023 Year ended March 31, 2022 "
+        "Salaries wages and bonus 6,551.5 6,535.3 "
+        "Staff welfare 226.0 255.3 "
+        "Professional and consultancy 6,882.2 8,554.4 "
+        "Consumables 1,200.0 1,100.0 "
+        "Depreciation on R&D assets 800.0 750.0 "
+        "Power and fuel 400.0 380.0 "
+        "Repairs and maintenance 300.0 290.0 "
+        "Lab expenses 950.0 900.0 "
+        "Clinical trials 2,100.0 1,980.0 "
+        "Others 500.0 480.0 "
+        "Total R&D expenditure 19,909.7 20,225.0"
+    )
+    # Compact P&L — fewer rows but contains canonical semantic hints
+    pl_text = (
+        "Consolidated Statement of Profit and Loss ` in Million "
+        "Particulars Year ended March 31, 2023 Year ended March 31, 2022 "
+        "Revenue from operations 438,856.8 385,246.7 "
+        "Other income 4,988.9 7,197.2 "
+        "Total expenses 344,772.5 340,433.7 "
+        "Profit before tax 94,084.3 44,813.2 "
+        "Tax expense 9,348.5 3,202.2 "
+        "Profit for the year attributable to owners of the Company 84,735.8 41,611.0"
+    )
+    _write_chunks(
+        chunk_path,
+        [
+            {"chunk_id": "CHK-NOTE-RD", "page": 244, "text": note_text, "metadata": {}},
+            {"chunk_id": "CHK-PL-REAL", "page": 207, "text": pl_text, "metadata": {}},
+        ],
+    )
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={
+                "primary_profit_and_loss_statement": [
+                    {**_candidate("primary_profit_and_loss_statement", "CHK-NOTE-RD", 244, note_text), "basis": "consolidated"},
+                    {**_candidate("primary_profit_and_loss_statement", "CHK-PL-REAL", 207, pl_text), "basis": "consolidated"},
+                ]
+            }
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy23",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    pl_rows = result.tables["profit_and_loss"]
+    revenue = next((r for r in pl_rows if r.line_item_raw == "Revenue from operations"), None)
+    assert revenue is not None, "Revenue from operations must be present from the real P&L"
+    assert revenue.values[0].value_crore == pytest.approx(43885.68, rel=1e-3)
+
+    # Expense-only note rows like "Salaries wages and bonus" must not appear in primary P&L
+    primary_labels = {r.line_item_raw for r in pl_rows if r.is_primary_statement}
+    assert "Salaries wages and bonus" not in primary_labels
+
+
+def test_associates_jv_nci_profit_not_mapped_to_pat():
+    """Share-of-profit rows and NCI map to their own fields, not profit_and_loss.pat."""
+    # canonical_field is a bare name (e.g. "pat", "share_of_profit_associates")
+    checks = [
+        ("Share of profit of associates", {"share_of_profit_associates"}),
+        ("Share of profit of joint ventures", {"share_of_profit_jv"}),
+        ("Non-controlling interests", {"non_controlling_interests"}),
+        ("Profit for the year before non-controlling interests", set()),  # must NOT hit pat
+    ]
+    for label, expected_fields in checks:
+        matches = map_line_item(table_type="profit_and_loss", line_item_raw=label)
+        fields = {m.canonical_field for m in matches}
+        # None of these should map to pat
+        assert "pat" not in fields, (
+            f"'{label}' must not map to profit_and_loss.pat (got {fields})"
+        )
+        for ef in expected_fields:
+            assert ef in fields, f"'{label}' expected to map to {ef} (got {fields})"
+
+
+def test_period_labeled_candidate_preferred_over_unlabeled(tmp_path):
+    """Assembly prefers a candidate with explicit period column headers over an unlabeled one."""
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    # No period headers — just bare numbers
+    unlabeled_text = (
+        "Consolidated Statement of Profit and Loss ` in Crores "
+        "Revenue from operations 50,000.0 45,000.0 "
+        "Profit for the year attributable to owners 8,000.0 7,200.0"
+    )
+    # Properly period-labeled
+    labeled_text = (
+        "Consolidated Statement of Profit and Loss ` in Crores "
+        "Particulars Year ended March 31, 2023 Year ended March 31, 2022 "
+        "Revenue from operations 55,000.0 49,000.0 "
+        "Profit for the year attributable to owners of the Company 9,000.0 8,100.0"
+    )
+    _write_chunks(
+        chunk_path,
+        [
+            {"chunk_id": "CHK-UNLABELED", "page": 10, "text": unlabeled_text, "metadata": {}},
+            {"chunk_id": "CHK-LABELED", "page": 20, "text": labeled_text, "metadata": {}},
+        ],
+    )
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={
+                "primary_profit_and_loss_statement": [
+                    {**_candidate("primary_profit_and_loss_statement", "CHK-UNLABELED", 10, unlabeled_text), "basis": "consolidated"},
+                    {**_candidate("primary_profit_and_loss_statement", "CHK-LABELED", 20, labeled_text), "basis": "consolidated"},
+                ]
+            }
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy23",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    pl_rows = result.tables["profit_and_loss"]
+    revenue = next(r for r in pl_rows if "Revenue from operations" in r.line_item_raw)
+    # Period-labeled candidate has revenue=55000; unlabeled has 50000
+    assert revenue.values[0].value_crore == pytest.approx(55000.0), (
+        "Period-labeled candidate should be preferred (revenue=55000, not 50000)"
+    )
+    assert revenue.values[0].period == "March 31, 2023"
+
+
+def test_standalone_candidate_not_used_when_consolidated_present(tmp_path):
+    """When both standalone and consolidated P&Ls are discovered, consolidated values are used."""
+    chunk_path = tmp_path / "clean_chunks.json"
+    discovery_path = tmp_path / "financial_discovery.json"
+    standalone_text = (
+        "STANDALONE STATEMENT OF PROFIT AND LOSS ` in Crores "
+        "Particulars Year ended March 31, 2023 Year ended March 31, 2022 "
+        "Revenue from operations 10,000.0 9,000.0 "
+        "Profit for the year 1,500.0 1,300.0"
+    )
+    consolidated_text = (
+        "CONSOLIDATED STATEMENT OF PROFIT AND LOSS ` in Crores "
+        "Particulars Year ended March 31, 2023 Year ended March 31, 2022 "
+        "Revenue from operations 50,000.0 45,000.0 "
+        "Profit for the year attributable to owners of the Company 8,000.0 7,000.0"
+    )
+    _write_chunks(
+        chunk_path,
+        [
+            {"chunk_id": "CHK-SA-PL", "page": 10, "text": standalone_text, "metadata": {}},
+            {"chunk_id": "CHK-CONSOL-PL", "page": 20, "text": consolidated_text, "metadata": {}},
+        ],
+    )
+    _write_json(
+        discovery_path,
+        _discovery_payload(
+            sections={
+                "primary_profit_and_loss_statement": [
+                    {**_candidate("primary_profit_and_loss_statement", "CHK-SA-PL", 10, standalone_text), "basis": "standalone"},
+                    {**_candidate("primary_profit_and_loss_statement", "CHK-CONSOL-PL", 20, consolidated_text), "basis": "consolidated"},
+                ]
+            }
+        ),
+    )
+
+    result = extract_financial_tables(
+        company="acme",
+        year="fy23",
+        chunk_path=chunk_path,
+        discovery_path=discovery_path,
+    )
+
+    pl_rows = [r for r in result.tables["profit_and_loss"] if r.is_primary_statement]
+    assert all(r.basis == "consolidated" for r in pl_rows), (
+        "All primary P&L rows must be consolidated when consolidated candidate is available"
+    )
+    revenue = next(r for r in pl_rows if "Revenue from operations" in r.line_item_raw)
+    # Consolidated revenue is 50000, standalone is 10000
+    assert revenue.values[0].value_crore == pytest.approx(50000.0)
+
+
+def test_no_company_or_sector_hardcoding_in_extractor_and_discovery():
+    """Extractor and discovery source code must not reference specific company names or sectors."""
+    import ast
+
+    forbidden = {"sun_pharma", "sunpharma", "pharma", "cipla", "drreddy", "lupin", "zydus"}
+    files_to_check = [
+        ROOT / "knowledge" / "financials" / "extractor.py",
+        ROOT / "knowledge" / "financials" / "discovery.py",
+        ROOT / "knowledge" / "financials" / "line_item_mapper.py",
+        ROOT / "knowledge" / "financials" / "normalizer.py",
+    ]
+    for file_path in files_to_check:
+        source = file_path.read_text(encoding="utf-8").lower()
+        # Strip comments and string literals via AST to avoid false positives on docstrings
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        # Check raw source for company-specific tokens (simple string search)
+        for token in forbidden:
+            assert token not in source, (
+                f"Company-specific token '{token}' found in {file_path.name}. "
+                "Extractor and discovery must be company-agnostic."
+            )
+
+
+# ---------------------------------------------------------------------------
+# Real-data regression tests (read pre-generated artifacts)
+# ---------------------------------------------------------------------------
+
+
+def test_sun_pharma_fy23_revenue_and_pat_regression():
+    """Sun Pharma FY23 normalized fundamentals must contain correct revenue and PAT."""
+    fin_dir = ROOT / "companies" / "sun_pharma" / "fy23" / "financials"
+    readiness_path = fin_dir / "financial_extraction_readiness.json"
+    normalized_path = fin_dir / "normalized_fundamentals.json"
+
+    if not readiness_path.exists() or not normalized_path.exists():
+        pytest.skip("Sun Pharma FY23 artifacts not present")
+
+    readiness = json.loads(readiness_path.read_text(encoding="utf-8"))
+    assert readiness["status"] == "READY", (
+        f"FY23 readiness gate must be READY, got {readiness['status']}. "
+        f"blocking_reasons={readiness.get('blocking_reasons')}"
+    )
+    assert not readiness.get("blocking_reasons"), (
+        f"FY23 must have no blocking reasons, got {readiness['blocking_reasons']}"
+    )
+
+    # P&L candidate must match revenue and pat
+    pl_candidate = next(
+        (c for c in readiness.get("candidate_reports", []) if c["candidate_id"] == "primary_profit_and_loss_statement"),
+        None,
+    )
+    assert pl_candidate is not None
+    assert pl_candidate["selected"] is True
+    assert "profit_and_loss.revenue" in pl_candidate["matched_fields"]
+    assert "profit_and_loss.pat" in pl_candidate["matched_fields"]
+
+    normalized = json.loads(normalized_path.read_text(encoding="utf-8"))
+    # Locate revenue and pat from normalized output
+    pl_section = normalized.get("profit_and_loss", {})
+    revenue_entry = pl_section.get("revenue") or {}
+    pat_entry = pl_section.get("pat") or {}
+
+    assert revenue_entry, "profit_and_loss.revenue must be present in normalized_fundamentals"
+    assert pat_entry, "profit_and_loss.pat must be present in normalized_fundamentals"
+
+    revenue_crore = revenue_entry.get("value_crore")
+    pat_crore = pat_entry.get("value_crore")
+
+    assert revenue_crore is not None
+    assert pat_crore is not None
+    assert pytest.approx(revenue_crore, rel=0.01) == 43885.68, (
+        f"FY23 revenue expected ~43,885.68 crore, got {revenue_crore}"
+    )
+    assert pytest.approx(pat_crore, rel=0.01) == 8473.58, (
+        f"FY23 PAT expected ~8,473.58 crore, got {pat_crore}"
+    )
+
+
+@pytest.mark.parametrize("year", ["fy20", "fy22", "fy24", "fy25"])
+def test_sun_pharma_existing_years_remain_ready(year):
+    """Pre-existing Sun Pharma years must stay READY after the FY23 fix."""
+    fin_dir = ROOT / "companies" / "sun_pharma" / year / "financials"
+    readiness_path = fin_dir / "financial_extraction_readiness.json"
+
+    if not readiness_path.exists():
+        pytest.skip(f"Sun Pharma {year} readiness artifact not present")
+
+    readiness = json.loads(readiness_path.read_text(encoding="utf-8"))
+    assert readiness["status"] == "READY", (
+        f"Sun Pharma {year} must still be READY after FY23 fix, "
+        f"got {readiness['status']}. blocking={readiness.get('blocking_reasons')}"
+    )

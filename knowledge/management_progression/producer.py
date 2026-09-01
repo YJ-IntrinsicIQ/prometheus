@@ -8,7 +8,8 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .contract import SCHEMA_VERSION, confidence, evidence_ref
 from .evidence_adapter import ManagementProgressionSources, load_management_progression_sources, loaded_payload
-from .linker import duplicate_key, link_company_model_ids, theme_key
+from .linker import build_cross_year_links, duplicate_key, link_company_model_ids, theme_key
+from .synthesis import build_synthesis_chain
 from .validator import validate_management_progression
 
 
@@ -117,6 +118,18 @@ _LOW_VALUE_NOISE_WORDS = {
     "sustainability",
 }
 
+# Priority order for picking the representative transition when a project has
+# multiple accepted transitions within the same fiscal-year period.
+_TRANSITION_PRIORITY: Dict[str, int] = {
+    "completion": 10,
+    "confirmation": 9,
+    "capacity_ramp": 7,
+    "delay_signal": 6,
+    "funding_committed": 5,
+    "latest_assessment": 3,
+    "project_announced": 2,
+}
+
 
 def build_management_progression(company_slug: str, *, companies_root: Path | str = Path("companies"), generated_at: str | None = None) -> Dict[str, Any]:
     sources = load_management_progression_sources(company_slug, companies_root=companies_root)
@@ -148,6 +161,12 @@ class ManagementProgressionProducer:
         self.company_slug = sources.company_slug
         self.generated_at = generated_at
         self.company_model = loaded_payload(sources, "company_model")
+        self.metric_series: Dict[str, List[Dict[str, Any]]] = self._load_metric_series()
+
+    def _load_metric_series(self) -> Dict[str, List[Dict[str, Any]]]:
+        financial_trends = loaded_payload(self.sources, "financial_trends")
+        raw = financial_trends.get("metric_series")
+        return dict(raw) if isinstance(raw, dict) else {}
 
     def build(self) -> Dict[str, Any]:
         events = self._collect_events()
@@ -156,12 +175,17 @@ class ManagementProgressionProducer:
         if not _has_governed_progression_stream(items):
             items = []
         coverage = "supported" if len(items) >= 2 else "partial" if items else "insufficient_evidence"
+        consistency_data = loaded_payload(self.sources, "management_consistency")
+        cross_year = build_cross_year_links(items, consistency_data=consistency_data or None)
         return {
             "schema_version": SCHEMA_VERSION,
             "company_slug": self.company_slug,
             "generated_at": self.generated_at,
             "coverage_status": coverage,
             "progression_items": items,
+            "management_thesis_chains": cross_year["management_thesis_chains"],
+            "measurable_commitments": cross_year["measurable_commitments"],
+            "contradiction_signals": cross_year["contradiction_signals"],
             "source_manifest": self._source_manifest(coverage),
         }
 
@@ -183,7 +207,10 @@ class ManagementProgressionProducer:
         for item in payload.get("commitments", []) or []:
             if not isinstance(item, dict):
                 continue
-            text = _pick(item, "normalized_commitment", "commitment", "topic", "title", "promise")
+            # Prefer original_statement: normalized_commitment is often too short
+            # (e.g. "Commercial production.") and fails _specific_enough, leaving
+            # all commitment-sourced events filtered out.
+            text = _pick(item, "original_statement", "normalized_commitment", "commitment", "topic", "title", "promise")
             text = _canonical_progression_text(text)
             if not _specific_enough(text) or _is_low_value_progression_text(text):
                 continue
@@ -216,6 +243,14 @@ class ManagementProgressionProducer:
             description = _canonical_progression_text(description)
             if not _specific_enough(description) or _is_low_value_progression_text(description):
                 continue
+
+            # Attempt multi-period split from accepted state transitions.
+            split_events = self._split_project_by_transitions(item, description)
+            if split_events:
+                results.extend(split_events)
+                continue
+
+            # Fall back to single-event from the assessment summary.
             assessment = item.get("assessment") if isinstance(item.get("assessment"), dict) else {}
             period = _pick(item, "announcement_period", "source_period", "period", default=_pick(assessment, "period", "latest_period"))
             execution = _pick(assessment, "execution_status", default=_pick(item, "current_status", "status"))
@@ -237,6 +272,119 @@ class ManagementProgressionProducer:
                 )
             )
         return results
+
+    def _split_project_by_transitions(
+        self,
+        item: Dict[str, Any],
+        description: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Emit one event per distinct fiscal year found in accepted state_transitions.
+
+        Returns [] when fewer than 2 distinct periods exist — caller should fall
+        back to the single-event assessment path.
+
+        Rules:
+        - Only accepted=True transitions are considered.
+        - When multiple transitions share the same period, the highest-priority
+          transition type wins (completion > confirmation > capacity_ramp > …).
+        - Each event's evidence_id is taken from the first matching source_reference.
+        - No events are emitted for periods without accepted evidence.
+        - Vague descriptions already blocked upstream by _specific_enough().
+        """
+        prog = item.get("progression") if isinstance(item.get("progression"), dict) else {}
+        if not prog:
+            return []
+        transitions = prog.get("state_transitions") or []
+        source_refs = item.get("source_references") or []
+        project_id = _pick(item, "project_id")
+        artifact = "company_memory/projects/projects_registry.json"
+
+        # Collect accepted transitions and pick the best per period.
+        by_period: Dict[str, Dict[str, Any]] = {}
+        for t in transitions:
+            if not t.get("accepted"):
+                continue
+            period = str(t.get("period") or "").strip()
+            if not period:
+                continue
+            priority = _TRANSITION_PRIORITY.get(str(t.get("transition_type") or ""), 1)
+            existing = by_period.get(period)
+            existing_priority = _TRANSITION_PRIORITY.get(
+                str((existing or {}).get("transition_type") or ""), 0
+            ) if existing else -1
+            if priority > existing_priority:
+                by_period[period] = t
+
+        if len(by_period) < 2:
+            return []
+
+        # Build evidence_id lookup: period → first matching source_ref evidence_id.
+        ref_by_period: Dict[str, str] = {}
+        for ref in source_refs:
+            if not isinstance(ref, dict):
+                continue
+            ref_period = str(ref.get("period") or "").strip()
+            if ref_period and ref_period not in ref_by_period:
+                ev_ids = ref.get("evidence_ids") or []
+                if ev_ids:
+                    ref_by_period[ref_period] = str(ev_ids[0])
+
+        events: List[Dict[str, Any]] = []
+        for period in sorted(by_period.keys(), key=_period_sort_key):
+            t = by_period[period]
+            transition_type = str(t.get("transition_type") or "")
+            current_state = str(t.get("current_state") or "")
+            role, verification = _transition_role_verification(transition_type, current_state)
+
+            # Build operational_outcome from structured basis fields.
+            basis = (t.get("confidence") or {}).get("basis") or []
+            outcome_parts: List[str] = []
+            for b in basis:
+                b_str = str(b or "")
+                for prefix in ("status:", "current_capacity:", "timeline:"):
+                    if b_str.lower().startswith(prefix):
+                        val = b_str[len(prefix):].strip()
+                        skip_vals = {
+                            "deterministic project progression",
+                            "deterministic capacity progression",
+                        }
+                        if val and val.lower() not in skip_vals:
+                            outcome_parts.append(val)
+                        break
+            operational_outcome = "; ".join(outcome_parts[:2])
+
+            # Attach evidence from the matching source_reference.
+            ev_id = ref_by_period.get(period, "")
+            evidence = [
+                evidence_ref(
+                    source_artifact=artifact,
+                    source_period=period,
+                    evidence_id=ev_id,
+                    source_item_id=project_id,
+                    excerpt=_truncate(description, 220),
+                )
+            ]
+
+            action_taken = description if role not in ("commitment", "statement") else ""
+            statement_text = description if role in ("commitment", "statement") else ""
+
+            events.append(
+                self._event(
+                    event_id=f"{project_id}_{period}",
+                    role=role,
+                    event_type="project_execution",
+                    source_period=period,
+                    event_period=period,
+                    action_taken=action_taken,
+                    statement_text=statement_text,
+                    operational_outcome=operational_outcome,
+                    verification_status=verification,
+                    evidence=evidence,
+                    stream_type="project",
+                )
+            )
+        return events
 
     def _events_from_capacity(self) -> List[Dict[str, Any]]:
         payload = loaded_payload(self.sources, "capacity_registry")
@@ -441,19 +589,23 @@ class ManagementProgressionProducer:
             stream_types = sorted(set(event.get("_stream_type") for event in grouped if event.get("_stream_type")))
             current = _derive_current_status(grouped)
             linked_ids = link_company_model_ids(" ".join(_event_grouping_text(event) for event in grouped), self.company_model)
-            items.append(
-                {
-                    "item_id": f"MP-{index:04d}-{key[:40]}",
-                    "theme": theme,
-                    "linked_company_model_ids": linked_ids,
-                    "stream_types": stream_types,
-                    "current_status": current,
-                    "management_credibility_signal": _management_credibility_signal(current, grouped),
-                    "events": [_public_event(event) for event in grouped],
-                    "investor_implication": _investor_implication(theme, grouped, current),
-                    "unresolved": _unresolved_for(grouped, current),
-                }
-            )
+            public_events = [_public_event(event) for event in grouped]
+            item: Dict[str, Any] = {
+                "item_id": f"MP-{index:04d}-{key[:40]}",
+                "theme": theme,
+                "linked_company_model_ids": linked_ids,
+                "stream_types": stream_types,
+                "current_status": current,
+                "management_credibility_signal": _management_credibility_signal(current, grouped),
+                "events": public_events,
+                "investor_implication": _investor_implication(theme, grouped, current),
+                "unresolved": _unresolved_for(grouped, current),
+                "synthesis_chain": build_synthesis_chain(
+                    {"theme": theme, "events": public_events},
+                    self.metric_series,
+                ),
+            }
+            items.append(item)
         return sorted(items, key=lambda item: (-_materiality_score(item), item["item_id"]))[:25]
 
     def _event(self, *, event_id: str, role: str, event_type: str, source_period: str, event_period: str = "", target_period: str = "", resolved_period: str = "", actor: str = "management", statement_text: str = "", action_taken: str = "", operational_outcome: str = "", financial_or_business_outcome: str = "", verification_status: str = "unresolved", evidence: List[Dict[str, Any]] | None = None, stream_type: str = "", theme_hint: str = "") -> Dict[str, Any]:
@@ -616,6 +768,27 @@ def _management_credibility_signal(current: str, events: List[Dict[str, Any]]) -
     if any(event.get("role") in {"commitment", "statement"} for event in events):
         return "UNABLE_TO_VERIFY"
     return "UNABLE_TO_VERIFY"
+
+
+def _transition_role_verification(transition_type: str, current_state: str) -> tuple:
+    """Map an accepted state_transition to (event_role, verification_status)."""
+    if transition_type in ("completion", "confirmation"):
+        return "completion", "verified"
+    if transition_type == "capacity_ramp":
+        return "milestone", "partially_verified"
+    if transition_type == "delay_signal":
+        return "action", "partially_verified"
+    if transition_type == "funding_committed":
+        if current_state in ("funded", "partially_operational", "operational"):
+            return "action", "partially_verified"
+        return "commitment", "unresolved"
+    if transition_type == "latest_assessment":
+        if current_state in ("under_execution", "in_progress", "partially_operational"):
+            return "action", "partially_verified"
+        return "statement", "unresolved"
+    if transition_type == "project_announced":
+        return "commitment", "unresolved"
+    return "action", "partially_verified"
 
 
 def _status_to_current(status: Any) -> str:

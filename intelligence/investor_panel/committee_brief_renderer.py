@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 from pipelines.pipeline_context import get_context
 
 from .forbidden_language import find_forbidden_recommendation_language
+from .committee_validator import FORBIDDEN_INTERNAL_BRIEF_TERMS as FORBIDDEN_INTERNAL_TERMS
 
 REQUIRED_TOP_LEVEL_FIELDS = {
     "company",
@@ -19,23 +20,6 @@ REQUIRED_TOP_LEVEL_FIELDS = {
     "critical_unknowns",
     "investigation_questions",
     "synthesis_limits",
-}
-
-FORBIDDEN_INTERNAL_TERMS = {
-    "pcim",
-    "cim",
-    "evidence_id",
-    "evidence ids",
-    "source_manifest",
-    "input_pack",
-    "artifact",
-    "doctrine",
-    "schema",
-    "validator",
-    "grounding_status",
-    "raw chunk",
-    "source_chunk",
-    "multi_year_inputs",
 }
 
 FORBIDDEN_INTERNAL_KEYS = {
@@ -952,7 +936,9 @@ def build_canonical_committee_brief_view(
             committee_synthesis,
             committee_financial_truth,
         )
-    payload = finalize_committee_brief_quality(committee_synthesis)
+    # NOTE: committee_synthesis is already finalized by the synthesizer's _finalize_payload.
+    # We consume the investor-ready fields directly — no re-finalization.
+    payload = committee_synthesis
     truth = committee_financial_truth if isinstance(committee_financial_truth, dict) else payload.get("committee_financial_truth")
     truth = truth if isinstance(truth, dict) else {}
 
@@ -1224,14 +1210,69 @@ def build_canonical_committee_brief_view_v2(
         value = " ".join(value.split())
         return value[:1].upper() + value[1:] if value else ""
 
+    # ---------------------------------------------------------------------------
+    # Surface-safety helpers — filter internal/garbled text before user display
+    # ---------------------------------------------------------------------------
+    _INTERNAL_STRENGTHENER_PREFIXES = (
+        "the project is visible in the source record",
+        "investment lens implication",
+        "investment lens question",
+    )
+    _INTERNAL_OR_NEGATIVE_STATE_PHRASES = frozenset({
+        "unable to verify", "unable to confirm", "not verified", "evidence not available",
+        "later evidence is still being read", "evidence quality change",
+        "the project is visible in the source record",
+    })
+    _RAW_MANAGEMENT_VERB_STARTERS = (
+        "continue to ", "continue focus", "develop ", "build a ", "focus on ",
+        "grow ", "expand ", "invest ", "pursue ", "implement ",
+    )
+    _ANALYST_FRAMING_MARKERS = (
+        "shows ", "began", "remains", "completed", "operational", "delivered",
+        "unproven", "evidence", "partially", "action started", "verified",
+        "action began", "outcome", "commissioned",
+    )
+
+    def _safe_why(val: str) -> str:
+        v = (val or "").strip()
+        if any(tok in v.lower() for tok in ("evidence_quality_change", "turning_point is", "turning point is")):
+            return ""
+        return v
+
+    def _safe_positive_state(val: str) -> str:
+        cleaned = (val or "").strip()
+        if cleaned.casefold() in _INTERNAL_OR_NEGATIVE_STATE_PHRASES:
+            return ""
+        if any(cleaned.casefold().startswith(p) for p in ("the project is visible", "unable to")):
+            return ""
+        # A bare single word (title-cased from a raw state enum) carries no investor context
+        if len(cleaned.split()) == 1 and cleaned[0].isupper() and cleaned[1:].islower():
+            return ""
+        return cleaned
+
+    def _is_internal_strengthener(text: str) -> bool:
+        t = (text or "").strip().casefold()
+        if any(t.startswith(p) for p in _INTERNAL_STRENGTHENER_PREFIXES):
+            return True
+        # Raw management directive: imperative verb, no analyst framing words
+        if any(t.startswith(v) for v in _RAW_MANAGEMENT_VERB_STARTERS):
+            if not any(m in t for m in _ANALYST_FRAMING_MARKERS):
+                return True
+        return False
+
     what_changed: List[Dict[str, Any]] = []
     for item in payload.get("major_turning_points", []) or []:
         if not isinstance(item, dict):
             continue
         period = str(item.get("period") or latest_period).strip()
         previous_state = _humanize_state(_first_text(item.get("before"), item.get("prior_state"), item.get("previous_state")))
-        current_state = _humanize_state(_first_text(item.get("after"), item.get("current_state"), item.get("event"), item.get("summary")))
-        why_it_matters = _ensure_sentence(item.get("why_it_matters"))
+        # Prefer longer, human-readable fields over bare state tokens from "after"
+        current_state_raw = _humanize_state(_first_text(item.get("event"), item.get("summary"), item.get("after"), item.get("current_state")))
+        # Skip bare single-word state tokens (e.g. "Operational", "Funded") — use summary instead
+        if len((current_state_raw or "").split()) == 1:
+            current_state_raw = _humanize_state(_first_text(item.get("summary"), item.get("event"), item.get("after"), item.get("current_state")))
+        current_state = current_state_raw
+        why_it_matters = _safe_why(_ensure_sentence(item.get("why_it_matters")))
         if not current_state:
             continue
         what_changed.append(
@@ -1243,31 +1284,46 @@ def build_canonical_committee_brief_view_v2(
             }
         )
     if not what_changed:
+        _RAW_MGMT_VERB_CHECK = (
+            "continue to ", "develop ", "build a ", "focus on ",
+            "grow ", "expand ", "invest ", "pursue ", "implement ",
+        )
+        _ANALYST_MARKER_CHECK = (
+            "shows ", "began", "completed", "operational", "delivered",
+            "unproven", "evidence", "partially", "verified", "outcome", "commissioned",
+        )
         for item in (payload.get("thesis_strengtheners") or [])[:2]:
             if not isinstance(item, dict):
                 continue
             summary = _ensure_sentence(item.get("summary") or item.get("conclusion") or item.get("event"))
-            if summary:
-                what_changed.append(
-                    {
-                        "period": str(item.get("period") or latest_period).strip() or latest_period,
-                        "previous_state": "Earlier evidence was not explicit.",
-                        "current_state": summary,
-                        "why_it_matters": _ensure_sentence(item.get("why_it_matters")) or "This changes investor conviction.",
-                    }
-                )
+            if not summary:
+                continue
+            t = summary.strip().casefold()
+            # Skip raw management directives in what_changed fallback
+            if any(t.startswith(v) for v in _RAW_MGMT_VERB_CHECK) and not any(m in t for m in _ANALYST_MARKER_CHECK):
+                continue
+            what_changed.append(
+                {
+                    "period": str(item.get("period") or latest_period).strip() or latest_period,
+                    "previous_state": "Earlier evidence was not explicit.",
+                    "current_state": summary,
+                    "why_it_matters": _ensure_sentence(item.get("why_it_matters")) or "This changes investor conviction.",
+                }
+            )
 
     what_strengthened: List[Dict[str, Any]] = []
     for item in (payload.get("thesis_strengtheners") or [])[:4]:
         if not isinstance(item, dict):
             continue
         conclusion = _ensure_sentence(item.get("summary") or item.get("conclusion") or item.get("event"))
-        if not conclusion:
+        if not conclusion or _is_internal_strengthener(conclusion):
             continue
+        why_raw = _ensure_sentence(item.get("why_it_matters")) or "This matters for conviction."
+        why_clean = _safe_why(why_raw) or "This matters for conviction."
         what_strengthened.append(
             {
                 "conclusion": conclusion,
-                "why_it_matters": _ensure_sentence(item.get("why_it_matters")) or "This matters for conviction.",
+                "why_it_matters": why_clean,
                 "evidence_confidence": str(item.get("confidence") or "medium").strip() or "medium",
             }
         )
@@ -1472,12 +1528,12 @@ def build_canonical_committee_brief_view_v2(
 
     committee_phrase = committee_view if len(committee_view.split()) > 1 else "a mixed business with still-developing evidence"
     positive_reason = _first_text(
-        (what_changed[0].get("why_it_matters") if what_changed else ""),
-        (what_strengthened[0].get("why_it_matters") if what_strengthened else ""),
+        _safe_why(what_changed[0].get("why_it_matters", "") if what_changed else ""),
+        _safe_why(what_strengthened[0].get("why_it_matters", "") if what_strengthened else ""),
         "the latest evidence still shows visible delivery and capacity progress",
     )
     positive_core = _first_text(
-        (what_changed[0].get("current_state") if what_changed else ""),
+        _safe_positive_state(what_changed[0].get("current_state", "") if what_changed else ""),
         (what_strengthened[0].get("conclusion") if what_strengthened else ""),
         (payload.get("strongest_shared_convictions") or [{}])[0].get("conclusion") if payload.get("strongest_shared_convictions") else "",
         "visible delivery and capacity progress",
@@ -1884,7 +1940,9 @@ class CommitteeBriefRenderer:
             raise FileNotFoundError(
                 f"committee_synthesis.json not found or unreadable: {self.source_path}"
             )
-        sanitized = validate_committee_brief_source(finalize_committee_brief_quality(payload))
+        # committee_synthesis.json is already finalized by the synthesizer (_finalize_payload).
+        # We validate the already-finalized payload directly — no re-finalization.
+        sanitized = validate_committee_brief_source(payload)
         brief_view = build_canonical_committee_brief_view(
             sanitized,
             sanitized.get("committee_financial_truth"),

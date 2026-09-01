@@ -11,6 +11,7 @@ import {
   getCompanyDiscoverySummaries,
   getCompanyDiscoverySummary,
   getDiscoveredCompanySlugs,
+  resolveInternalKey,
 } from "@/src/lib/ask-intrinsiciq/company-discovery";
 import { getAskIntrinsicIqPaths, isValidRouteSegment } from "@/src/lib/ask-intrinsiciq/paths";
 import { validateCompanyResearchView } from "@/src/lib/ask-intrinsiciq/validate-runtime-view";
@@ -223,9 +224,10 @@ function mapFinancialVisuals(
 }
 
 async function loadCanonicalCompanyResearchView(
-  companySlug: string,
+  publicSlug: string,
+  internalKey: string,
 ): Promise<CompanyResearchView | null> {
-  const paths = getAskIntrinsicIqPaths(companySlug);
+  const paths = getAskIntrinsicIqPaths(internalKey);
 
   if (!paths) {
     return null;
@@ -247,7 +249,7 @@ async function loadCanonicalCompanyResearchView(
 
   if (
     !artifactCompanyMatches(
-      companySlug,
+      internalKey,
       rawView.company?.companySlug,
       paths.companyResearchView,
     )
@@ -256,16 +258,16 @@ async function loadCanonicalCompanyResearchView(
   }
 
   if (
-    !artifactCompanyMatches(companySlug, rawJourney?.company_slug, paths.businessJourney) ||
-    !artifactCompanyMatches(companySlug, rawProducts?.company_slug, paths.productsServices) ||
-    !artifactCompanyMatches(companySlug, rawVisuals?.company_slug, paths.financialVisualSummaries)
+    !artifactCompanyMatches(internalKey, rawJourney?.company_slug, paths.businessJourney) ||
+    !artifactCompanyMatches(internalKey, rawProducts?.company_slug, paths.productsServices) ||
+    !artifactCompanyMatches(internalKey, rawVisuals?.company_slug, paths.financialVisualSummaries)
   ) {
     return null;
   }
 
   if (report?.status === "fail" || manifest?.validation_status === "fail") {
     logRuntimeIssue("Canonical Ask IntrinsicIQ validation failed.", {
-      companySlug,
+      companySlug: internalKey,
       report,
       manifest,
     });
@@ -274,7 +276,10 @@ async function loadCanonicalCompanyResearchView(
 
   const mapped: CompanyResearchView = {
     schemaVersion: rawView.schemaVersion,
-    company: rawView.company,
+    company: {
+      ...rawView.company,
+      companySlug: publicSlug,
+    },
     coverage: rawView.coverage,
     categories: rawView.categories,
     businessJourney: mapBusinessJourney(rawJourney ?? null) ?? rawView.businessJourney ?? null,
@@ -300,7 +305,7 @@ async function loadCanonicalCompanyResearchView(
 
   if (errors.length > 0) {
     logRuntimeIssue("Canonical company research view failed runtime validation.", {
-      companySlug,
+      companySlug: publicSlug,
       errors,
     });
     return null;
@@ -310,21 +315,26 @@ async function loadCanonicalCompanyResearchView(
 }
 
 export async function getCompanyResearchView(
-  companySlug: string,
+  publicSlug: string,
 ): Promise<CompanyResearchView | null> {
-  if (!isValidRouteSegment(companySlug)) {
+  if (!isValidRouteSegment(publicSlug)) {
     return null;
   }
 
-  const canonical = await loadCanonicalCompanyResearchView(companySlug);
+  const internalKey = await resolveInternalKey(publicSlug);
+  if (!internalKey) {
+    return null;
+  }
+
+  const canonical = await loadCanonicalCompanyResearchView(publicSlug, internalKey);
 
   if (canonical) {
     return canonical;
   }
 
-  const discovery = await getCompanyDiscoverySummary(companySlug);
+  const discovery = await getCompanyDiscoverySummary(publicSlug);
   if (discovery) {
-    return buildCompanyResearchViewFromDiscovery(companySlug, discovery);
+    return buildCompanyResearchViewFromDiscovery(discovery.internalKey, discovery.slug, discovery);
   }
 
   return null;

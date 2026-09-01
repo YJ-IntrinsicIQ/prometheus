@@ -110,13 +110,29 @@ def _normalize_facts(bundle: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return normalized
 
 
+def _fact_has_numeric_value(fact: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(fact, dict):
+        return False
+    return any(
+        isinstance(fact.get(key), (int, float))
+        for key in ("value", "value_crore", "value_per_share", "raw_number", "value_shares", "crore_shares")
+    )
+
+
 def _find_fact(bundle: Dict[str, Any], *metric_ids: str) -> Optional[Dict[str, Any]]:
     fact_map = _normalize_facts(bundle)
+    candidates: List[Dict[str, Any]] = []
     for metric_id in metric_ids:
         fact = fact_map.get(_metric_key(metric_id))
         if fact is not None:
+            candidates.append(fact)
+    for fact in candidates:
+        if _usable(fact) and _fact_has_numeric_value(fact):
             return fact
-    return None
+    for fact in candidates:
+        if _fact_has_numeric_value(fact):
+            return fact
+    return candidates[0] if candidates else None
 
 
 def _metric_in_truth_list(items: Sequence[Dict[str, Any]], metric_ids: Sequence[str]) -> bool:
@@ -663,16 +679,14 @@ def _build_order_revenue_cash_conversion_tracker(company: str, bundles: Dict[str
     return payload
 
 
-def _corporate_actions_by_year(company_root: Path) -> Dict[str, List[Dict[str, Any]]]:
+def _corporate_actions_by_year(company_root: Path, years: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
     actions_by_year: Dict[str, List[Dict[str, Any]]] = {}
-    for year_dir in company_root.iterdir() if company_root.exists() else []:
-        if not year_dir.is_dir() or not year_dir.name.lower().startswith("fy"):
-            continue
-        payload = _load_optional_json(year_dir / "financials" / "corporate_actions.json") or {}
+    for year in years:
+        payload = _load_optional_json(company_root / year / "financials" / "corporate_actions.json") or {}
         actions = payload.get("actions") or payload.get("corporate_actions") or []
         if not isinstance(actions, list):
             actions = []
-        actions_by_year[year_dir.name] = [item for item in actions if isinstance(item, dict)]
+        actions_by_year[year] = [item for item in actions if isinstance(item, dict)]
     return actions_by_year
 
 
@@ -686,7 +700,7 @@ def _build_per_share_compounding_analysis(
     analysis: List[Dict[str, Any]] = []
     warnings: List[str] = []
     limitations: List[str] = []
-    actions_by_year = _corporate_actions_by_year(company_root)
+    actions_by_year = _corporate_actions_by_year(company_root, _years_covered(bundles))
     invalid_metrics = _blocked_metric_ids(truth_pack)
     unreliable_metrics = _unreliable_metric_ids(truth_pack)
     owner_bridge_by_year = {
@@ -699,7 +713,7 @@ def _build_per_share_compounding_analysis(
     for year in _years_covered(bundles):
         bundle = bundles[year]
         closing = _find_fact(bundle, "closing_shares", "shares_outstanding", "share_count")
-        weighted = _find_fact(bundle, "weighted_avg_shares")
+        weighted = _find_fact(bundle, "weighted_avg_shares", "weighted_average_basic_shares")
         diluted = _find_fact(bundle, "weighted_average_diluted_shares", "diluted_shares")
         eps_basic = _find_fact(bundle, "eps_basic")
         eps_diluted = _find_fact(bundle, "eps_diluted")
@@ -775,7 +789,10 @@ def _build_per_share_compounding_analysis(
             _append_unique(warnings, f"{year}: Closing shares are present, but weighted-average shares are missing for EPS comparability.")
         if _metric_key("closing_shares") in invalid_metrics or _metric_key("shares_outstanding") in invalid_metrics:
             dilution_status = "unreliable"
-        elif any(_metric_key(metric) in unreliable_metrics for metric in ("closing_shares", "weighted_avg_shares", "diluted_shares")):
+        elif any(
+            _metric_key(metric) in unreliable_metrics
+            for metric in ("closing_shares", "weighted_avg_shares", "weighted_average_basic_shares", "diluted_shares", "weighted_average_diluted_shares")
+        ):
             dilution_status = "unreliable"
         elif closing_value is None and weighted_value is None and diluted_value is None:
             dilution_status = "insufficient_data"

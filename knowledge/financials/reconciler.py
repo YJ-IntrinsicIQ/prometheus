@@ -11,6 +11,7 @@ from .reconciliation_schema import (
     ReconciliationFieldCheck,
     validate_financial_reconciliation_payload,
 )
+from .schema import DerivationState, ReconciliationStatus
 
 
 CRITICAL_GATE_FIELDS = {
@@ -115,7 +116,9 @@ CAPEX_DISALLOWED_SOURCE_TOKENS = (
 
 PAYABLES_ALLOWED_SOURCE_TOKENS = (
     "trade payables",
+    "trade payable",
     "total trade payables",
+    "total trade payable",
     "accounts payable",
     "supplier payables",
     "dues to suppliers",
@@ -368,9 +371,30 @@ def _check_field(field_name: str, section: str, entry_payload: Dict[str, Any]) -
             warnings.append("capex sign convention missing or unclear")
 
     if entry_payload.get("derived") is True and status == "pass" and field_name != "payables":
-        status = "warning"
-        reason = f"{field_name} is derived from normalized inputs"
-        warnings.append("derived value used")
+        # For banking format derived total_assets, check if reconciliation is PASS
+        if field_name == "total_assets":
+            derivation_state = entry_payload.get("derivation_state")
+            recon_status = entry_payload.get("reconciliation_status")
+            if derivation_state == "DERIVED_FROM_LINKED_PRIMARY_SCHEDULES":
+                if recon_status == "PASS":
+                    status = "pass"
+                    reason = "total_assets derived from linked primary schedules and independently reconciled"
+                elif recon_status == "FAIL":
+                    status = "fail"
+                    hard_failure = True
+                    reason = "total_assets derived from linked primary schedules but reconciliation failed"
+                else:
+                    status = "warning"
+                    reason = "total_assets derived from linked primary schedules but reconciliation pending"
+                    warnings.append("reconciliation status: UNRECONCILED")
+            else:
+                status = "warning"
+                reason = f"{field_name} is derived from normalized inputs"
+                warnings.append("derived value used")
+        else:
+            status = "warning"
+            reason = f"{field_name} is derived from normalized inputs"
+            warnings.append("derived value used")
 
     return ReconciliationFieldCheck(
         field_name=field_name,
@@ -386,10 +410,136 @@ def _check_field(field_name: str, section: str, entry_payload: Dict[str, Any]) -
     )
 
 
+def _validate_derived_total_assets(
+    total_assets_entry: Dict[str, Any],
+    normalized: Dict[str, Any],
+) -> Tuple[Optional[bool], Optional[str]]:
+    """
+    Validate derived total_assets against independent references:
+    1. Published consolidated assets reference (from investment_schedule or similar)
+    2. Balance sheet equation: total_assets = total_liabilities + net_worth
+
+    Returns (is_valid, reason) where is_valid is None if no validation possible.
+    """
+    if not total_assets_entry.get("derived", False):
+        return None, None
+
+    derivation_state = total_assets_entry.get("derivation_state")
+    if derivation_state != "DERIVED_FROM_LINKED_PRIMARY_SCHEDULES":
+        return None, None
+
+    derived_value = total_assets_entry.get("value_crore")
+    if derived_value is None:
+        return False, "derived total_assets has no value"
+
+    validation_checks = []
+    validation_passed = 0
+
+    # 1. Check against published consolidated assets reference
+    # Look for published consolidated assets in normalized data (e.g., from investment_schedule)
+    published_ref = None
+    # Check if there's a reference value in the normalized payload
+    ref_entry = normalized.get("_published_references", {}).get("total_consolidated_assets")
+    if ref_entry and isinstance(ref_entry, (int, float)):
+        published_ref = float(ref_entry)
+    else:
+        # Look in notes/financial_note for published consolidated assets
+        for section_name in ["profit_and_loss", "balance_sheet", "cash_flow", "share_data", "corporate_actions", "shareholding_pattern"]:
+            section = normalized.get(section_name, {})
+            if not isinstance(section, dict):
+                continue
+            for entry in section.values():
+                if not isinstance(entry, dict):
+                    continue
+                source_line = str(entry.get("source_line_item", "")).lower()
+                source_artifact = str(entry.get("source_artifact", "")).lower()
+                if "consolidated asset" in source_line or "total consolidated" in source_line:
+                    val = entry.get("value_crore")
+                    if isinstance(val, (int, float)):
+                        published_ref = float(val)
+                        break
+            if published_ref:
+                break
+
+    if published_ref is not None:
+        # Allow 1% tolerance for rounding/consolidation differences
+        tolerance = max(1.0, published_ref * 0.01)
+        delta = abs(derived_value - published_ref)
+        if delta <= tolerance:
+            validation_checks.append(f"published_consolidated_assets: PASS (delta={delta:.2f} <= {tolerance:.2f})")
+            validation_passed += 1
+        else:
+            validation_checks.append(f"published_consolidated_assets: FAIL (delta={delta:.2f} > {tolerance:.2f}, ref={published_ref:.2f})")
+
+    # 2. Check balance sheet equation: total_assets = total_liabilities + net_worth
+    total_liabilities_entry = normalized.get("balance_sheet", {}).get("total_liabilities", {})
+    net_worth_entry = normalized.get("balance_sheet", {}).get("net_worth", {})
+    equity_entry = normalized.get("balance_sheet", {}).get("equity_share_capital", {})
+    reserves_entry = normalized.get("balance_sheet", {}).get("reserves", {})
+
+    total_liabilities = total_liabilities_entry.get("value_crore")
+    net_worth = net_worth_entry.get("value_crore")
+    equity = equity_entry.get("value_crore")
+    reserves = reserves_entry.get("value_crore")
+
+    # If net_worth not available, use equity + reserves
+    if net_worth is None and equity is not None and reserves is not None:
+        net_worth = equity + reserves
+
+    if total_liabilities is not None and net_worth is not None:
+        equation_value = total_liabilities + net_worth
+        # Allow 1% tolerance
+        tolerance = max(1.0, equation_value * 0.01)
+        delta = abs(derived_value - equation_value)
+        if delta <= tolerance:
+            validation_checks.append(f"balance_sheet_equation: PASS (delta={delta:.2f} <= {tolerance:.2f})")
+            validation_passed += 1
+        else:
+            validation_checks.append(f"balance_sheet_equation: FAIL (delta={delta:.2f} > {tolerance:.2f}, computed={equation_value:.2f})")
+
+    # Total validation requires at least one check to pass
+    if validation_passed > 0 and validation_passed == len(validation_checks):
+        return True, "; ".join(validation_checks)
+    elif validation_checks:
+        return False, "; ".join(validation_checks)
+    else:
+        return None, "no independent validation reference available"
+
+
+def _update_derived_field_reconciliation(
+    normalized: Dict[str, Any],
+) -> None:
+    """
+    Update reconciliation_status for derived fields after independent validation.
+    This is called after all field checks to validate derived totals.
+    """
+    total_assets_entry = normalized.get("balance_sheet", {}).get("total_assets", {})
+    if total_assets_entry.get("derived", False) and total_assets_entry.get("derivation_state") == "DERIVED_FROM_LINKED_PRIMARY_SCHEDULES":
+        is_valid, reason = _validate_derived_total_assets(total_assets_entry, normalized)
+        if is_valid is True:
+            total_assets_entry["reconciliation_status"] = "PASS"
+            total_assets_entry["reconciliation_reference_value"] = total_assets_entry.get("value_crore")
+            total_assets_entry["reconciliation_tolerance_crore"] = max(1.0, (total_assets_entry.get("value_crore") or 0) * 0.01)
+        elif is_valid is False:
+            total_assets_entry["reconciliation_status"] = "FAIL"
+            total_assets_entry["reconciliation_reference_value"] = None
+            total_assets_entry["reconciliation_tolerance_crore"] = None
+            # Add warning
+            total_assets_entry.setdefault("warnings", []).append(f"reconciliation failed: {reason}")
+        else:
+            total_assets_entry["reconciliation_status"] = "UNRECONCILED"
+            total_assets_entry["reconciliation_reference_value"] = None
+            total_assets_entry["reconciliation_tolerance_crore"] = None
+            total_assets_entry.setdefault("warnings", []).append(f"reconciliation could not be validated: {reason}")
+
+
 def build_financial_reconciliation_report(*, company: str, year: str, normalized_path: Path) -> FinancialReconciliationReport:
     normalized = _load_json(normalized_path)
     if not isinstance(normalized, dict):
         raise RuntimeError("financial_reconciliation requires normalized_fundamentals.json to contain an object")
+
+    # Validate derived fields BEFORE running field checks so results reflect reconciliation
+    _update_derived_field_reconciliation(normalized)
 
     checks: Dict[str, ReconciliationFieldCheck] = {}
     hard_failures: List[str] = []

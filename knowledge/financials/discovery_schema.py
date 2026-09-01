@@ -19,6 +19,18 @@ FINANCIAL_DISCOVERY_SECTIONS = (
     "shareholding_note",
     "corporate_action_note",
     "irrelevant_financial_text",
+    # Banking/NBFC schedule sections (RBI Schedule III) - Balance Sheet
+    "schedule_6_cash_rbi",
+    "schedule_7_balances_banks",
+    "schedule_8_investments",
+    "schedule_9_advances",
+    "schedule_10_fixed_assets",
+    "schedule_11_other_assets",
+    # Banking/NBFC schedule sections (RBI Schedule III) - Profit & Loss
+    "schedule_13_interest_earned",
+    "schedule_14_other_income",
+    "schedule_15_interest_expended",
+    "schedule_16_operating_expenses",
 )
 
 ALLOWED_DISCOVERY_CONFIDENCE = {"high", "medium", "low"}

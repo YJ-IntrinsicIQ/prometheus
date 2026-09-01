@@ -28,11 +28,13 @@ _RAW_CATEGORY_KEYWORDS: Sequence[Tuple[str, Sequence[str]]] = (
     ("promoter_holding_percent", ("promoter and promoter group", "promoter group", "promoters", "promoter holding", "promoter shareholding")),
     ("mutual_fund_holding_percent", ("mutual fund", "mutual funds")),
     ("insurance_holding_percent", ("insurance companies", "insurance")),
+    ("fii_holding_percent", ("institutions (foreign)", "foreign institutions")),
+    ("dii_holding_percent", ("institutions (domestic)", "domestic institutions")),
     ("fii_holding_percent", ("foreign institutional investor", "foreign portfolio investor", "fii", "fpi", "foreign investors")),
     ("dii_holding_percent", ("domestic institutional investor", "dii", "financial institutions", "banks / financial institutions", "banks and financial institutions")),
     ("body_corporates_percent", ("body corporates", "body corporate", "corporates")),
-    ("retail_holding_percent", ("retail", "individual shareholders", "individuals", "resident individuals")),
-    ("public_holding_percent", ("public shareholding", "public holding", "public")),
+    ("retail_holding_percent", ("indian public", "resident individuals", "retail", "individual shareholders", "individuals")),
+    ("public_holding_percent", ("total public shareholding", "total public holding", "public shareholding", "public holding")),
     ("others_percent", ("others", "other investors")),
     ("institutional_holding_percent", ("institutional investors", "institutions", "institutional holding")),
     ("non_institutional_holding_percent", ("non institutional", "non-institutional")),
@@ -149,9 +151,20 @@ def _value_type(current: Optional[Dict[str, Any]], line_item_raw: str) -> str:
     if isinstance(current, dict):
         explicit = str(current.get("value_type", "") or "").strip().lower()
         if explicit:
+            # Cross-check: if explicit says "percentage" but raw_number is clearly a share count (large magnitude),
+            # trust the magnitude. Percentages are typically < 100; share counts are millions/billions.
+            raw_number = current.get("raw_number")
+            if explicit == "percentage" and isinstance(raw_number, (int, float)) and raw_number > 1000:
+                return "share_count"
+            if explicit == "share_count" and isinstance(raw_number, (int, float)) and raw_number < 100:
+                return "percentage"
             return explicit
         unit = str(current.get("unit_hint", "") or "").strip().lower()
         if unit in {"%", "percent", "percentage"}:
+            # Double-check magnitude for percentage-labeled values
+            raw_number = current.get("raw_number")
+            if isinstance(raw_number, (int, float)) and raw_number > 1000:
+                return "share_count"
             return "percentage"
         if unit in {"shares", "units"}:
             return "share_count"
@@ -256,28 +269,100 @@ def _build_from_raw(raw_payload: Optional[Dict[str, Any]], year: str) -> Tuple[L
             _append_unique(rejection_reasons, f"Unclassified shareholding row: {line_item_raw}")
             rejection_items.append(_rejection_record(row=row, rejection_reason="shareholding category could not be classified"))
             continue
-        current, previous = _best_current_and_previous(row.get("values", []), target_year)
-        if current is None:
-            _append_unique(rejection_reasons, f"Shareholding row missing usable current period: {line_item_raw}")
-            rejection_items.append(_rejection_record(row=row, rejection_reason="current period value missing"))
+        # Extract ALL values for the target year (some rows have multiple columns: shares + percentage)
+        # Both columns may be mislabeled as "percentage" with unit_hint="%"
+        all_values = row.get("values", [])
+        if not all_values:
+            _append_unique(rejection_reasons, f"Shareholding row missing values: {line_item_raw}")
+            rejection_items.append(_rejection_record(row=row, rejection_reason="no values in row"))
             continue
-        current_value = _parse_numeric(current.get("value_raw"))
-        previous_value = _parse_numeric(previous.get("value_raw")) if previous else None
-        value_type = _value_type(current, line_item_raw)
-        change_percent = None
+
+        # Find values for the target year
+        target_values = []
+        for v in all_values:
+            if isinstance(v, dict):
+                period = str(v.get("period", ""))
+                # Check if this value belongs to our target year (exact match)
+                # Score must be >= 6 (base 1 + target_year match 5) to ensure exact year match
+                if _period_match_score(period, target_year) >= 6 or "PERIOD_COLUMN_UNRESOLVED" in period:
+                    target_values.append(v)
+
+        if not target_values:
+            # Fallback: use _best_current_and_previous for any available value
+            current, previous = _best_current_and_previous(all_values, target_year)
+            if current is None:
+                _append_unique(rejection_reasons, f"Shareholding row missing usable current period: {line_item_raw}")
+                rejection_items.append(_rejection_record(row=row, rejection_reason="current period value missing"))
+                continue
+            target_values = [current]
+            previous_value = _parse_numeric(previous.get("value_raw")) if previous else None
+        else:
+            # For multi-column rows, also find previous year values for change calculation
+            # We only do this for percentage values (not share counts)
+            previous_values = []
+            for v in all_values:
+                if isinstance(v, dict):
+                    period = str(v.get("period", ""))
+                    # Look for previous year (score > 0 but < 6, meaning not exact match but still has some period info)
+                    score = _period_match_score(period, target_year)
+                    if 0 < score < 6 and "PERIOD_COLUMN_UNRESOLVED" not in period:
+                        previous_values.append(v)
+            previous_value = None
+            if previous_values:
+                # Use the best previous value (highest score)
+                best_previous = max(previous_values, key=lambda v: _period_match_score(str(v.get("period", "")), target_year))
+                previous_value = _parse_numeric(best_previous.get("value_raw"))
+
         holding_percent = None
         shares_held = None
+        change_percent = None
         warnings = list(row.get("warnings", [])) if isinstance(row.get("warnings"), list) else []
-        if value_type == "percentage":
-            holding_percent = current_value
-            if current_value is not None and previous_value is not None:
-                change_percent = current_value - previous_value
-        elif value_type == "share_count":
-            shares_held = current_value
+
+        # Process each target value - classify each by magnitude
+        for val in target_values:
+            current_value = _parse_numeric(val.get("value_raw"))
+            if current_value is None:
+                continue
+            value_type = _value_type(val, line_item_raw)
+            if value_type == "percentage":
+                holding_percent = current_value
+            elif value_type == "share_count":
+                shares_held = current_value
+            else:
+                _append_unique(rejection_reasons, f"Unsupported shareholding value type for row: {line_item_raw}")
+                rejection_items.append(_rejection_record(row=row, rejection_reason=f"unsupported shareholding value type: {value_type}"))
+                continue
+
+        # If we still don't have either, try the old single-value approach as fallback
+        if holding_percent is None and shares_held is None:
+            current, previous = _best_current_and_previous(all_values, target_year)
+            if current:
+                current_value = _parse_numeric(current.get("value_raw"))
+                previous_value = _parse_numeric(previous.get("value_raw")) if previous else None
+                value_type = _value_type(current, line_item_raw)
+                if value_type == "percentage":
+                    holding_percent = current_value
+                    if current_value is not None and previous_value is not None:
+                        change_percent = current_value - previous_value
+                elif value_type == "share_count":
+                    shares_held = current_value
+            # Set current for period use below
+            if current:
+                current_period = str(current.get("period", "") or "")
+            else:
+                current_period = ""
         else:
-            _append_unique(rejection_reasons, f"Unsupported shareholding value type for row: {line_item_raw}")
-            rejection_items.append(_rejection_record(row=row, rejection_reason=f"unsupported shareholding value type: {value_type}"))
-            continue
+            # We got values from multi-column processing
+            value_type = "percentage" if holding_percent is not None else "share_count"
+            # Calculate change_percent if we have both current percentage and previous percentage
+            if holding_percent is not None and previous_value is not None:
+                change_percent = holding_percent - previous_value
+            # Use the first target value's period, or fallback to target year
+            if target_values:
+                current_period = str(target_values[0].get("period", "") or "")
+            else:
+                current_period = ""
+
         if holder_category == "pledged_promoter_holding_percent" and value_type != "percentage":
             _append_unique(rejection_reasons, f"Pledge row must be a percentage: {line_item_raw}")
             rejection_items.append(_rejection_record(row=row, rejection_reason="pledge disclosure must be percentage based"))
@@ -291,14 +376,12 @@ def _build_from_raw(raw_payload: Optional[Dict[str, Any]], year: str) -> Tuple[L
         if shares_held is None and value_type == "share_count":
             _append_unique(warnings, "shares held unavailable")
         if holder_category == "total_shareholders":
-            shares_held = current_value
+            shares_held = current_value if 'current_value' in locals() else None
             holding_percent = None
-        if current_value is not None and previous_value is not None and value_type == "percentage":
-            change_percent = current_value - previous_value
         items.append(
             _make_item(
                 holder_category=holder_category,
-                period=str(current.get("period", "") or ""),
+                period=current_period,
                 holding_percent=holding_percent,
                 shares_held=shares_held,
                 change_percent=change_percent,
@@ -359,6 +442,29 @@ def _sum_known(items: Dict[str, ShareholdingItem], categories: Sequence[str]) ->
 def _derive_aggregate_items(items: List[ShareholdingItem]) -> List[ShareholdingItem]:
     item_map = _item_map(items)
     derived: List[ShareholdingItem] = []
+
+    promoter_item = item_map.get("promoter_holding_percent")
+    if (
+        "public_holding_percent" not in item_map
+        and promoter_item is not None
+        and promoter_item.holding_percent is not None
+        and 0.0 <= promoter_item.holding_percent <= 100.0
+    ):
+        derived.append(
+            _make_item(
+                holder_category="public_holding_percent",
+                period=promoter_item.period,
+                holding_percent=round(100.0 - promoter_item.holding_percent, 2),
+                shares_held=None,
+                change_percent=None,
+                source_line_item="derived public holding from 100 minus promoter holding",
+                source_page=promoter_item.source_page,
+                source_artifact=promoter_item.source_artifact,
+                confidence="low",
+                warnings=["derived from promoter holding because explicit total public holding was unavailable"],
+            )
+        )
+        item_map["public_holding_percent"] = derived[-1]
 
     institutional_total, institutional_warnings = _sum_known(item_map, _INSTITUTIONAL_COMPONENTS)
     if institutional_total is not None and "institutional_holding_percent" not in item_map:

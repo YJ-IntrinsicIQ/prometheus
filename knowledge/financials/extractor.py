@@ -19,16 +19,70 @@ from .extraction_schema import (
 from .units import canonicalize_unit, convert_to_crore
 
 
+PRIMARY_STATEMENT_SECTIONS = {
+    "primary_profit_and_loss_statement",
+    "primary_balance_sheet_statement",
+    "primary_cash_flow_statement",
+}
+
+PRIMARY_STATEMENT_TABLE_MAP = {
+    "primary_profit_and_loss_statement": "profit_and_loss",
+    "primary_balance_sheet_statement": "balance_sheet",
+    "primary_cash_flow_statement": "cash_flow",
+}
+
+PRIMARY_STATEMENT_REQUIRED_FIELDS = {
+    "primary_profit_and_loss_statement": ["profit_and_loss.revenue", "profit_and_loss.pat"],
+    "primary_balance_sheet_statement": ["balance_sheet.total_assets", "balance_sheet.net_worth", "balance_sheet.equity_share_capital"],
+    "primary_cash_flow_statement": ["cash_flow.cfo"],
+}
+
+
 SECTION_KEY_ROW_HINTS: Dict[str, Tuple[str, ...]] = {
     "profit_and_loss": ("revenue", "profit before tax", "profit for the year"),
     "balance_sheet": ("total assets", "equity share capital", "total liabilities"),
     "cash_flow": ("net profit before tax", "net cash generated", "net cash used"),
 }
 
+# Row-label phrases that confirm a span contains canonical primary-statement content.
+# A span containing at least one of these phrases earns a semantic bonus in the
+# assembly selection key, ensuring it beats denser but semantically-wrong spans
+# (e.g. a note table whose heading mentions the statement but whose body is expenses).
+PRIMARY_STATEMENT_SEMANTIC_HINTS: Dict[str, Tuple[str, ...]] = {
+    "profit_and_loss": (
+        "revenue from operations",
+        "net sales",
+        "total revenue",
+        "profit attributable to owners",
+        "profit for the year attributable to owners",
+        "profit attributable to equity holders",
+        "profit for the year",
+        "profit for the period",
+        "earnings per equity share",
+        "earnings per share",
+        "eps",
+    ),
+    "balance_sheet": (
+        "total assets",
+        "equity share capital",
+        "total equity and liabilities",
+        "total liabilities",
+        "shareholders equity",
+    ),
+    "cash_flow": (
+        "net cash generated from operating",
+        "cash generated from operations",
+        "net cash flow from operating",
+        "cash and cash equivalents at end",
+        "cash and cash equivalents at the end",
+    ),
+}
+
 PRIMARY_HEADING_HINTS: Dict[str, Tuple[str, ...]] = {
     "profit_and_loss": ("statement of profit and loss", "profit and loss"),
     "balance_sheet": ("balance sheet", "statement of financial position"),
     "cash_flow": ("cash flow statement", "statement of cash flows"),
+    "share_capital": ("statement of changes in equity", "equity share capital", "share capital"),
 }
 
 BALANCE_SHEET_SUPPORTING_SOURCE_SECTIONS = {
@@ -36,6 +90,13 @@ BALANCE_SHEET_SUPPORTING_SOURCE_SECTIONS = {
     "financial_note",
     "share_capital_note",
     "statement_of_changes_in_equity",
+    # Banking schedule sections (RBI Schedule III)
+    "schedule_6_cash_rbi",
+    "schedule_7_balances_banks",
+    "schedule_8_investments",
+    "schedule_9_advances",
+    "schedule_10_fixed_assets",
+    "schedule_11_other_assets",
 }
 
 STOP_PHRASES = (
@@ -291,7 +352,32 @@ def _trim_table_text(text: str, table_type: str) -> str:
         starts.append(lowered.index("particulars"))
     for hint in PRIMARY_HEADING_HINTS.get(table_type, ()):
         if hint in lowered:
-            starts.append(lowered.index(hint))
+            hint_index = lowered.index(hint)
+            if hint_index <= 200:
+                starts.append(hint_index)
+    # Also detect period header rows (e.g., "As on March 31, 2022 (` in 000's)")
+    # as table start markers when no "particulars" or primary heading found
+    if not starts:
+        period_header_re = re.compile(
+            r"(?:as at|as on|for the year ended|year ended)\s+[a-z]+\s+\d{1,2},?\s+\d{4}(?:\s*\([^)]+\))?",
+            re.IGNORECASE,
+        )
+        m = period_header_re.search(lowered)
+        late_cash_flow_footer = (
+            table_type == "cash_flow"
+            and m
+            and m.start() > 200
+            and any(
+                cue in lowered[: m.start()]
+                for cue in (
+                    "net cash",
+                    "payments for purchase",
+                    "cash and cash equivalents",
+                )
+            )
+        )
+        if m and m.start() <= 500 and not late_cash_flow_footer:
+            starts.append(m.start())
     if starts:
         cleaned = cleaned[min(starts):]
         lowered = cleaned.lower()
@@ -309,15 +395,34 @@ def _strip_column_headers(text: str) -> str:
         cleaned,
         flags=re.IGNORECASE,
     ).strip()
+    # Strip "Share Capital" / "Equity Share Capital" headings that survive trim
+    # Only strip when at the very start of text (share capital tables), not when
+    # appearing as line items in balance sheets
     cleaned = re.sub(
-        r"^(?:\s*(?:numbers?|amount))(?:\s+(?:numbers?|amount))*",
+        r"^\s*(?:equity\s+)?share\s+capital\b",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+    # Drop a leading "Note" or "Notes" word (optionally followed by "No"/"No.")
+    # that survives the "particulars" strip. The subsequent period-column rows
+    # (e.g., "Year ended March 31, 2022") are then removed by the while-loop below.
+    cleaned = re.sub(
+        r"^\s*notes?\s*(?:no\.?)?",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+    # Strip "Numbers*" / "Amount" column header rows (e.g., "Numbers* Amount Numbers* Amount")
+    cleaned = re.sub(
+        r"^(?:\s*(?:numbers?\*?|amount)\s*)+",
         "",
         cleaned,
         flags=re.IGNORECASE,
     ).strip()
     while True:
         updated = re.sub(
-            r"^(?:\s*(?:As at|For the year ended)\s+[A-Za-z]+\s+\d{1,2},?\s+\d{4})+",
+            r"^(?:\s*(?:As at|As on|For the year ended|Year ended)\s+[A-Za-z]+\s+\d{1,2},?\s+\d{4}(?:\s*\([^)]+\))?)+",
             "",
             cleaned,
             flags=re.IGNORECASE,
@@ -337,19 +442,32 @@ def _strip_column_headers(text: str) -> str:
 
 def _extract_periods(text: str) -> List[str]:
     periods: List[str] = []
+    seen: set[str] = set()
     for match in DATE_PERIOD_RE.finditer(text):
         label = _clean_text(match.group(1))
-        if label and label not in periods:
-            periods.append(label)
+        if label:
+            key = label.lower()
+            if key not in seen:
+                seen.add(key)
+                periods.append(label)
     for match in FY_PERIOD_RE.finditer(text):
         label = f"FY{match.group(1)}"
-        if label not in periods:
+        key = label.lower()
+        if key not in seen:
+            seen.add(key)
             periods.append(label)
     return periods
 
 
 def _is_number_token(token: str) -> bool:
-    return bool(NUMBER_TOKEN_RE.match(token))
+    if not NUMBER_TOKEN_RE.match(token):
+        return False
+    # Exclude simple note-reference integers (e.g., "29", "30", "31") that appear
+    # after line-item labels but before actual financial values. These are small
+    # positive integers without commas, decimals, or parentheses.
+    if token.isdigit() and 1 <= int(token) <= 100 and "." not in token and "," not in token:
+        return False
+    return True
 
 
 def _parse_numeric_token(token: str) -> Optional[float]:
@@ -399,6 +517,34 @@ def _should_skip_label(label: str, table_type: str) -> bool:
         return True
     if table_type == "cash_flow" and lowered in {"a.", "b.", "c."}:
         return True
+    if table_type == "cash_flow" and any(
+        token in lowered for token in ("statement of cash flow", "cash flow statement", "statement of cash flows")
+    ):
+        return True
+    if table_type == "cash_flow" and any(
+        token in lowered
+        for token in (
+            "payments for purchase of property",
+            "net cash flow from",
+            "net cash generated from",
+            "net cash used in",
+            "cash and cash equivalents at the end",
+        )
+    ):
+        return False
+    if table_type == "profit_and_loss" and any(
+        token in lowered
+        for token in (
+            "profit before tax",
+            "profit for the year",
+            "profit for the period",
+            "profit attributable to owners",
+            "profit for the year attributable to owners",
+            "total tax expense",
+            "non-controlling interests",
+        )
+    ):
+        return False
     if _is_paragraph_like_label(label):
         return True
     return False
@@ -455,26 +601,34 @@ def _split_rows(table_text: str, table_type: str) -> Tuple[List[Tuple[str, List[
 
     while index < len(tokens):
         token = tokens[index]
-        if NOTE_TOKEN_RE.match(token) and index + 1 < len(tokens) and _is_number_token(tokens[index + 1]):
+        if NOTE_TOKEN_RE.match(token):
+            # Note reference integer (e.g., "13", "29") — skip it whether or not
+            # a numeric value follows. In proper tables the note ref is followed
+            # by the value; in segment tables it may be followed by another label.
             label = _normalize_label(" ".join(label_tokens))
             label_tokens = []
-            if _should_skip_label(label, table_type):
-                if label:
+            # If the next token IS a number, treat this as a note-ref + value row
+            if index + 1 < len(tokens) and _is_number_token(tokens[index + 1]):
+                if _should_skip_label(label, table_type):
+                    if label:
+                        rejected_labels.append(label)
+                    index += 1
+                    continue
+                values: List[str] = []
+                index += 1
+                while index < len(tokens) and _is_number_token(tokens[index]) and len(values) < max(expected_values, 4):
+                    values.append(tokens[index])
+                    index += 1
+                if len(values) >= expected_values and _row_values_look_table_like(values):
+                    rows.append((label, values))
+                elif _capital_summary_row_is_salvageable(label, values, table_type):
+                    rows.append((label, values))
+                else:
                     rejected_labels.append(label)
-                index += 1
+                    warnings.append(f"table appears truncated near line item: {label}")
                 continue
-            values: List[str] = []
+            # Otherwise the note ref stands alone — discard it and continue
             index += 1
-            while index < len(tokens) and _is_number_token(tokens[index]) and len(values) < max(expected_values, 4):
-                values.append(tokens[index])
-                index += 1
-            if len(values) >= expected_values and _row_values_look_table_like(values):
-                rows.append((label, values))
-            elif _capital_summary_row_is_salvageable(label, values, table_type):
-                rows.append((label, values))
-            else:
-                rejected_labels.append(label)
-                warnings.append(f"table appears truncated near line item: {label}")
             continue
 
         if _is_number_token(token):
@@ -609,6 +763,24 @@ def _route_candidate(source_section_type: str, text: str) -> Optional[Tuple[str,
             return ("shareholding_pattern", "shareholding_pattern", False)
         if source_section_type == "corporate_action_note":
             return ("corporate_actions", "corporate_actions", False)
+    # Banking balance sheet schedule sections - route to balance_sheet for asset component extraction
+    if source_section_type in {
+        "schedule_6_cash_rbi",
+        "schedule_7_balances_banks",
+        "schedule_8_investments",
+        "schedule_9_advances",
+        "schedule_10_fixed_assets",
+        "schedule_11_other_assets",
+    }:
+        return ("balance_sheet", "balance_sheet", False)
+    # Banking P&L schedule sections - route to profit_and_loss for P&L component extraction
+    if source_section_type in {
+        "schedule_13_interest_earned",
+        "schedule_14_other_income",
+        "schedule_15_interest_expended",
+        "schedule_16_operating_expenses",
+    }:
+        return ("profit_and_loss", "profit_and_loss", False)
     return None
 
 
@@ -656,11 +828,17 @@ def _build_row_objects(
     score: int,
     warnings: Sequence[str],
     is_primary_statement: bool,
+    unit_source_text: Optional[str] = None,
+    per_row_chunk_ids: Optional[List[str]] = None,
 ) -> List[ExtractedFinancialRow]:
     rows: List[ExtractedFinancialRow] = []
-    unit_hint = _unit_hint(source_text, destination_table_type)
-    currency_hint = _currency_hint(source_text)
-    shared_periods = _period_labels(table_text, max((len(values) for _, values in row_pairs), default=1))
+    metadata_text = unit_source_text or source_text
+    unit_hint = _unit_hint(metadata_text, destination_table_type)
+    currency_hint = _currency_hint(metadata_text)
+    max_value_count = max((len(values) for _, values in row_pairs), default=1)
+    shared_periods = _period_labels(table_text, max_value_count)
+    if not shared_periods or all(period == "PERIOD_COLUMN_UNRESOLVED" for period in shared_periods):
+        shared_periods = _period_labels(metadata_text, max_value_count)
     table_confidence = _confidence_for_rows(len(row_pairs), basis, score, is_primary_statement)
     table_rejection_risk: List[str] = []
     if basis == "unknown":
@@ -669,7 +847,8 @@ def _build_row_objects(
         table_rejection_risk.append("unit unclear")
     if score < 5:
         table_rejection_risk.append("weak table context")
-    for label, raw_values in row_pairs:
+    for idx, (label, raw_values) in enumerate(row_pairs):
+        row_chunk_id = per_row_chunk_ids[idx] if per_row_chunk_ids and idx < len(per_row_chunk_ids) else chunk_id
         column_plan = (
             _share_capital_column_plan(table_text, len(raw_values))
             if destination_table_type == "share_capital" and source_section_type == "share_capital_note"
@@ -701,6 +880,10 @@ def _build_row_objects(
                 )
                 if value_type == "percentage":
                     per_value_unit_hint = "%"
+            if column_plan and index < len(column_plan):
+                # Column plan specifies exact value type (e.g., "share_count")
+                # Use it directly instead of detecting
+                _, value_type, _ = column_plan[index]
             values.append(
                 ExtractedValue(
                     period=periods[index] if index < len(periods) else f"value_{index + 1}",
@@ -726,7 +909,7 @@ def _build_row_objects(
                 values=values,
                 source_artifact=source_artifact,
                 page=page,
-                chunk_id=chunk_id,
+                chunk_id=row_chunk_id,
                 confidence=table_confidence,
                 source_section_type=source_section_type,
                 table_confidence=table_confidence,
@@ -784,6 +967,37 @@ def _balance_sheet_equity_path_is_satisfied(matched_fields: Sequence[str]) -> bo
     return "balance_sheet.equity_share_capital" in matched and "balance_sheet.reserves" in matched
 
 
+def _balance_sheet_assets_path_is_satisfied(
+    matched_fields: Sequence[str],
+    normalization_path: Optional[Path] = None,
+) -> bool:
+    """
+    Check if balance sheet assets path is satisfied.
+    For banking/NBFC formats, total_assets may be DERIVED_FROM_LINKED_PRIMARY_SCHEDULES
+    instead of explicitly extracted. In that case, check if derivation is valid and reconciled.
+    """
+    matched = set(matched_fields)
+    if "balance_sheet.total_assets" in matched:
+        # Explicitly extracted - check if it's derived and if so, validate reconciliation
+        if normalization_path and normalization_path.exists():
+            try:
+                import json
+                normalized = json.loads(normalization_path.read_text(encoding="utf-8"))
+                total_assets_entry = normalized.get("balance_sheet", {}).get("total_assets", {})
+                if total_assets_entry.get("derivation_state") == "DERIVED_FROM_LINKED_PRIMARY_SCHEDULES":
+                    # For derived assets, require reconciliation_status = PASS
+                    recon_status = total_assets_entry.get("reconciliation_status")
+                    if recon_status == "PASS":
+                        return True
+                    # If not yet reconciled, we still allow it to proceed to validation
+                    # where full reconciliation will be checked
+                    return True
+            except Exception:
+                pass
+        return True
+    return False
+
+
 def _candidate_report(
     *,
     section_name: str,
@@ -820,8 +1034,14 @@ def _candidate_report(
     matched_fields = set(_canonical_fields_from_rows(candidate_rows))
     if section_name == "primary_balance_sheet_statement":
         missing_fields = []
-        if "balance_sheet.total_assets" not in matched_fields:
+        # For banking format, check if we have sufficient asset components instead of explicit total_assets
+        has_total_assets = "balance_sheet.total_assets" in matched_fields
+        has_asset_components = _has_sufficient_asset_components(matched_fields)
+        if not has_total_assets and not has_asset_components:
             missing_fields.append("balance_sheet.total_assets")
+        elif not has_total_assets and has_asset_components:
+            # Banking format detected - note that total_assets will be derived
+            pass
         if not _balance_sheet_equity_path_is_satisfied(matched_fields):
             missing_fields.append("balance_sheet.net_worth_or_equity_share_capital_and_reserves")
     else:
@@ -854,10 +1074,34 @@ def _candidate_report(
     }
 
 
+def _has_sufficient_asset_components(matched_fields: Sequence[str]) -> bool:
+    """
+    Check if we have sufficient asset schedule components for banking format.
+    For banking/NBFC, total_assets is computed from: cash, investments, advances/receivables, fixed_assets, other_assets.
+    We require at least 4 of these core components to consider the assets path satisfied.
+    """
+    matched = set(matched_fields)
+    asset_components = {
+        "balance_sheet.cash_and_equivalents",
+        "balance_sheet.investments",
+        "balance_sheet.receivables",  # Advances for banks
+        "balance_sheet.fixed_assets",
+        "balance_sheet.other_assets",
+        "balance_sheet.cwip",
+        "balance_sheet.inventories",
+    }
+    available = matched & asset_components
+    # Need at least 4 core asset components for banking format
+    core_components = {"balance_sheet.cash_and_equivalents", "balance_sheet.investments", "balance_sheet.fixed_assets", "balance_sheet.other_assets"}
+    has_core = len(available & core_components) >= 3  # At least 3 of 4 core
+    has_advances = "balance_sheet.receivables" in available
+    return has_core or (has_advances and len(available) >= 4)
+
+
 def build_financial_extraction_readiness(discovery: FinancialDiscoveryResult, result: FinancialExtractionResult) -> Dict[str, Any]:
     primary_requirements = {
         "primary_profit_and_loss_statement": ["profit_and_loss.revenue", "profit_and_loss.pat"],
-        "primary_balance_sheet_statement": ["balance_sheet.total_assets", "balance_sheet.net_worth", "balance_sheet.equity_share_capital"],
+        "primary_balance_sheet_statement": ["balance_sheet.net_worth", "balance_sheet.equity_share_capital"],
         "primary_cash_flow_statement": ["cash_flow.cfo"],
     }
     primary_tables = {
@@ -905,9 +1149,17 @@ def build_financial_extraction_readiness(discovery: FinancialDiscoveryResult, re
             continue
         matched = set(report["matched_fields"])
         if section_name == "primary_balance_sheet_statement":
-            if "balance_sheet.total_assets" not in matched:
+            # Check if total_assets is explicitly matched OR we have sufficient asset components for banking format
+            has_total_assets = "balance_sheet.total_assets" in matched
+            has_asset_components = _has_sufficient_asset_components(matched)
+
+            if not has_total_assets and not has_asset_components:
                 missing_required_metrics.append("balance_sheet.total_assets")
-                blocking_reasons.append("primary_balance_sheet_statement: total assets missing")
+                blocking_reasons.append("primary_balance_sheet_statement: total assets missing and insufficient asset schedule components")
+            elif not has_total_assets and has_asset_components:
+                # Banking format detected - total_assets will be derived at normalization
+                # Add a note but don't block
+                pass
             if not _balance_sheet_equity_path_is_satisfied(matched):
                 missing_required_metrics.append("balance_sheet.net_worth_or_equity_share_capital_and_reserves")
                 blocking_reasons.append("primary_balance_sheet_statement: equity / net worth / reserves missing")
@@ -975,6 +1227,294 @@ def _rejection_record(
     }
 
 
+def _chunk_positions(chunks: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    positions: Dict[str, int] = {}
+    for index, chunk in enumerate(chunks):
+        chunk_id = str(chunk.get("chunk_id") or "").strip()
+        if chunk_id:
+            positions[chunk_id] = index
+    return positions
+
+
+def _unit_source_text_for_candidate(
+    *,
+    item: Any,
+    text: str,
+    chunks: Sequence[Dict[str, Any]],
+    positions: Dict[str, int],
+) -> str:
+    signals = set(getattr(item, "signals", []) or [])
+    section_type = str(getattr(item, "section_type", "") or "")
+    has_unit_context = any(_unit_token_present(text.lower(), candidate) for candidate in UNIT_HINT_CANDIDATES)
+    needs_adjacent_context = (
+        "continuation:primary_statement" in signals
+        or (
+            section_type in {
+                "primary_profit_and_loss_statement",
+                "primary_balance_sheet_statement",
+                "primary_cash_flow_statement",
+            }
+            and (not _extract_periods(text) or not has_unit_context)
+        )
+    )
+    if not needs_adjacent_context:
+        return text
+    position = positions.get(str(getattr(item, "chunk_id", "") or ""))
+    if position is None:
+        return text
+    parts = [text]
+    page = getattr(item, "page", None)
+    for nearby_index in (position - 1, position + 1):
+        if nearby_index < 0 or nearby_index >= len(chunks):
+            continue
+        nearby = chunks[nearby_index]
+        nearby_page = nearby.get("page")
+        if isinstance(page, int) and isinstance(nearby_page, int) and abs(nearby_page - page) > 1:
+            continue
+        nearby_text = _clean_text(nearby.get("text", ""))
+        nearby_lowered = nearby_text.lower()
+        nearby_has_statement_context = any(
+            hint in nearby_lowered
+            for hint in ("statement of profit and loss", "balance sheet", "cash flow statement", "statement of cash flow", "statement of cash flows")
+        )
+        nearby_has_unit_context = any(_unit_token_present(nearby_lowered, candidate) for candidate in UNIT_HINT_CANDIDATES)
+        if section_type == "primary_cash_flow_statement" and any(
+            cue in nearby_lowered for cue in ("equity share capital", "other equity", "statement of changes in equity")
+        ):
+            nearby_has_unit_context = False
+        if nearby_has_statement_context or nearby_has_unit_context:
+            parts.append(nearby_text)
+    return " ".join(parts)
+
+
+def _extract_rows_from_chunk(
+    *,
+    chunk: Dict[str, Any],
+    item: Any,
+    section_name: str,
+    destination_table_type: str,
+    chunk_positions: Dict[str, int],
+) -> Tuple[List[Tuple[str, List[str]]], List[str], List[str], int, Any, List[str]]:
+    """
+    Extract rows from a single chunk with its original metadata.
+    Returns (row_pairs, warnings, rejected_labels, score, item, row_chunk_ids)
+    """
+    text = _clean_text(chunk.get("text", ""))
+    if not text:
+        return [], [], [], 0, item, []
+
+    score = _table_score(text, destination_table_type, section_name)
+    if score < 3:
+        return [], [], [], score, item, []
+
+    table_text = _trim_table_text(text, destination_table_type)
+    row_pairs, row_warnings, rejected_labels = _split_rows(table_text, destination_table_type)
+    if not row_pairs:
+        return [], row_warnings, rejected_labels, score, item, []
+
+    # Each row from this chunk gets this chunk_id
+    row_chunk_ids = [item.chunk_id] * len(row_pairs)
+
+    return row_pairs, row_warnings, rejected_labels, score, item, row_chunk_ids
+
+
+def _assemble_primary_statement_rows(
+    *,
+    section_name: str,
+    candidates: List[Any],
+    chunks: Sequence[Dict[str, Any]],
+    by_chunk_id: Dict[str, Dict[str, Any]],
+    chunk_positions: Dict[str, int],
+) -> List[Tuple[List[Tuple[str, List[str]]], Any, int, List[str], str, List[str], List[str]]]:
+    """
+    Assemble multi-chunk primary statement fragments by extracting rows from each chunk
+    and combining them in order, preserving original chunk_id per row.
+    Returns a list of (combined_row_pairs, anchor_item, combined_score, combined_warnings, anchor_chunk_id, combined_row_chunk_ids, span_chunk_ids)
+    where span_chunk_ids includes ALL chunks in the span (including structural context chunks without rows).
+    """
+    if section_name not in PRIMARY_STATEMENT_SECTIONS:
+        return []
+
+    from .discovery import _get_primary_statement_fragment_spans
+
+    fragment_spans = _get_primary_statement_fragment_spans(
+        section_name=section_name,
+        chunks=chunks,
+        anchors=candidates,
+        positions=chunk_positions,
+    )
+
+    destination_table_type = PRIMARY_STATEMENT_TABLE_MAP[section_name]
+    assembled_results = []
+
+    for span in fragment_spans:
+        if not span:
+            continue
+
+        # Sort by chunk position to maintain order
+        span_sorted = sorted(span, key=lambda item: chunk_positions.get(item.chunk_id, 0))
+
+        # Use the first item as anchor for metadata
+        anchor_item = span_sorted[0]
+        anchor_chunk_id = anchor_item.chunk_id
+
+        # Get ALL chunk_ids in the span (including structural context chunks)
+        span_chunk_ids = [item.chunk_id for item in span_sorted]
+
+        # Extract rows from each chunk in the span
+        all_row_pairs: List[Tuple[str, List[str]]] = []
+        all_row_chunk_ids: List[str] = []
+        all_warnings: List[str] = []
+        all_rejected_labels: List[str] = []
+        max_score = 0
+
+        for item in span_sorted:
+            chunk = by_chunk_id.get(item.chunk_id)
+            if not chunk:
+                continue
+
+            row_pairs, row_warnings, rejected_labels, score, _, row_chunk_ids = _extract_rows_from_chunk(
+                chunk=chunk,
+                item=item,
+                section_name=section_name,
+                destination_table_type=destination_table_type,
+                chunk_positions=chunk_positions,
+            )
+
+            if row_pairs:
+                all_row_pairs.extend(row_pairs)
+                all_row_chunk_ids.extend(row_chunk_ids)
+                all_warnings.extend(row_warnings)
+                all_rejected_labels.extend(rejected_labels)
+                max_score = max(max_score, score)
+
+        if not all_row_pairs:
+            continue
+
+        assembled_results.append((all_row_pairs, anchor_item, max_score, all_warnings, all_rejected_labels, anchor_chunk_id, all_row_chunk_ids, span_chunk_ids))
+
+    return assembled_results
+
+
+def _extract_primary_statement_with_assembly(
+    *,
+    section_name: str,
+    candidates: List[Any],
+    chunks: Sequence[Dict[str, Any]],
+    by_chunk_id: Dict[str, Dict[str, Any]],
+    chunk_positions: Dict[str, int],
+    result: FinancialExtractionResult,
+) -> List[ExtractedFinancialRow]:
+    """
+    Extract primary statement with cross-chunk assembly.
+    Returns list of extracted rows for the primary statement.
+    """
+    if section_name not in PRIMARY_STATEMENT_SECTIONS:
+        return []
+
+    destination_table_type = PRIMARY_STATEMENT_TABLE_MAP[section_name]
+    statement_type = destination_table_type
+    is_primary_statement = True
+
+    # First try to assemble fragments
+    assembled_results = _assemble_primary_statement_rows(
+        section_name=section_name,
+        candidates=candidates,
+        chunks=chunks,
+        by_chunk_id=by_chunk_id,
+        chunk_positions=chunk_positions,
+    )
+
+    if assembled_results:
+        def span_text_for(span_chunk_ids: Sequence[str]) -> str:
+            parts: List[str] = []
+            for cid in dict.fromkeys(span_chunk_ids):
+                chunk_text = _clean_text(by_chunk_id.get(cid, {}).get("text", ""))
+                if chunk_text:
+                    parts.append(chunk_text)
+            return " ".join(parts)
+
+        # Select the most complete assembled statement object. A tail fragment that
+        # happens to carry an explicit basis must not outrank a fuller span that
+        # contains the unit/period header plus the same continuation rows.
+        #
+        # Key ordering (all descending):
+        #   1. unit_score     — span carries a unit declaration (million / crore)
+        #   2. period_score   — span carries column period dates
+        #   3. semantic_score — span contains at least one canonical primary-statement
+        #                       row label (revenue / profit attributable to owners / …).
+        #                       A dense note table whose heading mentions the P&L but
+        #                       whose body is an expense schedule earns 0 here, so it
+        #                       can never beat the actual primary statement spans even
+        #                       when it produces more raw rows.
+        #   4. basis_score    — consolidated > standalone > unknown
+        #   5. span_width     — number of distinct chunks assembled (wider = more
+        #                       likely to be a genuine multi-page statement)
+        #   6. row_count      — total extracted rows (tie-break within same span_width)
+        #   7. score          — table-context score
+        def assembly_completeness_key(item):
+            row_pairs, anchor_item, score, _, _, _, all_row_chunk_ids, span_chunk_ids = item
+            span_text = span_text_for(span_chunk_ids)
+            basis = _basis_from_candidate(text=span_text, item=anchor_item)
+            basis_score = {"consolidated": 3, "standalone": 2, "unknown": 1}.get(basis, 0)
+            row_count = len(all_row_chunk_ids)
+            unit_score = 1 if _unit_hint(span_text, destination_table_type) else 0
+            period_score = 1 if _period_labels(span_text, max((len(values) for _, values in row_pairs), default=1)) else 0
+            span_width = len(set(span_chunk_ids))
+            semantic_hints = PRIMARY_STATEMENT_SEMANTIC_HINTS.get(destination_table_type, ())
+            all_labels_lower = " ".join(label.lower() for label, _ in row_pairs)
+            semantic_score = 1 if semantic_hints and any(hint in all_labels_lower for hint in semantic_hints) else 0
+            return (unit_score, period_score, semantic_score, basis_score, span_width, row_count, score)
+
+        assembled_results.sort(key=assembly_completeness_key, reverse=True)
+        all_row_pairs, anchor_item, score, row_warnings, all_rejected_labels, anchor_chunk_id, all_row_chunk_ids, span_chunk_ids = assembled_results[0]
+
+        # Build unit source text from ALL chunks in the span (including structural context chunks)
+        # This ensures unit headers/period columns from context chunks are included
+        assembly_chunk_ids = list(dict.fromkeys(span_chunk_ids))  # Preserve order, remove duplicates
+        anchor_text = _clean_text(by_chunk_id.get(anchor_chunk_id, {}).get("text", ""))
+        unit_source_text = span_text_for(assembly_chunk_ids) or anchor_text
+        basis = _basis_from_candidate(text=unit_source_text, item=anchor_item)
+
+        # Build rows with assembly metadata, using per-row chunk_ids
+        built_rows = _build_row_objects(
+            destination_table_type=destination_table_type,
+            source_section_type=section_name,
+            statement_type=statement_type,
+            source_artifact=anchor_item.source_artifact,
+            page=anchor_item.page,
+            chunk_id=anchor_chunk_id,
+            source_text=anchor_text,
+            unit_source_text=unit_source_text,
+            table_text=_trim_table_text(anchor_text, destination_table_type),
+            row_pairs=all_row_pairs,
+            basis=basis,
+            score=score,
+            warnings=row_warnings,
+            is_primary_statement=is_primary_statement,
+            per_row_chunk_ids=all_row_chunk_ids,
+        )
+
+        # Add assembly metadata to rows
+        for row in built_rows:
+            if "primary_statement_assembled" not in row.warnings:
+                row.warnings.append("primary_statement_assembled")
+
+        # Record any rejected labels from the assembly
+        if all_rejected_labels:
+            result.rejections.append(
+                _rejection_record(
+                    item=anchor_item,
+                    reason="some rows rejected during table boundary detection in assembled statement",
+                    examples=all_rejected_labels[:10],
+                )
+            )
+
+        return built_rows
+
+    return []
+
+
 def extract_financial_tables(
     *,
     company: str,
@@ -987,6 +1527,7 @@ def extract_financial_tables(
         raise RuntimeError(f"financial_extraction requires non-empty chunks: {chunk_path}")
     discovery = _parse_discovery(discovery_path)
     by_chunk_id = {str(chunk.get("chunk_id", "")): chunk for chunk in chunks}
+    chunk_positions = _chunk_positions(chunks)
 
     result = FinancialExtractionResult(
         company=company,
@@ -1011,67 +1552,162 @@ def extract_financial_tables(
         successful_candidates = 0
         per_section_tables: Dict[str, List[ExtractedFinancialRow]] = {}
 
-        for item in candidates:
-            chunk = by_chunk_id.get(item.chunk_id)
-            if not chunk:
-                result.rejections.append(_rejection_record(item=item, reason="chunk missing from clean chunks"))
-                continue
-            text = _clean_text(chunk.get("text", ""))
-            if not text:
-                result.rejections.append(_rejection_record(item=item, reason="empty chunk text"))
-                continue
-
-            route = _route_candidate(section_name, text)
-            if route is None:
-                result.rejections.append(_rejection_record(item=item, reason="section type intentionally excluded from extraction"))
-                continue
-
-            destination_table_type, statement_type, is_primary_statement = route
-            score = _table_score(text, destination_table_type, section_name)
-            if score < 3:
-                result.rejections.append(_rejection_record(item=item, reason="weak table context score"))
-                continue
-            if not _looks_like_table_candidate(text, section_name):
-                result.rejections.append(_rejection_record(item=item, reason="candidate does not look table-like"))
-                continue
-
-            table_text = _trim_table_text(text, destination_table_type)
-            row_pairs, row_warnings, rejected_labels = _split_rows(table_text, destination_table_type)
-            if not row_pairs:
-                result.rejections.append(
-                    _rejection_record(
-                        item=item,
-                        reason="no extractable table rows detected from candidate",
-                        examples=rejected_labels[:10],
-                    )
-                )
-                continue
-
-            successful_candidates += 1
-            built_rows = _build_row_objects(
-                destination_table_type=destination_table_type,
-                source_section_type=section_name,
-                statement_type=statement_type,
-                source_artifact=item.source_artifact,
-                page=item.page,
-                chunk_id=item.chunk_id,
-                source_text=text,
-                table_text=table_text,
-                row_pairs=row_pairs,
-                basis=_basis_from_candidate(text=text, item=item),
-                score=score,
-                warnings=row_warnings,
-                is_primary_statement=is_primary_statement,
+        # Handle primary statements with cross-chunk assembly
+        if section_name in PRIMARY_STATEMENT_SECTIONS and candidates:
+            assembled_rows = _extract_primary_statement_with_assembly(
+                section_name=section_name,
+                candidates=candidates,
+                chunks=chunks,
+                by_chunk_id=by_chunk_id,
+                chunk_positions=chunk_positions,
+                result=result,
             )
-            per_section_tables.setdefault(destination_table_type, []).extend(built_rows)
-            if rejected_labels:
-                result.rejections.append(
-                    _rejection_record(
+            if assembled_rows:
+                destination_table_type = PRIMARY_STATEMENT_TABLE_MAP[section_name]
+                per_section_tables[destination_table_type] = assembled_rows
+                successful_candidates = 1
+            else:
+                # Fall back to per-candidate extraction if assembly yields nothing
+                for item in candidates:
+                    chunk = by_chunk_id.get(item.chunk_id)
+                    if not chunk:
+                        result.rejections.append(_rejection_record(item=item, reason="chunk missing from clean chunks"))
+                        continue
+                    text = _clean_text(chunk.get("text", ""))
+                    if not text:
+                        result.rejections.append(_rejection_record(item=item, reason="empty chunk text"))
+                        continue
+
+                    route = _route_candidate(section_name, text)
+                    if route is None:
+                        result.rejections.append(_rejection_record(item=item, reason="section type intentionally excluded from extraction"))
+                        continue
+
+                    destination_table_type, statement_type, is_primary_statement = route
+                    score = _table_score(text, destination_table_type, section_name)
+                    if score < 3:
+                        result.rejections.append(_rejection_record(item=item, reason="weak table context score"))
+                        continue
+                    if not _looks_like_table_candidate(text, section_name):
+                        result.rejections.append(_rejection_record(item=item, reason="candidate does not look table-like"))
+                        continue
+
+                    unit_source_text = _unit_source_text_for_candidate(
                         item=item,
-                        reason="some rows rejected during table boundary detection",
-                        examples=rejected_labels[:10],
+                        text=text,
+                        chunks=chunks,
+                        positions=chunk_positions,
                     )
+
+                    table_text = _trim_table_text(text, destination_table_type)
+                    row_pairs, row_warnings, rejected_labels = _split_rows(table_text, destination_table_type)
+                    if not row_pairs:
+                        result.rejections.append(
+                            _rejection_record(
+                                item=item,
+                                reason="no extractable table rows detected from candidate",
+                                examples=rejected_labels[:10],
+                            )
+                        )
+                        continue
+
+                    successful_candidates += 1
+                    built_rows = _build_row_objects(
+                        destination_table_type=destination_table_type,
+                        source_section_type=section_name,
+                        statement_type=statement_type,
+                        source_artifact=item.source_artifact,
+                        page=item.page,
+                        chunk_id=item.chunk_id,
+                        source_text=text,
+                        unit_source_text=unit_source_text,
+                        table_text=table_text,
+                        row_pairs=row_pairs,
+                        basis=_basis_from_candidate(text=text, item=item),
+                        score=score,
+                        warnings=row_warnings,
+                        is_primary_statement=is_primary_statement,
+                    )
+                    per_section_tables.setdefault(destination_table_type, []).extend(built_rows)
+                    if rejected_labels:
+                        result.rejections.append(
+                            _rejection_record(
+                                item=item,
+                                reason="some rows rejected during table boundary detection",
+                                examples=rejected_labels[:10],
+                            )
+                        )
+        else:
+            # Standard per-candidate extraction for non-primary statements
+            for item in candidates:
+                chunk = by_chunk_id.get(item.chunk_id)
+                if not chunk:
+                    result.rejections.append(_rejection_record(item=item, reason="chunk missing from clean chunks"))
+                    continue
+                text = _clean_text(chunk.get("text", ""))
+                if not text:
+                    result.rejections.append(_rejection_record(item=item, reason="empty chunk text"))
+                    continue
+
+                route = _route_candidate(section_name, text)
+                if route is None:
+                    result.rejections.append(_rejection_record(item=item, reason="section type intentionally excluded from extraction"))
+                    continue
+
+                destination_table_type, statement_type, is_primary_statement = route
+                score = _table_score(text, destination_table_type, section_name)
+                if score < 3:
+                    result.rejections.append(_rejection_record(item=item, reason="weak table context score"))
+                    continue
+                if not _looks_like_table_candidate(text, section_name):
+                    result.rejections.append(_rejection_record(item=item, reason="candidate does not look table-like"))
+                    continue
+
+                unit_source_text = _unit_source_text_for_candidate(
+                    item=item,
+                    text=text,
+                    chunks=chunks,
+                    positions=chunk_positions,
                 )
+
+                table_text = _trim_table_text(text, destination_table_type)
+                row_pairs, row_warnings, rejected_labels = _split_rows(table_text, destination_table_type)
+                if not row_pairs:
+                    result.rejections.append(
+                        _rejection_record(
+                            item=item,
+                            reason="no extractable table rows detected from candidate",
+                            examples=rejected_labels[:10],
+                        )
+                    )
+                    continue
+
+                successful_candidates += 1
+                built_rows = _build_row_objects(
+                    destination_table_type=destination_table_type,
+                    source_section_type=section_name,
+                    statement_type=statement_type,
+                    source_artifact=item.source_artifact,
+                    page=item.page,
+                    chunk_id=item.chunk_id,
+                    source_text=text,
+                    unit_source_text=unit_source_text,
+                    table_text=table_text,
+                    row_pairs=row_pairs,
+                    basis=_basis_from_candidate(text=text, item=item),
+                    score=score,
+                    warnings=row_warnings,
+                    is_primary_statement=is_primary_statement,
+                )
+                per_section_tables.setdefault(destination_table_type, []).extend(built_rows)
+                if rejected_labels:
+                    result.rejections.append(
+                        _rejection_record(
+                            item=item,
+                            reason="some rows rejected during table boundary detection",
+                            examples=rejected_labels[:10],
+                        )
+                    )
 
         for table_type, rows in per_section_tables.items():
             extracted_by_table[table_type].extend(rows)

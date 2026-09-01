@@ -64,12 +64,12 @@ def test_status_governance_is_conservative_until_class_closure_criteria_are_met(
     counts = status_counts()
 
     assert counts == {
-        "CLASS_FIXED": 11,
-        "PARTIALLY_FIXED": 4,
+        "CLASS_FIXED": 14,
+        "PARTIALLY_FIXED": 1,
         "OPEN": 0,
         "UNKNOWN": 0,
     }
-    assert set(reopened_classes()) == set()
+    assert set(reopened_classes()) == {"PERIOD_RESOLUTION_UNSUPPORTED"}
     for entry in ROBUSTNESS_FAILURE_CLASSES:
         if entry["status"] == "CLASS_FIXED":
             assert not entry["closure_gaps"]
@@ -169,6 +169,44 @@ def test_basis_class_regression_artifacts_preserve_field_ownership():
     assert ujjivan["preferred_basis"] == "unknown"
     assert ujjivan["profit_and_loss"]["revenue"]["basis"] == "unknown"
     assert ujjivan["balance_sheet"]["total_assets"]["basis"] == "standalone"
+
+
+def test_sun_pharma_held_out_pat_survives_primary_pnl_extraction():
+    payload = _load_json("companies/sun_pharma/fy20/financials/raw_financial_tables.json")
+    rows = payload.get("tables", {}).get("profit_and_loss", [])
+
+    owner_pat_rows = [
+        row
+        for row in rows
+        if "profit for the year attributable to owners of the company" in str(row.get("line_item_raw") or "").lower()
+    ]
+
+    assert owner_pat_rows
+    row = owner_pat_rows[0]
+    assert row["basis"] == "consolidated"
+    assert row["source_section_type"] == "primary_profit_and_loss_statement"
+    assert row["is_primary_statement"] is True
+    assert row["values"][0]["value_crore"] == 3764.93
+
+
+def test_sun_pharma_held_out_total_assets_survives_primary_balance_sheet_extraction():
+    payload = _load_json("companies/sun_pharma/fy20/financials/raw_financial_tables.json")
+    rows = payload.get("tables", {}).get("balance_sheet", [])
+
+    total_assets_rows = [
+        row
+        for row in rows
+        if str(row.get("line_item_raw") or "").strip().lower() == "total assets"
+        and row.get("is_primary_statement") is True
+    ]
+
+    assert total_assets_rows
+    row = total_assets_rows[0]
+    assert row["basis"] == "consolidated"
+    assert row["source_section_type"] == "primary_balance_sheet_statement"
+    assert row["page"] == 184
+    assert row["values"][0]["period"] == "March 31, 2020"
+    assert row["values"][0]["value_crore"] == 68252.46
 
 
 def test_ocr_no_text_layer_case_remains_a_blocked_reject():

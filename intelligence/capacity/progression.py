@@ -55,15 +55,19 @@ def _status_from_text(status_text: str, utilization_status: str | None = None) -
         return "underutilized"
     if utilization_status == "ramping" or any(term in text for term in ("ramping", "ramp up", "ramp-up", "trial", "pilot", "initial use", "warm up")):
         return "ramping"
-    if any(term in text for term in ("operational", "in operation", "commercial operations", "commercial production", "live", "active", "operations started")):
+    if any(term in text for term in ("operational", "in operation", "commercial operations", "commercial production", "live", "active", "operations started", "went live", "went operational", "now operational", "fully operational", "live and operational", "in production", "producing", "delivered", "deployed", "implemented", "rolled out", "executed")):
+        return "operational"
+    if any(term in text for term in ("target achieved", "milestone achieved", "capacity achieved", "achieved target", "achieved operational", "reached operational", "went operational", "reached target")):
+        return "operational"
+    if any(term in text for term in ("achieved", "reached", "attained")):
         return "operational"
     if any(term in text for term in ("commissioned", "commissioning", "handed over", "ready for operation")):
         return "commissioned"
     if any(term in text for term in ("installed", "installation", "installed equipment", "set up", "equipment installed", "built", "completed")):
         return "installed"
-    if any(term in text for term in ("construction", "under construction", "ongoing", "in progress", "executing", "implementation", "under execution")):
+    if any(term in text for term in ("construction", "under construction", "ongoing", "in progress", "underway", "under way", "executing", "implementation", "under execution")):
         return "under_construction"
-    if any(term in text for term in ("funded", "funding", "allocated", "approved", "budget", "po", "purchase order", "committed")):
+    if any(term in text for term in ("funded", "funding", "allocated", "approved", "budget", "purchase order", "committed")):
         return "funded"
     if any(term in text for term in ("planned", "expected", "expect", "intend", "proposal", "announced", "next year")):
         return "planned" if any(term in text for term in ("planned", "proposal")) else "announced"

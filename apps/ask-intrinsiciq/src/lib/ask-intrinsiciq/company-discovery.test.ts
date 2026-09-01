@@ -27,7 +27,7 @@ describe("company discovery", () => {
   it("returns landing entries with per-company availability and summary data", async () => {
     const companies = await getLandingCompanies();
 
-    expect(companies).toHaveLength(4);
+    expect(companies.length).toBeGreaterThanOrEqual(4);
     expect(companies.map((company) => company.slug)).toEqual(
       expect.arrayContaining(["datapatterns", "tanla", "tips", "polymatech"]),
     );

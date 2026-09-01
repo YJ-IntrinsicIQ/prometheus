@@ -22,6 +22,7 @@ FAILURE_CLASS_REGISTRY: List[Dict[str, Any]] = [
             "capacity_expansions",
             "management_commitments",
             "capital_allocations",
+            "initiatives",
         ],
         "affected_company_years": [
             "tanla fy20",
@@ -29,6 +30,8 @@ FAILURE_CLASS_REGISTRY: List[Dict[str, Any]] = [
             "tanla fy23",
             "ujjivan fy21",
             "ujjivan fy23",
+            "sun_pharma fy20",
+            "sun_pharma fy22",
         ],
         "raw_input_shapes": [
             "source-year anchored disclosure with parenthetical example year",
@@ -39,6 +42,7 @@ FAILURE_CLASS_REGISTRY: List[Dict[str, Any]] = [
             "source-year anchored disclosure with incidental comparative year",
             "source-period promise with a historical reference year and a separate forward target/milestone",
             "current-period disclosure with a non-temporal statute, regulation, circular, scheme, or accounting-standard reference year",
+            "non-promotable historical regulatory context with multiple historical years and truncated final status",
         ],
         "root_causes": [
             "example-year clauses were being treated like active chronology conflicts",
@@ -46,14 +50,16 @@ FAILURE_CLASS_REGISTRY: List[Dict[str, Any]] = [
             "incidental comparative years in year-over-year capacity disclosures were still being counted as competing chronology instead of context",
             "temporal roles collapsed source_period, historical_periods, and target_period into one ambiguous year set",
             "years embedded in named legal, regulatory, accounting-standard, or scheme references were treated as company event chronology",
+            "the shared cleaner boundary treated every unresolved period validation error as fatal even when materiality explicitly blocked canonical promotion",
         ],
-        "root_cause_subtype": "NON_TEMPORAL_YEAR_REFERENCE_COLLISION",
+        "root_cause_subtype": "NON_PROMOTABLE_AMBIGUOUS_EVIDENCE_FATAL_BOUNDARY",
         "canonical_fix": [
             "propagate source_year before final validation",
             "strip explicit example clauses from period extraction",
             "prefer source-period anchoring over incidental comparative years when the disclosure clearly expresses a year-over-year comparison",
             "preserve source/report, event, historical-reference, and forward-target roles at the shared period-resolution boundary",
             "filter statute, regulation, accounting-standard, circular, scheme, and other named-reference years before chronology conflict checks",
+            "quarantine non-promotable ambiguous period items locally with diagnostics when period ambiguity is the sole validation blocker",
             "keep genuine conflicting chronology invalid",
         ],
         "regression_tests": [
@@ -64,10 +70,13 @@ FAILURE_CLASS_REGISTRY: List[Dict[str, Any]] = [
             "Ujjivan FY23 promise keeps fy23 as source/event, fy21 as historical reference, and fy24 as target",
             "Ujjivan FY24 capital allocation ignores Income Tax Act, 1961 as chronology while retaining FY23/FY24 statement timing",
             "unrelated future or multi-event historical years remain ambiguous",
+            "Sun Pharma FY20 projects_00011 is quarantined with provenance and does not abort cleaning",
+            "promotable ambiguous items and required ambiguous facts still hard-fail",
         ],
         "safeguards": [
             "strict ambiguous-year rejection",
             "structured validation diagnostics",
+            "ambiguous evidence never enters canonical cleaned output unless resolved",
             "corpus audit report checked into docs/audits",
         ],
     },

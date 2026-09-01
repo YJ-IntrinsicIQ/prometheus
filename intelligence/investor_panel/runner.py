@@ -145,6 +145,115 @@ DOCTRINE_SECTION_PRIORITIES = {
         "growth_quality_inputs",
     ],
 }
+
+DOCTRINE_DIFFERENTIATION_GUIDANCE: Dict[str, Dict[str, Any]] = {
+    "graham": {
+        "primary_doctrine_question": "Does the evidence protect the investor from permanent loss, weak financial integrity, or inadequate margin of safety?",
+        "shared_fact_interpretation": {
+            "capex": "Does the spending weaken balance-sheet protection, financing resilience, or downside protection?",
+            "revenue_growth": "Is growth stable enough to support asset protection, or is it distracting from weaker safety evidence?",
+            "management_execution": "Does execution reduce financial fragility, accounting uncertainty, or downside risk?",
+            "low_debt": "Use debt conservatism as protection evidence only when cash conversion and asset quality also support it.",
+        },
+        "must_prioritize": [
+            "balance-sheet resilience",
+            "debt and liquidity risk",
+            "cash conversion and working-capital strain",
+            "financial integrity, reconciliation warnings, and missing evidence",
+            "downside protection before upside narrative",
+        ],
+        "downweight_generic": [
+            "growth ambition unless it affects downside or earnings stability",
+            "moat language without financial protection evidence",
+            "management optimism not tied to conservative financing or risk control",
+        ],
+    },
+    "buffett": {
+        "primary_doctrine_question": "Does the evidence show a durable, understandable business that can compound owner capital under rational stewardship?",
+        "shared_fact_interpretation": {
+            "capex": "Is retained capital being deployed into durable economics with visible incremental returns or owner-value evidence?",
+            "revenue_growth": "Does growth reinforce durable competitive advantage and owner earnings rather than merely adding scale?",
+            "management_execution": "Does management behavior show rational stewardship and capital-allocation discipline over time?",
+            "low_debt": "Treat low debt as helpful only if paired with durable returns, cash generation, and reinvestment runway.",
+        },
+        "must_prioritize": [
+            "business quality and moat durability",
+            "owner earnings and cash conversion quality",
+            "return on capital and per-share economics",
+            "capital allocation and management stewardship",
+            "long-term compounding durability",
+        ],
+        "downweight_generic": [
+            "short-term growth not tied to durable economics",
+            "one-off execution items without owner-return evidence",
+            "financial strength facts that do not change compounding quality",
+        ],
+    },
+    "fisher": {
+        "primary_doctrine_question": "Does the evidence reveal a long runway for quality growth through products, customers, R&D, distribution, or management depth?",
+        "shared_fact_interpretation": {
+            "capex": "Does the investment expand product capability, capacity, customer reach, or the long-term growth runway?",
+            "revenue_growth": "Is growth supported by products, customers, distribution, innovation, or repeatable execution?",
+            "management_execution": "Does execution show management depth and follow-through on long-term growth initiatives?",
+            "low_debt": "Use low debt mainly as funding flexibility for growth, not as the central conclusion.",
+        },
+        "must_prioritize": [
+            "growth runway and durability",
+            "product, customer, R&D, and distribution evidence",
+            "management depth and execution follow-through",
+            "growth quality versus cash-consuming growth",
+            "scuttlebutt-style operating clues from supplied evidence",
+        ],
+        "downweight_generic": [
+            "static balance-sheet comfort unless it funds growth quality",
+            "valuation or downside framing",
+            "generic profitability facts without growth mechanism",
+        ],
+    },
+    "munger": {
+        "primary_doctrine_question": "What could make the apparent story wrong through incentives, complexity, fragility, accounting traps, or repeated misjudgment?",
+        "shared_fact_interpretation": {
+            "capex": "Does the spending create complexity, irreversible exposure, poor incentives, or execution risk?",
+            "revenue_growth": "Could growth mask fragility, accounting weakness, cash strain, or incentive-driven behavior?",
+            "management_execution": "Does the behavior reveal sound judgment, avoidable mistakes, or recurring blind spots?",
+            "low_debt": "Low debt reduces one failure mode but does not offset complexity, governance, or cash-conversion traps.",
+        },
+        "must_prioritize": [
+            "incentives and governance sanity",
+            "failure modes and self-inflicted risk",
+            "complexity, fragility, and accounting/economic traps",
+            "contradictions between story, numbers, and behavior",
+            "recurring mistakes or weak risk judgment",
+        ],
+        "downweight_generic": [
+            "simple praise for growth or low debt",
+            "success claims that ignore contradictions",
+            "capital allocation applause without downside or behavior analysis",
+        ],
+    },
+    "lynch": {
+        "primary_doctrine_question": "Is there a simple, believable business story, and do the operating facts show that story improving or deteriorating?",
+        "shared_fact_interpretation": {
+            "capex": "Does the spending make the growth story easier to believe, or does it complicate the story?",
+            "revenue_growth": "Does growth fit a clear category and operating story, or does it look like hype outrunning reality?",
+            "management_execution": "Does execution make the business story simpler and more credible for a practical investor?",
+            "low_debt": "Use low debt as a sanity check, not as a substitute for a clear business story.",
+        },
+        "must_prioritize": [
+            "plain-language business category",
+            "story versus operating evidence",
+            "growth expectations versus reality",
+            "momentum, simplicity, and balance-sheet sanity",
+            "hype or category mismatch",
+        ],
+        "downweight_generic": [
+            "technical detail that does not clarify the story",
+            "financial facts not connected to investor-readable business progress",
+            "doctrine jargon or abstract quality labels",
+        ],
+    },
+}
+
 HEAVY_SECTION_KEYS = {
     "multi_year_inputs",
     "management_quality_inputs",
@@ -1294,11 +1403,23 @@ def _normalize_financial_truth_list(value: Any) -> List[str]:
     )
 
 
-def _metric_present_in_registry(metric_registry: List[Dict[str, Any]], aliases: Sequence[str]) -> bool:
+def _metric_entry_has_usable_value(entry: Dict[str, Any]) -> bool:
+    value = entry.get("value")
+    return isinstance(value, (int, float))
+
+
+def _metric_present_in_registry(
+    metric_registry: List[Dict[str, Any]],
+    aliases: Sequence[str],
+    *,
+    require_usable_value: bool = False,
+) -> bool:
     alias_set = {str(alias).strip().lower() for alias in aliases if str(alias).strip()}
     for entry in metric_registry:
         canonical = str(entry.get("canonical_metric") or "").strip().lower()
         metric_id = str(entry.get("metric_id") or "").strip().lower()
+        if require_usable_value and not _metric_entry_has_usable_value(entry):
+            continue
         if canonical in alias_set or metric_id in alias_set:
             return True
         for alias in entry.get("aliases", []) or []:
@@ -1312,19 +1433,23 @@ def _financial_warning_is_blocked(warning: str, metric_registry: List[Dict[str, 
     if not lowered:
         return False
     if "fcf missing" in lowered or "free cash flow missing" in lowered:
-        return _metric_present_in_registry(metric_registry, ("fcf",))
+        return _metric_present_in_registry(metric_registry, ("fcf",), require_usable_value=True)
     if "cfo/pat missing" in lowered:
-        return _metric_present_in_registry(metric_registry, ("cfo_to_pat", "cfo", "pat"))
+        return _metric_present_in_registry(metric_registry, ("cfo_to_pat", "cfo", "pat"), require_usable_value=True)
     if "capex missing" in lowered:
-        return _metric_present_in_registry(metric_registry, ("capex",))
+        return _metric_present_in_registry(metric_registry, ("capex",), require_usable_value=True)
     if "payables missing" in lowered or "payable days missing" in lowered:
-        return _metric_present_in_registry(metric_registry, ("payables", "payable_days"))
+        return _metric_present_in_registry(metric_registry, ("payables", "payable_days"), require_usable_value=True)
     if "roe unavailable" in lowered:
-        return _metric_present_in_registry(metric_registry, ("roe",))
+        return _metric_present_in_registry(metric_registry, ("roe",), require_usable_value=True)
     if "roce unavailable" in lowered:
-        return _metric_present_in_registry(metric_registry, ("roce",))
+        return _metric_present_in_registry(metric_registry, ("roce",), require_usable_value=True)
     if "share count missing" in lowered:
-        return _metric_present_in_registry(metric_registry, ("shares_outstanding", "share_count"))
+        return _metric_present_in_registry(
+            metric_registry,
+            ("shares_outstanding", "share_count", "weighted_avg_shares", "diluted_shares"),
+            require_usable_value=True,
+        )
     return False
 
 
@@ -1456,7 +1581,7 @@ def _derive_financial_context(selected_pcim: Dict[str, Any], sections: List[str]
     truth_pack = _build_analyst_financial_truth_pack(selected_pcim, sections)
     missing_data: List[str] = []
     interpretation_limits: List[str] = []
-    metric_flags = _financial_context_metric_flags({"metrics_used": metrics_used})
+    metric_flags = _financial_context_metric_flags({"metrics_used": metrics_used, "metric_registry": metric_registry})
 
     for section in missing_sections:
         if section in financial_sections:
@@ -1476,9 +1601,13 @@ def _derive_financial_context(selected_pcim: Dict[str, Any], sections: List[str]
     if "capex" not in metrics_set:
         missing_data.append("Capex is unavailable or not supplied in the current PCIM.")
     if per_share_signals_present:
-        if not any(metric in metrics_set for metric in {"share_count", "shares_outstanding", "weighted_avg_shares", "diluted_shares"}):
+        if not metric_flags["has_any_share_count"]:
             missing_data.append("share count missing")
         else:
+            if not metric_flags["has_shares_outstanding"]:
+                interpretation_limits.append(
+                    "Closing shares are missing; dividend-per-share and book-value-per-share derivations remain limited."
+                )
             if metric_flags["has_shares_outstanding"] and not metric_flags["has_weighted_avg_shares"]:
                 missing_data.append("weighted average shares missing")
                 interpretation_limits.append("Per-share analysis is limited because weighted average share count is missing.")
@@ -1504,7 +1633,7 @@ def _derive_financial_context(selected_pcim: Dict[str, Any], sections: List[str]
 
     for warning in truth_pack["allowed_financial_warnings"]:
         lowered = warning.lower()
-        if "share count missing" in lowered and metric_flags["has_shares_outstanding"]:
+        if "share count missing" in lowered and metric_flags["has_any_share_count"]:
             continue
         if any(token in lowered for token in ("basis", "share count", "weighted average shares", "diluted shares", "comparability", "fcf", "capex", "debt", "dilution", "qip", "payables", "payable days", "cash conversion cycle")):
             interpretation_limits.append(warning)
@@ -3014,6 +3143,13 @@ def _build_compact_prompt(
     available_input_pack_tokens = limits_used["compact_input_pack_budget_tokens"]
     raw_selected_pcim = _selected_pcim_view(pcim, sections)
     raw_largest_sections = _largest_offending_fields(raw_selected_pcim)
+    # Compute required warning groups from the full PCIM so metrics dropped during
+    # compaction do not falsely trigger missing-data groups in the analyst prompt.
+    # (The compact PCIM can lose canonical metric IDs like "capex" while retaining
+    # only derived IDs, making an otherwise-available metric appear absent.)
+    _full_required_warning_groups = _canonical_required_financial_warning_groups(
+        _derive_financial_context(raw_selected_pcim, sections, [])
+    )[:8]
     compact_pcim, section_stats, limits_used, input_compacted, pack_diagnostics = _prepare_compact_prompt_pack(
         pcim,
         sections,
@@ -3045,6 +3181,7 @@ def _build_compact_prompt(
         pcim_path=pcim_path,
         llm_input_pack=llm_input_pack,
         allowed_sections=sections,
+        required_warning_groups=_full_required_warning_groups,
     )
     initial_prompt_chars = len(prompt)
     initial_prompt_tokens = _estimate_prompt_tokens(prompt)
@@ -3105,6 +3242,7 @@ def _build_compact_prompt(
             pcim_path=pcim_path,
             llm_input_pack=llm_input_pack,
             allowed_sections=sections,
+            required_warning_groups=_full_required_warning_groups,
         )
     prompt_chars = len(prompt)
     prompt_tokens = _estimate_prompt_tokens(prompt)
@@ -3245,8 +3383,8 @@ def _build_prompt_input_pack(
     pack = build_llm_input_pack(
         stage="investor_panel_analyst",
         purpose=(
-            f"Produce doctrine-bound investor analysis for {doctrine['doctrine_id']} from declared PCIM sections "
-            "and longitudinal company-memory summaries only."
+            f"Produce doctrine-bound investor analysis for {doctrine['doctrine_id']} from declared PCIM sections, "
+            "structured management synthesis chains, and longitudinal company-memory summaries only."
         ),
         company=company,
         year=None,
@@ -3385,6 +3523,47 @@ def _shared_evidence_routing_rules() -> List[str]:
     ]
 
 
+def _management_synthesis_chain_rules() -> List[str]:
+    return [
+        "Management synthesis-chain rules:",
+        "- Use company_memory_context.management progression.synthesis_chains as the source of truth for claim/action/outcome/financial-link state.",
+        "- CLAIM_ONLY is statement evidence only; it is not execution, delivery, capital-allocation success, or realized operating outcome evidence.",
+        "- ACTION_STARTED means action began; do not claim completion, outcome, or financial impact unless later chain fields prove it.",
+        "- ACTION_COMPLETED means completion occurred; completion alone is not evidence of value creation or a positive operating outcome.",
+        "- OUTCOME_POSITIVE and OUTCOME_NEGATIVE require separately evidenced operating or financial results.",
+        "- If actor is regulator, customer, partner, market, other, or unknown, do not describe the action as management-initiated unless separate management-action evidence is present.",
+        "- If financial_link_status is not confirmed, say the economic consequence remains unproven.",
+    ]
+
+
+def _doctrine_differentiation_block(doctrine_id: str) -> Dict[str, Any]:
+    guidance = DOCTRINE_DIFFERENTIATION_GUIDANCE.get(doctrine_id, {})
+    if not guidance:
+        return {}
+    return {
+        "primary_doctrine_question": guidance.get("primary_doctrine_question"),
+        "shared_fact_interpretation": {
+            "capex": (guidance.get("shared_fact_interpretation") or {}).get("capex"),
+        },
+        "must_prioritize": list(guidance.get("must_prioritize") or [])[:3],
+    }
+
+
+def _doctrine_differentiation_rules(doctrine_id: str) -> List[str]:
+    guidance = _doctrine_differentiation_block(doctrine_id)
+    if not guidance:
+        return []
+    return [
+        "Doctrine differentiation:",
+        "- Make the doctrine-specific causal question visible.",
+        "- Shared facts are allowed, but interpret them through this doctrine's mechanism.",
+        "- Do not force disagreement; agree only when this lens supports it.",
+        "- Downweight generic facts unless they answer this doctrine's primary question.",
+        "- Translate internal labels into investor-usable implications.",
+        f"- Primary doctrine question: {guidance.get('primary_doctrine_question')}",
+    ]
+
+
 def _format_allowed_financial_metrics(metric_registry: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     formatted: List[Dict[str, Any]] = []
     for entry in metric_registry:
@@ -3408,9 +3587,14 @@ def _build_llm_prompt(
     pcim_path: Path,
     llm_input_pack: Dict[str, Any],
     allowed_sections: List[str],
+    *,
+    required_warning_groups: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     compact_pack = deepcopy(llm_input_pack)
     compact_pack.pop("input_policy", None)
+    compact_pack.pop("company_memory_context_for_prompt", None)
+    compact_pack.pop("financial_truth_summary_for_prompt", None)
+    compact_pack.pop("evidence_subset_for_prompt", None)
     first_observation = (llm_input_pack.get("observations") or [{}])[0]
     compact_selected_pcim = first_observation.get("selected_pcim") or {}
     compact_financial_truth_summary = (
@@ -3424,15 +3608,29 @@ def _build_llm_prompt(
         token_budget=DEFAULT_EVIDENCE_PACK_BUDGET_TOKENS,
     )
     warning_policy_pack = {
-        "required_warning_groups": _canonical_required_financial_warning_groups(
-            _derive_financial_context(
-                compact_selected_pcim,
-                allowed_sections,
-                [],
-            )
-        )[:8]
+        "required_warning_groups": (
+            required_warning_groups
+            if required_warning_groups is not None
+            else _canonical_required_financial_warning_groups(
+                _derive_financial_context(
+                    compact_selected_pcim,
+                    allowed_sections,
+                    [],
+                )
+            )[:8]
+        )
     }
-    compact_pack["observations"] = [{"selected_pcim": compact_selected_pcim}]
+    compact_company_memory_context = (
+        llm_input_pack.get("company_memory_context_for_prompt")
+        or first_observation.get("company_memory_context")
+        or {}
+    )
+    compact_pack["observations"] = [
+        {
+            "selected_pcim": compact_selected_pcim,
+            "company_memory_context": compact_company_memory_context,
+        }
+    ]
     compact_pack["evidence_subset"] = evidence_subset
     compact_pack["warning_policy_pack"] = warning_policy_pack
     compact_pack_text = json.dumps(compact_pack, ensure_ascii=False, separators=(",", ":"))
@@ -3478,6 +3676,7 @@ def _build_llm_prompt(
         "Carry forward major financial warnings and missing-data limits.",
         "If FCF/capex/share-count/basis data is missing, say so explicitly.",
         "Do not treat dividends, related-party advances, or governance ambiguity as automatic condemnation without context.",
+        "Do not upgrade a management claim into execution, a completed action into a positive outcome, or an unconfirmed chain into financial impact.",
         "No buy, sell, hold, target price, fair value, undervalued, or overvalued language.",
         "Never mention internal system names such as PCIM, CIM, artifact, JSON, evidence IDs, source artifacts, input sections, schema, validation, prompt, or LLM wording.",
         "Write as an investment analyst speaking to a human reader, not as a pipeline describing its internals.",
@@ -3487,6 +3686,7 @@ def _build_llm_prompt(
         "investor_lens": doctrine["investor_lens"],
         "primary_focus": doctrine.get("primary_focus", [])[:4],
         "financial_rules": _financial_instruction_block(doctrine["doctrine_id"])[:12],
+        "doctrine_differentiation": _doctrine_differentiation_block(doctrine["doctrine_id"]),
         "canonical_questions": doctrine.get("canonical_questions", [])[:4],
         "red_flags": doctrine.get("red_flags", [])[:4],
         "uncertainty_rules": doctrine.get("uncertainty_rules", [])[:4],
@@ -3496,10 +3696,12 @@ def _build_llm_prompt(
             f"Company: {company}",
             f"Doctrine ID: {doctrine['doctrine_id']}",
             f"Investor Lens: {doctrine['investor_lens']}",
-            "Task: Produce structured investor analysis from compact PCIM only.",
+            "Task: Produce structured investor analysis from compact PCIM and company-memory synthesis chains.",
             "Rules:",
             *[f"- {rule}" for rule in rules],
             *_shared_evidence_routing_rules(),
+            *_management_synthesis_chain_rules(),
+            *_doctrine_differentiation_rules(doctrine["doctrine_id"]),
             "Allowed supporting_pcim_sections:",
             json.dumps(allowed_sections, ensure_ascii=False, separators=(",", ":")),
             "Allowed Financial Metrics:",
@@ -5688,13 +5890,30 @@ def finalize_analyst_validation_status(
 
 
 def _financial_context_metric_flags(context: Dict[str, Any]) -> Dict[str, bool]:
+    metric_registry = context.get("metric_registry") or []
     metrics = {metric.lower() for metric in context.get("metrics_used", [])}
+    has_shares_outstanding = _metric_present_in_registry(
+        metric_registry,
+        ("shares_outstanding", "share_count"),
+        require_usable_value=True,
+    ) if metric_registry else any(metric in metrics for metric in {"shares_outstanding", "share_count"})
+    has_weighted_avg_shares = _metric_present_in_registry(
+        metric_registry,
+        ("weighted_avg_shares",),
+        require_usable_value=True,
+    ) if metric_registry else "weighted_avg_shares" in metrics
+    has_diluted_shares = _metric_present_in_registry(
+        metric_registry,
+        ("diluted_shares",),
+        require_usable_value=True,
+    ) if metric_registry else "diluted_shares" in metrics
     return {
         "has_fcf": "fcf" in metrics,
         "has_capex": "capex" in metrics,
-        "has_shares_outstanding": any(metric in metrics for metric in {"shares_outstanding", "share_count"}),
-        "has_weighted_avg_shares": "weighted_avg_shares" in metrics,
-        "has_diluted_shares": "diluted_shares" in metrics,
+        "has_shares_outstanding": has_shares_outstanding,
+        "has_weighted_avg_shares": has_weighted_avg_shares,
+        "has_diluted_shares": has_diluted_shares,
+        "has_any_share_count": has_shares_outstanding or has_weighted_avg_shares or has_diluted_shares,
         "has_payable_days": "payable_days" in metrics,
         "has_cash_conversion_cycle": "cash_conversion_cycle" in metrics,
     }
@@ -5944,6 +6163,301 @@ def _raise_if_financial_warning_contradicted(
         raise ValueError("analyst contradicts required PCIM warning: basis unknown")
 
 
+_MANAGEMENT_EXECUTION_CLAIM_TERMS: Tuple[str, ...] = (
+    "delivered",
+    "delivery",
+    "executed",
+    "execution",
+    "completed",
+    "implemented",
+    "commissioned",
+    "launched",
+    "achieved",
+    "followed through",
+    "successful capital allocation",
+    "realized operating outcome",
+)
+
+_MANAGEMENT_POSITIVE_OUTCOME_TERMS: Tuple[str, ...] = (
+    "positive outcome",
+    "successful outcome",
+    "improved",
+    "improvement",
+    "higher utilization",
+    "higher revenue",
+    "higher profit",
+    "lower defects",
+    "reduced defects",
+    "value creation",
+    "created value",
+    "strengthened returns",
+    "operating benefit",
+    "financial impact confirmed",
+)
+
+_MANAGEMENT_NEGATION_OR_UNCERTAINTY_TERMS: Tuple[str, ...] = (
+    "not ",
+    "no evidence",
+    "unproven",
+    "unknown",
+    "unclear",
+    "insufficient",
+    "cannot",
+    "could not",
+    "has not",
+    "have not",
+    "remains to be seen",
+    "remains unproven",
+)
+
+_MANAGEMENT_ATTRIBUTION_TERMS: Tuple[str, ...] = (
+    "management initiated",
+    "management has initiated",
+    "management executed",
+    "management delivered",
+    "management completed",
+    "management implemented",
+    "management action",
+    "management response has delivered",
+)
+
+
+def _iter_management_progression_chains(company_memory_context: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not isinstance(company_memory_context, dict):
+        return []
+    chains: List[Dict[str, Any]] = []
+    for stream in company_memory_context.get("streams") or []:
+        if not isinstance(stream, dict):
+            continue
+        if str(stream.get("stream") or "").strip().lower() != "management progression":
+            continue
+        for item in stream.get("synthesis_chains") or []:
+            if isinstance(item, dict):
+                chains.append(item)
+    return chains
+
+
+def _token_set_for_management_chain(item: Dict[str, Any]) -> set[str]:
+    text = " ".join(
+        str(item.get(key) or "")
+        for key in (
+            "theme",
+            "claim_summary",
+            "action_summary",
+            "outcome_summary",
+            "investor_implication",
+        )
+    ).lower()
+    return {
+        token
+        for token in re.findall(r"[a-z][a-z0-9]{4,}", text)
+        if token
+        not in {
+            "management",
+            "company",
+            "business",
+            "evidence",
+            "outcome",
+            "action",
+            "financial",
+            "investor",
+            "period",
+            "remains",
+            "unproven",
+        }
+    }
+
+
+def _claim_mentions_management_chain(claim_text: str, item: Dict[str, Any]) -> bool:
+    claim_tokens = {
+        token
+        for token in re.findall(r"[a-z][a-z0-9]{4,}", claim_text.lower())
+        if token not in {"management", "company", "business", "evidence", "outcome", "action", "financial"}
+    }
+    chain_tokens = _token_set_for_management_chain(item)
+    return len(claim_tokens & chain_tokens) >= 2
+
+
+def _has_any_term(text: str, terms: Tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(term in lowered for term in terms)
+
+
+def _is_uncertainty_or_negated_management_claim(text: str) -> bool:
+    return _has_any_term(text, _MANAGEMENT_NEGATION_OR_UNCERTAINTY_TERMS)
+
+
+def _active_analyst_claim_texts(
+    *,
+    assessment: Dict[str, str],
+    key_findings: List[str],
+    red_flags: List[str],
+    open_uncertainties: List[str],
+    user_facing_brief: Dict[str, Any],
+) -> List[str]:
+    texts: List[str] = list(assessment.values()) + list(key_findings) + list(red_flags) + list(open_uncertainties)
+    for key in ("what_looks_good", "what_needs_caution", "what_is_missing"):
+        for item in user_facing_brief.get(key) or []:
+            if isinstance(item, str):
+                texts.append(item)
+    for key in ("financial_lens", "bottom_line"):
+        value = user_facing_brief.get(key)
+        if isinstance(value, str):
+            texts.append(value)
+    return [text for text in texts if isinstance(text, str) and text.strip()]
+
+
+def _management_chain_subject(chain: Dict[str, Any]) -> str:
+    for key in ("action_summary", "outcome_summary", "claim_summary", "theme"):
+        value = str(chain.get(key) or "").strip()
+        if value:
+            return _truncate_text(value, 180)
+    return "The management-progression item"
+
+
+def _conservative_management_chain_text(chain: Dict[str, Any], reason: str) -> str:
+    subject = _management_chain_subject(chain)
+    actor = str(chain.get("actor") or "").strip().lower()
+    status = str(chain.get("chain_status") or "").strip().upper()
+    if reason == "non_management_actor":
+        actor_label = actor if actor in {"regulator", "customer", "partner", "market", "other", "unknown"} else "non-management"
+        return f"A {actor_label} action occurred: {subject}. Management response and economic outcome remain unproven."
+    if status == "CLAIM_ONLY":
+        return f"{subject} is claim evidence only; execution, operating outcome, and financial consequence remain unproven."
+    if status == "ACTION_STARTED":
+        return f"{subject} shows action began; completion, operating outcome, and financial consequence remain unproven."
+    if status == "ACTION_COMPLETED":
+        return f"{subject} shows completion; operating outcome and financial consequence remain unproven."
+    return f"{subject} does not confirm financial consequence; economic impact remains unproven."
+
+
+def _management_chain_inflation_reason(claim_text: str, chain: Dict[str, Any]) -> Optional[str]:
+    if _is_uncertainty_or_negated_management_claim(claim_text):
+        return None
+    if not _claim_mentions_management_chain(claim_text, chain):
+        return None
+    actor = str(chain.get("actor") or "").strip().lower()
+    status = str(chain.get("chain_status") or "").strip().upper()
+    financial_status = str(chain.get("financial_link_status") or "").strip().lower()
+    if actor not in {"", "management", "company"} and _has_any_term(claim_text, _MANAGEMENT_ATTRIBUTION_TERMS):
+        return "non_management_actor"
+    if status == "CLAIM_ONLY" and _has_any_term(claim_text, _MANAGEMENT_EXECUTION_CLAIM_TERMS):
+        return "claim_only_execution"
+    if status == "ACTION_STARTED" and _has_any_term(
+        claim_text,
+        _MANAGEMENT_EXECUTION_CLAIM_TERMS + _MANAGEMENT_POSITIVE_OUTCOME_TERMS,
+    ):
+        return "action_started_outcome"
+    if status == "ACTION_COMPLETED" and _has_any_term(claim_text, _MANAGEMENT_POSITIVE_OUTCOME_TERMS):
+        return "action_completed_outcome_inflation"
+    if financial_status and financial_status not in {"confirmed", "financial_impact_confirmed"} and _has_any_term(
+        claim_text,
+        ("financial impact confirmed", "financial benefit", "returns improved", "profit improved", "revenue improved"),
+    ):
+        return "unconfirmed_financial_link"
+    return None
+
+
+def _repair_management_synthesis_chain_inflation(
+    *,
+    company_memory_context: Optional[Dict[str, Any]],
+    assessment: Dict[str, str],
+    key_findings: List[str],
+    red_flags: List[str],
+    open_uncertainties: List[str],
+    user_facing_brief: Dict[str, Any],
+) -> List[str]:
+    chains = _iter_management_progression_chains(company_memory_context)
+    if not chains:
+        return []
+    repair_notes: List[str] = []
+
+    def repair_text(text: str, field_path: str) -> str:
+        if not isinstance(text, str) or not text.strip():
+            return text
+        for chain in chains:
+            reason = _management_chain_inflation_reason(text, chain)
+            if not reason:
+                continue
+            repair_notes.append(
+                "management synthesis-chain inflation repaired "
+                f"at {field_path}: {reason}; chain_status={str(chain.get('chain_status') or '').strip() or 'unknown'}"
+            )
+            return _conservative_management_chain_text(chain, reason)
+        return text
+
+    for key, value in list(assessment.items()):
+        assessment[key] = repair_text(value, f"assessment.{key}")
+    for items, label in (
+        (key_findings, "key_findings"),
+        (red_flags, "red_flags"),
+        (open_uncertainties, "open_uncertainties"),
+    ):
+        for idx, value in enumerate(list(items)):
+            items[idx] = repair_text(value, f"{label}.{idx}")
+    for key in ("what_looks_good", "what_needs_caution", "what_is_missing"):
+        values = user_facing_brief.get(key)
+        if not isinstance(values, list):
+            continue
+        for idx, value in enumerate(list(values)):
+            values[idx] = repair_text(value, f"user_facing_brief.{key}.{idx}")
+    for key in ("financial_lens", "bottom_line"):
+        value = user_facing_brief.get(key)
+        if isinstance(value, str):
+            user_facing_brief[key] = repair_text(value, f"user_facing_brief.{key}")
+    return repair_notes
+
+
+def _raise_if_management_synthesis_chain_contradicted(
+    *,
+    company_memory_context: Optional[Dict[str, Any]],
+    assessment: Dict[str, str],
+    key_findings: List[str],
+    red_flags: List[str],
+    open_uncertainties: List[str],
+    user_facing_brief: Dict[str, Any],
+) -> None:
+    chains = _iter_management_progression_chains(company_memory_context)
+    if not chains:
+        return
+    claim_texts = _active_analyst_claim_texts(
+        assessment=assessment,
+        key_findings=key_findings,
+        red_flags=red_flags,
+        open_uncertainties=open_uncertainties,
+        user_facing_brief=user_facing_brief,
+    )
+    for chain in chains:
+        for text in claim_texts:
+            reason = _management_chain_inflation_reason(text, chain)
+            if not reason:
+                continue
+            if reason == "non_management_actor":
+                raise ValueError(
+                    "analyst contradicts management synthesis chain: non-management actor cannot be "
+                    "attributed to management action"
+                )
+            if reason == "claim_only_execution":
+                raise ValueError(
+                    "analyst contradicts management synthesis chain: CLAIM_ONLY cannot support execution, "
+                    "delivery, capital-allocation success, or realized outcome"
+                )
+            if reason == "action_started_outcome":
+                raise ValueError(
+                    "analyst contradicts management synthesis chain: ACTION_STARTED cannot support completion, "
+                    "outcome, or financial impact"
+                )
+            if reason == "action_completed_outcome_inflation":
+                raise ValueError(
+                    "analyst contradicts management synthesis chain: ACTION_COMPLETED alone cannot support "
+                    "positive operating or financial outcome"
+                )
+            if reason == "unconfirmed_financial_link":
+                raise ValueError(
+                    "analyst contradicts management synthesis chain: financial consequence is not confirmed"
+                )
+
+
 def _validate_repaired_llm_panel_output(
     parsed: Dict[str, Any],
     doctrine: Dict[str, Any],
@@ -5953,6 +6467,7 @@ def _validate_repaired_llm_panel_output(
     pcim: Dict[str, Any],
     consumed_sections: List[str],
     allowed_evidence_ids: List[str],
+    company_memory_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("Expected a JSON object")
@@ -6566,6 +7081,28 @@ def _validate_repaired_llm_panel_output(
     if warning_messages and grounding["evidence_grounding_status"] == "pass":
         grounding["evidence_grounding_status"] = "warning"
 
+    management_chain_repair_notes = _repair_management_synthesis_chain_inflation(
+        company_memory_context=company_memory_context,
+        assessment=normalized_assessment,
+        key_findings=key_findings,
+        red_flags=red_flags,
+        open_uncertainties=open_uncertainties,
+        user_facing_brief=user_facing_brief,
+    )
+    if management_chain_repair_notes:
+        schema_warnings.extend(management_chain_repair_notes)
+        if grounding["evidence_grounding_status"] == "pass":
+            grounding["evidence_grounding_status"] = "warning"
+
+    _raise_if_management_synthesis_chain_contradicted(
+        company_memory_context=company_memory_context,
+        assessment=normalized_assessment,
+        key_findings=key_findings,
+        red_flags=red_flags,
+        open_uncertainties=open_uncertainties,
+        user_facing_brief=user_facing_brief,
+    )
+
     payload = {
         "doctrine_id": doctrine["doctrine_id"],
         "company": company,
@@ -6658,6 +7195,7 @@ def _validate_llm_panel_output(
     pcim: Dict[str, Any],
     consumed_sections: List[str],
     allowed_evidence_ids: List[str],
+    company_memory_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     try:
         parsed = json.loads(payload_text)
@@ -6683,6 +7221,7 @@ def _validate_llm_panel_output(
         pcim=pcim,
         consumed_sections=consumed_sections,
         allowed_evidence_ids=allowed_evidence_ids,
+        company_memory_context=company_memory_context,
     )
 
 
@@ -7027,6 +7566,7 @@ class InvestorPanelRunner:
             pcim=pcim,
             consumed_sections=consumed_sections,
             allowed_evidence_ids=allowed_evidence_ids,
+            company_memory_context=llm_input_pack.get("company_memory_context_for_prompt"),
         )
         if doctrine["doctrine_id"] == "munger" and _has_governance_routing_failure(payload):
             repair_instruction = (
@@ -7056,6 +7596,7 @@ class InvestorPanelRunner:
                 pcim=pcim,
                 consumed_sections=consumed_sections,
                 allowed_evidence_ids=allowed_evidence_ids,
+                company_memory_context=llm_input_pack.get("company_memory_context_for_prompt"),
             )
             if _has_governance_routing_failure(payload):
                 raise ValueError(

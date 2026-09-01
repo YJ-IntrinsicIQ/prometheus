@@ -28,6 +28,23 @@ def test_pat_mapping():
     assert matches[0].canonical_field == "pat"
 
 
+def test_pat_mapping_prefers_profit_attributable_to_owners():
+    matches = map_line_item(table_type="profit_and_loss", line_item_raw="Profit for the year attributable to owners of the Company")
+    assert matches
+    assert matches[0].canonical_field == "pat"
+
+
+def test_pre_nci_profit_rows_do_not_map_to_pat():
+    labels = [
+        "Profit for the year before non-controlling interests",
+        "Profit for the year before share of profit/(loss) of associates and joint venture",
+    ]
+
+    for label in labels:
+        matches = map_line_item(table_type="profit_and_loss", line_item_raw=label)
+        assert "pat" not in {match.canonical_field for match in matches}
+
+
 def test_pat_mapping_handles_profit_loss_label_variants():
     matches = map_line_item(table_type="profit_and_loss", line_item_raw="VII. Profit(Loss)for the period")
     assert "pat" in {match.canonical_field for match in matches}
@@ -94,6 +111,8 @@ def test_real_ujjivan_fy23_asset_lookalikes_do_not_map_to_total_assets():
         "Segment Assets",
         "vi) Total Risk weighted assets ( RWA )",
         "Average Total Assets",
+        "Form AOC-1 Subsidiary Total Assets",
+        "Total Assets of subsidiaries",
     ]
 
     for phrase in phrases:
@@ -112,6 +131,11 @@ def test_balance_sheet_header_row_does_not_override_equity_line():
     assert "total_liabilities" not in fields
 
 
+def test_liabilities_prefixed_trade_payable_row_does_not_map_to_group_payables():
+    matches = map_line_item(table_type="balance_sheet", line_item_raw="Liabilities Trade payable")
+    assert "payables" not in {match.canonical_field for match in matches}
+
+
 def test_net_worth_rejects_off_balance_sheet_equity_tranche():
     matches = map_line_item(
         table_type="balance_sheet",
@@ -128,7 +152,9 @@ def test_net_worth_still_maps_for_real_equity_language():
     assert "net_worth" in {match.canonical_field for match in matches}
 
 
-def test_total_equity_and_liabilities_does_not_map_to_net_worth():
+def test_total_equity_and_liabilities_maps_to_total_assets():
+    # "Total Equity and Liabilities" is an accounting identity = Total Assets
+    # It should map to total_assets, NOT net_worth
     matches = map_line_item(
         table_type="balance_sheet",
         line_item_raw="Total Equity and Liabilities",
@@ -136,7 +162,7 @@ def test_total_equity_and_liabilities_does_not_map_to_net_worth():
     fields = {match.canonical_field for match in matches}
 
     assert "net_worth" not in fields
-    assert "total_assets" not in fields
+    assert "total_assets" in fields
 
 
 def test_bank_reserve_equivalents_map_to_balance_sheet_reserves():
@@ -160,6 +186,22 @@ def test_subtotals_do_not_map_to_full_balance_sheet_totals():
     liability_matches = map_line_item(table_type="balance_sheet", line_item_raw="Total non current liabilities")
     assert "total_assets" not in {match.canonical_field for match in asset_matches}
     assert "total_liabilities" not in {match.canonical_field for match in liability_matches}
+
+
+def test_capex_maps_when_prefixed_by_investing_activity_section_header():
+    matches = map_line_item(
+        table_type="cash_flow",
+        line_item_raw=(
+            "B. Cash flow from investing activities Payments for purchase of property, "
+            "plant and equipment"
+        ),
+    )
+    assert "capex" in {match.canonical_field for match in matches}
+    aggregate_matches = map_line_item(
+        table_type="cash_flow",
+        line_item_raw="Net cash flow from / (used in) investing activities (B)",
+    )
+    assert "capex" not in {match.canonical_field for match in aggregate_matches}
 
 
 def test_authorised_equity_shares_do_not_map_to_shares_outstanding():

@@ -7,6 +7,12 @@ from intelligence.investor_panel.briefs import LENS_CONFIG
 from intelligence.investor_panel.doctrine_registry import InvestorDoctrineRegistry
 from intelligence.investor_panel.runner import (
     _build_compact_prompt,
+    _canonical_required_financial_warning_groups,
+    _collect_section_evidence_ids,
+    _derive_financial_context,
+    _doctrine_differentiation_block,
+    _financial_warning_is_blocked,
+    _selected_pcim_view,
     _validate_llm_panel_output,
 )
 
@@ -362,6 +368,65 @@ def test_analyst_prompt_includes_expected_financial_sections(tmp_path, analyst, 
     for section in expected_sections:
         assert section in prompt
     assert '"source_chunk"' not in prompt
+
+
+@pytest.mark.parametrize(
+    ("analyst", "expected_terms"),
+    [
+        ("graham", ["downside protection", "margin of safety", "balance-sheet resilience"]),
+        ("buffett", ["owner earnings", "capital allocation", "durable economics"]),
+        ("fisher", ["growth runway", "product", "customer"]),
+        ("munger", ["incentives", "failure modes", "complexity"]),
+        ("lynch", ["simple", "business story", "expectations"]),
+    ],
+)
+def test_analyst_prompt_contains_doctrine_differentiation_guidance(tmp_path, analyst, expected_terms):
+    pcim_path = _write_pcim(tmp_path, "finpanel")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get(analyst)
+
+    prompt, _compact_pcim, _stats, _limits_used, _input_compacted, _budget_report = _build_compact_prompt(
+        doctrine=doctrine,
+        company="finpanel",
+        pcim_path=pcim_path,
+        pcim=pcim,
+        sections=list(doctrine["evidence_required_from_pcim"]),
+    )
+
+    lowered = prompt.lower()
+    assert "doctrine differentiation" in lowered
+    assert "shared facts are allowed" in lowered
+    assert "do not force disagreement" in lowered
+    assert "doctrine_differentiation" in lowered
+    for term in expected_terms:
+        assert term in lowered
+    assert "do not upgrade a management claim into execution" in lowered
+    assert "section names and json filenames are never valid evidence ids" in lowered
+
+
+def test_shared_capex_fact_has_distinct_doctrine_interpretations():
+    interpretations = {
+        analyst: _doctrine_differentiation_block(analyst)["shared_fact_interpretation"]["capex"]
+        for analyst in ["graham", "buffett", "fisher", "munger", "lynch"]
+    }
+
+    assert "balance-sheet protection" in interpretations["graham"]
+    assert "retained capital" in interpretations["buffett"]
+    assert "growth runway" in interpretations["fisher"]
+    assert "complexity" in interpretations["munger"]
+    assert "growth story" in interpretations["lynch"]
+    assert len(set(interpretations.values())) == 5
+
+
+def test_doctrine_differentiation_guidance_is_generic_not_company_hardcoded():
+    text = json.dumps(
+        [_doctrine_differentiation_block(analyst) for analyst in ["graham", "buffett", "fisher", "munger", "lynch"]],
+        ensure_ascii=False,
+    ).lower()
+
+    assert "sun_pharma" not in text
+    assert "sun pharma" not in text
+    assert "ujjivan" not in text
 
 
 def test_unknown_financial_metric_is_omitted_to_diagnostics(tmp_path):
@@ -1345,4 +1410,449 @@ def test_blocked_false_warning_is_rejected_when_truth_pack_has_metric(tmp_path):
             pcim=pcim,
             consumed_sections=consumed_sections,
             allowed_evidence_ids=["ev_fin_1", "ev_fd_1"],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — stale "capex missing" in PCIM causes false blocked warning
+# Bug: _build_compact_prompt computed required_warning_groups from the compact
+# PCIM. Compaction can drop the canonical "capex" metric ID while retaining
+# only derived IDs (e.g. "total_identified_capex"), making capex appear absent.
+# This triggered capex_missing in required_warning_groups → LLM instructed to
+# carry forward "capex missing" → validator blocked it (capex IS present in full
+# PCIM) → ValueError: analyst output contains blocked financial warnings: capex missing.
+# Fix: compute required_warning_groups from full PCIM before compaction.
+# ---------------------------------------------------------------------------
+
+def _pcim_with_capex_and_stale_warning(company: str = "syntheticco") -> dict:
+    """PCIM where capex IS in the metric registry but has a stale per-year 'capex
+    missing' warning (simulating a single bad year, e.g. FY21, inside a multi-year
+    dataset where FY22-FY25 have capex data)."""
+    return {
+        "contract_version": "1.0",
+        "company": company,
+        "financial_fundamentals_inputs": {
+            "by_year": [
+                {
+                    "year": "fy25",
+                    "key_metrics": [
+                        {"field": "revenue", "value_crore": 200.0, "source_year": "fy25",
+                         "source_artifact": "normalized_fundamentals.json", "evidence_ids": ["ev_fin_1"]},
+                    ],
+                }
+            ],
+            "warnings": [],
+        },
+        "cash_conversion_inputs": {
+            "status": "pass",
+            "summary": "Cash conversion healthy.",
+            "signals": [],
+            "warnings": [],
+            "metrics": [
+                {"metric": "capex", "series": [
+                    {"year": "fy25", "value": -50.0, "source_artifact": "financial_trends.json",
+                     "evidence_ids": ["ev_fin_1"]}
+                ]},
+                {"metric": "cfo", "series": [
+                    {"year": "fy25", "value": 120.0, "source_artifact": "financial_trends.json",
+                     "evidence_ids": ["ev_fin_1"]}
+                ]},
+                {"metric": "fcf", "series": [
+                    {"year": "fy25", "value": 70.0, "source_artifact": "financial_trends.json",
+                     "evidence_ids": ["ev_fin_1"]}
+                ]},
+            ],
+        },
+        "financial_quality_inputs": {
+            "by_year": [
+                {
+                    "year": "fy21",
+                    "status": "warning",
+                    "basis_used": "consolidated",
+                    "warnings": ["capex missing"],  # stale single-year warning
+                    "limitations": [],
+                    "missing_data": [],
+                    "red_flags": [],
+                    "investor_questions": [],
+                    "sections": {},
+                },
+                {
+                    "year": "fy25",
+                    "status": "pass",
+                    "basis_used": "consolidated",
+                    "warnings": [],
+                    "limitations": [],
+                    "missing_data": [],
+                    "red_flags": [],
+                    "investor_questions": [],
+                    "sections": {},
+                },
+            ],
+            "warnings": [],
+        },
+        "evidence_map": {
+            "financial_fundamentals_inputs": ["ev_fin_1"],
+            "cash_conversion_inputs": ["ev_fin_1"],
+        },
+    }
+
+
+def _pcim_without_capex(company: str = "syntheticco") -> dict:
+    """PCIM where capex is genuinely absent (no capex in any metric list)."""
+    pcim = _pcim_with_capex_and_stale_warning(company)
+    pcim["cash_conversion_inputs"]["metrics"] = [
+        m for m in pcim["cash_conversion_inputs"]["metrics"]
+        if m["metric"] not in ("capex", "fcf")
+    ]
+    pcim["cash_conversion_inputs"]["warnings"] = ["capex missing"]
+    return pcim
+
+
+def _buffett_sections() -> list:
+    return list(
+        InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines"))
+        .get("buffett")["evidence_required_from_pcim"]
+    )
+
+
+def test_full_pcim_capex_present_excludes_capex_missing_from_required_groups():
+    """Stale per-year 'capex missing' in PCIM warnings must not trigger the
+    capex_missing required group when canonical capex is present in the metric
+    registry for the full PCIM view."""
+    pcim = _pcim_with_capex_and_stale_warning("alphaco")
+    sections = _buffett_sections()
+    full_view = _selected_pcim_view(pcim, sections)
+    full_context = _derive_financial_context(full_view, sections, [])
+    required = _canonical_required_financial_warning_groups(full_context)
+    required_ids = {g["warning_id"] for g in required}
+    assert "capex_missing" not in required_ids, (
+        f"capex_missing must not appear in required groups when capex is "
+        f"canonically available; got: {required_ids}"
+    )
+
+
+def test_full_pcim_capex_absent_includes_capex_missing_in_required_groups():
+    """When capex is genuinely absent from the full PCIM, capex_missing must
+    appear in required_warning_groups so the analyst carries the warning forward."""
+    pcim = _pcim_without_capex("betaco")
+    sections = _buffett_sections()
+    full_view = _selected_pcim_view(pcim, sections)
+    full_context = _derive_financial_context(full_view, sections, [])
+    required = _canonical_required_financial_warning_groups(full_context)
+    required_ids = {g["warning_id"] for g in required}
+    assert "capex_missing" in required_ids, (
+        f"capex_missing must appear in required groups when capex is "
+        f"genuinely absent; got: {required_ids}"
+    )
+
+
+def test_stale_capex_missing_pcim_warning_does_not_block_clean_analyst_output(tmp_path):
+    """Ujjivan-shaped scenario: PCIM has capex (metric present) but also a stale
+    single-year 'capex missing' warning. A clean analyst output that does not
+    repeat 'capex missing' must validate without error."""
+    pcim_path = _write_pcim(tmp_path, "gammaco")
+    # Inject stale per-year 'capex missing' warning (simulates FY21-style gap)
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    pcim["financial_quality_inputs"]["by_year"][0]["warnings"].append("capex missing")
+    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    consumed_sections = list(doctrine["evidence_required_from_pcim"])
+    allowed_ids = _collect_section_evidence_ids(pcim, consumed_sections)
+
+    payload = _valid_buffett_payload(
+        consumed_sections,
+        missing_data=[],
+        interpretation_limits=["Maintenance versus growth capex split is not disclosed."],
+        carried_warnings=[],
+    )
+
+    parsed = _validate_llm_panel_output(
+        payload,
+        doctrine=doctrine,
+        company="gammaco",
+        pcim_path=pcim_path,
+        pcim_version="1.0",
+        pcim=pcim,
+        consumed_sections=consumed_sections,
+        allowed_evidence_ids=allowed_ids,
+    )
+    # Capex IS available → no "capex missing" should survive into the output
+    all_financial_text = (
+        parsed.get("financial_warnings_carried_forward") or []
+        + (parsed.get("financial_assessment") or {}).get("missing_financial_data") or []
+    )
+    assert not any("capex missing" == item.strip().lower() for item in all_financial_text), (
+        "Stale 'capex missing' must not survive into validated output when capex is available"
+    )
+
+
+def test_validator_blocks_capex_missing_emitted_by_llm_when_capex_is_present(tmp_path):
+    """If an analyst LLM independently emits 'capex missing' in its output when
+    canonical capex IS present, the validator must still raise — we did not
+    weaken the blocked-warning check."""
+    pcim_path = _write_pcim(tmp_path, "deltaco")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    pcim["financial_quality_inputs"]["by_year"][0]["warnings"].append("capex missing")
+    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    consumed_sections = list(doctrine["evidence_required_from_pcim"])
+    allowed_ids = _collect_section_evidence_ids(pcim, consumed_sections)
+
+    # LLM incorrectly emits "capex missing" even though capex is in metric registry
+    payload = _valid_buffett_payload(
+        consumed_sections,
+        missing_data=["capex missing"],
+        interpretation_limits=["No new ratios were calculated."],
+        carried_warnings=[],
+    )
+
+    with pytest.raises(ValueError, match="blocked financial warnings"):
+        _validate_llm_panel_output(
+            payload,
+            doctrine=doctrine,
+            company="deltaco",
+            pcim_path=pcim_path,
+            pcim_version="1.0",
+            pcim=pcim,
+            consumed_sections=consumed_sections,
+            allowed_evidence_ids=allowed_ids,
+        )
+
+
+def test_unrelated_valid_financial_warning_preserved_when_capex_is_blocked(tmp_path):
+    """Unrelated valid financial warnings (not in the blocked set) must pass through
+    the validator unchanged when 'capex missing' is in blocked_financial_warnings."""
+    pcim_path = _write_pcim(tmp_path, "epsilonco")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    pcim["financial_quality_inputs"]["by_year"][0]["warnings"].append("capex missing")
+    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    consumed_sections = list(doctrine["evidence_required_from_pcim"])
+    allowed_ids = _collect_section_evidence_ids(pcim, consumed_sections)
+
+    unrelated = "Basis comparison limited due to corporate-action year."
+    payload = _valid_buffett_payload(
+        consumed_sections,
+        missing_data=[],
+        interpretation_limits=[unrelated],
+        carried_warnings=[],
+    )
+
+    parsed = _validate_llm_panel_output(
+        payload,
+        doctrine=doctrine,
+        company="epsilonco",
+        pcim_path=pcim_path,
+        pcim_version="1.0",
+        pcim=pcim,
+        consumed_sections=consumed_sections,
+        allowed_evidence_ids=allowed_ids,
+    )
+    all_limits = (
+        (parsed.get("financial_interpretation_limits") or [])
+        + (parsed.get("financial_assessment") or {}).get("financial_interpretation_limits", [])
+    )
+    assert any(unrelated in item for item in all_limits), (
+        "Unrelated valid financial warning must survive validation unchanged"
+    )
+
+
+def test_generic_share_count_missing_is_blocked_when_weighted_average_shares_exist():
+    registry = [
+        {
+            "metric_id": "weighted_avg_shares:fy25",
+            "canonical_metric": "weighted_avg_shares",
+            "value": 123.4,
+            "aliases": ["weighted average shares", "weighted_avg_shares"],
+        }
+    ]
+
+    assert _financial_warning_is_blocked("share count missing", registry) is True
+
+
+def test_generic_share_count_missing_is_not_blocked_by_placeholder_share_metrics():
+    registry = [
+        {
+            "metric_id": "shares_outstanding:fy25",
+            "canonical_metric": "shares_outstanding",
+            "value": None,
+            "aliases": ["shares outstanding", "share_count"],
+        },
+        {
+            "metric_id": "weighted_avg_shares:fy25",
+            "canonical_metric": "weighted_avg_shares",
+            "value": None,
+            "aliases": ["weighted average shares", "weighted_avg_shares"],
+        },
+    ]
+
+    assert _financial_warning_is_blocked("share count missing", registry) is False
+
+
+def test_share_context_uses_precise_warning_when_closing_shares_missing(tmp_path):
+    pcim_path = _write_pcim(tmp_path, "shareco")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    per_share_metrics = pcim["per_share_inputs"]["metrics"]
+    pcim["per_share_inputs"]["metrics"] = [
+        metric for metric in per_share_metrics if metric["metric"] != "shares_outstanding"
+    ]
+    pcim["financial_truth_inputs"]["usable_current_metrics"] = [
+        metric
+        for metric in pcim["financial_truth_inputs"]["usable_current_metrics"]
+        if metric["metric_id"] != "shares_outstanding"
+    ]
+    pcim["per_share_inputs"]["warnings"] = ["share count missing"]
+
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    sections = list(doctrine["evidence_required_from_pcim"])
+    full_view = _selected_pcim_view(pcim, sections)
+    context = _derive_financial_context(full_view, sections, [])
+
+    assert "share count missing" not in context["missing_data"]
+    assert any("closing shares are missing" in item.lower() for item in context["interpretation_limits"])
+
+
+def test_stale_generic_share_count_warning_does_not_block_clean_analyst_output(tmp_path):
+    pcim_path = _write_pcim(tmp_path, "shareclean")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    pcim["financial_quality_inputs"]["by_year"][0]["warnings"].append("share count missing")
+    pcim["financial_quality_inputs"]["warnings"].append("share count missing")
+    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    consumed_sections = list(doctrine["evidence_required_from_pcim"])
+    allowed_ids = _collect_section_evidence_ids(pcim, consumed_sections)
+
+    payload = _valid_buffett_payload(
+        consumed_sections,
+        missing_data=["weighted average shares missing", "diluted shares missing"],
+        interpretation_limits=[
+            "Per-share analysis is limited because weighted average share count is missing.",
+            "Per-share analysis is limited because diluted share count is missing.",
+        ],
+        carried_warnings=[],
+        financial_metrics_used=["roe", "roce", "cfo", "capex", "fcf", "eps_basic", "book_value_per_share", "shares_outstanding"],
+    )
+
+    parsed = _validate_llm_panel_output(
+        payload,
+        doctrine=doctrine,
+        company="shareclean",
+        pcim_path=pcim_path,
+        pcim_version="1.0",
+        pcim=pcim,
+        consumed_sections=consumed_sections,
+        allowed_evidence_ids=allowed_ids,
+    )
+
+    all_financial_text = (
+        (parsed.get("financial_missing_data") or [])
+        + (parsed.get("financial_interpretation_limits") or [])
+        + (parsed.get("financial_warnings_carried_forward") or [])
+        + (parsed.get("financial_assessment") or {}).get("missing_financial_data", [])
+        + (parsed.get("financial_assessment") or {}).get("financial_interpretation_limits", [])
+        + (parsed.get("financial_assessment") or {}).get("financial_warnings_carried_forward", [])
+    )
+    assert not any(item.strip().lower() == "share count missing" for item in all_financial_text)
+
+
+def test_genuinely_missing_all_share_counts_preserves_generic_warning(tmp_path):
+    pcim_path = _write_pcim(tmp_path, "sharemissing")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    pcim["per_share_inputs"]["metrics"] = [
+        metric
+        for metric in pcim["per_share_inputs"]["metrics"]
+        if metric["metric"] not in {"shares_outstanding", "weighted_avg_shares", "diluted_shares"}
+    ]
+    pcim["financial_truth_inputs"]["usable_current_metrics"] = [
+        metric
+        for metric in pcim["financial_truth_inputs"]["usable_current_metrics"]
+        if metric["metric_id"] != "shares_outstanding"
+    ]
+    pcim["per_share_compounding_inputs"]["analysis"] = [
+        item
+        for item in pcim["per_share_compounding_inputs"]["analysis"]
+        if item.get("metric_id") not in {"revenue_per_share", "fcf_per_share", "owner_earnings_per_share", "cfo_per_share"}
+    ]
+    pcim["per_share_inputs"]["warnings"] = ["share count missing"]
+
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    consumed_sections = list(doctrine["evidence_required_from_pcim"])
+    allowed_ids = _collect_section_evidence_ids(pcim, consumed_sections)
+
+    payload = _valid_buffett_payload(
+        consumed_sections,
+        missing_data=["share count missing"],
+        interpretation_limits=["Per-share analysis remains limited."],
+        carried_warnings=[],
+        financial_metrics_used=["roe", "roce", "cfo", "capex", "fcf", "eps_basic"],
+    )
+
+    parsed = _validate_llm_panel_output(
+        payload,
+        doctrine=doctrine,
+        company="sharemissing",
+        pcim_path=pcim_path,
+        pcim_version="1.0",
+        pcim=pcim,
+        consumed_sections=consumed_sections,
+        allowed_evidence_ids=allowed_ids,
+    )
+    assert any(item.strip().lower() == "share count missing" for item in parsed["financial_missing_data"])
+
+
+def test_validator_still_blocks_unresolved_generic_share_count_warning_when_share_fact_exists(tmp_path):
+    pcim_path = _write_pcim(tmp_path, "shareblock")
+    pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    pcim["financial_quality_inputs"]["by_year"][0]["warnings"].append("share count missing")
+    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+
+    doctrine = InvestorDoctrineRegistry(Path("intelligence/investor_panel/doctrines")).get("buffett")
+    consumed_sections = list(doctrine["evidence_required_from_pcim"])
+    allowed_ids = _collect_section_evidence_ids(pcim, consumed_sections)
+
+    payload = _valid_buffett_payload(
+        consumed_sections,
+        missing_data=["share count missing"],
+        interpretation_limits=["No new ratios were calculated."],
+        carried_warnings=[],
+        financial_metrics_used=["roe", "roce", "cfo", "capex", "fcf", "eps_basic", "shares_outstanding", "weighted_avg_shares"],
+    )
+
+    with pytest.raises(ValueError, match="blocked financial warnings"):
+        _validate_llm_panel_output(
+            payload,
+            doctrine=doctrine,
+            company="shareblock",
+            pcim_path=pcim_path,
+            pcim_version="1.0",
+            pcim=pcim,
+            consumed_sections=consumed_sections,
+            allowed_evidence_ids=allowed_ids,
+        )
+
+
+def test_no_company_year_hardcoding_in_capex_required_group():
+    """The capex_missing required-group logic must not be tied to any specific
+    company name or year. Any synthetic PCIM with canonical capex must exclude
+    capex_missing from required groups; any without capex must include it."""
+    sections = _buffett_sections()
+    for company in ("alphaco", "betaco", "gammaco", "widgetco", "financeco"):
+        pcim_with = _pcim_with_capex_and_stale_warning(company)
+        view_with = _selected_pcim_view(pcim_with, sections)
+        context_with = _derive_financial_context(view_with, sections, [])
+        groups_with = {g["warning_id"] for g in _canonical_required_financial_warning_groups(context_with)}
+        assert "capex_missing" not in groups_with, (
+            f"Company {company!r}: capex present → capex_missing must not be required, got {groups_with}"
+        )
+
+        pcim_without = _pcim_without_capex(company)
+        view_without = _selected_pcim_view(pcim_without, sections)
+        context_without = _derive_financial_context(view_without, sections, [])
+        groups_without = {g["warning_id"] for g in _canonical_required_financial_warning_groups(context_without)}
+        assert "capex_missing" in groups_without, (
+            f"Company {company!r}: capex absent → capex_missing must be required, got {groups_without}"
         )

@@ -437,6 +437,126 @@ def test_payable_days_and_cash_conversion_cycle_calculate(tmp_path):
     assert report.ratios["cash_conversion_cycle"].value == 87.6
 
 
+def test_payable_days_uses_closing_balance_with_precision_warning_when_opening_missing(tmp_path):
+    normalized_path = tmp_path / "normalized_fundamentals.json"
+    reconciliation_path = tmp_path / "financial_reconciliation_report.json"
+    payload = _normalized_payload()
+    payload["balance_sheet"]["payables"]["comparatives"] = []
+    _write_json(normalized_path, payload)
+    _write_json(reconciliation_path, _reconciliation_payload())
+
+    report = calculate_financial_ratios(
+        company="acme", year="fy25", normalized_path=normalized_path, reconciliation_path=reconciliation_path
+    )
+
+    assert report.ratios["payable_days"].value == 54.75
+    assert "used closing value because prior-year average was unavailable" in report.ratios["payable_days"].warnings
+
+
+def test_payable_days_rejects_incompatible_total_expenses_denominator(tmp_path):
+    normalized_path = tmp_path / "normalized_fundamentals.json"
+    reconciliation_path = tmp_path / "financial_reconciliation_report.json"
+    payload = _normalized_payload()
+    payload["profit_and_loss"]["cost_of_materials"]["source_line_item"] = "Total expenses"
+    _write_json(normalized_path, payload)
+    _write_json(reconciliation_path, _reconciliation_payload())
+
+    report = calculate_financial_ratios(
+        company="acme", year="fy25", normalized_path=normalized_path, reconciliation_path=reconciliation_path
+    )
+
+    assert report.ratios["payable_days"].value is None
+    assert any("not a compatible purchases or COGS base" in warning for warning in report.ratios["payable_days"].warnings)
+
+
+def test_payable_days_rejects_wrong_basis_denominator(tmp_path):
+    normalized_path = tmp_path / "normalized_fundamentals.json"
+    reconciliation_path = tmp_path / "financial_reconciliation_report.json"
+    payload = _normalized_payload()
+    payload["profit_and_loss"]["cost_of_materials"]["basis"] = "standalone"
+    _write_json(normalized_path, payload)
+    _write_json(reconciliation_path, _reconciliation_payload())
+
+    report = calculate_financial_ratios(
+        company="acme", year="fy25", normalized_path=normalized_path, reconciliation_path=reconciliation_path
+    )
+
+    assert report.ratios["payable_days"].value is None
+    assert "payable_days unavailable: numerator and denominator basis mismatch" in report.ratios["payable_days"].warnings
+
+
+def test_payable_days_rejects_wrong_period_denominator(tmp_path):
+    normalized_path = tmp_path / "normalized_fundamentals.json"
+    reconciliation_path = tmp_path / "financial_reconciliation_report.json"
+    payload = _normalized_payload()
+    payload["profit_and_loss"]["cost_of_materials"]["period"] = "March 31, 2024"
+    _write_json(normalized_path, payload)
+    _write_json(reconciliation_path, _reconciliation_payload())
+
+    report = calculate_financial_ratios(
+        company="acme", year="fy25", normalized_path=normalized_path, reconciliation_path=reconciliation_path
+    )
+
+    assert report.ratios["payable_days"].value is None
+    assert "payable_days unavailable: denominator period does not match fiscal year" in report.ratios["payable_days"].warnings
+
+
+def test_payable_days_rejects_unit_mismatch(tmp_path):
+    normalized_path = tmp_path / "normalized_fundamentals.json"
+    reconciliation_path = tmp_path / "financial_reconciliation_report.json"
+    payload = _normalized_payload()
+    payload["profit_and_loss"]["cost_of_materials"]["unit_original"] = "shares"
+    _write_json(normalized_path, payload)
+    _write_json(reconciliation_path, _reconciliation_payload())
+
+    report = calculate_financial_ratios(
+        company="acme", year="fy25", normalized_path=normalized_path, reconciliation_path=reconciliation_path
+    )
+
+    assert report.ratios["payable_days"].value is None
+    assert any("units are not compatible" in warning for warning in report.ratios["payable_days"].warnings)
+
+
+def test_payable_days_rejects_stores_spares_denominator_and_absurd_days(tmp_path):
+    normalized_path = tmp_path / "normalized_fundamentals.json"
+    reconciliation_path = tmp_path / "financial_reconciliation_report.json"
+    payload = _normalized_payload()
+    payload["balance_sheet"]["payables"]["value_crore"] = 3973.66
+    payload["balance_sheet"]["payables"]["value_original"] = "3973.66"
+    payload["profit_and_loss"]["cost_of_materials"]["value_crore"] = 284.89
+    payload["profit_and_loss"]["cost_of_materials"]["value_original"] = "284.89"
+    payload["profit_and_loss"]["cost_of_materials"]["source_line_item"] = "Consumption of materials, stores and spare parts"
+    _write_json(normalized_path, payload)
+    _write_json(reconciliation_path, _reconciliation_payload())
+
+    report = calculate_financial_ratios(
+        company="acme", year="fy25", normalized_path=normalized_path, reconciliation_path=reconciliation_path
+    )
+
+    assert report.ratios["payable_days"].value is None
+    assert any("stores/spares consumption" in warning for warning in report.ratios["payable_days"].warnings)
+
+
+def test_payable_days_rejects_tiny_denominator_that_would_create_absurd_days(tmp_path):
+    normalized_path = tmp_path / "normalized_fundamentals.json"
+    reconciliation_path = tmp_path / "financial_reconciliation_report.json"
+    payload = _normalized_payload()
+    payload["balance_sheet"]["payables"]["value_crore"] = 4000.0
+    payload["balance_sheet"]["payables"]["value_original"] = "4000.00"
+    payload["profit_and_loss"]["cost_of_materials"]["value_crore"] = 300.0
+    payload["profit_and_loss"]["cost_of_materials"]["value_original"] = "300.00"
+    payload["profit_and_loss"]["cost_of_materials"]["source_line_item"] = "Cost of materials consumed"
+    _write_json(normalized_path, payload)
+    _write_json(reconciliation_path, _reconciliation_payload())
+
+    report = calculate_financial_ratios(
+        company="acme", year="fy25", normalized_path=normalized_path, reconciliation_path=reconciliation_path
+    )
+
+    assert report.ratios["payable_days"].value is None
+    assert any("implausible working-capital days" in warning for warning in report.ratios["payable_days"].warnings)
+
+
 def test_ratios_blocked_when_reconciliation_has_hard_failures(tmp_path):
     normalized_path = tmp_path / "normalized_fundamentals.json"
     reconciliation_path = tmp_path / "financial_reconciliation_report.json"
@@ -480,5 +600,7 @@ def test_no_company_specific_behavior():
     text = Path("knowledge/financials/ratio_calculator.py").read_text(encoding="utf-8").lower()
     assert "datapatterns" not in text
     assert "polymatech" not in text
+    assert "sun_pharma" not in text
     assert "tanla" not in text
     assert "tips" not in text
+    assert "ujjivan" not in text

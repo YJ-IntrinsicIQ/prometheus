@@ -291,6 +291,26 @@ def test_loader_lists_found_and_missing_sources(tmp_path, monkeypatch):
     assert "company_memory/financials/financial_truth_pack.json" in bundle["source_files_missing"]
 
 
+def test_loader_resolves_sun_pharma_filesystem_slug():
+    bundle = load_company_memory_sources("sun_pharma")
+
+    assert bundle["company_slug"] == "sun_pharma"
+    assert bundle["sources"]["cim"]["status"] == "loaded"
+    assert bundle["sources"]["pcim"]["status"] == "loaded"
+    assert bundle["sources"]["committee_synthesis"]["status"] == "loaded"
+    assert len(bundle["source_files_found"]) >= 30
+
+
+def test_loader_canonicalizes_hyphenated_company_slug_to_filesystem_form():
+    hyphenated = load_company_memory_sources("sun-pharma")
+    canonical = load_company_memory_sources("sun_pharma")
+
+    assert hyphenated["company_slug"] == "sun_pharma"
+    assert hyphenated["source_files_found"] == canonical["source_files_found"]
+    assert hyphenated["sources"]["cim"]["status"] == "loaded"
+    assert hyphenated["sources"]["pcim"]["status"] == "loaded"
+
+
 def test_loader_rejects_company_mismatched_sources(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_json(
@@ -1897,3 +1917,194 @@ def test_company_research_view_rejects_stale_source_freshness():
     assert errors
     assert any("stale upstream inputs" in error for error in errors)
     assert any("stale sources" in error for error in errors)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Regression tests: Ask Prometheus surface quality (D1–D5 defect classes)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _load_artifact(slug, filename):
+    path = Path(f"companies/{slug}/company_memory/ask_intrinsiciq/{filename}")
+    if not path.exists():
+        pytest.skip(f"{path} not found — run pipeline first")
+    return json.loads(path.read_text())
+
+
+def _all_text(artifact):
+    return json.dumps(artifact).lower()
+
+
+# T1 — supported answer must never have empty detailed_explanation
+def test_supported_answers_always_have_nonempty_explanation():
+    for slug in ("sun_pharma", "ujjivan"):
+        cards = _load_artifact(slug, "answer_cards.json")
+        for a in cards.get("answers", []):
+            if a.get("answer_status") == "supported":
+                expl = str(a.get("detailed_explanation") or "").strip()
+                assert expl, (
+                    f"{slug}/{a['id']}: answer_status='supported' but detailed_explanation is empty"
+                )
+
+
+# T2 — wrong-sector customer types must not appear in any answer field
+def test_no_electronics_sector_contamination_in_answers():
+    contamination = [
+        "electronics or semiconductor",
+        "industrial/electronics",
+        "engineered systems or components",
+        "design, build, test, and delivery",
+    ]
+    for slug in ("sun_pharma", "ujjivan"):
+        cards = _load_artifact(slug, "answer_cards.json")
+        text = _all_text(cards)
+        for term in contamination:
+            assert term not in text, (
+                f"{slug}: contamination term '{term}' found in answer_cards.json"
+            )
+
+
+# T3 — pharma company model: no electronics customer types after fix
+def test_sun_pharma_company_model_has_no_electronics_customers():
+    model_path = Path("companies/sun_pharma/company_memory/company_model/company_model.json")
+    if not model_path.exists():
+        pytest.skip("sun_pharma company_model not found")
+    model = json.loads(model_path.read_text())
+    cm = model.get("current_business_model", {})
+    who_pays = " ".join(cm.get("who_pays") or []).lower()
+    who_uses = " ".join(cm.get("who_uses") or []).lower()
+    for bad in ("electronics", "semiconductor", "industrial/electronics"):
+        assert bad not in who_pays, f"sun_pharma.who_pays contains '{bad}'"
+        assert bad not in who_uses, f"sun_pharma.who_uses contains '{bad}'"
+
+
+# T4 — business answers must use Company Model content, not generic boilerplate
+def test_what_does_company_do_uses_company_model_content():
+    checks = {
+        "sun_pharma": "pharmaceutical",
+        "ujjivan": "lending",
+    }
+    for slug, expected_keyword in checks.items():
+        cards = _load_artifact(slug, "answer_cards.json")
+        a = next((x for x in cards["answers"] if x["id"] == "answer-what-does-company-do"), None)
+        assert a is not None, f"{slug}: answer-what-does-company-do not found"
+        expl = str(a.get("detailed_explanation") or "").lower()
+        assert expected_keyword in expl, (
+            f"{slug}: answer-what-does-company-do does not mention '{expected_keyword}' — "
+            f"Company Model content not consumed. Got: {expl[:200]}"
+        )
+
+
+# T5 — customer answers must reference company-specific customer types
+def test_who_are_customers_references_company_specific_types():
+    checks = {
+        "sun_pharma": "healthcare",
+        "ujjivan": "borrower",
+    }
+    for slug, expected_keyword in checks.items():
+        cards = _load_artifact(slug, "answer_cards.json")
+        a = next((x for x in cards["answers"] if x["id"] == "answer-who-are-the-customers"), None)
+        assert a is not None
+        text = (str(a.get("detailed_explanation") or "") + " " + json.dumps(a.get("payers") or [])).lower()
+        assert expected_keyword in text, (
+            f"{slug}: who-are-customers does not reference '{expected_keyword}'. Got: {text[:300]}"
+        )
+
+
+# T6 — how-does-it-make-money: revenue flow model_type must match business type
+def test_revenue_flow_model_type_matches_business():
+    expected = {
+        "sun_pharma": "product_sales",
+        "ujjivan": "interest_income",
+    }
+    for slug, expected_model_type in expected.items():
+        cards = _load_artifact(slug, "answer_cards.json")
+        a = next((x for x in cards["answers"] if x["id"] == "answer-how-does-it-make-money"), None)
+        assert a is not None
+        flow = a.get("revenue_flow") or {}
+        assert flow.get("model_type") == expected_model_type, (
+            f"{slug}: revenue_flow.model_type={flow.get('model_type')!r}, expected {expected_model_type!r}"
+        )
+
+
+# T7 — internal management status enums must not appear in investor-facing text
+def test_no_internal_management_status_enums_in_answers():
+    forbidden_enums = [
+        "ACTION_STARTED", "ACTION_COMPLETED", "ACTION_ABANDONED",
+        "CLAIM_MADE", "COMPLETION_CLAIMED", "OUTCOME_VERIFIED",
+    ]
+    for slug in ("sun_pharma", "ujjivan"):
+        cards = _load_artifact(slug, "answer_cards.json")
+        raw_text = json.dumps(cards)
+        for term in forbidden_enums:
+            assert term not in raw_text, (
+                f"{slug}: internal enum '{term}' found in answer_cards.json"
+            )
+
+
+# T8 — Ujjivan Ask surface must have exactly the 8 expected artifacts
+def test_ujjivan_ask_surface_artifacts_exist():
+    expected_files = [
+        "business_journey.json",
+        "products_services.json",
+        "answer_cards.json",
+        "financial_visual_summaries.json",
+        "uncertainty_map.json",
+        "company_research_view.json",
+        "ask_intrinsiciq_manifest.json",
+        "ask_intrinsiciq_validation_report.json",
+    ]
+    base = Path("companies/ujjivan/company_memory/ask_intrinsiciq")
+    if not base.exists():
+        pytest.skip("ujjivan ask_intrinsiciq not generated")
+    for fname in expected_files:
+        assert (base / fname).exists(), f"ujjivan: missing artifact {fname}"
+
+
+# T9 — Ujjivan answer cards reference lending/financial-services content
+def test_ujjivan_answers_are_financial_services_specific():
+    cards = _load_artifact("ujjivan", "answer_cards.json")
+    text = _all_text(cards)
+    for term in ("lending", "loan", "borrower", "interest income", "deposit"):
+        assert term in text, f"ujjivan answer_cards: expected financial term '{term}' not found"
+
+
+# T10 — sanitizer rewrites management status enums to readable text
+def test_sanitizer_rewrites_action_status_enums():
+    assert sanitize_public_text("The initiative is in ACTION_STARTED state.") != ""
+    assert "ACTION_STARTED" not in sanitize_public_text("The initiative is in ACTION_STARTED state.")
+    assert sanitize_public_text("The review was ACTION_COMPLETED in FY24.") != ""
+    assert "ACTION_COMPLETED" not in sanitize_public_text("The review was ACTION_COMPLETED in FY24.")
+
+
+# T11 — _revenue_summary prefers revenue_descriptions over generic manufacturing template
+def test_revenue_summary_prefers_engine_descriptions_over_manufacturing_template():
+    from intelligence.ask_intrinsiciq.canonical_projection import _revenue_summary
+    engines = [
+        {"description": "Sales of branded and generic pharmaceutical products to distributors.", "billing_basis": "sale"},
+    ]
+    current_model = {"business_model_type": "manufacturing"}
+    result = _revenue_summary(engines, current_model)
+    assert "engineered systems" not in result, (
+        f"_revenue_summary returned generic engineering template for pharma: {result!r}"
+    )
+    assert "pharmaceutical" in result.lower() or "branded" in result.lower() or "generic" in result.lower(), (
+        f"_revenue_summary did not use engine description: {result!r}"
+    )
+
+
+# T12 — producer alias fix: "led" substring no longer triggers electronics customer type
+def test_producer_led_alias_does_not_match_capacity_led():
+    from knowledge.company_model.producer import CompanyModelProducer
+    import tempfile, os
+    producer = CompanyModelProducer.__new__(CompanyModelProducer)
+    producer.company_slug = "test"
+    evidence = []
+    latest = {
+        "business_model_summary": "A capacity-led manufacturing scale-up focused on pharmaceutical generics.",
+        "what_company_does": "Manufacture generic medicines at scale for regulated markets.",
+    }
+    customers = producer._build_customers(latest, "manufacturing", evidence)
+    payer_types = [c.get("payer_type") for c in customers]
+    assert "electronics or semiconductor customers" not in payer_types, (
+        f"'capacity-led' phrase triggered electronics customer type. Customers: {payer_types}"
+    )

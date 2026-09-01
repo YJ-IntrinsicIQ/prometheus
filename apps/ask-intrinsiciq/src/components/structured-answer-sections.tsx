@@ -5,15 +5,27 @@ type StructuredAnswerSectionsProps = {
   sections: NonNullable<ResearchAnswerCard["structuredSections"]>;
 };
 
-const SECTION_STYLES: Record<
-  string,
-  {
-    eyebrow: string;
-    symbol: string;
-    accentClass: string;
-    badgeClass: string;
+// Strips known backend-internal suffixes before display.
+// "(Gold)" is a backend architecture label, not investor-facing terminology.
+const INTERNAL_TITLE_SUFFIXES = [" (Gold)"] as const;
+
+function normalizeSectionTitle(rawTitle: string): string {
+  for (const suffix of INTERNAL_TITLE_SUFFIXES) {
+    if (rawTitle.endsWith(suffix)) {
+      return rawTitle.slice(0, -suffix.length).trimEnd();
+    }
   }
-> = {
+  return rawTitle;
+}
+
+type SectionStyle = {
+  eyebrow: string;
+  symbol: string;
+  accentClass: string;
+  badgeClass: string;
+};
+
+const SECTION_STYLES: Record<string, SectionStyle> = {
   "what he may like": {
     eyebrow: "Positive signal",
     symbol: "✓",
@@ -37,6 +49,22 @@ const SECTION_STYLES: Record<
       "border-[rgba(100,116,139,0.22)] bg-[rgba(148,163,184,0.08)]",
     badgeClass:
       "border-[rgba(100,116,139,0.24)] bg-[rgba(148,163,184,0.14)] text-slate-600",
+  },
+  "management track record": {
+    eyebrow: "Management",
+    symbol: "◇",
+    accentClass:
+      "border-[rgba(100,116,139,0.20)] bg-[rgba(100,116,139,0.05)]",
+    badgeClass:
+      "border-[rgba(100,116,139,0.26)] bg-[rgba(148,163,184,0.12)] text-foreground",
+  },
+  "capital deployment returns": {
+    eyebrow: "Capital allocation",
+    symbol: "→",
+    accentClass:
+      "border-[rgba(100,116,139,0.20)] bg-[rgba(100,116,139,0.05)]",
+    badgeClass:
+      "border-[rgba(100,116,139,0.26)] bg-[rgba(148,163,184,0.12)] text-foreground",
   },
 };
 
@@ -63,7 +91,8 @@ export function StructuredAnswerSections({
 
       <div className="mt-5 grid gap-4 md:grid-cols-2">
         {sections.map((section, index) => {
-          const sectionKey = section.title.toLowerCase();
+          const displayTitle = normalizeSectionTitle(section.title);
+          const sectionKey = displayTitle.toLowerCase();
           const style = SECTION_STYLES[sectionKey] ?? {
             eyebrow: "Structured view",
             symbol: "•",
@@ -89,7 +118,7 @@ export function StructuredAnswerSections({
                     {style.eyebrow}
                   </p>
                   <h3 className="mt-1 text-[1rem] font-semibold leading-6 text-foreground">
-                    {section.title}
+                    {displayTitle}
                   </h3>
                 </div>
               </div>

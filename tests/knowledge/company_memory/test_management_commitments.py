@@ -295,7 +295,8 @@ def test_commitments_keep_multiple_updates_in_progression(tmp_path, monkeypatch)
     ]
 
 
-def test_commitments_flag_duplicate_wording_across_years(tmp_path, monkeypatch):
+def test_cross_year_reconfirmation_merges_into_one_commitment(tmp_path, monkeypatch):
+    """Same wording in a later year is a reconfirmation, not a new commitment or a validation error."""
     monkeypatch.chdir(tmp_path)
     _write_year_artifacts(
         tmp_path,
@@ -327,10 +328,23 @@ def test_commitments_flag_duplicate_wording_across_years(tmp_path, monkeypatch):
     )
 
     ManagementCommitmentsBuilder(company="acme").build()
-    _, _, validation, _ = _load_outputs(tmp_path, "acme")
+    commitments_data, _, validation, _ = _load_outputs(tmp_path, "acme")
 
-    assert validation["status"] == "fail"
-    assert any(issue["code"] == "identical_commitments_across_years" for issue in validation["issues"])
+    # Validation must pass — cross-year reconfirmation is not an error
+    assert validation["status"] == "pass", validation.get("issues")
+    assert not any(issue["code"] == "identical_commitments_across_years" for issue in validation["issues"])
+    # Both years should be merged into one commitment (not two)
+    assert commitments_data["commitment_count"] == 1
+    commitment = commitments_data["commitments"][0]
+    # Status must be Reconfirmed (not In Progress — repetition is not action)
+    assert commitment["status"] == "Reconfirmed"
+    # Lifecycle must show fy24 as a check year
+    lifecycle = commitment.get("lifecycle", {})
+    assert "fy24" in lifecycle.get("check_years", [])
+    # Evidence updates must include the reconfirmation event
+    evidence_updates = commitment.get("progression", {}).get("evidence_updates", [])
+    reconfirm_events = [ev for ev in evidence_updates if ev.get("event_type") == "reconfirmation"]
+    assert reconfirm_events, "Expected a reconfirmation event in evidence_updates"
 
 
 def test_validation_rejects_unsupported_delivery_and_future_ambition_marked_delivered():

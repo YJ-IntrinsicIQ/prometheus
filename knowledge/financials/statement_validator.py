@@ -134,6 +134,15 @@ def _has_original(entry_payload: Dict[str, Any]) -> bool:
     return bool(str(entry_payload.get("value_original", "")).strip())
 
 
+def _cash_flow_availability_status(payload: Dict[str, Any]) -> str:
+    availability = payload.get("cash_flow_availability")
+    if not isinstance(availability, dict):
+        nested = payload.get("cash_flow", {}).get("availability") if isinstance(payload.get("cash_flow"), dict) else None
+        availability = nested if isinstance(nested, dict) else {}
+    status = str(availability.get("status") or "").strip().upper()
+    return status if status in {"EXPLICIT", "DERIVED", "NOT_PUBLISHED", "UNAVAILABLE"} else ""
+
+
 def _basis_checked(payload: Dict[str, Any]) -> str:
     bases = set()
     for section_name in ("profit_and_loss", "balance_sheet", "cash_flow", "share_data", "corporate_actions", "shareholding_pattern"):
@@ -233,8 +242,13 @@ def validate_normalized_fundamentals(*, company: str, year: str, normalized_path
         for field_name in ("cfo", "cfi", "cff", "capex", "dividends_paid", "interest_paid", "tax_paid")
     )
     if not cash_flow_present:
-        _append_unique(hard_failures, "cash flow statement entirely missing")
-        _append_unique(missing_fields, "cash_flow")
+        cash_flow_status = _cash_flow_availability_status(payload)
+        if cash_flow_status == "NOT_PUBLISHED":
+            _append_unique(warnings, "cash flow statement not published; CFO/FCF unavailable")
+            _append_unique(missing_fields, "cash_flow")
+        else:
+            _append_unique(hard_failures, "cash flow statement entirely missing")
+            _append_unique(missing_fields, "cash_flow")
 
     for section_name, field_name, message in WARNING_MISSING_FIELDS:
         if not _has_original(_entry(payload, section_name, field_name)):
@@ -290,15 +304,38 @@ def validate_normalized_fundamentals(*, company: str, year: str, normalized_path
 
     pat = _value(_entry(payload, "profit_and_loss", "pat"))
     tax = _value(_entry(payload, "profit_and_loss", "tax")) or 0.0
-    _check_consistency(
-        checks=checks,
-        warnings=warnings,
-        hard_failures=hard_failures,
-        name="pat_bridge",
-        left=pat,
-        right=(pbt - tax) if pbt is not None else None,
-        details_prefix="PAT versus PBT - tax",
-    )
+    share_of_profit_associates = _value(_entry(payload, "profit_and_loss", "share_of_profit_associates")) or 0.0
+    share_of_profit_jv = _value(_entry(payload, "profit_and_loss", "share_of_profit_jv")) or 0.0
+    non_controlling_interests = _value(_entry(payload, "profit_and_loss", "non_controlling_interests")) or 0.0
+
+    if pbt is not None:
+        simple_bridge = pbt - tax
+        # Consolidated statements thread associates/JV share and non-controlling
+        # interests between PBT and PAT. When any of those layers is present, the
+        # correct bridge is PAT = PBT - tax + associates + JV - NCI.
+        has_consolidated_layers = (
+            _entry(payload, "profit_and_loss", "share_of_profit_associates").get("value_crore") is not None
+            or _entry(payload, "profit_and_loss", "share_of_profit_jv").get("value_crore") is not None
+            or _entry(payload, "profit_and_loss", "non_controlling_interests").get("value_crore") is not None
+        )
+        if has_consolidated_layers:
+            bridge_right = pbt - tax + share_of_profit_associates + share_of_profit_jv - non_controlling_interests
+            details_prefix = "PAT versus PBT - tax + associates + JV - NCI"
+        else:
+            bridge_right = simple_bridge
+            details_prefix = "PAT versus PBT - tax"
+        _check_consistency(
+            checks=checks,
+            warnings=warnings,
+            hard_failures=hard_failures,
+            name="pat_bridge",
+            left=pat,
+            right=bridge_right,
+            details_prefix=details_prefix,
+        )
+    else:
+        checks.append(ValidationCheck("pat_bridge", "warning", "PAT bridge: insufficient data"))
+        _append_unique(warnings, "PAT bridge could not be fully checked")
 
     equity_share_capital = _value(_entry(payload, "balance_sheet", "equity_share_capital"))
     reserves = _value(_entry(payload, "balance_sheet", "reserves"))

@@ -20,7 +20,7 @@ FORBIDDEN_BRIEF_TERMS = (
     "source_manifest",
     "input_pack",
     "artifact",
-    "doctrine",
+    "doctrine_id",
     "schema",
     "validator",
     "grounding_status",

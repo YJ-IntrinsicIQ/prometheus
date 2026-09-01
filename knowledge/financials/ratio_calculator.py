@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -173,6 +174,83 @@ def _safe_divide(numerator: Optional[float], denominator: Optional[float]) -> Tu
     if denominator == 0:
         return None, "division by zero"
     return numerator / denominator, None
+
+
+def _normalize_label(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).split())
+
+
+def _period_year(period: str) -> Optional[int]:
+    years = [int(item) for item in re.findall(r"(?:19|20)\d{2}", str(period or ""))]
+    return years[-1] if years else None
+
+
+def _target_period_year(year: str) -> Optional[int]:
+    match = re.search(r"fy\s*(\d{2,4})", str(year or "").lower())
+    if not match:
+        return None
+    value = int(match.group(1))
+    return 2000 + value if value < 100 else value
+
+
+def _is_monetary_entry(entry_payload: Dict[str, Any]) -> bool:
+    if _value(entry_payload) is None:
+        return False
+    unit = str(entry_payload.get("unit_original") or "").lower()
+    if not unit:
+        return True
+    return any(token in unit for token in ("crore", "million", "lakh", "inr", "rs", "₹"))
+
+
+def _working_capital_denominator_warning(
+    *,
+    ratio_name: str,
+    numerator: Optional[float],
+    numerator_entry: Dict[str, Any],
+    denominator: Optional[float],
+    denominator_entry: Dict[str, Any],
+    preferred_basis: str,
+    target_year: str,
+) -> Optional[str]:
+    if numerator is None or denominator is None:
+        return None
+    numerator_basis = str(numerator_entry.get("basis") or "unknown")
+    denominator_basis = str(denominator_entry.get("basis") or "unknown")
+    if numerator_basis != "unknown" and denominator_basis != "unknown" and numerator_basis != denominator_basis:
+        return f"{ratio_name} unavailable: numerator and denominator basis mismatch"
+    if denominator_basis not in {preferred_basis, "unknown"}:
+        return f"{ratio_name} unavailable: denominator basis is not the preferred basis"
+
+    expected_year = _target_period_year(target_year)
+    denominator_year = _period_year(str(denominator_entry.get("period") or ""))
+    if expected_year is not None and denominator_year is not None and denominator_year != expected_year:
+        return f"{ratio_name} unavailable: denominator period does not match fiscal year"
+
+    if not _is_monetary_entry(numerator_entry) or not _is_monetary_entry(denominator_entry):
+        return f"{ratio_name} unavailable: numerator and denominator units are not compatible monetary values"
+
+    label = _normalize_label(str(denominator_entry.get("source_line_item") or ""))
+    if ratio_name in {"inventory_days", "payable_days"}:
+        if "stores and spare parts" in label or "stores and spares" in label or "spare parts" in label:
+            return f"{ratio_name} unavailable: denominator is stores/spares consumption, not a compatible purchases or COGS base"
+        compatible_tokens = (
+            "cost of materials consumed",
+            "cost of materials",
+            "cost of goods sold",
+            "cogs",
+            "purchases of stock in trade",
+            "purchases of stock-in-trade",
+            "supplier purchases",
+            "raw material consumed",
+            "materials consumed",
+        )
+        if not any(token in label for token in compatible_tokens):
+            return f"{ratio_name} unavailable: denominator is not a compatible purchases or COGS base"
+
+    implied_days = (numerator / denominator) * 365 if denominator else None
+    if implied_days is not None and implied_days > 730:
+        return f"{ratio_name} unavailable: denominator produces implausible working-capital days"
+    return None
 
 
 def _confidence_from_inputs(*values: Optional[float], closing_only: bool = False) -> str:
@@ -478,7 +556,31 @@ def calculate_financial_ratios(
         ("inventory_days", avg_inventory, cost_of_materials, "average_inventory / cost_of_materials * 365", [inventory_entry, cost_entry], inv_closing_only),
         ("payable_days", avg_payables, cost_of_materials, "average_payables / cost_of_materials * 365", [payables_entry, cost_entry], pay_closing_only),
     ):
-        result, issue = _safe_divide(numerator, denominator)
+        compatibility_issue = None
+        if name == "inventory_days":
+            compatibility_issue = _working_capital_denominator_warning(
+                ratio_name=name,
+                numerator=numerator,
+                numerator_entry=inventory_entry,
+                denominator=denominator,
+                denominator_entry=cost_entry,
+                preferred_basis=basis,
+                target_year=year,
+            )
+        elif name == "payable_days":
+            compatibility_issue = _working_capital_denominator_warning(
+                ratio_name=name,
+                numerator=numerator,
+                numerator_entry=payables_entry,
+                denominator=denominator,
+                denominator_entry=cost_entry,
+                preferred_basis=basis,
+                target_year=year,
+            )
+        result, issue = (None, compatibility_issue) if compatibility_issue else _safe_divide(numerator, denominator)
+        ratio_warnings = [issue] if issue else []
+        if result is not None and closing_only:
+            ratio_warnings.append("used closing value because prior-year average was unavailable")
         _set_ratio(
             ratios,
             name,
@@ -487,8 +589,8 @@ def calculate_financial_ratios(
             formula=formula,
             inputs_used=[_input_item("numerator", numerator, "₹ crore"), _input_item("denominator", denominator, "₹ crore")],
             basis=basis,
-            confidence=_confidence_from_inputs(numerator, denominator, closing_only=closing_only),
-            warnings=[issue] if issue else [],
+            confidence="low" if result is None else _confidence_from_inputs(numerator, denominator, closing_only=closing_only),
+            warnings=ratio_warnings,
             source_artifacts=_source_artifacts(*source_entries),
         )
 

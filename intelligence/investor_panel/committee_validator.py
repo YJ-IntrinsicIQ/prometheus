@@ -56,7 +56,7 @@ FORBIDDEN_INTERNAL_BRIEF_TERMS = {
     "source_manifest",
     "input_pack",
     "artifact",
-    "doctrine",
+    "doctrine_id",
     "schema",
     "validator",
     "grounding_status",
@@ -2481,23 +2481,37 @@ def validate_committee_output(
     allowed_financial_terms = _collect_allowed_financial_terms(
         included_analyst_payloads or []
     )
-    owner_earnings_support = _owner_earnings_support_registry(
-        included_analyst_payloads or []
-    )
+    # CRITICAL FIX: Use committee_financial_truth from synthesis (already finalized by synthesizer).
+    # QA validates consistency against this truth — does NOT re-derive owner_earnings_support from analysts
+    # when truth_detected=True.  When truth_detected=False (no financial truth pack), fall back to the
+    # analyst-text registry so that honest limitation language in the committee view is not hard-blocked.
+    # Positive claims are never granted by the registry path (registry.positive_claim_supported stays False
+    # unless analysts explicitly made a positive owner-earnings assertion, which would be a real failure).
     financial_manifest = parsed.get("financial_warning_manifest") or {}
-    committee_truth = financial_manifest.get("committee_financial_truth") or {}
+    committee_truth = financial_manifest.get("committee_financial_truth") or parsed.get("committee_financial_truth") or {}
+    owner_earnings_support = {}
     if isinstance(committee_truth, dict) and committee_truth.get("truth_detected"):
-        if committee_truth.get("fcf_missing") is False:
-            owner_earnings_support["fcf_missing"] = False
-        if committee_truth.get("capex_missing") is False:
-            owner_earnings_support["capex_missing"] = False
-        if committee_truth.get("payables_available") is True:
-            owner_earnings_support["payables_missing"] = False
-        if committee_truth.get("basis_status") in {"consolidated", "standalone", "mixed"}:
-            owner_earnings_support["basis_unknown"] = False
-        if committee_truth.get("owner_earnings_status") in {"available_explicit", "available_derived_precision_limited"}:
-            owner_earnings_support["owner_earnings_limitation_supported"] = True
-            owner_earnings_support["owner_earnings_status"] = committee_truth.get("owner_earnings_status")
+        owner_earnings_support = {
+            "fcf_missing": committee_truth.get("fcf_missing"),
+            "capex_missing": committee_truth.get("capex_missing"),
+            "payables_available": committee_truth.get("payables_available"),
+            "basis_status": committee_truth.get("basis_status"),
+            "owner_earnings_status": committee_truth.get("owner_earnings_status"),
+            "owner_earnings_limitation_supported": committee_truth.get("owner_earnings_status") in {"available_explicit", "available_derived_precision_limited"},
+        }
+    elif included_analyst_payloads:
+        # No financial truth pack — scan analyst text to determine whether owner earnings
+        # limitations are grounded in what analysts actually reported.
+        _registry = _owner_earnings_support_registry(included_analyst_payloads)
+        owner_earnings_support = {
+            "fcf_missing": _registry.get("fcf_missing", False),
+            "capex_missing": _registry.get("capex_missing", False),
+            "payables_missing": _registry.get("payables_missing", False),
+            "basis_unknown": _registry.get("basis_unknown", False),
+            "owner_earnings_status": "missing",
+            "owner_earnings_limitation_supported": _registry.get("owner_earnings_limitation_supported", False),
+            "owner_earnings_positive_claim_supported": _registry.get("owner_earnings_positive_claim_supported", False),
+        }
     expected_financial_usage = _expected_financials_used(
         included_analyst_payloads or []
     )
@@ -2561,91 +2575,89 @@ def validate_committee_output(
         schema_warnings=schema_warnings,
     )
 
+    # CRITICAL FIX: Committee Brief owns synthesis; QA validates without re-deriving.
+    # The synthesizer already produced grounded critical_unknowns. We only VALIDATE
+    # that they are properly grounded in the analyst uncertainty registry — we do NOT
+    # re-derive or generate new ones.
     uncertainty_registry, uncertainty_registry_by_id = _build_uncertainty_registry(
         included_analyst_payloads or []
     )
-    critical_unknowns = _normalize_critical_unknowns(
-        parsed.get("critical_unknowns"),
-        registry=uncertainty_registry,
-        registry_by_id=uncertainty_registry_by_id,
-        schema_warnings=schema_warnings,
-    )
+    critical_unknowns = parsed.get("critical_unknowns", [])
     if not critical_unknowns:
-        fallback_entries = uncertainty_registry[:3]
-        critical_unknowns = [
-            {
-                "unknown": entry["text"],
-                "raised_by": [entry["analyst"]],
-                "why_it_matters": "This uncertainty remains unresolved in the analyst evidence and still affects investment judgment.",
-                "source_uncertainty_ids": [entry["uncertainty_id"]],
-                "evidence_limit": "Generated deterministically from analyst uncertainty registry.",
-            }
-            for entry in fallback_entries
-        ]
-        if critical_unknowns:
-            schema_warnings.append(
-                "critical_unknowns generated deterministically from analyst uncertainty registry."
-            )
-    critical_unknowns = _validate_object_list(
-        critical_unknowns,
-        "critical_unknowns",
-        ("unknown", "raised_by", "why_it_matters", "source_uncertainty_ids", "evidence_limit"),
-    )
-    for item in critical_unknowns:
-        raised_by = _normalize_string_list(
-            item.get("raised_by"),
-            "critical_unknowns.raised_by",
+        # No critical_unknowns present in synthesis — this is a synthesis gap.
+        # Validator flags it via schema_warnings but does NOT generate fallback entries.
+        schema_warnings.append(
+            "critical_unknowns absent from synthesis; expected grounded entries from synthesizer."
+        )
+        critical_unknowns = []
+    else:
+        critical_unknowns = _normalize_critical_unknowns(
+            critical_unknowns,
+            registry=uncertainty_registry,
+            registry_by_id=uncertainty_registry_by_id,
             schema_warnings=schema_warnings,
         )
-        invalid_analysts = [analyst for analyst in raised_by if analyst not in EXPECTED_ANALYSTS]
-        if invalid_analysts:
-            raise ValueError(f"critical_unknowns.raised_by contains invalid analysts: {invalid_analysts}")
-        item["raised_by"] = raised_by
-        source_ids = _normalize_string_list(
-            item.get("source_uncertainty_ids"),
-            "critical_unknowns.source_uncertainty_ids",
-            schema_warnings=schema_warnings,
+        # Validate grounding — raise if ungrounded, but do not generate.
+        critical_unknowns = _validate_object_list(
+            critical_unknowns,
+            "critical_unknowns",
+            ("unknown", "raised_by", "why_it_matters", "source_uncertainty_ids", "evidence_limit"),
         )
-        invalid_ids = [item_id for item_id in source_ids if item_id not in uncertainty_registry_by_id]
-        if invalid_ids:
-            raise ValueError(
-                "critical_unknowns contains source_uncertainty_ids not present in analyst uncertainty registry: "
-                f"{sorted(set(invalid_ids))}"
+        for item in critical_unknowns:
+            raised_by = _normalize_string_list(
+                item.get("raised_by"),
+                "critical_unknowns.raised_by",
+                schema_warnings=schema_warnings,
             )
-        if not source_ids:
-            matches = _match_unknown_to_registry(
+            invalid_analysts = [analyst for analyst in raised_by if analyst not in EXPECTED_ANALYSTS]
+            if invalid_analysts:
+                raise ValueError(f"critical_unknowns.raised_by contains invalid analysts: {invalid_analysts}")
+            item["raised_by"] = raised_by
+            source_ids = _normalize_string_list(
+                item.get("source_uncertainty_ids"),
+                "critical_unknowns.source_uncertainty_ids",
+                schema_warnings=schema_warnings,
+            )
+            invalid_ids = [item_id for item_id in source_ids if item_id not in uncertainty_registry_by_id]
+            if invalid_ids:
+                raise ValueError(
+                    "critical_unknowns contains source_uncertainty_ids not present in analyst uncertainty registry: "
+                    f"{sorted(set(invalid_ids))}"
+                )
+            if not source_ids:
+                matches = _match_unknown_to_registry(
+                    item.get("unknown", ""),
+                    raised_by=raised_by,
+                    registry=uncertainty_registry,
+                )
+                if not matches:
+                    raise ValueError(
+                        "critical_unknowns must be grounded in analyst uncertainty registry"
+                    )
+                source_ids = [match["uncertainty_id"] for match in matches]
+                item["source_uncertainty_ids"] = source_ids
+                if not raised_by:
+                    raised_by = sorted({match["analyst"] for match in matches})
+                    item["raised_by"] = raised_by
+                schema_warnings.append(
+                    "critical_unknowns source_uncertainty_ids were inferred from analyst uncertainty registry."
+                )
+            if not _match_unknown_to_registry(
                 item.get("unknown", ""),
                 raised_by=raised_by,
-                registry=uncertainty_registry,
-            )
-            if not matches:
+                registry=[uncertainty_registry_by_id[item_id] for item_id in source_ids],
+            ):
                 raise ValueError(
                     "critical_unknowns must be grounded in analyst uncertainty registry"
                 )
-            source_ids = [match["uncertainty_id"] for match in matches]
+            source_text = " ".join(uncertainty_registry_by_id[item_id]["text"] for item_id in source_ids)
+            if _tokenize(item.get("unknown", "")).isdisjoint(_tokenize(source_text)):
+                raise ValueError(
+                    "critical_unknowns must be grounded in analyst uncertainty registry"
+                )
             item["source_uncertainty_ids"] = source_ids
-            if not raised_by:
-                raised_by = sorted({match["analyst"] for match in matches})
-                item["raised_by"] = raised_by
-            schema_warnings.append(
-                "critical_unknowns source_uncertainty_ids were inferred from analyst uncertainty registry."
-            )
-        if not _match_unknown_to_registry(
-            item.get("unknown", ""),
-            raised_by=raised_by,
-            registry=[uncertainty_registry_by_id[item_id] for item_id in source_ids],
-        ):
-            raise ValueError(
-                "critical_unknowns must be grounded in analyst uncertainty registry"
-            )
-        source_text = " ".join(uncertainty_registry_by_id[item_id]["text"] for item_id in source_ids)
-        if _tokenize(item.get("unknown", "")).isdisjoint(_tokenize(source_text)):
-            raise ValueError(
-                "critical_unknowns must be grounded in analyst uncertainty registry"
-            )
-        item["source_uncertainty_ids"] = source_ids
-        if not isinstance(item.get("evidence_limit"), str):
-            raise ValueError("critical_unknowns.evidence_limit must be a string")
+            if not isinstance(item.get("evidence_limit"), str):
+                raise ValueError("critical_unknowns.evidence_limit must be a string")
 
     parsed["investigation_questions"] = normalize_committee_field(
         "investigation_questions",

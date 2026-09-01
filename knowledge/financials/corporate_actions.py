@@ -24,7 +24,14 @@ _ACTION_KEYWORDS: Sequence[Tuple[str, Sequence[str]]] = (
     ("esop_dilution", ("esop", "employee stock option")),
     ("merger", ("merger", "amalgamation")),
     ("demerger", ("demerger", "demerged")),
-    ("face_value_change", ("face value", "nominal value")),
+    # Only change/transition language qualifies — static "face value per share ₹1" must not match.
+    ("face_value_change", (
+        "face value changed", "face value change", "change in face value",
+        "face value revised", "revised face value", "face value reduced",
+        "face value sub-divided", "face value from", "face value split",
+        "face value consolidated", "face value altered",
+        "nominal value changed", "nominal value revised",
+    )),
     ("weighted_avg_shares", ("weighted average shares", "weighted avg shares", "weighted average number of equity shares")),
     ("diluted_shares", ("diluted shares", "diluted weighted average shares", "diluted weighted average number of equity shares")),
     ("share_capital_change", ("issue of shares", "shares issued", "issued share capital", "allotment of shares")),
@@ -133,7 +140,16 @@ def _infer_rejected_action_type(line_item_raw: str) -> str:
         return "preferential_issue"
     if "qip" in lowered:
         return "qip"
-    if "face value" in lowered or "nominal value" in lowered:
+    # Require explicit change/transition language — a static "face value per share ₹1"
+    # row must not be classified as face_value_change.
+    _fv_change_tokens = (
+        "face value changed", "face value change", "change in face value",
+        "face value revised", "revised face value", "face value reduced",
+        "face value sub-divided", "sub-division", "subdivision", "sub-divided",
+        "subdivided", "face value from", "face value split", "face value consolidated",
+        "face value altered", "nominal value changed", "nominal value revised",
+    )
+    if any(tok in lowered for tok in _fv_change_tokens):
         return "face_value_change"
     return "unknown"
 
@@ -256,7 +272,28 @@ def _has_explicit_action_language(action_type: str, line_item_raw: str) -> bool:
         "final_dividend": ("final dividend",),
         "interim_dividend": ("interim dividend",),
         "stock_split": ("stock split", "split of equity shares", "sub-division", "subdivision"),
-        "face_value_change": ("face value", "nominal value"),
+        # Require explicit change/transition language for face value.
+        # A static disclosure "face value per share ₹1" must NOT become a corporate action —
+        # only rows that evidence an actual transition qualify.
+        "face_value_change": (
+            "face value changed",
+            "face value change",
+            "change in face value",
+            "face value revised",
+            "revised face value",
+            "face value reduced",
+            "face value sub-divided",
+            "sub-division",
+            "subdivision",
+            "sub-divided",
+            "subdivided",
+            "face value from",
+            "face value split",
+            "face value consolidated",
+            "face value altered",
+            "nominal value changed",
+            "nominal value revised",
+        ),
         "share_capital_change": _EXPLICIT_SHARE_CAPITAL_EVENT_TOKENS,
     }
     return any(token in lowered for token in explicit_tokens.get(action_type, (action_type.replace("_", " "),)))
@@ -638,8 +675,20 @@ def _build_from_raw(
                         )
 
             face_before, face_after = _parse_face_value_change(line_item_raw)
-            if action_type == "face_value_change" and face_after is None:
-                face_after = current_face_value
+            if action_type == "face_value_change" and face_before is None and face_after is None:
+                # No from→to transition could be parsed — reject rather than fabricate.
+                reason = "face value disclosure without parseable from→to transition"
+                _append_unique(rejection_reasons, f"Rejected face_value_change without transition evidence: {line_item_raw}")
+                rejection_items.append(
+                    _rejection_record(
+                        row=row,
+                        rejected_action_type=action_type,
+                        rejection_reason=reason,
+                        raw_value=raw_value,
+                        detected_value_type=value_type,
+                    )
+                )
+                continue
 
             shares_before = None
             shares_after = None

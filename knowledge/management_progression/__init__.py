@@ -1,10 +1,50 @@
+from .linker import build_cross_year_links
 from .producer import ManagementProgressionProducer, build_management_progression, write_management_progression
+from .synthesis import (
+    CHAIN_STATUSES,
+    CHAIN_STATUS_ACTION_COMPLETED,
+    CHAIN_STATUS_ACTION_STARTED,
+    CHAIN_STATUS_CLAIM_ONLY,
+    CHAIN_STATUS_EARLY_OPERATING_SIGNAL,
+    CHAIN_STATUS_FINANCIAL_IMPACT_CONFIRMED,
+    CHAIN_STATUS_FINANCIAL_IMPACT_NOT_YET_VISIBLE,
+    CHAIN_STATUS_FINANCIAL_LINK_UNPROVEN,
+    CHAIN_STATUS_OUTCOME_MIXED,
+    CHAIN_STATUS_OUTCOME_NEGATIVE,
+    CHAIN_STATUS_OUTCOME_POSITIVE,
+    CHAIN_STATUS_OUTCOME_UNKNOWN,
+    CHAIN_STATUS_PARTIAL_EXECUTION,
+    FINANCIAL_LINK_CONFIRMED,
+    FINANCIAL_LINK_NOT_YET_VISIBLE,
+    FINANCIAL_LINK_STATUSES,
+    FINANCIAL_LINK_UNPROVEN,
+    build_synthesis_chain,
+)
 from .validator import validate_management_progression
 
 __all__ = [
     "ManagementProgressionProducer",
+    "build_cross_year_links",
+    "CHAIN_STATUSES",
+    "CHAIN_STATUS_ACTION_COMPLETED",
+    "CHAIN_STATUS_ACTION_STARTED",
+    "CHAIN_STATUS_CLAIM_ONLY",
+    "CHAIN_STATUS_EARLY_OPERATING_SIGNAL",
+    "CHAIN_STATUS_FINANCIAL_IMPACT_CONFIRMED",
+    "CHAIN_STATUS_FINANCIAL_IMPACT_NOT_YET_VISIBLE",
+    "CHAIN_STATUS_FINANCIAL_LINK_UNPROVEN",
+    "CHAIN_STATUS_OUTCOME_MIXED",
+    "CHAIN_STATUS_OUTCOME_NEGATIVE",
+    "CHAIN_STATUS_OUTCOME_POSITIVE",
+    "CHAIN_STATUS_OUTCOME_UNKNOWN",
+    "CHAIN_STATUS_PARTIAL_EXECUTION",
+    "FINANCIAL_LINK_CONFIRMED",
+    "FINANCIAL_LINK_NOT_YET_VISIBLE",
+    "FINANCIAL_LINK_STATUSES",
+    "FINANCIAL_LINK_UNPROVEN",
     "build_management_progression",
-    "write_management_progression",
+    "build_synthesis_chain",
     "validate_management_progression",
+    "write_management_progression",
 ]
 

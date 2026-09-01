@@ -558,8 +558,8 @@ def test_run_all_reuses_business_understanding_bundle_and_context(monkeypatch):
         ("business_understanding", context),
         ("business_intelligence", context, bundle),
         ("intelligence", context),
-        ("cim", context.company, context),
         ("multi_year_memory", context.company, context),
+        ("cim", context.company, context),
     ]
 
 
@@ -632,8 +632,16 @@ def test_main_runs_company_memory_without_year(monkeypatch):
 
     monkeypatch.setattr(
         run_company_pipeline,
-        "run_company_memory_stage",
-        lambda company, context=None: calls.append(("run_company_memory_stage", company, context)),
+        "run_stage_sequence",
+        lambda company_slug, stages, options=None, context=None, profile_name="custom": calls.append(
+            (
+                "run_stage_sequence",
+                company_slug,
+                list(stages),
+                getattr(context, "year", None),
+                profile_name,
+            )
+        ),
     )
     monkeypatch.setattr(
         run_company_pipeline.sys,
@@ -643,7 +651,15 @@ def test_main_runs_company_memory_without_year(monkeypatch):
 
     run_company_pipeline.main()
 
-    assert calls == [("run_company_memory_stage", "tips", None)]
+    assert calls == [
+        (
+            "run_stage_sequence",
+            "tips",
+            run_company_pipeline.COMPANY_MEMORY_STAGE_SEQUENCE,
+            None,
+            "company_memory",
+        )
+    ]
 
 
 def test_main_runs_cim_without_year(monkeypatch):

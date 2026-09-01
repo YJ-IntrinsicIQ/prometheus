@@ -22,7 +22,7 @@ from intelligence.ask_intrinsiciq.canonical_projection import (
     canonical_company_model,
     canonical_management_progression,
 )
-from intelligence.ask_intrinsiciq.loader import load_company_memory_sources
+from intelligence.ask_intrinsiciq.loader import _artifact_company_slug, load_company_memory_sources
 
 
 CORPUS_COMPANIES = ["tanla", "datapatterns", "tips", "polymatech"]
@@ -113,18 +113,7 @@ class TestLoaderCrossCompanyRejection:
 
     def _extract_company_from_payload(self, payload: dict) -> str | None:
         """Extract company identity from payload using same logic as loader."""
-        candidates = [
-            payload.get("company_slug"),
-            payload.get("source_company"),
-            (payload.get("metadata") or {}).get("company") if isinstance(payload.get("metadata"), dict) else None,
-            (payload.get("company_identity") or {}).get("company_slug") if isinstance(payload.get("company_identity"), dict) else None,
-            payload.get("company"),
-        ]
-        for candidate in candidates:
-            value = str(candidate or "").strip().lower()
-            if value and value.replace("_", "-").isalnum() or all(c.isalnum() or c in "-_" for c in value.replace("_", "-")):
-                return value.replace("_", "-")
-        return None
+        return _artifact_company_slug(payload) or None
 
 
 class TestCanonicalProjectionCrossCompanyGuards:
@@ -228,18 +217,7 @@ class TestCrossCompanyIsolationMatrix:
 
     def _extract_company_from_payload(self, payload: dict) -> str | None:
         """Extract company identity from payload using same logic as loader."""
-        candidates = [
-            payload.get("company_slug"),
-            payload.get("source_company"),
-            (payload.get("metadata") or {}).get("company") if isinstance(payload.get("metadata"), dict) else None,
-            (payload.get("company_identity") or {}).get("company_slug") if isinstance(payload.get("company_identity"), dict) else None,
-            payload.get("company"),
-        ]
-        for candidate in candidates:
-            value = str(candidate or "").strip().lower()
-            if value:
-                return value.replace("_", "-")
-        return None
+        return _artifact_company_slug(payload) or None
 
 
 class TestHeldOutCasesStillPass:
@@ -270,18 +248,7 @@ class TestHeldOutCasesStillPass:
                     assert artifact_company == "tips", f"tips/{source_name} has artifact_company={artifact_company}"
 
     def _extract_company_from_payload(self, payload: dict) -> str | None:
-        candidates = [
-            payload.get("company_slug"),
-            payload.get("source_company"),
-            (payload.get("metadata") or {}).get("company") if isinstance(payload.get("metadata"), dict) else None,
-            (payload.get("company_identity") or {}).get("company_slug") if isinstance(payload.get("company_identity"), dict) else None,
-            payload.get("company"),
-        ]
-        for candidate in candidates:
-            value = str(candidate or "").strip().lower()
-            if value:
-                return value.replace("_", "-")
-        return None
+        return _artifact_company_slug(payload) or None
 
 
 class TestCompanyIsolationInvariantDefinition:

@@ -7,13 +7,15 @@ SCHEMA_VERSION = "company_model.v1"
 
 COVERAGE_STATUSES = {"supported", "partial", "insufficient_evidence"}
 CONFIDENCE_LEVELS = {"high", "medium", "low"}
-BUSINESS_MODEL_TYPES = {"platform", "manufacturing", "content_ip", "services", "hybrid", "other"}
+BUSINESS_MODEL_TYPES = {"platform", "manufacturing", "content_ip", "services", "financial_services", "hybrid", "other"}
 OFFERING_CATEGORIES = {
     "product",
     "platform",
     "service",
     "content_ip",
     "manufacturing_capability",
+    "financial_product",
+    "distribution_channel",
     "other",
 }
 REVENUE_BILLING_BASES = {
@@ -25,6 +27,9 @@ REVENUE_BILLING_BASES = {
     "royalty",
     "ad_revenue",
     "service_fee",
+    "interest_spread",
+    "fee_income",
+    "treasury_income",
     "unknown",
 }
 
@@ -53,4 +58,3 @@ def confidence(level: str, *, basis: List[str] | None = None, limitations: List[
         "basis": list(basis or []),
         "limitations": list(limitations or []),
     }
-

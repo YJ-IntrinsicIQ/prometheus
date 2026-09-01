@@ -13,6 +13,18 @@ from knowledge.financials.memory_builder import build_financial_memory_artifacts
 def _write_json(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
+    parts = path.parts
+    if "financials" in parts:
+        financials_index = parts.index("financials")
+        if financials_index >= 1:
+            year_root = Path(*parts[:financials_index])
+            if year_root.name.lower().startswith("fy"):
+                intelligence_dir = year_root / "intelligence"
+                (intelligence_dir / "company_intelligence.json").parent.mkdir(parents=True, exist_ok=True)
+                for name in ("company_intelligence.json", "business_classification.json"):
+                    target = intelligence_dir / name
+                    if not target.exists():
+                        target.write_text(json.dumps({"company": "acme", "year": year_root.name}), encoding="utf-8")
 
 
 def _registry_payload():
@@ -192,7 +204,8 @@ def test_financial_memory_manifest_distinguishes_registry_partial_and_missing_ye
 
     assert manifest["years_with_financial_truth_registry"] == ["fy24"]
     assert manifest["years_with_partial_financials"] == ["fy25"]
-    assert manifest["years_missing_financials"] == ["fy23"]
+    assert manifest["years_missing_financials"] == []
+    assert manifest["excluded_company_years"]["fy23"]["status"] == "INELIGIBLE"
     assert manifest["financial_memory_status"] in {"warning", "partial"}
 
 

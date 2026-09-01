@@ -12,6 +12,7 @@ import { getQuestionPresentationType } from "@/src/lib/ask-intrinsiciq/question-
 export type CompanyAvailabilityState = "READY" | "PARTIAL" | "UNAVAILABLE";
 
 export type CompanyDiscoverySummary = {
+  internalKey: string;
   slug: string;
   name: string;
   availabilityState: CompanyAvailabilityState;
@@ -454,24 +455,52 @@ async function loadYearlyIntelligenceIndex(companySlug: string) {
   return readJsonIfExists<RawYearlyIntelligenceIndex>(readYearlyIntelligenceIndexPath(companySlug));
 }
 
-export async function getDiscoveredCompanySlugs() {
+async function buildSlugIdentityMap(): Promise<Map<string, string>> {
   const companiesRoot = path.join(getRepoRoot(), "companies");
   try {
     const entries = await readdir(companiesRoot, { withFileTypes: true });
-    const slugs = entries
+    const candidates = entries
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
-      .filter((slug) => /^[-a-z0-9]+$/.test(slug));
-    const discovered = await Promise.all(
-      slugs.map(async (slug) => {
-        const index = await loadCompanyMemoryIndex(slug);
-        return index ? slug : null;
+      .filter((name) => /^[-a-z0-9_]+$/.test(name));
+
+    const resolved = await Promise.all(
+      candidates.map(async (internalKey) => {
+        const index = await loadCompanyMemoryIndex(internalKey);
+        if (!index) return null;
+        return { internalKey, slug: internalKey.replace(/_/g, "-") };
       }),
     );
-    return discovered.filter((slug): slug is string => Boolean(slug));
+
+    const valid = resolved.filter(
+      (r): r is { internalKey: string; slug: string } => r !== null,
+    );
+
+    const slugCounts = new Map<string, number>();
+    for (const { slug } of valid) {
+      slugCounts.set(slug, (slugCounts.get(slug) ?? 0) + 1);
+    }
+
+    const map = new Map<string, string>();
+    for (const { internalKey, slug } of valid) {
+      if ((slugCounts.get(slug) ?? 0) === 1) {
+        map.set(slug, internalKey);
+      }
+    }
+    return map;
   } catch {
-    return [];
+    return new Map();
   }
+}
+
+export async function resolveInternalKey(publicSlug: string): Promise<string | null> {
+  const map = await buildSlugIdentityMap();
+  return map.get(publicSlug) ?? null;
+}
+
+export async function getDiscoveredCompanySlugs() {
+  const map = await buildSlugIdentityMap();
+  return [...map.keys()];
 }
 
 export async function getCompanyDiscoverySummaries(): Promise<CompanyDiscoverySummary[]> {
@@ -480,14 +509,18 @@ export async function getCompanyDiscoverySummaries(): Promise<CompanyDiscoverySu
   return companies.filter((company): company is CompanyDiscoverySummary => Boolean(company));
 }
 
-export async function getCompanyDiscoverySummary(companySlug: string): Promise<CompanyDiscoverySummary | null> {
-  const memoryIndex = await loadCompanyMemoryIndex(companySlug);
+export async function getCompanyDiscoverySummary(publicSlug: string): Promise<CompanyDiscoverySummary | null> {
+  const map = await buildSlugIdentityMap();
+  const internalKey = map.get(publicSlug);
+  if (!internalKey) return null;
+
+  const memoryIndex = await loadCompanyMemoryIndex(internalKey);
   if (!memoryIndex) {
     return null;
   }
 
-  const yearlyIndex = await loadYearlyIntelligenceIndex(companySlug);
-  const askPaths = getAskIntrinsicIqPaths(companySlug);
+  const yearlyIndex = await loadYearlyIntelligenceIndex(internalKey);
+  const askPaths = getAskIntrinsicIqPaths(internalKey);
   const canonicalView = askPaths
     ? await readJsonIfExists<CompanyResearchView>(askPaths.companyResearchView)
     : null;
@@ -497,17 +530,17 @@ export async function getCompanyDiscoverySummary(companySlug: string): Promise<C
   const canonicalAvailable = Boolean(
     canonicalView &&
       validationReport?.status !== "fail" &&
-      canonicalView.company?.companySlug === companySlug,
+      canonicalView.company?.companySlug === internalKey,
   );
 
-  const companyIntelligence = await loadCompanyIntelligence(companySlug, yearlyIndex);
+  const companyIntelligence = await loadCompanyIntelligence(internalKey, yearlyIndex);
   const summaryText = String(companyIntelligence?.business?.industry_profile?.business_summary ?? "").trim();
   const displayName = canonicalAvailable
-    ? canonicalView?.company.displayName ?? canonicalView?.company.companyName ?? companySlug
-    : extractDisplayNameFromSummary(summaryText, companySlug);
+    ? canonicalView?.company.displayName ?? canonicalView?.company.companyName ?? publicSlug
+    : extractDisplayNameFromSummary(summaryText, publicSlug);
   const primaryIndustry = canonicalAvailable
     ? canonicalView?.company.primaryIndustry ?? "Company-memory intelligence"
-    : extractPrimaryIndustry(summaryText, companySlug);
+    : extractPrimaryIndustry(summaryText, publicSlug);
   const usableYears = yearsToRange(memoryIndex.usable_years ?? []);
   const availabilityState: CompanyAvailabilityState = canonicalAvailable
     ? "READY"
@@ -515,46 +548,48 @@ export async function getCompanyDiscoverySummary(companySlug: string): Promise<C
       ? "PARTIAL"
       : "UNAVAILABLE";
   const questionIds = FallbackQuestions.map((question) => question.id);
-  const importantUnknown = buildUncertaintySummary(companySlug, memoryIndex, yearlyIndex, canonicalAvailable).mainUncertainty;
+  const importantUnknown = buildUncertaintySummary(internalKey, memoryIndex, yearlyIndex, canonicalAvailable).mainUncertainty;
 
   return {
-    slug: companySlug,
+    internalKey,
+    slug: publicSlug,
     name: displayName,
     availabilityState,
     reportingPeriods: usableYears,
     primaryIndustry,
     summary: summaryText ||
-      `Company-memory intelligence is ${availabilityState === "READY" ? "ready" : "partially available"} for ${companySlug}.`,
+      `Company-memory intelligence is ${availabilityState === "READY" ? "ready" : "partially available"} for ${publicSlug}.`,
     importantUnknown,
     questionIds,
   };
 }
 
 export async function buildCompanyResearchViewFromDiscovery(
-  companySlug: string,
+  internalKey: string,
+  publicSlug: string,
   discovery?: CompanyDiscoverySummary | null,
 ): Promise<CompanyResearchView | null> {
-  const memoryIndex = await loadCompanyMemoryIndex(companySlug);
+  const memoryIndex = await loadCompanyMemoryIndex(internalKey);
   if (!memoryIndex) {
     return null;
   }
 
-  const yearlyIndex = await loadYearlyIntelligenceIndex(companySlug);
-  const companyIntelligence = await loadCompanyIntelligence(companySlug, yearlyIndex);
+  const yearlyIndex = await loadYearlyIntelligenceIndex(internalKey);
+  const companyIntelligence = await loadCompanyIntelligence(internalKey, yearlyIndex);
   const summaryText = String(companyIntelligence?.business?.industry_profile?.business_summary ?? "").trim();
-  const displayName = discovery?.name ?? extractDisplayNameFromSummary(summaryText, companySlug);
-  const primaryIndustry = discovery?.primaryIndustry ?? extractPrimaryIndustry(summaryText, companySlug);
+  const displayName = discovery?.name ?? extractDisplayNameFromSummary(summaryText, publicSlug);
+  const primaryIndustry = discovery?.primaryIndustry ?? extractPrimaryIndustry(summaryText, publicSlug);
   const reportingPeriods = discovery?.reportingPeriods ?? yearsToRange(memoryIndex.usable_years ?? []);
   return {
     schemaVersion: "ask_intrinsiciq.company_research_view.v1",
     company: {
-      companySlug,
+      companySlug: publicSlug,
       companyName: displayName,
       displayName,
       reportingPeriodsCovered: reportingPeriods,
       primaryIndustry,
       shortDescription: summaryText ||
-        `Company-memory intelligence is available, but canonical Ask IntrinsicIQ output is still partial for ${companySlug}.`,
+        `Company-memory intelligence is available, but canonical Ask IntrinsicIQ output is still partial for ${publicSlug}.`,
     },
     coverage: {
       availableCategoryIds: getFallbackCategories().map((category) => category.id),
@@ -565,7 +600,7 @@ export async function buildCompanyResearchViewFromDiscovery(
       evidenceStatus: "partial",
       summary:
         summaryText ||
-        `Canonical Ask IntrinsicIQ output is not yet available for ${companySlug}; the UI is using a clean partial research shell.`,
+        `Canonical Ask IntrinsicIQ output is not yet available for ${publicSlug}; the UI is using a clean partial research shell.`,
     },
     categories: getFallbackCategories(),
     businessJourney: null,
@@ -579,14 +614,14 @@ export async function buildCompanyResearchViewFromDiscovery(
       sourceMode: "company_memory",
       summary:
         summaryText ||
-        `Canonical Ask IntrinsicIQ output is not yet available for ${companySlug}.`,
+        `Canonical Ask IntrinsicIQ output is not yet available for ${publicSlug}.`,
       foundSourceCount: reportingPeriods.length,
       missingSourceCount: memoryIndex.incomplete_years?.length ?? 0,
       sourceUpdatedAt: new Date().toISOString(),
       notes: [
         `Available years: ${reportingPeriods.length > 0 ? reportingPeriods.join(", ") : "none"}.`,
       ],
-      uncertaintySummary: buildUncertaintySummary(companySlug, memoryIndex, yearlyIndex, false),
+      uncertaintySummary: buildUncertaintySummary(internalKey, memoryIndex, yearlyIndex, false),
     },
   };
 }

@@ -7,7 +7,10 @@ import type { InvestorInterpretation } from "@/src/types/investor-interpretation
 import type { ProgressionInsight } from "@/src/types/progression";
 import type { QuestionPresentationType } from "@/src/types/question-presentation";
 import { readJsonIfExists } from "@/src/lib/prometheus/read-json";
-import { buildUnavailableResearchAnswerCard } from "@/src/lib/ask-intrinsiciq/company-discovery";
+import {
+  buildUnavailableResearchAnswerCard,
+  resolveInternalKey,
+} from "@/src/lib/ask-intrinsiciq/company-discovery";
 import {
   finalizeResearchAnswerCardForDisplay,
   cleanPublicList,
@@ -24,6 +27,38 @@ import {
   isValidRouteSegment,
 } from "@/src/lib/ask-intrinsiciq/paths";
 import { validateResearchAnswerCard } from "@/src/lib/ask-intrinsiciq/validate-runtime-view";
+
+type DependencyProvenanceEntry = {
+  logical_source: string;
+  artifact_path: string;
+  artifact_timestamp: string;
+  used_as: "primary" | "secondary" | "enrichment";
+};
+
+/**
+ * Returns FRESH when all registered dependencies have timestamps ≤ cardGeneratedAt.
+ * Returns STALE when any dependency timestamp is newer.
+ * Returns UNKNOWN when provenance is absent or timestamps cannot be compared.
+ *
+ * UNKNOWN is NOT silently treated as FRESH — callers must handle it explicitly.
+ */
+function checkAnswerCardFreshness(
+  provenance: DependencyProvenanceEntry[] | null | undefined,
+  cardGeneratedAt: string | null | undefined,
+): "FRESH" | "STALE" | "UNKNOWN" {
+  if (!cardGeneratedAt || !provenance || provenance.length === 0) {
+    return "UNKNOWN";
+  }
+  for (const dep of provenance) {
+    if (!dep.artifact_timestamp) {
+      continue; // missing timestamp for this dep — skip rather than fail the whole card
+    }
+    if (dep.artifact_timestamp > cardGeneratedAt) {
+      return "STALE";
+    }
+  }
+  return "FRESH";
+}
 
 type RawAnswerCardsPayload = {
   company_slug?: string;
@@ -102,6 +137,7 @@ type RawAnswerCardsPayload = {
     }>;
     answer_status: ResearchAnswerCard["answerStatus"];
     generated_at: string;
+    dependency_provenance?: DependencyProvenanceEntry[] | null;
   }>;
 };
 
@@ -241,10 +277,11 @@ function mapInterpretation(
 }
 
 async function loadCanonicalAnswerCard(
-  companySlug: string,
+  publicSlug: string,
+  internalKey: string,
   questionId: string,
 ): Promise<ResearchAnswerCard | null> {
-  const paths = getAskIntrinsicIqPaths(companySlug);
+  const paths = getAskIntrinsicIqPaths(internalKey);
 
   if (!paths) {
     return null;
@@ -253,14 +290,30 @@ async function loadCanonicalAnswerCard(
   const [payload, company, productsAndServices, financialVisuals] =
     await Promise.all([
       readJsonIfExists<RawAnswerCardsPayload>(paths.answerCards),
-      getCompanyResearchView(companySlug),
-      getProductsServices(companySlug),
-      getFinancialVisuals(companySlug),
+      getCompanyResearchView(publicSlug),
+      getProductsServices(publicSlug),
+      getFinancialVisuals(publicSlug),
     ]);
 
   const raw = payload?.answers.find((entry) => entry.question_id === questionId);
 
-  if (!raw || !company || !artifactCompanyMatches(companySlug, payload?.company_slug, paths.answerCards)) {
+  if (!raw || !company || !artifactCompanyMatches(internalKey, payload?.company_slug, paths.answerCards)) {
+    return null;
+  }
+
+  // Freshness gate: do not serve a saved card that is older than its own registered dependencies.
+  // UNKNOWN is not treated as FRESH — log it but continue (allows serving when provenance is absent
+  // on legacy cards that pre-date this schema; remove that permissive path after first full pipeline run).
+  const freshnessState = checkAnswerCardFreshness(raw.dependency_provenance, raw.generated_at);
+  if (freshnessState === "STALE") {
+    logRuntimeIssue("Answer card is stale relative to its registered dependencies — not serving.", {
+      companySlug: publicSlug,
+      questionId,
+      cardGeneratedAt: raw.generated_at,
+      staleDependencies: (raw.dependency_provenance ?? []).filter(
+        (dep) => dep.artifact_timestamp && raw.generated_at && dep.artifact_timestamp > raw.generated_at,
+      ),
+    });
     return null;
   }
 
@@ -279,7 +332,7 @@ async function loadCanonicalAnswerCard(
 
   if (nextQuestions.length !== 3) {
     logRuntimeIssue("Canonical answer card did not contain exactly three next questions.", {
-      companySlug,
+      companySlug: publicSlug,
       questionId,
       nextQuestions,
     });
@@ -394,7 +447,7 @@ async function loadCanonicalAnswerCard(
 
   if (errors.length > 0) {
     logRuntimeIssue("Canonical answer card failed runtime validation.", {
-      companySlug,
+      companySlug: publicSlug,
       questionId,
       errors,
     });
@@ -405,16 +458,21 @@ async function loadCanonicalAnswerCard(
 }
 
 export async function getResearchAnswerCard(
-  companySlug: string,
+  publicSlug: string,
   questionId: string,
 ): Promise<ResearchAnswerCard | null> {
-  if (!isValidRouteSegment(companySlug) || !isValidRouteSegment(questionId)) {
+  if (!isValidRouteSegment(publicSlug) || !isValidRouteSegment(questionId)) {
+    return null;
+  }
+
+  const internalKey = await resolveInternalKey(publicSlug);
+  if (!internalKey) {
     return null;
   }
 
   const [answer, company] = await Promise.all([
-    loadCanonicalAnswerCard(companySlug, questionId),
-    getCompanyResearchView(companySlug),
+    loadCanonicalAnswerCard(publicSlug, internalKey, questionId),
+    getCompanyResearchView(publicSlug),
   ]);
 
   if (answer) {
@@ -422,7 +480,7 @@ export async function getResearchAnswerCard(
   }
 
   if (company) {
-    return buildUnavailableResearchAnswerCard(companySlug, questionId, company);
+    return buildUnavailableResearchAnswerCard(publicSlug, questionId, company);
   }
 
   return null;

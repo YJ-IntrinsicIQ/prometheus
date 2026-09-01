@@ -124,16 +124,17 @@ def test_capital_allocation_cleaner_keeps_ambiguous_multi_year_history_blocked(t
     try:
         items = [
             {
-                "action": "Capital allocation history 2015, 2018 and 2021",
+                "action": "Capital allocation across 2019, 2021, 2023",
                 "category": "Equity issuance (employee stock-based compensation)",
                 "amount": "",
                 "purpose": "Historical reference only",
-                "source_chunk": "Historical reference only 2015 2018 2021",
+                "source_chunk": "Capital allocation in 2019, 2021, and 2023 shows varying patterns",
                 "page": 9,
                 "time_reference": "period_specific",
-                "year": "2024",
+                "year": "2023",
                 "actor": "company",
-                "value": "Capital allocation history 2015, 2018 and 2021",
+                "value": "Capital allocation across 2019, 2021, 2023",
+                "uncertainty_reason": "multiple years mentioned: 2019, 2021, 2023; conflicting chronology",
             }
         ]
         (context.extracted_dir / "extracted_capital_allocations.json").write_text(
@@ -141,13 +142,15 @@ def test_capital_allocation_cleaner_keeps_ambiguous_multi_year_history_blocked(t
             encoding="utf-8",
         )
 
-        try:
-            create_cleaner().run()
-        except ValueError as exc:
-            message = str(exc)
-            assert "invalid or unsupported period resolution" in message
-            assert '"failure_class": "PERIOD_RESOLUTION_UNSUPPORTED"' in message
-        else:
-            raise AssertionError("Expected ambiguous multi-year capital allocation history to fail validation")
+        # Genuinely ambiguous multi-year capital allocation -> quarantine
+        cleaned = create_cleaner().run()
+        assert cleaned == []
+
+        rejections = json.loads((context.extracted_dir / "clean_capital_allocation_rejections.json").read_text(encoding="utf-8"))
+        assert rejections["rejection_count"] == 1
+        rejection = rejections["rejections"][0]
+        assert rejection["failure_class"] == "PERIOD_RESOLUTION_UNSUPPORTED"
+        assert rejection["diagnostics"]["period_status"] == "AMBIGUOUS"
+        assert rejection["diagnostics"]["should_promote"] is False
     finally:
         set_context(None)

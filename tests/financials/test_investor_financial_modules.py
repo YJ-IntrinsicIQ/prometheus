@@ -11,6 +11,10 @@ from knowledge.financials.investor_modules import build_investor_financial_modul
 def _write_json(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
+    if path.name == "financial_fact_registry.json" and path.parent.name == "financials":
+        year_root = path.parent.parent
+        _write_json(year_root / "intelligence" / "company_intelligence.json", {"company": "acme", "year": year_root.name})
+        _write_json(year_root / "intelligence" / "business_classification.json", {"company": "acme", "year": year_root.name})
 
 
 def _registry_payload(year: str, *, include_order_book: bool = False) -> dict:
@@ -286,6 +290,66 @@ def test_per_share_compounding_preserves_direct_eps_and_dividend_with_reported_d
     assert row["dividend_per_share"] == 4.0
     assert metadata["dividend_per_share"]["calculation_formula"] == "reported_directly"
     assert metadata["dividend_per_share"]["source_unit"] == "INR/share"
+
+
+def test_per_share_compounding_skips_missing_alias_when_equivalent_share_fact_is_present(tmp_path: Path):
+    company_root = tmp_path / "companies" / "acme"
+    payload = _registry_payload("fy25", include_order_book=False)
+    payload["available_facts"] = [
+        fact
+        for fact in payload["available_facts"]
+        if fact["metric_id"] not in {"weighted_avg_shares", "weighted_average_diluted_shares"}
+    ]
+    missing_basic = {
+        **payload["available_facts"][0],
+        "metric_id": "weighted_avg_shares",
+        "metric_name": "weighted avg shares",
+        "value": None,
+        "raw_number": None,
+        "availability_status": "missing",
+        "usable_downstream": False,
+        "unit": "shares",
+        "source_line_item": "",
+    }
+    missing_diluted = {
+        **missing_basic,
+        "metric_id": "weighted_average_diluted_shares",
+        "metric_name": "weighted average diluted shares",
+    }
+    valid_basic_alias = {
+        **payload["available_facts"][0],
+        "metric_id": "weighted_average_basic_shares",
+        "metric_name": "weighted average basic shares",
+        "value": 9_800_000.0,
+        "raw_number": 9_800_000.0,
+        "unit": "shares",
+        "source_line_item": "Weighted average number of shares used in computing basic and diluted earnings per share",
+    }
+    valid_diluted_alias = {
+        **valid_basic_alias,
+        "metric_id": "diluted_shares",
+        "metric_name": "diluted shares",
+    }
+    payload["available_facts"].extend([valid_basic_alias, valid_diluted_alias])
+    payload["missing_facts"].extend([missing_basic, missing_diluted])
+    for fact in payload["derived_facts"]:
+        if fact["metric_id"] == "fcf":
+            fact["value_crore"] = 22.0
+            fact["unit"] = "₹ crore"
+    _write_json(company_root / "fy25" / "financials" / "financial_fact_registry.json", payload)
+    _write_json(company_root / "fy25" / "financials" / "financial_truth_reconciliation_report.json", _reconciliation_payload())
+    _write_json(company_root / "fy25" / "financials" / "financial_artifact_quarantine_report.json", _quarantine_payload())
+
+    per_share = build_investor_financial_modules(company="acme", company_root=company_root)[
+        "per_share_compounding_analysis.json"
+    ]
+    row = per_share["analysis"][0]
+
+    assert row["weighted_average_basic_shares"] == 9_800_000.0
+    assert row["weighted_average_diluted_shares"] == 9_800_000.0
+    assert row["fcf_per_share"] == pytest.approx(22.0 * 10_000_000 / 9_800_000.0)
+    assert row["eps_basic"] == 20.0
+    assert row["eps_diluted"] == 18.5
 
 
 def test_per_share_compounding_builds_owner_earnings_per_share_when_owner_bridge_available(tmp_path: Path):

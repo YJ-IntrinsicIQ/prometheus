@@ -323,7 +323,33 @@ def test_fact_registry_quarantines_invalid_shareholding_percentages(tmp_path):
 
     assert registry.downstream_readiness["financial_truth_status"] == "invalid"
     assert any(fact.metric_id.startswith("shareholding_") for fact in registry.invalid_facts)
-    assert "shareholding_sum_check" in report.invalid_metrics
+    assert "shareholding_promoter_percent" in report.invalid_metrics
+
+
+def test_fact_registry_shareholding_sum_check_uses_top_level_totals_not_subcategories(tmp_path):
+    financial_root = tmp_path / "companies" / "acme" / "fy25" / "financials"
+    _write_json(financial_root / "normalized_fundamentals.json", _normalized_payload())
+    _write_json(financial_root / "financial_reconciliation_report.json", _reconciliation_payload())
+    _write_json(
+        financial_root / "shareholding_pattern.json",
+        _shareholding_payload(
+            [
+                {"holder_category": "promoter_holding_percent", "holding_percent": 54.48, "shares_held": 1307134535.0, "period": "FY25", "source_line_item": "Promoters", "source_page": 15, "confidence": "high", "warnings": []},
+                {"holder_category": "public_holding_percent", "holding_percent": 45.52, "shares_held": 1092200435.0, "period": "FY25", "source_line_item": "Total Public Shareholding", "source_page": 15, "confidence": "high", "warnings": []},
+                {"holder_category": "retail_holding_percent", "holding_percent": 5.63, "shares_held": 135055794.0, "period": "FY25", "source_line_item": "Indian Public", "source_page": 15, "confidence": "high", "warnings": []},
+                {"holder_category": "mutual_fund_holding_percent", "holding_percent": 12.21, "shares_held": 293051620.0, "period": "FY25", "source_line_item": "Mutual Funds", "source_page": 15, "confidence": "high", "warnings": []},
+            ]
+        ),
+    )
+
+    registry, report, quarantine = build_financial_fact_registry(company="acme", year="fy25", financial_root=financial_root)
+
+    assert "shareholding_sum_check" not in report.invalid_metrics
+    assert not any(fact.metric_id == "shareholding_sum_check" for fact in registry.invalid_facts)
+    assert quarantine.artifact_status_by_file["shareholding_pattern.json"]["status"] == "usable"
+    metric_values = {fact.metric_id: fact.value for fact in registry.available_facts if fact.metric_id.startswith("shareholding_")}
+    assert metric_values["shareholding_public_holding_percent_percent"] == 45.52
+    assert metric_values["shareholding_retail_holding_percent_percent"] == 5.63
 
 
 def test_fact_registry_derives_two_fcf_variants_from_ppe_and_intangible_capex(tmp_path):
@@ -725,3 +751,156 @@ def test_bonus_split_warns_comparability_without_economic_dilution(tmp_path):
     partial_ids = {fact.metric_id for fact in registry.partial_facts}
     assert "eps_comparability_status" in partial_ids
     assert "dilution_status" not in partial_ids
+
+
+# ---------------------------------------------------------------------------
+# FCF-derived ratio regression tests
+# Requirement: fact_registry must derive fcf_to_pat and fcf_margin from
+# canonical FCF when financial_ratios.json is stale or null.
+# ---------------------------------------------------------------------------
+
+def _normalized_payload_with_pl(
+    *,
+    cfo: float = 4959.33,
+    capex: float = -2085.58,
+    revenue: float = 43885.68,
+    pat: float = 8473.58,
+    capex_sign_convention: str = "cash_flow_signed",
+):
+    return {
+        "company": "acme",
+        "year": "fy25",
+        "generated_at": "2026-07-25T00:00:00Z",
+        "preferred_basis": "consolidated",
+        "profit_and_loss": {
+            "revenue": dict(_normalized_entry("revenue", value_crore=revenue, value_original=str(revenue)), usable_downstream=True),
+            "pat": dict(_normalized_entry("pat", value_crore=pat, value_original=str(pat)), usable_downstream=True),
+        },
+        "balance_sheet": {},
+        "cash_flow": {
+            "cfo": dict(_normalized_entry("cfo", value_crore=cfo, value_original=str(cfo)), usable_downstream=True),
+            "capex": dict(
+                _normalized_entry("capex", value_crore=capex, value_original=str(capex)),
+                sign_convention=capex_sign_convention,
+                usable_downstream=True,
+            ),
+        },
+        "share_data": {
+            "shares_outstanding": _share_count_entry("shares_outstanding", 1000000, "shares outstanding"),
+        },
+        "warnings": [],
+        "limitations": [],
+        "unmapped_rows": [],
+    }
+
+
+def _stale_ratios_payload():
+    """Simulates a financial_ratios.json generated when capex was None → FCF null."""
+    return {
+        "company": "acme",
+        "year": "fy25",
+        "generated_at": "2026-07-25T00:00:00Z",
+        "basis_used": "consolidated",
+        "ratios": {
+            "fcf": {"value": None, "unit": "₹ crore", "formula": "cfo + capex", "inputs_used": [], "warnings": ["capex missing"], "basis": "consolidated", "confidence": "missing"},
+            "fcf_to_pat": {"value": None, "unit": "x", "formula": "fcf / pat", "inputs_used": [{"name": "numerator"}, {"name": "denominator"}], "warnings": ["missing inputs"], "basis": "consolidated", "confidence": "low"},
+            "fcf_margin": {"value": None, "unit": "%", "formula": "fcf / revenue * 100", "inputs_used": [{"name": "numerator"}, {"name": "denominator"}], "warnings": ["missing inputs"], "basis": "consolidated", "confidence": "low"},
+        },
+        "warnings": [],
+        "limitations": [],
+    }
+
+
+def test_signed_negative_capex_produces_correct_fcf(tmp_path):
+    """cfo=4959.33, capex=-2085.58 (cash_flow_signed) → FCF=2873.75"""
+    financial_root = tmp_path / "financials"
+    _write_json(financial_root / "normalized_fundamentals.json", _normalized_payload_with_pl())
+
+    registry, _report, _quarantine = build_financial_fact_registry(company="acme", year="fy25", financial_root=financial_root)
+
+    fcf_facts = [f for f in registry.derived_facts if f.metric_id == "fcf"]
+    assert fcf_facts, "FCF must be in derived_facts"
+    assert abs(fcf_facts[0].value - 2873.75) < 0.1
+    assert fcf_facts[0].usable_downstream
+
+
+def test_positive_outflow_capex_produces_correct_fcf(tmp_path):
+    """cfo=100, capex=+30 (positive outflow) → FCF=70"""
+    financial_root = tmp_path / "financials"
+    payload = _normalized_payload_with_pl(cfo=100.0, capex=30.0, capex_sign_convention="positive_outflow")
+    _write_json(financial_root / "normalized_fundamentals.json", payload)
+
+    registry, _report, _quarantine = build_financial_fact_registry(company="acme", year="fy25", financial_root=financial_root)
+
+    fcf_facts = [f for f in registry.derived_facts if f.metric_id == "fcf"]
+    assert fcf_facts, "FCF must be derived"
+    assert abs(fcf_facts[0].value - 70.0) < 0.1
+
+
+def test_fcf_to_pat_derived_when_ratios_stale(tmp_path):
+    """When financial_ratios.json shows fcf_to_pat=null, fact_registry derives it from canonical FCF + PAT."""
+    financial_root = tmp_path / "financials"
+    _write_json(financial_root / "normalized_fundamentals.json", _normalized_payload_with_pl())
+    _write_json(financial_root / "financial_ratios.json", _stale_ratios_payload())
+
+    registry, _report, _quarantine = build_financial_fact_registry(company="acme", year="fy25", financial_root=financial_root)
+
+    all_facts = registry.derived_facts + registry.available_facts
+    fcf_to_pat_facts = [f for f in all_facts if f.metric_id == "fcf_to_pat" and f.value is not None]
+    assert fcf_to_pat_facts, "fcf_to_pat must be derived when stale ratios show null"
+    expected = round(2873.75 / 8473.58, 4)
+    assert abs(fcf_to_pat_facts[0].value - expected) < 0.01
+    assert fcf_to_pat_facts[0].usable_downstream
+
+
+def test_fcf_margin_derived_when_ratios_stale(tmp_path):
+    """When financial_ratios.json shows fcf_margin=null, fact_registry derives it from canonical FCF + revenue."""
+    financial_root = tmp_path / "financials"
+    _write_json(financial_root / "normalized_fundamentals.json", _normalized_payload_with_pl())
+    _write_json(financial_root / "financial_ratios.json", _stale_ratios_payload())
+
+    registry, _report, _quarantine = build_financial_fact_registry(company="acme", year="fy25", financial_root=financial_root)
+
+    all_facts = registry.derived_facts + registry.available_facts
+    fcf_margin_facts = [f for f in all_facts if f.metric_id == "fcf_margin" and f.value is not None]
+    assert fcf_margin_facts, "fcf_margin must be derived when stale ratios show null"
+    expected = round(2873.75 / 43885.68 * 100, 4)
+    assert abs(fcf_margin_facts[0].value - expected) < 0.1
+    assert fcf_margin_facts[0].usable_downstream
+
+
+def test_genuinely_missing_cfo_leaves_fcf_ratios_unavailable(tmp_path):
+    """When CFO is absent, FCF cannot be derived and fcf_to_pat/fcf_margin must stay missing."""
+    financial_root = tmp_path / "financials"
+    payload = {
+        "company": "acme",
+        "year": "fy25",
+        "generated_at": "2026-07-25T00:00:00Z",
+        "preferred_basis": "consolidated",
+        "profit_and_loss": {
+            "revenue": dict(_normalized_entry("revenue", value_crore=43885.68), usable_downstream=True),
+            "pat": dict(_normalized_entry("pat", value_crore=8473.58), usable_downstream=True),
+        },
+        "balance_sheet": {},
+        "cash_flow": {},
+        "share_data": {"shares_outstanding": _share_count_entry("shares_outstanding", 1000000, "shares")},
+        "warnings": [],
+        "limitations": [],
+        "unmapped_rows": [],
+    }
+    _write_json(financial_root / "normalized_fundamentals.json", payload)
+
+    registry, _report, _quarantine = build_financial_fact_registry(company="acme", year="fy25", financial_root=financial_root)
+
+    all_ids_with_value = {f.metric_id for f in registry.derived_facts + registry.available_facts if f.value is not None}
+    assert "fcf" not in all_ids_with_value, "FCF must not be present when CFO is missing"
+    assert "fcf_to_pat" not in all_ids_with_value
+    assert "fcf_margin" not in all_ids_with_value
+
+
+def test_no_company_year_hardcoding_in_fact_registry_fcf():
+    """fact_registry.py must not reference Sun Pharma or FY23 for the FCF fix."""
+    text = Path("knowledge/financials/fact_registry.py").read_text(encoding="utf-8").lower()
+    assert "sun_pharma" not in text
+    assert "sun pharma" not in text
+    assert "fy23" not in text

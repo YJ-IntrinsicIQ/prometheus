@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 DOCTRINE_MEMORY_PRIORITIES: Dict[str, List[str]] = {
     "graham": [
         "financial memory",
+        "company model",
+        "management progression",
         "risk evolution",
         "capital allocation outcomes",
         "management commitments",
@@ -18,6 +20,9 @@ DOCTRINE_MEMORY_PRIORITIES: Dict[str, List[str]] = {
         "management commentary",
     ],
     "buffett": [
+        "gold intelligence",        # Gold first for Buffett: management + capital + strategy
+        "company model",
+        "management progression",
         "management quality",
         "capital allocation outcomes",
         "management commitments",
@@ -28,6 +33,8 @@ DOCTRINE_MEMORY_PRIORITIES: Dict[str, List[str]] = {
         "risk evolution",
     ],
     "fisher": [
+        "company model",
+        "management progression",
         "management commitments",
         "projects",
         "capacity evolution",
@@ -38,6 +45,7 @@ DOCTRINE_MEMORY_PRIORITIES: Dict[str, List[str]] = {
         "risk evolution",
     ],
     "munger": [
+        "management progression",
         "management quality",
         "management commitments",
         "capital allocation outcomes",
@@ -46,8 +54,11 @@ DOCTRINE_MEMORY_PRIORITIES: Dict[str, List[str]] = {
         "capacity evolution",
         "projects",
         "financial memory",
+        "company model",
     ],
     "lynch": [
+        "company model",
+        "management progression",
         "projects",
         "capacity evolution",
         "management commentary",
@@ -60,6 +71,19 @@ DOCTRINE_MEMORY_PRIORITIES: Dict[str, List[str]] = {
 }
 
 STREAM_FILE_PRIORITY: Dict[str, List[Path]] = {
+    "gold intelligence": [
+        Path("company_memory/gold/management_credibility_synthesis.json"),
+        Path("company_memory/gold/capital_allocation_outcome_tracker.json"),
+        Path("company_memory/gold/management_promise_tracker.json"),
+        Path("company_memory/gold/strategy_evolution_timeline.json"),
+        Path("company_memory/gold/risk_evolution_timeline.json"),
+    ],
+    "company model": [
+        Path("company_memory/company_model/company_model.json"),
+    ],
+    "management progression": [
+        Path("company_memory/management_progression/management_progression.json"),
+    ],
     "management commitments": [
         Path("company_memory/management_commitments/management_commitments.json"),
         Path("company_memory/management_commitments/commitment_timeline.json"),
@@ -202,6 +226,24 @@ def _collect_evidence_ids(value: Any) -> List[str]:
     return ordered
 
 
+def _panel_citable_evidence_ids(value: Any, *, limit: int = 5) -> List[str]:
+    """Return only evidence identifiers that panel validators can cite.
+
+    Management Progression also carries internal item IDs such as PJ-0003 or
+    commitment_1. Those are useful provenance inside the progression module,
+    but they are not valid analyst evidence IDs and must not be exposed as
+    citation candidates.
+    """
+
+    ids = _collect_evidence_ids(value)
+    citable = [
+        item
+        for item in ids
+        if item.startswith("ev_") or item.startswith("evidence_")
+    ]
+    return citable[:limit]
+
+
 def _collect_source_artifacts(value: Any) -> List[str]:
     artifacts: List[str] = []
     if isinstance(value, dict):
@@ -230,6 +272,32 @@ def _top_list(value: Any, limit: int = 3) -> List[Any]:
     if isinstance(value, list):
         return [_deep_trim(item, max_depth=0, max_list_items=2, max_str=140) for item in value[:limit]]
     return []
+
+
+def _company_model_text_items(value: Any, *, limit: int = 3, char_limit: int = 140) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    items: List[str] = []
+    for item in value:
+        if isinstance(item, str):
+            text = item
+        elif isinstance(item, dict):
+            text = (
+                item.get("mechanism")
+                or item.get("driver")
+                or item.get("question")
+                or item.get("why_it_matters")
+                or item.get("summary")
+                or item.get("description")
+            )
+        else:
+            text = item
+        cleaned = _truncate_text(text, char_limit)
+        if cleaned and cleaned not in items:
+            items.append(cleaned)
+        if len(items) >= limit:
+            break
+    return items
 
 
 def _period_sort_key(value: Any) -> tuple:
@@ -310,6 +378,19 @@ def _compact_timelines(payload: Dict[str, Any], *, limit: int = 2) -> Dict[str, 
     }
 
 
+_MQ_INTERNAL_ID_KEYS: frozenset = frozenset({"evidence_ids", "evidence_id", "source_item_id", "source_item_ids"})
+
+
+def _strip_mq_internal_ids(items: List[Any]) -> List[Any]:
+    cleaned: List[Any] = []
+    for item in items:
+        if isinstance(item, dict):
+            cleaned.append({k: v for k, v in item.items() if k not in _MQ_INTERNAL_ID_KEYS})
+        else:
+            cleaned.append(item)
+    return cleaned
+
+
 def _compact_management_quality(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "company_slug": payload.get("company_slug") or payload.get("company"),
@@ -322,11 +403,75 @@ def _compact_management_quality(payload: Dict[str, Any]) -> Dict[str, Any]:
         "weakest_dimension": payload.get("weakest_dimension"),
         "investor_implication": _truncate_text(payload.get("investor_implication"), 260),
         "interpretation": _deep_trim(payload.get("interpretation") or {}, max_depth=1, max_list_items=3, max_str=120),
-        "what_strengthened_conviction": _top_list(payload.get("what_strengthened_conviction") or [], limit=2),
-        "what_weakened_conviction": _top_list(payload.get("what_weakened_conviction") or [], limit=2),
-        "what_remains_unproven": _top_list(payload.get("what_remains_unproven") or [], limit=2),
-        "major_turning_points": _top_list(payload.get("major_turning_points") or [], limit=2),
+        "what_strengthened_conviction": _top_list(_strip_mq_internal_ids(payload.get("what_strengthened_conviction") or []), limit=2),
+        "what_weakened_conviction": _top_list(_strip_mq_internal_ids(payload.get("what_weakened_conviction") or []), limit=2),
+        "what_remains_unproven": _top_list(_strip_mq_internal_ids(payload.get("what_remains_unproven") or []), limit=2),
+        "major_turning_points": _top_list(_strip_mq_internal_ids(payload.get("major_turning_points") or []), limit=2),
         "evidence_confidence": _deep_trim(payload.get("evidence_confidence") or {}, max_depth=0, max_list_items=2, max_str=60),
+    }
+
+
+def _compact_company_model(payload: Dict[str, Any]) -> Dict[str, Any]:
+    business_model = payload.get("current_business_model") if isinstance(payload.get("current_business_model"), dict) else {}
+    identity = payload.get("company_identity") if isinstance(payload.get("company_identity"), dict) else {}
+    return {
+        "company_slug": payload.get("company_slug") or payload.get("company"),
+        "schema_version": payload.get("schema_version"),
+        "generated_at": payload.get("generated_at"),
+        "coverage_status": payload.get("coverage_status"),
+        "business_model_type": business_model.get("business_model_type"),
+        "business_summary": _truncate_text(business_model.get("summary"), 180),
+        "what_it_sells": _top_list(business_model.get("what_it_sells") or payload.get("offerings") or [], limit=2),
+        "who_pays": _top_list(business_model.get("who_pays") or [], limit=2),
+        "how_revenue_happens": _truncate_text(business_model.get("how_revenue_happens"), 140),
+        "economic_drivers": _company_model_text_items(payload.get("economic_drivers") or [], limit=1, char_limit=120),
+        "evidence_ids": _panel_citable_evidence_ids(payload, limit=3),
+    }
+
+
+def _compact_management_progression(payload: Dict[str, Any], *, limit: int = 5) -> Dict[str, Any]:
+    items = payload.get("progression_items") or []
+    compacted: List[Dict[str, Any]] = []
+    for item in [entry for entry in items if isinstance(entry, dict)][:limit]:
+        chain = item.get("synthesis_chain") if isinstance(item.get("synthesis_chain"), dict) else {}
+        claim = chain.get("claim") if isinstance(chain.get("claim"), dict) else {}
+        action = chain.get("action") if isinstance(chain.get("action"), dict) else {}
+        outcome = chain.get("outcome") if isinstance(chain.get("outcome"), dict) else {}
+        financial_consequence = (
+            chain.get("financial_consequence") if isinstance(chain.get("financial_consequence"), dict) else {}
+        )
+        implication = chain.get("investor_implication") if isinstance(chain.get("investor_implication"), dict) else {}
+        compacted.append(
+            {
+                "theme": _truncate_text(item.get("theme") or item.get("topic"), 140),
+                "period": item.get("period") or item.get("latest_period"),
+                "chain_status": str(chain.get("chain_status") or "").strip().upper(),
+                "actor": action.get("action_actor") or action.get("actor") or outcome.get("actor") or "unknown",
+                "claim_summary": _truncate_text(claim.get("text"), 180),
+                "action_summary": _truncate_text(action.get("text"), 180),
+                "action_completed": bool(action.get("completed")),
+                "outcome_summary": _truncate_text(outcome.get("text"), 180),
+                "outcome_direction": outcome.get("direction") or outcome.get("outcome_direction"),
+                "financial_link_status": financial_consequence.get("link_status"),
+                "investor_implication": _truncate_text(implication.get("conclusion"), 220),
+                "confidence": implication.get("confidence") or item.get("confidence"),
+                "evidence_ids": _panel_citable_evidence_ids(chain, limit=5),
+            }
+        )
+    return {
+        "company_slug": payload.get("company_slug") or payload.get("company"),
+        "schema_version": payload.get("schema_version"),
+        "generated_at": payload.get("generated_at"),
+        "coverage_status": payload.get("coverage_status"),
+        "progression_item_count": len(items) if isinstance(items, list) else 0,
+        "synthesis_chains": compacted,
+        "chain_rules": [
+            "CLAIM_ONLY is statement evidence, not delivery or execution evidence.",
+            "ACTION_STARTED shows management/company action began; outcome and financial consequence remain unproven unless separately evidenced.",
+            "ACTION_COMPLETED shows completion only; completion alone is not a positive operating or financial outcome.",
+            "OUTCOME_POSITIVE/OUTCOME_NEGATIVE require separately evidenced operating or financial result.",
+            "FINANCIAL_LINK_UNPROVEN means do not claim realized financial impact.",
+        ],
     }
 
 
@@ -381,6 +526,128 @@ def _compact_financial_memory(payload: Dict[str, Any], source_dir: Path) -> Dict
     return compacted
 
 
+_GUIDANCE_WEIGHT_NATURAL: Dict[str, str] = {
+    "HIGH_WEIGHT": "management guidance carries strong weight",
+    "MODERATE_WEIGHT": "management guidance deserves moderate weight",
+    "LOW_WEIGHT": "management guidance carries limited weight",
+    "VERY_LOW_WEIGHT": "management guidance carries very limited weight",
+}
+
+_RETURN_STATUS_NATURAL: Dict[str, str] = {
+    "PROVEN_POSITIVE": "return confirmed",
+    "EARLY_POSITIVE_SIGNAL": "early return signals visible",
+    "UNPROVEN": "return unproven",
+    "MIXED": "mixed return signals",
+    "DESTRUCTIVE": "value-destructive outcome",
+    "NOT_APPLICABLE": "",
+}
+
+
+def _compact_gold_stream(candidates: List[Tuple[Path, Dict[str, Any]]]) -> Dict[str, Any]:
+    """
+    Compact all available Gold artifacts into a single panel-ready block.
+
+    Returns investor-language summaries only — no internal Gold vocabulary exposed.
+    Called by build_company_memory_context when 'gold intelligence' stream is selected.
+    """
+    payloads: Dict[str, Dict[str, Any]] = {}
+    for path, payload in candidates:
+        key = path.stem  # e.g. management_credibility_synthesis
+        payloads[key] = payload
+
+    credibility = payloads.get("management_credibility_synthesis", {})
+    capital = payloads.get("capital_allocation_outcome_tracker", {})
+    promises = payloads.get("management_promise_tracker", {})
+    strategy = payloads.get("strategy_evolution_timeline", {})
+    risk = payloads.get("risk_evolution_timeline", {})
+
+    cred_summary = credibility.get("summary") or {}
+    guidance_weight = str(cred_summary.get("guidance_weight") or "")
+    guidance_natural = _GUIDANCE_WEIGHT_NATURAL.get(guidance_weight, guidance_weight)
+    cred_text = _truncate_text(cred_summary.get("management_credibility_summary") or "", 220)
+
+    # Capital allocation: top 3 allocations with natural return status
+    cap_allocs = (capital.get("material_allocations") or [])[:3]
+    cap_items = []
+    for a in cap_allocs:
+        if not isinstance(a, dict):
+            continue
+        rs = str(a.get("return_status") or "")
+        natural = _RETURN_STATUS_NATURAL.get(rs, rs.lower().replace("_", " "))
+        if not natural:
+            continue
+        cap_items.append(
+            f"{_truncate_text(a.get('allocation_name') or a.get('allocation_type') or '', 60)}: {natural}"
+        )
+
+    # Promise tracker
+    pt_summary = promises.get("summary") or {}
+    tracked = int(pt_summary.get("tracked_promises") or 0)
+    unverified = int((pt_summary.get("status_breakdown") or {}).get("unverified", 0) if isinstance(pt_summary.get("status_breakdown"), dict) else 0)
+    promise_note = (
+        f"{tracked} commitments tracked; {unverified} remain unverified."
+        if tracked
+        else ""
+    )
+
+    # Strategy arc
+    arc = strategy.get("strategy_arc") or {}
+    current_strategy = _truncate_text(arc.get("current_state") or "", 200)
+
+    # Risk summary
+    risk_summary_text = _truncate_text((risk.get("summary") or {}).get("current_risk_summary") or "", 200)
+
+    # Evidence IDs from Gold layers
+    ev_ids: List[str] = []
+    for p in (credibility, capital, promises):
+        for eid in (p.get("evidence_ids") or _collect_evidence_ids(p)):
+            if isinstance(eid, str) and eid.strip() and eid not in ev_ids:
+                ev_ids.append(eid)
+    ev_ids = ev_ids[:10]
+
+    block: Dict[str, Any] = {
+        "management_credibility": {
+            "guidance_weight_natural": guidance_natural,
+            "summary": cred_text,
+        },
+        "capital_allocation_outcomes": {
+            "allocations_summary": cap_items,
+        },
+        "promise_tracker": {
+            "note": promise_note,
+        },
+        "limitations": [
+            "Gold intelligence is derived from canonical evidence; verify currency against source artifacts.",
+            "Capital allocation return evidence should not be treated as independent confirmation when same evidence appears across multiple Gold layers.",
+        ],
+    }
+    if current_strategy:
+        block["strategy_evolution"] = {"current_state": current_strategy}
+    if risk_summary_text:
+        block["risk_evolution"] = {"current_summary": risk_summary_text}
+
+    block["evidence_ids"] = ev_ids
+    return block
+
+
+def _collect_evidence_ids(payload: Any) -> List[str]:
+    """Recursively collect evidence_id strings from a nested dict/list."""
+    ids: List[str] = []
+    if isinstance(payload, dict):
+        for k, v in payload.items():
+            if k in ("evidence_id", "evidence_ids") and isinstance(v, (str, list)):
+                for eid in ([v] if isinstance(v, str) else v):
+                    s = str(eid or "").strip()
+                    if s and s not in ids:
+                        ids.append(s)
+            else:
+                ids.extend(_collect_evidence_ids(v))
+    elif isinstance(payload, list):
+        for item in payload:
+            ids.extend(_collect_evidence_ids(item))
+    return ids[:20]
+
+
 def _stream_priority(doctrine_id: str) -> List[str]:
     return DOCTRINE_MEMORY_PRIORITIES.get(
         doctrine_id,
@@ -390,6 +657,7 @@ def _stream_priority(doctrine_id: str) -> List[str]:
             "projects",
             "capacity evolution",
             "risk evolution",
+            "management progression",
             "management commentary",
             "capital allocation outcomes",
             "financial memory",
@@ -452,8 +720,15 @@ def build_company_memory_context(
 
     max_streams = 3
     max_items_per_stream = 1
+    protected_streams = {"management progression"}
+    selected_streams = ordered_streams[:max_streams]
+    selected_names = {name for name, _candidates in selected_streams}
+    for stream_name, candidates in ordered_streams[max_streams:]:
+        if stream_name in protected_streams and stream_name not in selected_names:
+            selected_streams.append((stream_name, candidates))
+            selected_names.add(stream_name)
 
-    for stream_name, candidates in ordered_streams[:max_streams]:
+    for stream_name, candidates in selected_streams:
         primary_path, primary_payload = candidates[0]
         source_artifacts.extend(str(path.relative_to(company_root)) for path, _payload in candidates if path.is_relative_to(company_root))
         derived_latest_period = (
@@ -473,7 +748,11 @@ def build_company_memory_context(
             "latest_period": derived_latest_period,
             "limitations": _top_list(primary_payload.get("limitations") or [], limit=3),
         }
-        if stream_name == "management commitments":
+        if stream_name == "company model":
+            block.update(_compact_company_model(primary_payload))
+        elif stream_name == "management progression":
+            block.update(_compact_management_progression(primary_payload, limit=2))
+        elif stream_name == "management commitments":
             merged_commitments = deepcopy(primary_payload)
             for path, payload in candidates[1:]:
                 if not merged_commitments.get("timeline") and payload.get("timeline"):
@@ -489,6 +768,8 @@ def build_company_memory_context(
                 if not merged_assessments.get("timeline") and payload.get("timeline"):
                     merged_assessments["timeline"] = payload.get("timeline")
             block.update(_compact_assessments(merged_assessments, limit=max_items_per_stream))
+        elif stream_name == "gold intelligence":
+            block.update(_compact_gold_stream(candidates))
         elif stream_name == "management quality":
             block.update(_compact_management_quality(primary_payload))
         elif stream_name == "financial memory":

@@ -154,7 +154,7 @@ def artifact_company_slug(payload: Dict[str, Any]) -> str:
     for candidate in candidates:
         value = str(candidate or "").strip().lower()
         if value and re.fullmatch(r"[a-z0-9_-]+", value):
-            return value.replace("_", "-")
+            return value
     return ""
 
 

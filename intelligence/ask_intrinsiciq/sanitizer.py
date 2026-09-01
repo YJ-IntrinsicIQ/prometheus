@@ -35,6 +35,14 @@ FORBIDDEN_PUBLIC_TERMS = {
     "doctrine_id",
     "normalized_ids",
     "original_ids",
+    "action_started",
+    "action_completed",
+    "action_abandoned",
+    "claim_made",
+    "completion_claimed",
+    "outcome_verified",
+    "insufficient_evidence",
+    "evidence_quality",
 }
 
 PUBLIC_REWRITES = {
@@ -75,6 +83,14 @@ PUBLIC_REWRITES = {
     "this remains a central caution in the related analyst output": "this remains a central caution",
     "commitments and projects with announcements but limited or unverifiable follow-through; capacity under construction without clear evidence of economic use": "announcements outpace clear follow-through; capacity remains under construction",
     "returns on capital show positive roe and roa in the latest year but are described as weak or deteriorating in the evidence summary": "returns on capital remain mixed",
+    "action_started": "underway",
+    "action_completed": "completed",
+    "action_abandoned": "discontinued",
+    "claim_made": "announced",
+    "completion_claimed": "reported as complete",
+    "outcome_verified": "outcome confirmed",
+    "insufficient_evidence": "evidence not yet sufficient",
+    "evidence_quality": "evidence quality",
 }
 
 PUBLIC_EMPTY_FILLERS = {
