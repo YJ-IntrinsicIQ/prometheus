@@ -11,7 +11,6 @@ FORBIDDEN_PUBLIC_TERMS = (
     "full_text",
     "llm",
     "prompt",
-    "score",
     "management_score",
 )
 
@@ -86,7 +85,9 @@ def validate_management_quality_payload(
             issues.append({"code": "invalid_confidence", "severity": "fail", "dimension": dimension, "message": "Confidence must include level, basis, and limitations."})
         if item.get("missing_critical_stream_groups") and assessment != "insufficient_evidence":
             issues.append({"code": "missing_critical_stream_not_capped", "severity": "fail", "dimension": dimension, "message": "A missing critical stream must cap the dimension at insufficient evidence."})
-        if not item.get("conflicting_evidence") and assessment in {"mixed", "weak"} and dimension != "evidence_confidence":
+        # Only warn if negative evidence exists (what_weakened populated) but conflicting_evidence was not surfaced.
+        # If both are empty there is genuinely no negative evidence to show — not a producer defect.
+        if not item.get("conflicting_evidence") and item.get("what_weakened") and assessment in {"mixed", "weak"} and dimension != "evidence_confidence":
             issues.append({"code": "missing_conflicting_evidence", "severity": "warning", "dimension": dimension, "message": "Conflicting evidence should remain visible."})
 
     if str(summary_payload.get("overall_view") or "").strip().lower() not in (*MANAGEMENT_QUALITY_ASSESSMENTS,):

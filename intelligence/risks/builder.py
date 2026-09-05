@@ -566,7 +566,18 @@ def build_risk_evolution(
     
     # Deduplicate
     deduplicated_risks, merge_log = deduplicate_risks(normalized_risks)
-    
+    # Final ID-based collapse: same risk_id = same name hash = same risk; keep earliest first_observed_period.
+    _seen_ids: dict = {}
+    for _r in deduplicated_risks:
+        _rid = _r.get("risk_id")
+        if _rid not in _seen_ids:
+            _seen_ids[_rid] = _r
+        else:
+            _kept = _seen_ids[_rid]
+            if _r.get("latest_period", "") > (_kept.get("latest_period") or ""):
+                _kept["latest_period"] = _r["latest_period"]
+    deduplicated_risks = list(_seen_ids.values())
+
     # Enrich
     enriched_risks = _enrich_risks(deduplicated_risks, company_root)
     

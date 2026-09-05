@@ -689,32 +689,15 @@ def _validate_public_value_strings(value: Any, root: str) -> List[str]:
 
 
 def _canonical_question_ids() -> List[str]:
+    # The Ask question catalog is owned by answer_cards. Keep this import local to
+    # avoid a module-load cycle while preventing validator-local catalog drift.
+    from .answer_cards import QUESTION_CATALOG
+
     return [
-        "what-does-company-do",
-        "who-are-the-customers",
-        "how-does-it-make-money",
-        "are-profits-converting-into-cash",
-        "what-is-owner-earnings",
-        "is-working-capital-a-concern",
-        "are-per-share-economics-improving",
-        "what-has-management-promised",
-        "did-past-claims-come-true",
-        "what-projects-are-underway",
-        "how-is-capacity-changing",
-        "what-is-management-commentary-saying",
-        "how-is-capital-allocated",
-        "what-incentives-matter",
-        "what-should-i-ask-ir",
-        "what-would-graham-worry-about",
-        "what-would-buffett-focus-on",
-        "where-would-fisher-be-curious",
-        "what-would-munger-avoid",
-        "how-would-lynch-explain-it",
-        "what-can-break-the-thesis",
-        "which-disclosure-is-missing",
-        "what-evidence-would-change-the-view",
-        "what-needs-management-clarification",
-        "what-remains-unresolved",
+        str(question.get("id") or "")
+        for category in QUESTION_CATALOG
+        for question in (category.get("questions") or [])
+        if str(question.get("id") or "").strip()
     ]
 
 

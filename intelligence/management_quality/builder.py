@@ -62,6 +62,7 @@ def _source_file_payloads(company_root: Path) -> Dict[str, Any]:
     financial_root = company_root / "company_memory" / "financials"
     return {
         "commitments": _load_list(company_root / "company_memory" / "management_commitments" / "management_commitments.json", ("commitments",)),
+        "management_progression": _load_company_payload(company_root / "company_memory" / "management_progression" / "management_progression.json"),
         "projects": _load_list(company_root / "company_memory" / "projects" / "projects_registry.json", ("projects",)),
         "capacity": _load_list(company_root / "company_memory" / "capacity" / "capacity_registry.json", ("capacity_items", "capacities")),
         "risks": _load_list(company_root / "company_memory" / "risks" / "risk_registry.json", ("risks",)),
@@ -104,9 +105,64 @@ def _build_validation(summary_payload: Dict[str, Any], dimensions_payload: Dict[
     return validate_management_quality_payload(summary_payload, dimensions_payload=dimensions_payload, evidence_payload=evidence_payload, lineage_report=lineage_report, upstream_validation=upstream_validation)
 
 
+REQUIRED_UPSTREAM_VALIDATION_STREAMS = frozenset({"management_commitments", "management_progression"})
+OPTIONAL_UPSTREAM_VALIDATION_STREAMS = frozenset({
+    "projects",
+    "capacity",
+    "risks",
+    "management_commentary",
+    "capital_allocation_outcomes",
+})
+OPTIONAL_VALIDATION_TO_SOURCE_KEY = {
+    "projects": "projects",
+    "capacity": "capacity",
+    "risks": "risks",
+    "management_commentary": "commentary",
+    "capital_allocation_outcomes": "capital_allocation_outcomes",
+}
+
+
+def _status_for_validation_path(path: Path) -> str:
+    if not path.exists():
+        return "missing"
+    return str(_load_company_payload(path).get("status") or "missing").lower()
+
+
+def _is_hard_invalid_upstream(status: str) -> bool:
+    return str(status or "").lower() in {"fail", "failed", "missing"}
+
+
 def build_management_quality_payloads(*, company: str, company_root: Path) -> Dict[str, Dict[str, Any]]:
     source_payloads = _source_file_payloads(company_root)
     years = _discover_years(company_root)
+    validation_paths = {
+        "management_commitments": company_root / "company_memory" / "management_commitments" / "commitment_validation.json",
+        "management_progression": company_root / "company_memory" / "management_progression" / "management_progression_validation.json",
+        "projects": company_root / "company_memory" / "projects" / "projects_validation.json",
+        "capacity": company_root / "company_memory" / "capacity" / "capacity_validation.json",
+        "risks": company_root / "company_memory" / "risks" / "risk_validation.json",
+        "management_commentary": company_root / "company_memory" / "management_commentary" / "commentary_validation.json",
+        "capital_allocation_outcomes": company_root / "company_memory" / "capital_allocation_outcomes" / "capital_allocation_validation.json",
+    }
+    upstream_validation = {
+        name: _status_for_validation_path(path)
+        for name, path in validation_paths.items()
+        if name in REQUIRED_UPSTREAM_VALIDATION_STREAMS or path.exists()
+    }
+    quarantined_optional_sources = sorted(
+        name
+        for name, status in upstream_validation.items()
+        if name in OPTIONAL_UPSTREAM_VALIDATION_STREAMS and _is_hard_invalid_upstream(status)
+    )
+    for name in quarantined_optional_sources:
+        source_key = OPTIONAL_VALIDATION_TO_SOURCE_KEY.get(name)
+        if source_key:
+            source_payloads[source_key] = []
+    validation_upstream_status = {
+        name: status
+        for name, status in upstream_validation.items()
+        if name in REQUIRED_UPSTREAM_VALIDATION_STREAMS or status not in {"fail", "failed", "missing"}
+    }
     evidence_items = build_management_quality_evidence(source_payloads, company_slug=company)
     evidence_items = [item for item in evidence_items if _period_in_analysis_window(item.get("period"), years)]
     latest_period = _latest_period_from_evidence(evidence_items, years)
@@ -146,15 +202,6 @@ def build_management_quality_payloads(*, company: str, company_root: Path) -> Di
     conviction_lists = build_conviction_lists(dimension_records, evidence_items)
     turning_points = build_turning_points(evidence_items)
     evidence_confidence = confidence_from_coverage(source_stream_counts, evidence_items)
-    validation_paths = {
-        "management_commitments": company_root / "company_memory" / "management_commitments" / "commitment_validation.json",
-        "projects": company_root / "company_memory" / "projects" / "projects_validation.json",
-        "capacity": company_root / "company_memory" / "capacity" / "capacity_validation.json",
-        "risks": company_root / "company_memory" / "risks" / "risk_validation.json",
-        "management_commentary": company_root / "company_memory" / "management_commentary" / "commentary_validation.json",
-        "capital_allocation_outcomes": company_root / "company_memory" / "capital_allocation_outcomes" / "capital_allocation_validation.json",
-    }
-    upstream_validation = {name: str(_load_company_payload(path).get("status") or "missing").lower() for name, path in validation_paths.items() if path.exists()}
     degraded = sorted(name for name, status in upstream_validation.items() if status not in {"pass", "passed"})
     if degraded and evidence_confidence.get("level") == "high":
         evidence_confidence["level"] = "medium"
@@ -240,6 +287,7 @@ def build_management_quality_payloads(*, company: str, company_root: Path) -> Di
     dependencies = []
     for name, path in {
         "management_commitments": company_root / "company_memory" / "management_commitments" / "management_commitments.json",
+        "management_progression": company_root / "company_memory" / "management_progression" / "management_progression.json",
         "projects": company_root / "company_memory" / "projects" / "projects_registry.json",
         "capacity": company_root / "company_memory" / "capacity" / "capacity_registry.json",
         "risks": company_root / "company_memory" / "risks" / "risk_registry.json",
@@ -248,12 +296,13 @@ def build_management_quality_payloads(*, company: str, company_root: Path) -> Di
     }.items():
         dependencies.append({"name": name, "generated_at": _load_company_payload(path).get("generated_at")})
     lineage_report = validate_lineage(artifact_generated_at=summary_payload["generated_at"], dependencies=dependencies)
-    validation_payload = _build_validation(summary_payload, dimensions_payload, evidence_payload, lineage_report=lineage_report, upstream_validation=upstream_validation)
+    validation_payload = _build_validation(summary_payload, dimensions_payload, evidence_payload, lineage_report=lineage_report, upstream_validation=validation_upstream_status)
     manifest_payload = build_management_quality_manifest(
         company_slug=company,
         generated_at=_utc_now(),
         source_files_considered=[
             "company_memory/management_commitments/management_commitments.json",
+            "company_memory/management_progression/management_progression.json",
             "company_memory/projects/projects_registry.json",
             "company_memory/capacity/capacity_registry.json",
             "company_memory/risks/risk_registry.json",
@@ -264,7 +313,7 @@ def build_management_quality_payloads(*, company: str, company_root: Path) -> Di
             "company_memory/financials/financial_truth_pack.json",
         ],
         source_files_found=[key for key, value in source_stream_counts.items() if value],
-        source_files_missing=[key for key in ("management_commitments", "projects", "capacity", "risks", "management_commentary", "capital_allocation_outcomes", "owner_earnings", "per_share_compounding", "financial_truth") if not source_stream_counts.get(key)],
+        source_files_missing=[key for key in ("management_commitments", "management_progression", "projects", "capacity", "risks", "management_commentary", "capital_allocation_outcomes", "owner_earnings", "per_share_compounding", "financial_truth") if not source_stream_counts.get(key)],
         dimension_count=len(dimension_records),
         evidence_count=len(evidence_items),
         turning_point_count=len(turning_points),
@@ -275,6 +324,7 @@ def build_management_quality_payloads(*, company: str, company_root: Path) -> Di
     )
     manifest_payload["lineage_validation"] = lineage_report
     manifest_payload["upstream_validation"] = upstream_validation
+    manifest_payload["quarantined_optional_sources"] = quarantined_optional_sources
 
     return {
         "management_quality_summary.json": summary_payload,

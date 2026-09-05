@@ -97,22 +97,62 @@ def _direction_from_polarity(polarity: str) -> str:
     }.get(polarity, "unclear")
 
 
-def extract_commitment_evidence(commitments: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _management_progression_commitment_index(management_progression: Any) -> Dict[str, Dict[str, Any]]:
+    if not isinstance(management_progression, dict):
+        return {}
+    items = management_progression.get("progression_items") or management_progression.get("items") or []
+    index: Dict[str, Dict[str, Any]] = {}
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        events = item.get("events") or []
+        for event in events if isinstance(events, list) else []:
+            if not isinstance(event, dict):
+                continue
+            role = _normalize_text(_first_text(event.get("event_role"), event.get("role")))
+            event_id = _first_text(event.get("event_id"), event.get("source_item_id"))
+            if event_id and role == "commitment":
+                index[event_id] = item
+    return index
+
+
+def _commitment_status_from_progression(commitment: Dict[str, Any], lifecycle_index: Dict[str, Dict[str, Any]]) -> str:
+    item = lifecycle_index.get(_first_text(commitment.get("commitment_fingerprint")))
+    if not item:
+        return "unknown"
+    status = _normalize_text(_first_text(item.get("current_status"), item.get("chain_status"), item.get("status")))
+    if status in {"delivered", "achieved", "completed", "outcome positive", "financial impact confirmed"}:
+        return "delivered"
+    if status in {"partially delivered", "partially achieved"}:
+        return "partially_delivered"
+    if status in {"in progress", "progressing", "action started", "action completed"}:
+        return "in_progress"
+    if status == "delayed":
+        return "delayed"
+    if status in {"missed", "failed", "not delivered", "abandoned", "cancelled", "contradicted"}:
+        return "missed"
+    if status in {"announced", "claim only", "unverified", "unable to verify", "unresolved", "unknown"}:
+        return "unable_to_verify"
+    return "unknown"
+
+
+def extract_commitment_evidence(commitments: Sequence[Dict[str, Any]], management_progression: Any = None) -> List[Dict[str, Any]]:
     evidence: List[Dict[str, Any]] = []
+    lifecycle_index = _management_progression_commitment_index(management_progression)
     for commitment in commitments:
-        status = _first_text(commitment.get("status"), commitment.get("delivery_assessment"))
+        status = _commitment_status_from_progression(commitment, lifecycle_index)
         polarity = _status_polarity(
             status,
-            positive=("delivered", "partially delivered", "fulfilled", "on track", "completed"),
-            negative=("delayed", "abandoned", "superseded", "unable to verify", "not delivered"),
-            mixed=("in progress", "partially", "ongoing"),
+            positive=("delivered", "partially delivered"),
+            negative=("delayed", "abandoned", "superseded", "not delivered", "missed"),
+            mixed=("in progress", "partially"),
         )
         evidence.append(
             _evidence(
                 source_stream="management_commitments",
                 source_item_id=commitment.get("id"),
                 period=_coalesce_period(commitment.get("announcement_period"), commitment.get("latest_period")),
-                evidence_type=f"commitment_{_normalize_text(status or commitment.get('category') or 'unknown').replace(' ', '_') or 'unknown'}",
+                evidence_type=f"commitment_{_normalize_text(status or 'unknown').replace(' ', '_') or 'unknown'}",
                 direction=_direction_from_polarity(polarity),
                 relevance="high" if commitment.get("category") in {"Capacity", "Capex", "Manufacturing", "Financial Target", "Growth"} else "medium",
                 confidence=str((commitment.get("confidence") or {}).get("level") or "medium").lower() if isinstance(commitment.get("confidence"), dict) else "medium",
@@ -124,7 +164,7 @@ def extract_commitment_evidence(commitments: Sequence[Dict[str, Any]]) -> List[D
                 ),
                 polarity=polarity,
                 source_references=_refs(commitment),
-                turning_point=bool(commitment.get("progression", {}).get("turning_points")),
+                turning_point=bool((lifecycle_index.get(_first_text(commitment.get("commitment_fingerprint"))) or {}).get("turning_points")),
                 source_label=commitment.get("category"),
             )
         )
@@ -439,7 +479,7 @@ def extract_investor_panel_evidence(panel_payload: Dict[str, Any] | None, compan
 
 def build_management_quality_evidence(sources: Dict[str, Any], *, company_slug: str) -> List[Dict[str, Any]]:
     evidence: List[Dict[str, Any]] = []
-    evidence.extend(extract_commitment_evidence(sources.get("commitments") or []))
+    evidence.extend(extract_commitment_evidence(sources.get("commitments") or [], sources.get("management_progression") or {}))
     evidence.extend(extract_project_evidence(sources.get("projects") or []))
     evidence.extend(extract_capacity_evidence(sources.get("capacity") or []))
     evidence.extend(extract_risk_evidence(sources.get("risks") or []))

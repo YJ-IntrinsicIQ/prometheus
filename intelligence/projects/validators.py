@@ -13,7 +13,8 @@ FORBIDDEN_PUBLIC_TERMS = (
     "full_text",
     "llm",
     "prompt",
-    "pipeline",
+    # "pipeline" removed: legitimate business term in pharma/tech (R&D pipeline, drug pipeline).
+    # Internal pipeline references don't appear in project names or objectives.
 )
 
 

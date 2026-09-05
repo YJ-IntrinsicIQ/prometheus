@@ -3,6 +3,12 @@ from pathlib import Path
 
 from intelligence.management_quality import ManagementQualityBuilder, validate_management_quality_payload
 from intelligence.management_quality.evidence_linker import build_management_quality_evidence
+from intelligence.management_quality.builder import (
+    OPTIONAL_VALIDATION_TO_SOURCE_KEY,
+    OPTIONAL_UPSTREAM_VALIDATION_STREAMS,
+    REQUIRED_UPSTREAM_VALIDATION_STREAMS,
+    _is_hard_invalid_upstream,
+)
 from intelligence.management_quality.synthesis import evaluate_dimensions
 
 
@@ -14,9 +20,10 @@ def _mkdirs(base_dir: Path, company: str) -> dict[str, Path]:
     capacity_dir = root / "capacity"
     commitments_dir = root / "management_commitments"
     commentary_dir = root / "management_commentary"
+    progression_dir = root / "management_progression"
     capital_dir = root / "capital_allocation_outcomes"
     risks_dir = root / "risks"
-    for path in (financial_dir / "investor_financial_modules", investor_dir, projects_dir, capacity_dir, commitments_dir, commentary_dir, capital_dir, risks_dir):
+    for path in (financial_dir / "investor_financial_modules", investor_dir, projects_dir, capacity_dir, commitments_dir, commentary_dir, progression_dir, capital_dir, risks_dir):
         path.mkdir(parents=True, exist_ok=True)
     return {
         "root": root,
@@ -26,6 +33,7 @@ def _mkdirs(base_dir: Path, company: str) -> dict[str, Path]:
         "capacity": capacity_dir,
         "commitments": commitments_dir,
         "commentary": commentary_dir,
+        "progression": progression_dir,
         "capital": capital_dir,
         "risks": risks_dir,
     }
@@ -39,6 +47,10 @@ def _write_positive_fixture(base_dir: Path, company: str):
     paths = _mkdirs(base_dir, company)
     financial_dir = paths["financial"]
     investor_dir = paths["investor"]
+
+    _write_json(paths["commitments"] / "commitment_validation.json", {"status": "pass", "issues": []})
+    _write_json(paths["progression"] / "management_progression_validation.json", {"status": "pass", "issues": []})
+    _write_json(paths["progression"] / "management_progression.json", {"company_slug": company, "events": []})
 
     _write_json(
         paths["commitments"] / "management_commitments.json",
@@ -371,6 +383,31 @@ def test_management_quality_builder_aggregates_longitudinal_evidence(tmp_path, m
     assert "management_score" not in json.dumps(summary).lower()
     assert "management_score" not in json.dumps(dimensions).lower()
     assert "management_score" not in json.dumps(evidence).lower()
+
+
+def test_public_term_scanner_allows_public_satisfaction_score_but_rejects_internal_scores():
+    from intelligence.management_quality.validators import _scan_forbidden_keys, _scan_forbidden_terms
+
+    public_evidence = {"summary": "Employee satisfaction score improved by 2025."}
+    internal_term = {"summary": "The management_score was high."}
+    internal_key = {"overall_score": 82}
+
+    assert _scan_forbidden_terms(public_evidence) == []
+    assert "management_score" in _scan_forbidden_terms(internal_term)
+    assert "overall_score" in _scan_forbidden_keys(internal_key)
+
+
+def test_management_quality_optional_upstream_failures_are_quarantinable_not_required():
+    assert "management_commitments" in REQUIRED_UPSTREAM_VALIDATION_STREAMS
+    assert "management_progression" in REQUIRED_UPSTREAM_VALIDATION_STREAMS
+    assert "projects" in OPTIONAL_UPSTREAM_VALIDATION_STREAMS
+    assert "risks" in OPTIONAL_UPSTREAM_VALIDATION_STREAMS
+    assert OPTIONAL_VALIDATION_TO_SOURCE_KEY["projects"] == "projects"
+    assert OPTIONAL_VALIDATION_TO_SOURCE_KEY["risks"] == "risks"
+    assert _is_hard_invalid_upstream("fail") is True
+    assert _is_hard_invalid_upstream("missing") is True
+    assert _is_hard_invalid_upstream("warning") is False
+    assert _is_hard_invalid_upstream("pass") is False
 
 
 def test_validator_rejects_management_score_field():
