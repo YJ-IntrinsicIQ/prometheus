@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -239,11 +240,27 @@ PRIORITY_BY_CATEGORY = {
 # also be genuinely similar (via _promises_match on the raw text).
 # Missing linkage is safer than false linkage.
 _GENERIC_FALLBACK_TOPICS = frozenset({
-    "Management commitment",  # Other catch-all: always too broad
-    "Capital deployment",     # Capex catch-all: "investment" appears in unrelated items
-    "Growth target",          # Growth catch-all: "growth/goals" appear broadly
-    "Business expansion",     # Expansion catch-all
-    "Acquisition",            # Category label: acquire ≠ divest, both land here
+    # Other catch-all
+    "Management commitment",
+    # Capex catch-all
+    "Capital deployment",
+    # Growth catch-all
+    "Growth target",
+    # Expansion catch-all
+    "Business expansion",
+    # Category label only
+    "Acquisition",
+    # TOPIC_BY_CATEGORY defaults — all are category-level labels, not initiative-specific.
+    # Same category + same generic topic ≠ same commitment (hard principle 3).
+    "Product launch",        # all Product-category items
+    "Capacity expansion",    # all Capacity items without a specific sub-keyword
+    "Technology upgrade",    # all Technology items
+    "Partnership rollout",   # all Partnership items
+    "Financial target",      # all Financial Target items
+    "Margin improvement",    # all Margin items
+    "Market entry",          # all Market Entry items without "export"
+    "Commercial production", # default Manufacturing topic
+    "Customer win",          # all Customer items
 })
 
 # Generic management vocabulary that does not distinguish one initiative from
@@ -1180,8 +1197,17 @@ def _build_manifest(
     }
 
 
+def _commitment_fingerprint(company: str, announcement_period: str, normalized_commitment: str) -> str:
+    """Deterministic stable identity for cross-system linkage; not tied to ordinal MC-XXXX IDs."""
+    raw = f"{company}|{announcement_period}|{normalized_commitment}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:20]
+
+
 def _build_commitment_record(company: str, group: Dict[str, Any], commitment_id: str) -> Dict[str, Any]:
-    status = _determine_status(group)
+    # MC is NOT a lifecycle authority. _determine_status is a candidate heuristic for the
+    # progression timeline's internal evidence trail only — not for the top-level status verdict.
+    _candidate_signal = _determine_status(group)
+    _fingerprint = _commitment_fingerprint(company, group["announcement_period"], group["normalized_commitment"])
     supporting_evidence = sorted(
         group["supporting_evidence"],
         key=lambda item: (_year_sort_key(item["period"]), item["event_type"], item["statement"]),
@@ -1200,7 +1226,8 @@ def _build_commitment_record(company: str, group: Dict[str, Any], commitment_id:
         stream_type=_PROGRESSION_ADAPTER.stream_type,
         events=progression_events,
         adapter=_PROGRESSION_ADAPTER,
-        unresolved_questions=[] if status != "Unable To Verify" else ["No later evidence confirmed the commitment."],
+        # MC cannot confirm delivery; lifecycle truth belongs to management_progression.
+        unresolved_questions=["Canonical lifecycle status is owned by management_progression, not management_commitments."],
         coverage_status="supported" if len(progression_events) > 1 else "partial",
     )
     progression_validation = validate_progression_payload(progression_timeline)
@@ -1221,7 +1248,7 @@ def _build_commitment_record(company: str, group: Dict[str, Any], commitment_id:
             for item in supporting_evidence
             if item["event_type"] not in ("announcement",)
         ],
-        "latest_status": status,
+        "candidate_evidence_signal": _candidate_signal,  # heuristic only; NOT canonical lifecycle status
         "latest_period": _latest_evidence_period(group),
         "current_state": progression_timeline["current_state"],
         "turning_points": progression_timeline["turning_points"],
@@ -1256,6 +1283,8 @@ def _build_commitment_record(company: str, group: Dict[str, Any], commitment_id:
     }
     return {
         "id": commitment_id,
+        "commitment_fingerprint": _fingerprint,  # stable cross-system identity (not ordinal)
+        "lifecycle_authority": "management_progression",  # canonical lifecycle owner
         "topic": group["topic"],
         "category": group["category"],
         "announcement_period": group["announcement_period"],
@@ -1263,11 +1292,13 @@ def _build_commitment_record(company: str, group: Dict[str, Any], commitment_id:
         "normalized_commitment": group["normalized_commitment"],
         "expected_timeframe": group["expected_timeframe"],
         "priority": group["priority"],
-        "status": status,
+        # MC is not a lifecycle authority. Status is always "Unable To Verify" here.
+        # Canonical lifecycle status lives in management_progression.json and Gold.
+        "status": "Unable To Verify",
         "supporting_evidence": supporting_evidence,
-        "delivery_assessment": _build_delivery_assessment(status, group),
+        "delivery_assessment": _build_delivery_assessment("Unable To Verify", group),
         "confidence": _confidence_for_group(group),
-        "investor_implication": _investor_implication(status),
+        "investor_implication": _investor_implication("Unable To Verify"),
         "source_references": group["source_references"],
         "lifecycle": lifecycle,
         "progression": progression,
@@ -1461,17 +1492,10 @@ def _validate_commitment_record(commitment: Dict[str, Any]) -> List[Dict[str, An
             }
         )
 
-    decisive_event_types = {"progress", "progress_update", "confirmation", "delay_signal", "abandonment_signal", "superseded", "delivery_confirmation"}
-    decisive_evidence = [ev for ev in evidence if ev.get("event_type") in decisive_event_types]
-    if status == "Unable To Verify" and decisive_evidence:
-        issues.append(
-            {
-                "code": "overstated_verification",
-                "severity": "fail",
-                "commitment_id": commitment.get("id"),
-                "message": "Unable To Verify should only be used when there is no confirming later evidence.",
-            }
-        )
+    # overstated_verification check removed: MC always outputs "Unable To Verify" because
+    # MC is not a lifecycle authority. Lifecycle truth is owned by management_progression.
+    # Presence of candidate follow-up evidence in supporting_evidence does NOT imply delivery;
+    # it only means the evidence is available for management_progression to evaluate.
 
     return issues
 
@@ -1658,7 +1682,11 @@ class ManagementCommitmentsBuilder:
                         if candidate.get("commitment_role") == "follow_up":
                             left_sig = set(_significant_tokens(candidate["original_statement"]))
                             right_sig = set(_significant_tokens(group["original_statements"][0]))
-                            if not (left_sig & right_sig):
+                            shared = left_sig & right_sig
+                            # "any shared token" is too loose — generic words like
+                            # "products" or "including" appear in unrelated items.
+                            # Require meaningful overlap to establish relevance.
+                            if not shared or len(shared) / max(len(left_sig), len(right_sig), 1) < 0.20:
                                 continue
                         elif not _promises_match(
                             candidate["original_statement"],

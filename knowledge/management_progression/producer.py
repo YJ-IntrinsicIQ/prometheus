@@ -191,6 +191,7 @@ class ManagementProgressionProducer:
 
     def _collect_events(self) -> List[Dict[str, Any]]:
         events: List[Dict[str, Any]] = []
+        events.extend(self._events_from_multi_source_longitudinal())
         events.extend(self._events_from_commitments())
         events.extend(self._events_from_projects())
         events.extend(self._events_from_capacity())
@@ -200,6 +201,114 @@ class ManagementProgressionProducer:
         events.extend(self._events_from_legacy_promises())
         events.extend(self._events_from_legacy_capital_allocation())
         return events
+
+    def _events_from_multi_source_longitudinal(self) -> List[Dict[str, Any]]:
+        payload = loaded_payload(self.sources, "multi_source_longitudinal")
+        results: List[Dict[str, Any]] = []
+        commitments = payload.get("commitments") or []
+        if not isinstance(commitments, list):
+            return results
+        for item in commitments:
+            if not isinstance(item, dict):
+                continue
+            theme = _pick(item, "theme_label", "theme_slug", default="Multi-source progression")
+            theme = _canonical_progression_text(theme)
+            claimed_text = _canonical_progression_text(_pick(item, "claimed_text"))
+            confirmed_text = _canonical_progression_text(_pick(item, "confirmed_text"))
+            financial_text = _canonical_progression_text(_pick(item, "financial_consequence"))
+            if not any(_specific_enough(text) and not _is_low_value_progression_text(text) for text in (theme, claimed_text, confirmed_text, financial_text)):
+                continue
+
+            commitment_id = _pick(item, "commitment_id", default=f"multi_source_{len(results)+1}")
+            lifecycle = str(item.get("lifecycle") or "").upper()
+            claim_domain = str(item.get("claim_domain") or "").upper()
+            source_evidence = item.get("evidence") or []
+            first_ev = _first_evidence(source_evidence)
+            first_target_period = _pick(first_ev, "target_period") if first_ev else ""
+            claimed_period = _pick(item, "claimed_period", default=_pick(first_ev, "source_period", "fiscal_year") if first_ev else "")
+            claimed_actor = _actor_from_longitudinal_item(item, first_ev)
+            event_type = _event_type_from_longitudinal(item)
+
+            if claimed_text:
+                claim_role = "commitment" if claim_domain == "COMMITMENT" else "statement"
+                results.append(
+                    self._event(
+                        event_id=f"{commitment_id}:claim",
+                        role=claim_role,
+                        event_type=event_type,
+                        source_period=claimed_period,
+                        event_period=claimed_period,
+                        target_period=first_target_period,
+                        actor=claimed_actor,
+                        statement_text=claimed_text,
+                        verification_status="unresolved" if lifecycle in {"CLAIMED", "UNPROVEN", ""} else "partially_verified",
+                        evidence=_evidence_from_longitudinal(item, first_ev, claimed_period),
+                        stream_type="multi_source_longitudinal",
+                        theme_hint=theme,
+                    )
+                )
+
+            confirmed_period = _pick(item, "confirmed_period")
+            confirmed_ev = _best_evidence_for_text(source_evidence, confirmed_text) if confirmed_text else {}
+            if confirmed_text:
+                confirmed_event_period = confirmed_period or _pick(confirmed_ev, "source_period", "fiscal_year") or claimed_period
+                results.append(
+                    self._event(
+                        event_id=f"{commitment_id}:confirmed",
+                        role="completion" if lifecycle == "CONFIRMED" else "action",
+                        event_type=event_type,
+                        source_period=confirmed_event_period,
+                        event_period=confirmed_event_period,
+                        actor=_actor_from_longitudinal_item(item, confirmed_ev),
+                        action_taken="" if lifecycle == "CONFIRMED" else confirmed_text,
+                        operational_outcome=confirmed_text if lifecycle == "CONFIRMED" else "",
+                        verification_status="verified" if lifecycle == "CONFIRMED" else "partially_verified",
+                        evidence=_evidence_from_longitudinal(item, confirmed_ev, confirmed_event_period),
+                        stream_type="multi_source_longitudinal",
+                        theme_hint=theme,
+                    )
+                )
+
+            financial_ev = _best_evidence_for_text(source_evidence, financial_text) if financial_text else {}
+            if financial_text:
+                financial_period = _pick(financial_ev, "source_period", "fiscal_year") or claimed_period
+                results.append(
+                    self._event(
+                        event_id=f"{commitment_id}:financial",
+                        role="outcome",
+                        event_type="financial_outcome",
+                        source_period=financial_period,
+                        event_period=financial_period,
+                        actor=_actor_from_longitudinal_item(item, financial_ev),
+                        financial_or_business_outcome=financial_text,
+                        verification_status="partially_verified",
+                        evidence=_evidence_from_longitudinal(item, financial_ev, financial_period),
+                        stream_type="multi_source_longitudinal",
+                        theme_hint=theme,
+                    )
+                )
+
+            if lifecycle == "CONTRADICTED":
+                contradicted_period = confirmed_period or claimed_period
+                contradiction_text = confirmed_text or _pick(item, "unproven_reason") or claimed_text
+                if contradiction_text:
+                    results.append(
+                        self._event(
+                            event_id=f"{commitment_id}:contradicted",
+                            role="reversal",
+                            event_type=event_type,
+                            source_period=contradicted_period,
+                            event_period=contradicted_period,
+                            actor=_actor_from_longitudinal_item(item, confirmed_ev or first_ev),
+                            operational_outcome=contradiction_text,
+                            verification_status="contradicted",
+                            evidence=_evidence_from_longitudinal(item, confirmed_ev or first_ev, contradicted_period),
+                            stream_type="multi_source_longitudinal",
+                            theme_hint=theme,
+                        )
+                    )
+
+        return results
 
     def _events_from_commitments(self) -> List[Dict[str, Any]]:
         payload = loaded_payload(self.sources, "management_commitments")
@@ -215,17 +324,20 @@ class ManagementProgressionProducer:
             if not _specific_enough(text) or _is_low_value_progression_text(text):
                 continue
             period = _pick(item, "first_seen_period", "announcement_period", "source_period", "first_seen_year", "period")
-            status = _pick(item, "latest_status", "delivery_status", "status") or "unresolved"
             evidence = _evidence_from_item(item, "company_memory/management_commitments/management_commitments.json", period)
+            # MC is not a lifecycle authority (lifecycle_authority="management_progression").
+            # All commitment events start as "unresolved"; lifecycle is derived from action/completion
+            # events sourced from projects, capacity, commentary, and capital_allocation_outcomes.
             results.append(
                 self._event(
-                    event_id=_pick(item, "commitment_id", "promise_id", default=f"commitment_{len(results)+1}"),
+                    # Prefer stable fingerprint over ordinal MC-XXXX id for cross-system linkage.
+                    event_id=_pick(item, "commitment_fingerprint", "commitment_id", "promise_id", default=f"commitment_{len(results)+1}"),
                     role="commitment",
                     event_type=_event_type_from_text(text),
                     source_period=period,
                     event_period=period,
                     statement_text=text,
-                    verification_status="unresolved" if _status_to_current(status) in {"announced", "unresolved"} else "partially_verified",
+                    verification_status="unresolved",
                     evidence=evidence,
                     stream_type="commitment",
                 )
@@ -580,7 +692,8 @@ class ManagementProgressionProducer:
     def _group_events(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         groups: Dict[str, List[Dict[str, Any]]] = {}
         for event in events:
-            key = theme_key(_event_primary_text(event) or _event_grouping_text(event))
+            key_text = event.get("_theme_hint") if event.get("_stream_type") == "multi_source_longitudinal" else ""
+            key = theme_key(key_text or _event_primary_text(event) or _event_grouping_text(event))
             groups.setdefault(key, []).append(event)
         items = []
         for index, (key, grouped) in enumerate(sorted(groups.items()), start=1):
@@ -649,7 +762,7 @@ def _public_event(event: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _has_governed_progression_stream(items: List[Dict[str, Any]]) -> bool:
-    governed_streams = {"commitment", "project", "capacity", "commentary", "capital_allocation"}
+    governed_streams = {"multi_source_longitudinal", "commitment", "project", "capacity", "commentary", "capital_allocation"}
     for item in items:
         if governed_streams & set(item.get("stream_types") or []):
             return True
@@ -690,6 +803,8 @@ def _event_grouping_text(event: Dict[str, Any]) -> str:
 
 
 def _title_from_event(event: Dict[str, Any]) -> str:
+    if event.get("_stream_type") == "multi_source_longitudinal" and event.get("_theme_hint"):
+        return _truncate(event.get("_theme_hint"), 96) or "Management progression item"
     text = _event_primary_text(event) or _event_grouping_text(event)
     return _truncate(text, 96) or "Management progression item"
 
@@ -843,6 +958,101 @@ def _evidence_from_item(item: Dict[str, Any], artifact: str, period: str) -> Lis
     ]
 
 
+def _first_evidence(evidence_items: Any) -> Dict[str, Any]:
+    if isinstance(evidence_items, list):
+        for ev in evidence_items:
+            if isinstance(ev, dict):
+                return ev
+    return {}
+
+
+def _best_evidence_for_text(evidence_items: Any, text: str) -> Dict[str, Any]:
+    if not isinstance(evidence_items, list):
+        return {}
+    period_match = re.match(r"\[([^\]]+)\s*/\s*([^\]]+)\]", str(text or "").strip())
+    if period_match:
+        wanted_period = period_match.group(1).strip().lower()
+        wanted_source = period_match.group(2).strip().upper()
+        for ev in evidence_items:
+            if not isinstance(ev, dict):
+                continue
+            ev_period = str(ev.get("source_period") or ev.get("fiscal_year") or "").strip().lower()
+            ev_source = str(ev.get("source_type") or ev.get("authority") or "").strip().upper()
+            if ev_period == wanted_period and (wanted_source in ev_source or ev_source in wanted_source):
+                return ev
+    needle = " ".join(str(text or "").lower().split())[:160]
+    if not needle:
+        return _first_evidence(evidence_items)
+    for ev in evidence_items:
+        if not isinstance(ev, dict):
+            continue
+        ev_text = " ".join(str(ev.get("text") or "").lower().split())
+        if needle and (needle in ev_text or ev_text[:160] in needle):
+            return ev
+    return _first_evidence(evidence_items)
+
+
+def _evidence_from_longitudinal(item: Dict[str, Any], ev: Dict[str, Any], period: str) -> List[Dict[str, Any]]:
+    ev = ev if isinstance(ev, dict) else {}
+    return [
+        evidence_ref(
+            source_artifact="longitudinal/longitudinal_report.json",
+            source_period=period or _pick(ev, "source_period", "fiscal_year"),
+            evidence_id=_pick(ev, "evidence_id"),
+            source_item_id=_pick(item, "commitment_id"),
+            field_path="commitments[]",
+            excerpt=_truncate(_pick(ev, "text", default=_pick(item, "claimed_text", "confirmed_text", "financial_consequence")), 220),
+        )
+    ]
+
+
+def _actor_from_longitudinal_item(item: Dict[str, Any], ev: Dict[str, Any] | None = None) -> str:
+    ev = ev if isinstance(ev, dict) else {}
+    speaker_role = str(ev.get("speaker_role") or "").strip().upper()
+    speaker = str(ev.get("speaker") or item.get("claimed_by") or "").strip().lower()
+    source_type = str(ev.get("source_type") or item.get("claimed_source") or "").upper()
+    domain = str(item.get("claim_domain") or ev.get("claim_domain") or "").upper()
+    text = " ".join(str(ev.get("text") or item.get("claimed_text") or item.get("confirmed_text") or "").lower().split())
+    if speaker_role == "MANAGEMENT" or speaker in {"management", "company"}:
+        return "management"
+    if domain == "FACTUAL_EVENT" and "regulat" in text:
+        return "regulator"
+    if source_type == "EXCHANGE_DISCLOSURE":
+        return "company"
+    if speaker_role == "ANALYST":
+        return "market"
+    return "unknown"
+
+
+def _event_type_from_longitudinal(item: Dict[str, Any]) -> str:
+    slug = str(item.get("theme_slug") or "").lower()
+    if any(token in slug for token in ("profit", "margin", "cash_flow", "revenue", "ebitda")):
+        return "financial_outcome"
+    if any(token in slug for token in ("capital", "qip", "debt", "acquisition", "dividend", "buyback")):
+        return "capital_deployment"
+    if any(token in slug for token in ("capacity", "facility", "plant", "manufacturing")):
+        return "capacity_expansion"
+    if any(token in slug for token in ("platform_launch", "product", "rcs", "ott", "whatsapp", "wisely")):
+        return "product_launch"
+    if any(token in slug for token in ("risk", "regulatory", "compliance", "fraud", "spam")):
+        return "risk_response"
+    text = " ".join(
+        str(item.get(key) or "")
+        for key in ("theme_slug", "theme_label", "claimed_text", "confirmed_text", "financial_consequence")
+    ).lower()
+    if any(token in text for token in ("capacity", "facility", "plant", "manufacturing")):
+        return "capacity_expansion"
+    if any(token in text for token in ("launch", "product", "platform", "catalog", "catalogue", "rcs", "ott", "whatsapp")):
+        return "product_launch"
+    if any(token in text for token in ("capex", "investment", "qip", "debt", "loan", "acquisition", "dividend", "buyback")):
+        return "capital_deployment"
+    if any(token in text for token in ("risk", "regulatory", "compliance", "fraud", "spam")):
+        return "risk_response"
+    if any(token in text for token in ("revenue", "profit", "margin", "cash flow", "ebitda", "pat")):
+        return "financial_outcome"
+    return "strategic_change"
+
+
 def _specific_enough(text: Any) -> bool:
     words = _specific_progression_words(_canonical_progression_text(text))
     return len(words) >= 2 and (_has_material_anchor(text) or len(words) >= 4)
@@ -923,6 +1133,8 @@ def _materiality_score(item: Dict[str, Any]) -> int:
     stream_types = set(item.get("stream_types") or [])
     if "commitment" in stream_types:
         score += 8
+    if "multi_source_longitudinal" in stream_types:
+        score += 10
     if "legacy_promise" in stream_types:
         score += 6
     score += 4 if {"project", "capacity"} & stream_types else 0
