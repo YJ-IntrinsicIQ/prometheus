@@ -167,6 +167,12 @@ DOCTRINE_DIFFERENTIATION_GUIDANCE: Dict[str, Dict[str, Any]] = {
             "moat language without financial protection evidence",
             "management optimism not tied to conservative financing or risk control",
         ],
+        "risk_interpretation": (
+            "If risk evolution data is present in company-memory context: prioritize worsening risks that could "
+            "cause permanent capital loss, weaken balance-sheet protection, or create unmanaged contingent liabilities. "
+            "Treat recurring risks with unknown financial consequence conservatively as ongoing exposure, not resolved. "
+            "Do not infer that an improving risk is resolved — only that pressure is reducing."
+        ),
     },
     "buffett": {
         "primary_doctrine_question": "Does the evidence show a durable, understandable business that can compound owner capital under rational stewardship?",
@@ -188,6 +194,12 @@ DOCTRINE_DIFFERENTIATION_GUIDANCE: Dict[str, Dict[str, Any]] = {
             "one-off execution items without owner-return evidence",
             "financial strength facts that do not change compounding quality",
         ],
+        "risk_interpretation": (
+            "If risk evolution data is present in company-memory context: assess whether worsening risks threaten "
+            "moat durability, management trustworthiness, or long-term owner economics. An improving trajectory "
+            "indicates reduced pressure, not resolution or moat confirmation. Do not infer economic damage from "
+            "trajectory alone — that requires separately evidenced financial consequence."
+        ),
     },
     "fisher": {
         "primary_doctrine_question": "Does the evidence reveal a long runway for quality growth through products, customers, R&D, distribution, or management depth?",
@@ -209,6 +221,12 @@ DOCTRINE_DIFFERENTIATION_GUIDANCE: Dict[str, Dict[str, Any]] = {
             "valuation or downside framing",
             "generic profitability facts without growth mechanism",
         ],
+        "risk_interpretation": (
+            "If risk evolution data is present in company-memory context: focus on risks that could impair product "
+            "execution, R&D delivery, commercialization capacity, or management follow-through on growth initiatives. "
+            "Worsening trajectory is relevant mainly when it limits the growth runway. An improving risk reduces "
+            "drag on execution but does not confirm the growth story will succeed."
+        ),
     },
     "munger": {
         "primary_doctrine_question": "What could make the apparent story wrong through incentives, complexity, fragility, accounting traps, or repeated misjudgment?",
@@ -230,6 +248,12 @@ DOCTRINE_DIFFERENTIATION_GUIDANCE: Dict[str, Dict[str, Any]] = {
             "success claims that ignore contradictions",
             "capital allocation applause without downside or behavior analysis",
         ],
+        "risk_interpretation": (
+            "If risk evolution data is present in company-memory context: treat worsening governance or operational "
+            "risks as evidence of structural failure modes or incentive problems — not mere market exposure. "
+            "Recurring risks signal systematic weakness: the company has faced this condition repeatedly and has "
+            "not resolved it. Do not call a recurring risk 'worsening' unless the trajectory field confirms it."
+        ),
     },
     "lynch": {
         "primary_doctrine_question": "Is there a simple, believable business story, and do the operating facts show that story improving or deteriorating?",
@@ -251,6 +275,12 @@ DOCTRINE_DIFFERENTIATION_GUIDANCE: Dict[str, Dict[str, Any]] = {
             "financial facts not connected to investor-readable business progress",
             "doctrine jargon or abstract quality labels",
         ],
+        "risk_interpretation": (
+            "If risk evolution data is present in company-memory context: assess only whether a worsening or "
+            "recurring risk threatens the simple business story or the credibility of near-term delivery. "
+            "If a risk's consequence is unknown, note it as an open question rather than a thesis-breaker. "
+            "An improving risk reduces a concern — it does not become a positive investment argument."
+        ),
     },
 }
 
@@ -2111,11 +2141,7 @@ def compact_financial_truth_for_analyst(
         "per_share_status": per_share_status,
         "basis_status": _truncate_text(str(financial_truth_inputs.get("financial_panel_status_reason") or financial_truth_inputs.get("financial_panel_status") or "unknown"), 120),
         "debt_reliability_status": debt_reliability_status,
-        "source_provenance_summary": _extract_summary_fragments(
-            financial_truth_inputs.get("source_provenance", []),
-            max_items=4,
-            item_limit=120,
-        ),
+        "source_provenance_summary": [],
     }
 
 
@@ -3518,8 +3544,14 @@ def _shared_evidence_routing_rules() -> List[str]:
         "- Treat the latest fiscal year in the supplied financial truth as the current baseline; include latest-year metrics before using older years as trend context.",
         "- Governance, integrity, and incentive claims must use governance, ownership, compensation, board, committee, related-party, capital-allocation, or explicit uncertainty evidence.",
         "- Market-risk evidence supports only FX, currency, interest-rate, or market-risk claims unless risk oversight is explicit.",
-        "- Section names and JSON filenames are never valid evidence IDs.",
+        "- Section names, JSON filenames (e.g. management_progression.json), and metric shortcodes (e.g. gross_margin:fy26, cfo:fy24) are NEVER valid evidence IDs; use only the exact evidence_id strings found inside the PCIM section data supplied below.",
         "- If stronger evidence is missing, downgrade the claim into a limitation rather than forcing unrelated evidence IDs.",
+        "Risk trajectory invariants (apply when risk evolution stream is in company-memory context):",
+        "- A worsening trajectory means the risk is intensifying — do NOT infer specific financial damage unless evidence explicitly states it.",
+        "- An improving trajectory means pressure is reducing — do NOT treat it as resolved or as confirmation of a competitive moat.",
+        "- A recurring trajectory means the risk has persisted across multiple periods — do NOT call it worsening.",
+        "- If financial consequence is marked unknown or absent, state the consequence as unknown — do not synthesize a loss figure.",
+        "- Interpret each risk through your doctrine's primary question, not by restating the risk list.",
     ]
 
 
@@ -3540,13 +3572,16 @@ def _doctrine_differentiation_block(doctrine_id: str) -> Dict[str, Any]:
     guidance = DOCTRINE_DIFFERENTIATION_GUIDANCE.get(doctrine_id, {})
     if not guidance:
         return {}
-    return {
+    block: Dict[str, Any] = {
         "primary_doctrine_question": guidance.get("primary_doctrine_question"),
         "shared_fact_interpretation": {
             "capex": (guidance.get("shared_fact_interpretation") or {}).get("capex"),
         },
         "must_prioritize": list(guidance.get("must_prioritize") or [])[:3],
     }
+    if guidance.get("risk_interpretation"):
+        block["risk_interpretation"] = guidance["risk_interpretation"]
+    return block
 
 
 def _doctrine_differentiation_rules(doctrine_id: str) -> List[str]:
@@ -3569,7 +3604,7 @@ def _format_allowed_financial_metrics(metric_registry: List[Dict[str, Any]]) -> 
     for entry in metric_registry:
         formatted.append(
             {
-                "metric_id": entry.get("metric_id"),
+                "metric_name": entry.get("canonical_metric") or entry.get("display_name"),
                 "display_name": entry.get("display_name"),
                 "period": entry.get("period"),
                 "value": entry.get("value"),
@@ -7078,7 +7113,16 @@ def _validate_repaired_llm_panel_output(
         warning_messages.append(
             "PCIM share-count warning was imprecise; shares_outstanding exists, so equivalent per-share limitation wording was accepted."
         )
-    if warning_messages and grounding["evidence_grounding_status"] == "pass":
+    # Normalization-event dicts (ID found via alias) and auto-carry confirmations are informational;
+    # only actionable string warnings reflect actual grounding issues
+    _INFORMATIONAL_STR_WARNINGS = frozenset({
+        "Deterministic PCIM financial warnings were auto-carried into analyst output.",
+    })
+    substantive_warnings = [
+        w for w in warning_messages
+        if isinstance(w, str) and w not in _INFORMATIONAL_STR_WARNINGS
+    ]
+    if substantive_warnings and grounding["evidence_grounding_status"] == "pass":
         grounding["evidence_grounding_status"] = "warning"
 
     management_chain_repair_notes = _repair_management_synthesis_chain_inflation(

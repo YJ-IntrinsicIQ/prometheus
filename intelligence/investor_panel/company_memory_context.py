@@ -910,7 +910,7 @@ def build_company_memory_context(
 
     max_streams = 3
     max_items_per_stream = 1
-    protected_streams = {"management progression", "capital allocation outcomes"}
+    protected_streams = {"management progression", "capital allocation outcomes", "risk evolution"}
     selected_streams = ordered_streams[:max_streams]
     selected_names = {name for name, _candidates in selected_streams}
     for stream_name, candidates in ordered_streams[max_streams:]:
