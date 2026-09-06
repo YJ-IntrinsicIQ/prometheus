@@ -206,16 +206,16 @@ QUESTION_DEPENDENCY_MAP: Dict[str, List[str]] = {
     "what-is-owner-earnings": ["owner_earnings_bridge", "financial_truth_pack"],
     "is-working-capital-a-concern": ["working_capital_quality_drilldown", "financial_truth_pack"],
     "are-per-share-economics-improving": ["per_share_compounding_analysis", "financial_truth_pack"],
-    "what-has-management-promised": ["gold_promise_tracker", "management_commitments"],
+    "what-has-management-promised": ["gold_promise_tracker", "management_commitments", "management_progression"],
     "what-promise-types-dominate": ["gold_promise_tracker"],
     "which-promises-are-overdue": ["gold_promise_tracker"],
     "what-was-delivered-last-3-years": ["gold_promise_tracker"],
     "what-was-missed": ["gold_promise_tracker"],
-    "did-past-claims-come-true": ["gold_promise_tracker", "gold_credibility", "management_commitments"],
+    "did-past-claims-come-true": ["gold_promise_tracker", "gold_credibility", "management_commitments", "management_progression"],
     "what-projects-are-underway": ["projects_registry", "project_timelines", "project_assessments"],
     "how-is-capacity-changing": ["management_progression", "capacity_registry", "capacity_timelines"],
     "what-is-management-commentary-saying": ["management_progression", "commentary_themes"],
-    "how-is-capital-allocated": ["gold_capital_allocation", "management_progression", "capital_allocation_outcomes"],
+    "how-is-capital-allocated": ["capital_allocation_longitudinal_profile", "capital_allocation_assessments", "capital_allocation_outcomes", "management_progression", "gold_capital_allocation"],
     "what-is-the-return-on-capex": ["gold_capital_allocation", "capital_allocation_roi_ledger"],
     "what-regulatory-risks-remain-active": ["gold_risk_evolution"],
     "what-is-committee-direction": ["committee_synthesis"],
@@ -1169,20 +1169,105 @@ def _commitment_priority_rank(commitment: Dict[str, Any]) -> int:
     return max(score, 0)
 
 
-def _commitment_status_label(commitment: Dict[str, Any]) -> str:
-    status = _get_string(commitment, "status")
-    if not status:
-        return "Unable To Verify"
-    lowered = status.lower()
-    if lowered in {"unable to verify", "unable_to_verify"}:
-        return "Unable To Verify"
-    if lowered in {"in progress", "in_progress"}:
-        return "In Progress"
-    if lowered in {"partially delivered", "partially_delivered"}:
-        return "Partially Delivered"
-    if lowered in {"delivered"}:
-        return "Delivered"
-    return status[:1].upper() + status[1:]
+def _management_progression_commitment_index(management_progression: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Map stable commitment fingerprints to Management Progression lifecycle items.
+
+    Management Commitments is not a lifecycle authority. The only supported join for
+    commitment lifecycle display is the ENG-098 fingerprint carried as the
+    commitment event id in Management Progression. We intentionally do not fall
+    back to ordinal ids, topic equality, or fuzzy text matching.
+    """
+    index: Dict[str, Dict[str, Any]] = {}
+    for item in _get_record_list(management_progression, "progression_items") + _get_record_list(management_progression, "items"):
+        for event in _get_record_list(item, "events"):
+            event_role = _normalize_sentence(_first_string(_get_string(event, "event_role"), _get_string(event, "role")))
+            event_id = _first_string(_get_string(event, "event_id"), _get_string(event, "source_item_id"))
+            if event_id and event_role == "commitment":
+                index[event_id] = item
+    return index
+
+
+def _commitment_lifecycle_item(commitment: Dict[str, Any], lifecycle_index: Optional[Dict[str, Dict[str, Any]]]) -> Dict[str, Any]:
+    if not lifecycle_index:
+        return {}
+    fingerprint = _get_string(commitment, "commitment_fingerprint")
+    return lifecycle_index.get(fingerprint) or {}
+
+
+def _commitment_lifecycle_status_key(commitment: Dict[str, Any], lifecycle_index: Optional[Dict[str, Dict[str, Any]]]) -> str:
+    item = _commitment_lifecycle_item(commitment, lifecycle_index)
+    if not item:
+        return "unknown"
+    status = _normalize_sentence(_first_string(_get_string(item, "current_status"), _get_string(item, "chain_status"), _get_string(item, "status")))
+    if status in {"delivered", "achieved", "completed", "outcome_positive", "financial_impact_confirmed", "outcome positive", "financial impact confirmed"}:
+        return "delivered"
+    if status in {"partially_delivered", "partially_achieved", "partially delivered", "partially achieved", "partially completed"}:
+        return "partially_delivered"
+    if status in {"in_progress", "in progress", "progressing", "action_started", "action started", "action_completed", "action completed"}:
+        return "in_progress"
+    if status in {"delayed"}:
+        return "delayed"
+    if status in {"missed", "failed", "not_delivered", "not delivered", "abandoned", "cancelled", "contradicted"}:
+        return "missed"
+    if status in {"announced", "claim_only", "claim only", "unverified", "unable_to_verify", "unable to verify", "unresolved", "unknown"}:
+        return "unable_to_verify"
+    return "unknown"
+
+
+def _commitment_lifecycle_status_label(commitment: Dict[str, Any], lifecycle_index: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
+    key = _commitment_lifecycle_status_key(commitment, lifecycle_index)
+    return {
+        "delivered": "Delivered",
+        "partially_delivered": "Partially Delivered",
+        "in_progress": "In Progress",
+        "delayed": "Delayed",
+        "missed": "Missed",
+        "unable_to_verify": "Unable To Verify",
+        "unknown": "Unable To Verify",
+    }.get(key, "Unable To Verify")
+
+
+def _commitment_authority_note(commitment: Dict[str, Any], lifecycle_index: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
+    key = _commitment_lifecycle_status_key(commitment, lifecycle_index)
+    if key == "delivered":
+        return "Management Progression contains verified delivery or outcome evidence."
+    if key == "partially_delivered":
+        return "Management Progression contains partial follow-through evidence."
+    if key == "in_progress":
+        return "Management Progression shows action evidence, but final delivery remains unproven."
+    if key == "delayed":
+        return "Management Progression shows delay evidence."
+    if key == "missed":
+        return "Management Progression shows missed, cancelled, or contradicted execution evidence."
+    if key == "unable_to_verify":
+        return "Management Progression has not verified delivery."
+    return "No matching Management Progression lifecycle record was found."
+
+
+def _commitment_display_text(commitment: Dict[str, Any], *, max_words: int = 25) -> str:
+    """
+    Return the best investor-facing commitment text: original_statement → normalized_commitment → topic.
+    Prefers source-grounded meaning. For long text, extracts the first complete sentence.
+    Uses topic only when richer fields are absent or exceed safe length.
+    """
+    orig = sanitize_public_text(_get_string(commitment, "original_statement"))
+    norm = sanitize_public_text(_get_string(commitment, "normalized_commitment"))
+    topic_val = sanitize_public_text(_get_string(commitment, "topic"))
+
+    for candidate in (orig, norm):
+        if not candidate:
+            continue
+        words = candidate.split()
+        if len(words) <= max_words:
+            return candidate
+        # Long text: try extracting the first complete sentence (up to the first ".")
+        if "." in candidate:
+            dot_pos = candidate.index(".")
+            first_sent = candidate[:dot_pos + 1].strip()
+            if first_sent and len(first_sent.split()) <= max_words:
+                return first_sent
+
+    return topic_val
 
 
 def _clean_display_phrase(text: str, *, limit_words: int = 12) -> str:
@@ -1214,6 +1299,13 @@ def _strip_backend_phrasing(text: str) -> str:
         r"counterpoint\s*:\s*",
         r"is claim evidence only\s*[;,]?\s*",
         r"\bclaim evidence only\s*[;,]?\s*",
+        # Parenthetical forms first so they are consumed whole before bare-label patterns run
+        r"\(\s*CLAIM_ONLY\s*\)",
+        r"\(\s*ACTION_STARTED\s*\)",
+        r"\(\s*ACTION_COMPLETED\s*\)",
+        r"\(\s*NOT_APPLICABLE\s*\)",
+        r"\(\s*UNVERIFIED\s*\)",
+        r"\(\s*PARTIALLY_ACHIEVED\s*\)",
         r"\bCLAIM_ONLY\s*[;,]?\s*",
         r"\bACTION_STARTED\s*[;,]?\s*",
         r"\bACTION_COMPLETED\s*[;,]?\s*",
@@ -1247,14 +1339,10 @@ def _strip_backend_phrasing(text: str) -> str:
     return sanitize_public_text(cleaned)
 
 
-def _commitment_summary(commitment: Dict[str, Any], *, include_status: bool = True) -> str:
+def _commitment_summary(commitment: Dict[str, Any], *, include_status: bool = True, lifecycle_index: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
     period = _commitment_period(commitment)
     label = _commitment_topic_label(commitment)
-    later_evidence = first_available_text(
-        _get_string(commitment, "delivery_assessment"),
-        _get_string(commitment, "investor_implication"),
-        "Later evidence remains limited.",
-    )
+    later_evidence = _commitment_authority_note(commitment, lifecycle_index)
     later_evidence = _clean_display_phrase(later_evidence, limit_words=18)
     significance = first_available_text(
         _get_string(commitment, "investor_implication"),
@@ -1267,7 +1355,7 @@ def _commitment_summary(commitment: Dict[str, Any], *, include_status: bool = Tr
     else:
         parts.append(label)
     if include_status:
-        parts.append(f"Current: {_commitment_status_label(commitment)}.")
+        parts.append(f"Current: {_commitment_lifecycle_status_label(commitment, lifecycle_index)}.")
     parts.append(f"Later evidence: {later_evidence}.")
     parts.append(f"Investor significance: {significance}.")
     return " ".join(part.strip() for part in parts if part.strip())
@@ -1310,7 +1398,7 @@ def _material_commitments(commitments: List[Dict[str, Any]], *, limit: int = 4) 
     return material
 
 
-def _commitment_progression(commitment: Dict[str, Any]) -> Dict[str, Any]:
+def _commitment_progression(commitment: Dict[str, Any], lifecycle_index: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     progression = _get_record(commitment, "progression")
     label = _clean_display_phrase(
         _first_string(_get_string(commitment, "normalized_commitment"), _get_string(commitment, "topic"), "Management commitment"),
@@ -1318,12 +1406,12 @@ def _commitment_progression(commitment: Dict[str, Any]) -> Dict[str, Any]:
     )
     return _make_progression_block(
         headline=label,
-        current_state=_first_string(_get_string(commitment, "status"), _get_string(progression, "current_state"), _get_string(progression, "latest_status"), "Unable To Verify"),
-        what_changed=_clean_display_phrase(_first_string(_get_string(commitment, "topic"), _get_string(commitment, "normalized_commitment"), _get_string(commitment, "delivery_assessment")), limit_words=14),
-        why_it_changed=_clean_display_phrase(_first_string(_get_string(commitment, "investor_implication"), _get_string(commitment, "delivery_assessment"), "Later evidence changed the confidence level."), limit_words=16),
-        conviction_impact=_first_string(_get_string(progression, "conviction_impact"), _get_string(commitment, "delivery_assessment"), "unclear"),
+        current_state=_commitment_lifecycle_status_label(commitment, lifecycle_index),
+        what_changed=_clean_display_phrase(_first_string(_get_string(commitment, "topic"), _get_string(commitment, "normalized_commitment")), limit_words=14),
+        why_it_changed=_clean_display_phrase(_first_string(_get_string(commitment, "investor_implication"), _commitment_authority_note(commitment, lifecycle_index)), limit_words=16),
+        conviction_impact=_first_string(_get_string(progression, "conviction_impact"), "unclear"),
         latest_evidence=[
-            _clean_display_phrase(_get_string(commitment, "delivery_assessment"), limit_words=18),
+            _clean_display_phrase(_commitment_authority_note(commitment, lifecycle_index), limit_words=18),
             _clean_display_phrase(_get_string(commitment, "investor_implication"), limit_words=18),
             _first_string(_get_string_list(progression, "unresolved_questions")),
         ],
@@ -1332,14 +1420,14 @@ def _commitment_progression(commitment: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
-def _commitment_watch_item(commitment: Dict[str, Any]) -> str:
+def _commitment_watch_item(commitment: Dict[str, Any], lifecycle_index: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
     topic = _clean_display_phrase(
         _first_string(_get_string(commitment, "topic"), _get_string(commitment, "normalized_commitment"), "the commitment"),
         limit_words=8,
     )
     if not topic:
         return ""
-    status = _commitment_status_label(commitment).lower()
+    status = _commitment_lifecycle_status_label(commitment, lifecycle_index).lower()
     topic_text = topic.lower()
     if status in {"in progress", "delayed"}:
         return f"Completion evidence for {topic_text}"
@@ -1642,6 +1730,53 @@ def _gold_promise_enrichment_from_payload(gold: Dict[str, Any]) -> Optional[str]
     return result
 
 
+def _mc_specific_promise_points(commitment_list: List[Dict[str, Any]], *, max_items: int = 4, lifecycle_index: Optional[Dict[str, Dict[str, Any]]] = None) -> List[str]:
+    """Q-A: surface specific commitment items (period + commitment text + status) for investor display."""
+    material = _material_commitments(commitment_list, limit=max_items + 3)
+    pts: List[str] = []
+    for c in material:
+        period = _commitment_period(c)
+        display_text = _commitment_display_text(c)
+        if not display_text:
+            continue
+        status = _commitment_lifecycle_status_label(c, lifecycle_index)
+        timeframe = _get_string(c, "expected_timeframe")
+        tf_note = f" (target: {timeframe})" if timeframe and timeframe not in {"unspecified", "unknown", ""} else ""
+        period_prefix = f"{period.upper()}: " if period else ""
+        text_body = display_text.rstrip(".")
+        pts.append(f"{period_prefix}{text_body}{tf_note} — {status}.")
+        if len(pts) >= max_items:
+            break
+    return pts
+
+
+def _mc_claim_outcome_points(commitment_list: List[Dict[str, Any]], *, max_items: int = 4, lifecycle_index: Optional[Dict[str, Dict[str, Any]]] = None) -> List[str]:
+    """Q-B: surface claim→outcome pairs (commitment text + status + delivery assessment) for investor display."""
+    def _sort_key(c: Dict[str, Any]) -> int:
+        s = _commitment_lifecycle_status_key(c, lifecycle_index)
+        if s == "delivered":
+            return 0
+        if s in {"in_progress", "partially_delivered"}:
+            return 1
+        return 3
+    material = sorted(_material_commitments(commitment_list, limit=max_items + 3), key=_sort_key)
+    pts: List[str] = []
+    for c in material:
+        period = _commitment_period(c)
+        display_text = _commitment_display_text(c)
+        if not display_text:
+            continue
+        status = _commitment_lifecycle_status_label(c, lifecycle_index)
+        assessment = _commitment_authority_note(c, lifecycle_index)
+        period_prefix = f"{period.upper()}: " if period else ""
+        text_body = display_text.rstrip(".")
+        outcome_note = f" {assessment}" if assessment else ""
+        pts.append(f"{period_prefix}{text_body} — {status}.{outcome_note}")
+        if len(pts) >= max_items:
+            break
+    return pts
+
+
 def _build_management_promises_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
     # PRIMARY: Gold Promise Tracker (when present and has tracked promises)
     gold = _source_payload(source_bundle, "gold_promise_tracker")
@@ -1656,25 +1791,60 @@ def _build_management_promises_answer(source_bundle: Dict[str, Any], *, business
         key_pts = _gold_promise_key_points(gold)
         answer_st = "partially_supported" if not achieved and not partially else "supported"
         thesis = "strengthens" if (achieved + partially) > missed else "neutral"
+        # Enrich with management_commitments when present: show specific items rather than aggregate only
+        mc_payload = _source_payload(source_bundle, "management_commitments")
+        mc_list = _get_record_list(mc_payload, "commitments")
+        mc_available = bool(mc_payload)
+        lifecycle_index = _management_progression_commitment_index(_source_payload(source_bundle, "management_progression"))
+        if mc_list:
+            specific_pts = _mc_specific_promise_points(mc_list, max_items=4, lifecycle_index=lifecycle_index)
+            if specific_pts:
+                type_pts = [p for p in _gold_promise_key_points(gold) if "commitment(s)" in p]
+                key_pts = _clean_list(specific_pts + type_pts[:1])[:4]
+        # Q-A simple_answer: describe what was promised (themes + status mix) — distinct from Q-B credibility verdict
+        tracked = int(gold_summary.get("tracked_promises") or 0)
+        unverified = int(sb.get("unverified", 0))
+        delivery_count = achieved + partially
+        tb = gold_summary.get("promise_type_breakdown") or {}
+        type_labels = sorted([ptype.replace("_", " ").lower() for ptype, count in tb.items() if isinstance(count, int) and count > 0])
+        if type_labels:
+            delivery_note = f" {delivery_count} with delivery evidence;" if delivery_count > 0 else ""
+            unverified_note = f" {unverified} unverified." if unverified else "."
+            qa_simple = (
+                f"{tracked} commitment(s) tracked across "
+                + _join_human_list(type_labels[:3])
+                + (" and other themes;" if len(type_labels) > 3 else ";")
+                + delivery_note
+                + unverified_note
+            )
+        else:
+            qa_simple = gp_text or f"{tracked} management commitments tracked."
+        # Fix uncertainty note: only reference management_commitments as missing when it actually is absent
+        uncertainty = (
+            "Full commitment-level detail and individual claim evidence requires the management_commitments source."
+            if not mc_available and unverified > 0
+            else ""
+        )
         return _draft(
             answer_status=answer_st,
-            simple_answer=gp_text or f"{gold_summary.get('tracked_promises')} management commitments tracked.",
+            simple_answer=qa_simple,
             why_it_matters="Commitment tracking matters because it gives investors a checkable record of what management said it would do.",
             key_points=key_pts,
             detailed_explanation="Derived from the Gold Promise Tracker, which synthesizes management commitments longitudinally across reporting periods.",
             evidence_status="partial" if not achieved and not partially else "direct",
             evidence_summary="Gold Promise Tracker with tracked promises and delivery status breakdown.",
             evidence_points=key_pts[:2],
-            uncertainty="Full commitment-level detail and individual claim evidence requires the management_commitments source." if int(sb.get("unverified", 0)) > 0 else "",
+            uncertainty=uncertainty,
             products_refs=[],
             business_journey_ref=None,
             progression={},
-            interpretation={"conclusion": gp_text or "", "thesis_impact": thesis},
+            interpretation={"conclusion": qa_simple, "thesis_impact": thesis},
         )
 
     # SECONDARY: management_commitments (Gold absent or ineligible)
     commitments = _source_payload(source_bundle, "management_commitments")
     commitment_list = _get_record_list(commitments, "commitments")
+    lifecycle_index = _management_progression_commitment_index(_source_payload(source_bundle, "management_progression"))
     if not commitment_list:
         return _build_generic_not_supported_answer(
             source_bundle,
@@ -1686,18 +1856,18 @@ def _build_management_promises_answer(source_bundle: Dict[str, Any], *, business
             limitation="The current source set does not preserve a clean commitment ledger.",
         )
     featured = _material_commitments(commitment_list, limit=4)
-    progression = _commitment_progression(featured[0])
+    progression = _commitment_progression(featured[0], lifecycle_index)
     commitment_references = [_commitment_reference_label(commitment) for commitment in featured[:3] if _commitment_reference_label(commitment)]
-    later_checks = [_commitment_watch_item(commitment) for commitment in featured[:3]]
+    later_checks = [_commitment_watch_item(commitment, lifecycle_index) for commitment in featured[:3]]
     later_checks = _clean_list(later_checks)[:3]
-    active_commitments = [commitment for commitment in featured if _commitment_status_label(commitment).lower() in {"in progress", "delivered", "partially delivered"}]
-    unresolved_commitments = [commitment for commitment in featured if _commitment_status_label(commitment).lower() in {"unable to verify", "announced", "delayed"}]
+    active_commitments = [commitment for commitment in featured if _commitment_lifecycle_status_label(commitment, lifecycle_index).lower() in {"in progress", "delivered", "partially delivered"}]
+    unresolved_commitments = [commitment for commitment in featured if _commitment_lifecycle_status_label(commitment, lifecycle_index).lower() in {"unable to verify", "announced", "delayed"}]
     status_fragments = []
-    if any(_commitment_status_label(commitment).lower() == "in progress" for commitment in featured):
+    if any(_commitment_lifecycle_status_label(commitment, lifecycle_index).lower() == "in progress" for commitment in featured):
         status_fragments.append("one is in progress")
-    if any(_commitment_status_label(commitment).lower() == "unable to verify" for commitment in featured):
+    if any(_commitment_lifecycle_status_label(commitment, lifecycle_index).lower() == "unable to verify" for commitment in featured):
         status_fragments.append("others remain unverified")
-    if any(_commitment_status_label(commitment).lower() in {"delivered", "partially delivered"} for commitment in featured):
+    if any(_commitment_lifecycle_status_label(commitment, lifecycle_index).lower() in {"delivered", "partially delivered"} for commitment in featured):
         status_fragments.append("some follow-through is visible")
     interpretation = _make_interpretation_from_progression(
         progression=progression,
@@ -1711,20 +1881,20 @@ def _build_management_promises_answer(source_bundle: Dict[str, Any], *, business
         what_to_watch=later_checks,
         thesis_impact=(
             "strengthens"
-            if len(delivered := [item for item in commitment_list if str(item.get("status") or "").lower() in {"delivered", "partially delivered", "partially_delivered"}]) > len(delayed := [item for item in commitment_list if str(item.get("status") or "").lower() == "delayed"])
+            if len(delivered := [item for item in commitment_list if _commitment_lifecycle_status_key(item, lifecycle_index) in {"delivered", "partially_delivered"}]) > len(delayed := [item for item in commitment_list if _commitment_lifecycle_status_key(item, lifecycle_index) == "delayed"])
             else "weakens"
             if len(delayed) > len(delivered)
             else "neutral"
         ),
         confidence_level="medium",
     )
-    commitment_highlights = [_commitment_summary(item, include_status=True) for item in featured[:4] if _commitment_summary(item, include_status=True)]
+    commitment_highlights = [_commitment_summary(item, include_status=True, lifecycle_index=lifecycle_index) for item in featured[:4] if _commitment_summary(item, include_status=True, lifecycle_index=lifecycle_index)]
     if commitment_highlights:
         interpretation["what_changed"] = commitment_highlights[:4]
     if active_commitments:
-        interpretation["positive_evidence"] = [_commitment_summary(item, include_status=True) for item in active_commitments[:3]]
+        interpretation["positive_evidence"] = [_commitment_summary(item, include_status=True, lifecycle_index=lifecycle_index) for item in active_commitments[:3]]
     if unresolved_commitments:
-        interpretation["negative_evidence"] = [_commitment_summary(item, include_status=True) for item in unresolved_commitments[:3]]
+        interpretation["negative_evidence"] = [_commitment_summary(item, include_status=True, lifecycle_index=lifecycle_index) for item in unresolved_commitments[:3]]
     return _draft(
         answer_status="supported" if len(featured) > 1 else "partially_supported",
         simple_answer=interpretation["conclusion"],
@@ -1749,24 +1919,46 @@ def _build_past_claims_answer(source_bundle: Dict[str, Any], *, business_journey
     if gold_eligible:
         gold_cred = _source_payload(source_bundle, "gold_credibility")
         gp_text = _gold_promise_enrichment_from_payload(gold_tracker)
+        # Enrich with management_commitments when present: surface claim→outcome examples
+        mc_payload = _source_payload(source_bundle, "management_commitments")
+        mc_list = _get_record_list(mc_payload, "commitments")
+        mc_available = bool(mc_payload)
+        lifecycle_index = _management_progression_commitment_index(_source_payload(source_bundle, "management_progression"))
+        cs = _gold_cred_summary(gold_cred) if gold_cred else None
+        gw = _gold_cred_weight(gold_cred) if gold_cred else None
+        # Q-B simple_answer: credibility verdict (NOT the delivery count — that's Q-A's job)
+        qb_simple = cs or gw or gp_text or ""
+        # Build key_points: claim→outcome examples first, then supporting credibility context
         pts: List[str] = []
-        if gp_text:
+        if mc_list:
+            claim_pts = _mc_claim_outcome_points(mc_list, max_items=4, lifecycle_index=lifecycle_index)
+            pts.extend(claim_pts)
+        if gp_text and gp_text not in pts:
             pts.append(gp_text)
-        if gold_cred:
-            cs = _gold_cred_summary(gold_cred)
-            gw = _gold_cred_weight(gold_cred)
-            if cs:
-                pts.append(cs)
-            elif gw:
-                pts.append(gw)
-        if pts:
+        if cs and cs not in pts:
+            pts.append(cs)
+        elif gw and gw not in pts:
+            pts.append(gw)
+        pts = _clean_list(pts)[:4]
+        if qb_simple or pts:
             # Invariant: Gold has tracked promises → status CANNOT be not_supported
+            # Fix ENG-083: only reference management_commitments as absent when it actually is
+            if mc_available:
+                explanation = (
+                    "Derived from the Gold Promise Tracker (delivery state) and Gold Credibility Synthesis (track-record context). "
+                    "Specific claim examples are drawn from management_commitments where evidence supports the claim."
+                )
+            else:
+                explanation = (
+                    "Derived from the Gold Promise Tracker (delivery state) and Gold Credibility Synthesis (track-record context). "
+                    "Full claim-level comparison requires the management_commitments source."
+                )
             return _draft(
                 answer_status="partially_supported",
-                simple_answer=pts[0],
+                simple_answer=qb_simple if qb_simple else (pts[0] if pts else ""),
                 why_it_matters="This matters because management quality is easier to judge by follow-through than by messaging alone.",
-                key_points=_clean_list(pts)[:4],
-                detailed_explanation="Derived from the Gold Promise Tracker (delivery state) and Gold Credibility Synthesis (track-record context). Full claim-level comparison requires the management_commitments source.",
+                key_points=pts or [gp_text or ""],
+                detailed_explanation=explanation,
                 evidence_status="partial",
                 evidence_summary="Gold Promise Tracker and Gold Credibility Synthesis.",
                 evidence_points=_clean_list(pts[:2]),
@@ -1774,15 +1966,16 @@ def _build_past_claims_answer(source_bundle: Dict[str, Any], *, business_journey
                 products_refs=[],
                 business_journey_ref=None,
                 progression={},
-                interpretation={"conclusion": pts[0], "thesis_impact": "neutral"},
+                interpretation={"conclusion": qb_simple or (pts[0] if pts else ""), "thesis_impact": "neutral"},
             )
 
     # SECONDARY: management_commitments (Gold absent or ineligible)
     commitments = _get_record_list(_source_payload(source_bundle, "management_commitments"), "commitments")
     material_commitments = _material_commitments(commitments, limit=4)
-    delivered = [item for item in material_commitments if str(item.get("status") or "").lower() in {"delivered", "partially delivered", "partially_delivered"}]
-    delayed = [item for item in material_commitments if str(item.get("status") or "").lower() == "delayed"]
-    unresolved = [item for item in material_commitments if str(item.get("status") or "").lower() in {"in progress", "unable to verify", "announced"}]
+    lifecycle_index = _management_progression_commitment_index(_source_payload(source_bundle, "management_progression"))
+    delivered = [item for item in material_commitments if _commitment_lifecycle_status_key(item, lifecycle_index) in {"delivered", "partially_delivered"}]
+    delayed = [item for item in material_commitments if _commitment_lifecycle_status_key(item, lifecycle_index) == "delayed"]
+    unresolved = [item for item in material_commitments if _commitment_lifecycle_status_key(item, lifecycle_index) in {"in_progress", "unable_to_verify", "unknown"}]
     if not commitments:
         return _build_generic_not_supported_answer(
             source_bundle,
@@ -1808,7 +2001,7 @@ def _build_past_claims_answer(source_bundle: Dict[str, Any], *, business_journey
         if delivered or delayed
         else "The commitment ledger is visible, but follow-through is not yet strong enough to make a confident delivery claim."
     )
-    progression = _commitment_progression(material_commitments[0])
+    progression = _commitment_progression(material_commitments[0], lifecycle_index)
     delivered_refs = [_commitment_reference_label(item) for item in delivered[:2] if _commitment_reference_label(item)]
     open_refs = [_commitment_reference_label(item) for item in unresolved[:2] if _commitment_reference_label(item)]
     delayed_refs = [_commitment_reference_label(item) for item in delayed[:2] if _commitment_reference_label(item)]
@@ -1825,7 +2018,7 @@ def _build_past_claims_answer(source_bundle: Dict[str, Any], *, business_journey
         progression=progression,
         conclusion=" ".join(conclusion_parts),
         economic_mechanism="Past claims matter because management credibility rises only when later evidence keeps matching the original promise.",
-        what_to_watch=[item for item in (_commitment_watch_item(commitment) for commitment in material_commitments[:3]) if item],
+        what_to_watch=[item for item in (_commitment_watch_item(commitment, lifecycle_index) for commitment in material_commitments[:3]) if item],
         thesis_impact=(
             "strengthens"
             if len(delivered) > len(delayed)
@@ -1835,18 +2028,21 @@ def _build_past_claims_answer(source_bundle: Dict[str, Any], *, business_journey
         ),
         confidence_level="medium",
     )
-    commitment_highlights = [_commitment_summary(item, include_status=True) for item in material_commitments[:4] if _commitment_summary(item, include_status=True)]
+    commitment_highlights = [_commitment_summary(item, include_status=True, lifecycle_index=lifecycle_index) for item in material_commitments[:4] if _commitment_summary(item, include_status=True, lifecycle_index=lifecycle_index)]
     if commitment_highlights:
         interpretation["what_changed"] = commitment_highlights[:4]
     if delivered:
-        interpretation["positive_evidence"] = [_commitment_summary(item, include_status=True) for item in delivered[:3]]
+        interpretation["positive_evidence"] = [_commitment_summary(item, include_status=True, lifecycle_index=lifecycle_index) for item in delivered[:3]]
     if delayed or unresolved:
-        interpretation["negative_evidence"] = [_commitment_summary(item, include_status=True) for item in (delayed + unresolved)[:3]]
+        interpretation["negative_evidence"] = [_commitment_summary(item, include_status=True, lifecycle_index=lifecycle_index) for item in (delayed + unresolved)[:3]]
+    company_slug = str(source_bundle.get("company_slug") or "")
+    company_model_for_lcs = canonical_company_model(source_bundle, company_slug) if company_slug else {}
+    claims_key_points = _augment_with_lcs_signals(commitment_highlights[:4], company_model_for_lcs)
     return _draft(
         answer_status="partially_supported",
         simple_answer=interpretation["conclusion"],
         why_it_matters="This matters because investors should care less about the original promise and more about whether later evidence shows that execution kept pace.",
-        key_points=commitment_highlights[:4],
+        key_points=claims_key_points,
         detailed_explanation=simple + " The right comparison is not quote versus quote; it is promise versus later evidence. Where the evidence shows delivery, conviction can rise. Where the evidence shows delay or no follow-through, conviction should fall or stay cautious.",
         evidence_status="partial" if delivered or delayed else "missing",
         evidence_summary="Supported by the commitment ledger and its time-linked follow-through evidence.",
@@ -2703,6 +2899,8 @@ def _build_canonical_progression_answer(source_bundle: Dict[str, Any], *, busine
     implication = _get_record(item, "investor_implication")
     status = "partially_supported" if coverage == "partial" or _uses_legacy_streams(items) else "supported"
     key_points = _progression_key_points(items[:4], question_id)
+    if question_id == "did-past-claims-come-true":
+        key_points = _augment_with_lcs_signals(key_points, company_model)
     unresolved = _clean_list(summary.get("unresolved_items") or [])
     latest_evidence = _clean_list(summary.get("latest_evidence") or [])
     conclusion = _progression_conclusion(question_id, summary)
@@ -2737,6 +2935,31 @@ def _build_canonical_progression_answer(source_bundle: Dict[str, Any], *, busine
     )
 
 
+def _lcs_human_label(value: str) -> str:
+    return " ".join(str(value or "").replace("_", " ").split()).title() or "Unresolved"
+
+
+def _augment_with_lcs_signals(key_points: List[str], company_model: Dict[str, Any]) -> List[str]:
+    lcs_items = (company_model.get("longitudinal_current_state") or []) if isinstance(company_model, dict) else []
+    if not lcs_items:
+        return key_points
+    lcs_pts: List[str] = []
+    for lcs in lcs_items:
+        if not isinstance(lcs, dict):
+            continue
+        theme = str(lcs.get("theme") or "").strip()
+        current_status = str(lcs.get("current_status") or "").strip()
+        credibility = str(lcs.get("management_credibility_signal") or "").strip()
+        if not theme or not current_status:
+            continue
+        pt = f"{theme}: {_lcs_human_label(current_status)}"
+        if credibility:
+            pt += f" (credibility: {_lcs_human_label(credibility)})"
+        lcs_pts.append(pt + ".")
+    remaining = max(0, 4 - len(key_points))
+    return key_points + _clean_list(lcs_pts)[:remaining]
+
+
 def _progression_key_points(items: List[Dict[str, Any]], question_id: str) -> List[str]:
     points = []
     for item in items:
@@ -2744,7 +2967,12 @@ def _progression_key_points(items: List[Dict[str, Any]], question_id: str) -> Li
         label = _clean_display_phrase(str(summary.get("what_changed") or summary.get("headline") or "").strip(), limit_words=18)
         if not label:
             label = _clean_display_phrase(str(summary.get("headline") or summary.get("current_state") or "").strip(), limit_words=18)
-        points.append(_clean_display_phrase(f"{label}: {summary['current_state']}.", limit_words=18))
+        state = summary["current_state"]
+        credibility = str(summary.get("management_credibility_signal") or "").strip()
+        if question_id == "did-past-claims-come-true" and credibility:
+            points.append(_clean_display_phrase(f"{label}: {state} (credibility signal: {credibility}).", limit_words=22))
+        else:
+            points.append(_clean_display_phrase(f"{label}: {state}.", limit_words=18))
     return _clean_list(points)[:4]
 
 
@@ -3139,7 +3367,7 @@ def _build_buffett_answer(source_bundle: Dict[str, Any], *, business_journey_pay
         gold_cap_pts = [p for p in gold_cap_pts if p and p.strip()]
         if owner_note or gold_cap_pts:
             sections.append({"title": "Capital deployment returns (Gold)", "points": ([owner_note] if owner_note else []) + gold_cap_pts[:2]})
-    sections = [s for s in sections if s.get("points")]
+    sections = [s for s in sections if any(str(p).strip() for p in (s.get("points") or []))]
     interpretation = build_interpretation_contract(
         conclusion=_clean_display_phrase(concise_summary, limit_words=22) or concise_summary,
         what_changed=_clean_list([findings[0] if findings else "", red_flags[0] if red_flags else "", uncertainties[0] if uncertainties else ""])[:2],
@@ -3359,83 +3587,287 @@ def _build_unavailable_answer(question: Dict[str, Any], direct_answer: str, why:
 
 # ── P3A: Capital Allocation Intelligence ─────────────────────────────────────
 
-def _build_capital_allocation_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
-    gold_cap = _source_payload(source_bundle, "gold_capital_allocation")
-    if not gold_cap:
-        return _build_canonical_progression_answer(source_bundle, business_journey_payload=business_journey_payload, products_services_payload=products_services_payload, question=question)
+# State-to-investor translation tables (Phase 2 canonical → plain English)
+_DEP_STATE_LABEL = {
+    "DEPLOYED": "deployed",
+    "COMMITTED": "committed",
+    "ANNOUNCED": "announced",
+    "COMPLETED_TRANSACTION": "transaction completed",
+    "CANCELLED": "cancelled",
+    "UNABLE_TO_VERIFY": "unable to verify",
+}
+_EXE_STATE_LABEL = {
+    "COMPLETED": "execution complete",
+    "OPERATIONAL": "operational",
+    "IN_PROGRESS": "in progress",
+    "UNABLE_TO_VERIFY": "execution not yet verified",
+    "NOT_STARTED": "not yet started",
+}
+_FOS_LABEL = {
+    "CASH_FLOW_EFFECT": "direct cash-flow effect (capital returned or liability reduced)",
+    "REVENUE_CONTRIBUTION": "revenue contribution visible",
+    "UNABLE_TO_ATTRIBUTE": "financial return not yet attributable",
+}
+_VCC_LABEL = {
+    "VALUE_CREATION_EVIDENCE": "value-creation evidence present",
+    "VALUE_DESTRUCTION_EVIDENCE": "value-destruction evidence",
+    "TOO_EARLY_TO_JUDGE": "too early to judge",
+    "UNABLE_TO_VERIFY": "unable to verify",
+}
+_SKILL_LABEL = {
+    "POSITIVE_EVIDENCE": "positive evidence of value creation",
+    "NEGATIVE_EVIDENCE": "evidence of value destruction",
+    "MIXED_EVIDENCE": "mixed evidence",
+    "UNABLE_TO_VERIFY": "capital activity documented; value-creation skill not yet established",
+    "OUTCOMES_MOSTLY_UNVERIFIED": "most outcomes remain unverified — activity is clearer than skill",
+}
 
-    _RETURN_LABEL = {
-        "PROVEN_POSITIVE": "return confirmed",
-        "MIXED": "returns mixed",
-        "UNPROVEN": "return not yet visible",
-        "DESTRUCTIVE": "return negative",
-        "NOT_APPLICABLE": "capital returned to shareholders",
+
+def _build_capital_allocation_answer(
+    source_bundle: Dict[str, Any],
+    *,
+    business_journey_payload: Dict[str, Any],
+    products_services_payload: Dict[str, Any],
+    question: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build capital allocation answer from Phase 2/3 canonical data.
+
+    Source priority: Phase 3 longitudinal profile → Phase 2 assessments → fallback.
+    Does NOT recompute causality, deployment status, or value creation.
+    """
+    profile = _source_payload(source_bundle, "capital_allocation_longitudinal_profile")
+    outcomes = _source_payload(source_bundle, "capital_allocation_outcomes")
+    assessments_payload = _source_payload(source_bundle, "capital_allocation_assessments")
+
+    if not profile and not outcomes:
+        return _build_canonical_progression_answer(
+            source_bundle,
+            business_journey_payload=business_journey_payload,
+            products_services_payload=products_services_payload,
+            question=question,
+        )
+
+    # ── Section 1: Allocation pattern ───────────────────────────────────────
+    scope = (profile.get("profile_scope") or {}) if profile else {}
+    start_p = str(scope.get("start_period") or "").upper()
+    end_p = str(scope.get("end_period") or "").upper()
+    period_range = f"{start_p}–{end_p}" if start_p and end_p else (start_p or end_p or "")
+    n_events = scope.get("total_events") or int(outcomes.get("allocation_count") or 0)
+
+    oi = (profile.get("organic_vs_inorganic") or {}) if profile else {}
+    organic_n = oi.get("organic_event_count", 0)
+    inorganic_n = oi.get("inorganic_event_count", 0)
+    dist_n = oi.get("distribution_event_count", 0)
+    bs_n = oi.get("balance_sheet_event_count", 0)
+
+    pattern_parts = []
+    if inorganic_n:
+        pattern_parts.append(f"{inorganic_n} inorganic (acquisitions/investments)")
+    if organic_n:
+        pattern_parts.append(f"{organic_n} organic reinvestment events")
+    if dist_n:
+        pattern_parts.append(f"{dist_n} shareholder distribution events")
+    if bs_n:
+        pattern_parts.append(f"{bs_n} balance-sheet actions")
+    pattern_summary = (
+        f"Over {period_range}, management deployed capital across " + ", ".join(pattern_parts) + "."
+        if pattern_parts and period_range
+        else f"{n_events} capital allocation events documented."
+    )
+
+    # ── Section 2: Capital-weighted picture ─────────────────────────────────
+    cov = (profile.get("amount_coverage") or {}) if profile else {}
+    capital_weighted_ok = cov.get("capital_weighted_conclusions_permitted", False)
+    mix_pts: List[str] = []
+    if profile and capital_weighted_ok:
+        for entry in (profile.get("allocation_mix") or {}).get("by_category") or []:
+            if not isinstance(entry, dict):
+                continue
+            cat = str(entry.get("category") or "").replace("_", " ")
+            share = entry.get("share_of_known_deployment")
+            amount = entry.get("known_amount_crore")
+            cnt = entry.get("event_count", 0)
+            if share is not None and amount:
+                mix_pts.append(
+                    f"{cat.title()}: ₹{format_number(amount)} Cr ({int(share * 100)}% of tracked capital, {cnt} event(s))"
+                )
+            elif amount:
+                mix_pts.append(f"{cat.title()}: ₹{format_number(amount)} Cr ({cnt} event(s))")
+            elif cnt:
+                mix_pts.append(f"{cat.title()}: {cnt} event(s)")
+    capital_note = (
+        "Based on known deployment amounts, capital-weighted breakdown is available."
+        if capital_weighted_ok
+        else (cov.get("note") or "Event-count pattern is visible; monetary coverage is insufficient for capital-weighted conclusions.")
+    )
+
+    # ── Section 3: Major allocations ────────────────────────────────────────
+    major_pts: List[str] = []
+    raw_allocs = _get_record_list(outcomes, "allocations") if outcomes else []
+    assessments_list = (
+        _get_record_list(assessments_payload, "assessments") if assessments_payload else []
+    )
+    # Build a lookup from Phase 2 assessments by allocation_id
+    assess_by_id: Dict[str, Any] = {
+        a.get("allocation_id", ""): a
+        for a in assessments_list
+        if isinstance(a, dict) and a.get("allocation_id")
     }
-    allocations = (gold_cap.get("material_allocations") or gold_cap.get("allocations") or [])
-    if not allocations:
-        return _build_canonical_progression_answer(source_bundle, business_journey_payload=business_journey_payload, products_services_payload=products_services_payload, question=question)
-
-    # Build bucket-level key points
-    bucket_pts: List[str] = []
-    for alloc in allocations:
+    for alloc in raw_allocs[:5]:
         if not isinstance(alloc, dict):
             continue
-        name = _first_string(
-            _get_string(alloc, "theme"),
-            _get_string(alloc, "allocation_name"),
-            _get_string(alloc, "allocation_type"),
+        aid = alloc.get("allocation_id", "")
+        cat = str(alloc.get("allocation_category") or "").replace("_", " ")
+        name = _first_string(alloc.get("normalized_name"), alloc.get("allocation_name"), cat)
+        amount = alloc.get("amount")
+        periods = alloc.get("deployment_periods") or []
+        period_str = (
+            f"{str(periods[0]).upper()}–{str(periods[-1]).upper()}" if len(periods) > 1
+            else (str(periods[0]).upper() if periods else "")
         )
-        ret_raw = str(alloc.get("return_status") or "")
-        ret_label = _RETURN_LABEL.get(ret_raw, "")
-        amount = _get_number(alloc, "capital_amount_crore") or _get_number(alloc, "amount_crore")
-        period_s = _get_string(alloc, "source_period")
-        period_e = _get_string(alloc, "latest_period")
-        period = f"{period_s.upper()}–{period_e.upper()}" if period_s and period_e else (_get_string(alloc, "period") or _get_string(alloc, "periods"))
-        parts = [name]
+        a = assess_by_id.get(aid, {})
+        dep = _DEP_STATE_LABEL.get(a.get("deployment_state", ""), "")
+        exe = _EXE_STATE_LABEL.get(a.get("execution_state", ""), "")
+        parts = [f"{name}"]
         if amount:
             parts.append(f"₹{format_number(amount)} Cr")
-        if period:
-            parts.append(f"({period})")
-        if ret_label:
-            parts.append(f"— {ret_label}")
-        pt = " ".join(p for p in parts if p)
-        if pt:
-            bucket_pts.append(pt)
+        if period_str:
+            parts.append(f"({period_str})")
+        if dep:
+            parts.append(f"— {dep}")
+        if exe and exe != dep:
+            parts.append(f"/ {exe}")
+        major_pts.append(" ".join(p for p in parts if p))
 
-    owner_s = gold_cap.get("owner_capital_summary") or {}
-    owner_note = str(owner_s.get("narrative") or owner_s.get("interpretation") or "").strip()
-    n_allocations = len(allocations)
-    mixed_count = sum(1 for a in allocations if str(a.get("return_status") or "") in ("MIXED", "DESTRUCTIVE"))
-    unproven_count = sum(1 for a in allocations if str(a.get("return_status") or "") == "UNPROVEN")
-    returned_count = sum(1 for a in allocations if str(a.get("return_status") or "") == "NOT_APPLICABLE")
+    # ── Section 4: What actually worked (Phase 2 canonical states) ──────────
+    outcome_pts: List[str] = []
+    exec_verified = []
+    operating_visible = []
+    fin_attributable = []
+    per_share_attr = []
+    unverified = []
 
-    verdict_parts = []
-    if returned_count:
-        verdict_parts.append(f"{returned_count} allocation(s) returned capital to shareholders")
-    if mixed_count:
-        verdict_parts.append(f"{mixed_count} show mixed or uncertain returns")
-    if unproven_count:
-        verdict_parts.append(f"{unproven_count} remain unproven")
-    verdict = ("; ".join(verdict_parts) + ".") if verdict_parts else f"{n_allocations} capital allocations tracked."
+    for a in assessments_list:
+        if not isinstance(a, dict):
+            continue
+        aid = a.get("allocation_id", "")
+        cat = str(a.get("allocation_category") or "").replace("_", " ")
+        fos = a.get("financial_outcome_state", "UNABLE_TO_ATTRIBUTE")
+        oos = a.get("operating_outcome_state", "UNABLE_TO_VERIFY")
+        exe_s = a.get("execution_state", "UNABLE_TO_VERIFY")
+        pss = a.get("per_share_consequence_state", "UNABLE_TO_ATTRIBUTE")
+        dep_s = a.get("deployment_state", "UNABLE_TO_VERIFY")
 
-    simple = f"{n_allocations} capital allocations tracked: {verdict}"
+        if fos not in ("UNABLE_TO_ATTRIBUTE", None):
+            fin_attributable.append(f"{cat} ({aid}): {_FOS_LABEL.get(fos, fos)}")
+        elif oos not in ("UNABLE_TO_VERIFY", "NO_VERIFIED_OUTCOME", None):
+            operating_visible.append(f"{cat} ({aid}): operating progress visible")
+        elif exe_s not in ("UNABLE_TO_VERIFY", "NOT_STARTED", None):
+            exec_verified.append(f"{cat} ({aid}): {_EXE_STATE_LABEL.get(exe_s, exe_s)}")
+        else:
+            unverified.append(f"{cat} ({aid})")
+
+        if pss not in ("UNABLE_TO_ATTRIBUTE", None):
+            per_share_attr.append(f"{cat} ({aid}): per-share consequence attributable")
+
+    if fin_attributable:
+        outcome_pts.append("Financial return attributable: " + "; ".join(fin_attributable[:3]) + ".")
+    if operating_visible:
+        outcome_pts.append("Operating outcome visible (financial not yet attributed): " + "; ".join(operating_visible[:2]) + ".")
+    if exec_verified:
+        outcome_pts.append("Execution verified (operating outcome not yet visible): " + "; ".join(exec_verified[:2]) + ".")
+    if unverified:
+        outcome_pts.append(
+            f"{len(unverified)} allocation(s) with unverified outcomes: " + ", ".join(unverified[:3]) + "."
+        )
+    if per_share_attr:
+        outcome_pts.append("Per-share consequence attributable: " + "; ".join(per_share_attr[:2]) + ".")
+
+    # ── Section 5: Stewardship conclusion (Phase 3) ──────────────────────────
+    avs = (profile.get("allocation_activity_vs_skill") or {}) if profile else {}
+    skill_raw = avs.get("skill_assessment", "UNABLE_TO_VERIFY")
+    skill_label = _SKILL_LABEL.get(skill_raw, skill_raw)
+    skill_basis = avs.get("skill_basis", "")
+    stewardship_obs = (profile.get("stewardship_observations") or []) if profile else []
+    stewardship_pts = [
+        o.get("detail", "")
+        for o in stewardship_obs[:2]
+        if isinstance(o, dict) and o.get("detail")
+    ]
+
+    # ── Section 6: Unresolved questions ──────────────────────────────────────
+    uq = (profile.get("unresolved_questions") or []) if profile else []
+
+    # ── Compose answer ────────────────────────────────────────────────────────
+    n_fin = len(fin_attributable)
+    n_unverified = len(unverified)
+    n_total = len(assessments_list) or n_events
+
+    if n_fin >= n_total * 0.5:
+        answer_status = "supported"
+        thesis_impact = "neutral"
+    elif n_unverified >= n_total * 0.5:
+        answer_status = "partially_supported"
+        thesis_impact = "neutral"
+    else:
+        answer_status = "partially_supported"
+        thesis_impact = "neutral"
+
+    simple = pattern_summary
+    key_points = _clean_list(
+        [pattern_summary]
+        + mix_pts[:2]
+        + major_pts[:3]
+        + outcome_pts[:3]
+        + [f"Capital allocation skill: {skill_label}."] if skill_label else []
+    )
+    detailed = (
+        f"{pattern_summary} {capital_note} "
+        f"Of {n_total} tracked events, {n_fin} have attributable financial outcomes and "
+        f"{n_unverified} remain unverified. Allocation activity is documented; "
+        f"allocation skill requires attributable causal evidence which current records "
+        f"{'do not yet fully support' if n_fin < n_total * 0.5 else 'partially support'}."
+    )
+
+    evidence_pts = _clean_list(major_pts[:2] + outcome_pts[:2])
+    uncertainty_parts = []
+    if uq:
+        uncertainty_parts.append(uq[0])
+    if n_unverified:
+        uncertainty_parts.append(
+            f"{n_unverified} allocation(s) have no attributable financial outcome yet."
+        )
+    uncertainty = " ".join(uncertainty_parts) if uncertainty_parts else (
+        "Capital deployment is documented; return attribution requires further evidence."
+    )
+
     return _draft(
-        answer_status="supported",
+        answer_status=answer_status,
         simple_answer=simple,
-        why_it_matters="Investors need to separate deployment from return: spending money is not the same as creating per-share value.",
-        key_points=_clean_list(bucket_pts + [verdict]),
-        detailed_explanation=(
-            f"{n_allocations} capital allocations are tracked. {verdict} "
-            "The key test is whether organic capex has earned back an adequate return, and whether acquisitions are integrating as expected."
+        why_it_matters=(
+            "Capital allocation is the ultimate test of management stewardship: "
+            "deployment is easy to observe, but whether it creates per-share value is what matters."
         ),
-        evidence_status="direct",
-        evidence_summary="Derived from the Gold Capital Allocation Outcome Tracker.",
-        evidence_points=bucket_pts[:3],
-        uncertainty="Return classification reflects current evidence; capital deployed in recent years may not have generated a visible return yet.",
+        key_points=key_points,
+        detailed_explanation=detailed,
+        evidence_status="partial" if n_unverified > 0 else "direct",
+        evidence_summary=(
+            "Derived from canonical Phase 2 causal-attribution ledger and Phase 3 longitudinal profile. "
+            "Financial outcomes attributed only where direct causal linkage exists."
+        ),
+        evidence_points=evidence_pts,
+        uncertainty=uncertainty,
         products_refs=[],
         business_journey_ref=None,
         progression={},
-        interpretation={"conclusion": simple, "thesis_impact": "neutral" if unproven_count >= 2 else "weakens" if mixed_count >= 2 else "neutral"},
+        interpretation={
+            "conclusion": f"Management is an active capital allocator; {skill_label}.",
+            "skill_assessment": skill_raw,
+            "skill_basis": skill_basis,
+            "stewardship_observations": stewardship_pts,
+            "unresolved_diligence": uq[:2],
+            "thesis_impact": thesis_impact,
+        },
     )
 
 
@@ -3749,17 +4181,15 @@ def _build_committee_agree_answer(source_bundle: Dict[str, Any], *, business_jou
     if not agreements:
         return _build_unavailable_answer(question, "No doctrine agreements found in the committee synthesis.", "Agreement detail requires doctrine_agreements fields.", "")
     def _sentence_truncate(text: str, max_chars: int = 200) -> str:
-        """Truncate at last sentence boundary before max_chars; add period if missing."""
         raw = re.sub(r"[…]+$", "", text).strip()
         if len(raw) <= max_chars and raw.endswith((".", "!", "?")):
             return raw
-        # Find last sentence boundary within max_chars
         window = raw[:max_chars]
         for boundary in (".", "!", "?", ";"):
             idx = window.rfind(boundary)
             if idx > max_chars // 3:
-                return window[:idx + 1].strip()
-        # Fall back to word boundary + period
+                truncated = window[:idx + 1].strip()
+                return (truncated[:-1] + ".") if truncated.endswith(";") else truncated
         last_space = window.rfind(" ")
         if last_space > max_chars // 3:
             return window[:last_space].rstrip(" ,;:-") + "."
@@ -3801,7 +4231,8 @@ def _build_committee_disagree_answer(source_bundle: Dict[str, Any], *, business_
         for boundary in (".", "!", "?", ";"):
             idx = window.rfind(boundary)
             if idx > max_chars // 3:
-                return window[:idx + 1].strip()
+                truncated = window[:idx + 1].strip()
+                return (truncated[:-1] + ".") if truncated.endswith(";") else truncated
         last_space = window.rfind(" ")
         if last_space > max_chars // 3:
             return window[:last_space].rstrip(" ,;:-") + "."

@@ -1,5 +1,58 @@
 # Session Log
 
+## 2026-09-06 (ENG-105 Phase 4 — Capital Allocation Investor Consumption Integration)
+
+- Date: 2026-09-06
+- Sprint: ENG-105 Phase 4
+- Closure gate: **ENG_105_PHASE_4_CAPITAL_ALLOCATION_INVESTOR_CONSUMPTION_CLOSED**
+
+### Mission
+
+Integrate canonical Phase 2/3 capital allocation intelligence into investor-facing layers (Ask IntrinsicIQ, Investor Panel lenses, Committee synthesis). Enable long-term investors to answer: where did management deploy capital, what worked, what is unproven, and does evidence support capital-allocation skill?
+
+### Files Modified
+
+- **`intelligence/ask_intrinsiciq/loader.py`** — Added `capital_allocation_assessments` and `capital_allocation_longitudinal_profile` to `SOURCE_REGISTRY`.
+- **`intelligence/ask_intrinsiciq/answer_cards.py`** — Rewrote active `_build_capital_allocation_answer()` (was shadowing first definition, reading only Gold data). New version reads Phase 3 longitudinal profile for pattern/skill/stewardship, Phase 2 semantic states for per-allocation outcome categorization. Added translation tables for deployment/execution/financial/value-creation states. Updated `source_priorities["how-is-capital-allocated"]` to prefer Phase 3 profile.
+- **`intelligence/investor_panel/company_memory_context.py`** — Added `capital_allocation_longitudinal_profile.json` as primary file in `capital allocation outcomes` stream. Added `_compact_capital_allocation_outcomes()` function: prefers Phase 3 when available, falls back to Phase 2. Added `capital allocation outcomes` to `protected_streams` so it always appears in all doctrine contexts (not cut by max_streams=3).
+- **`tests/intelligence/test_ask_capital_allocation_contract.py`** (NEW) — 15 contract tests: 10 Ask contract + 5 Panel contract.
+
+### Key Design Decisions
+
+- **No second capital-allocation reasoning engine**: downstream reads Phase 2/3 canonical outputs; no recomputation of deployment_state, financial_outcome_state, skill, or value creation.
+- **Fabricated causality prohibition**: answer cards never attach company-level financial trends to individual allocation outcomes.
+- **Protected stream**: `capital allocation outcomes` added to `protected_streams` alongside `management progression` — ensures all 5 analyst lenses (Buffett, Graham, Munger, Fisher, Lynch) receive canonical Phase 3 profile regardless of doctrine stream priorities.
+- **Fallback discipline**: companies without Phase 3 profile fall back to raw Phase 2 data with explicit `"note": "Phase 3 longitudinal profile not yet available."` — no fabricated skill claim.
+- **ENG-104 provenance identity clean**: panel context verified to contain no metric shortcodes, no filenames as IDs.
+
+### Production Results
+
+| Company | Doctrine | Streams | Cap Alloc Stream | Skill |
+|---|---|---|---|---|
+| Sun Pharma | buffett | 4 | Phase 3 profile | OUTCOMES_MOSTLY_UNVERIFIED |
+| Sun Pharma | graham | 4 | Phase 3 profile | OUTCOMES_MOSTLY_UNVERIFIED |
+| Sun Pharma | munger | 4 | Phase 3 profile | OUTCOMES_MOSTLY_UNVERIFIED |
+| Sun Pharma | fisher | 4 | Phase 3 profile | OUTCOMES_MOSTLY_UNVERIFIED |
+| Sun Pharma | lynch | 4 | Phase 3 profile | OUTCOMES_MOSTLY_UNVERIFIED |
+| Tanla | buffett | 4 | Phase 3 profile | OUTCOMES_MOSTLY_UNVERIFIED |
+| datapatterns | buffett | 4 | Phase 2 fallback | N/A (no Phase 3 yet) |
+
+### Ask Answer — Sun Pharma "how-is-capital-allocated" (verified)
+
+- Allocation pattern: FY20–FY26, 4 inorganic / 2 organic / 2 distributions / 1 balance-sheet
+- Capital-weighted: permitted (100% amount coverage). Acquisition = ₹5713 Cr (23%), Debt Repayment = ₹1513 Cr (6%)
+- Financial attributable: 3 events (debt repayment, dividends, buybacks via CASH_FLOW_EFFECT)
+- Skill: `OUTCOMES_MOSTLY_UNVERIFIED` — acquisitions have no causal financial attribution
+- Unresolved: acquisition financial outcomes, organic capex returns
+
+### Test Results
+
+- 15/15 Phase 4 contract tests pass
+- 76/76 total (Phase 2 + Phase 3 + Phase 4 + Panel context tests) pass
+- Pre-existing failures in `test_ask_intrinsiciq.py` (8) and `test_semantic_quality_phase2.py` (1) confirmed pre-existing — not introduced by Phase 4
+
+---
+
 ## 2026-09-06 (ENG-105 Phase 3 — Longitudinal Capital Allocation Profile)
 
 - Date: 2026-09-06

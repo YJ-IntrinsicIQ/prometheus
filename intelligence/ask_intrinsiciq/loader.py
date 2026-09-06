@@ -42,6 +42,8 @@ SOURCE_REGISTRY = {
     "management_quality_summary": "company_memory/management_quality/management_quality_summary.json",
     "management_quality_dimensions": "company_memory/management_quality/management_quality_dimensions.json",
     "capital_allocation_outcomes": "company_memory/capital_allocation_outcomes/capital_allocation_outcomes.json",
+    "capital_allocation_assessments": "company_memory/capital_allocation_outcomes/capital_allocation_assessments.json",
+    "capital_allocation_longitudinal_profile": "company_memory/capital_allocation_outcomes/capital_allocation_longitudinal_profile.json",
     "capital_allocation_timelines": "company_memory/capital_allocation_timeline.json",
     "company_memory_index": "company_memory/company_memory_index.json",
     "multi_year_company_year_index": "company_memory/multi_year/company_year_index.json",

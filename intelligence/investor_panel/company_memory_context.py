@@ -48,13 +48,13 @@ DOCTRINE_MEMORY_PRIORITIES: Dict[str, List[str]] = {
         "management progression",
         "management quality",
         "management commitments",
+        "company model",   # Phase 13: Munger needs business model to assess fragility
         "capital allocation outcomes",
         "risk evolution",
         "management commentary",
         "capacity evolution",
         "projects",
         "financial memory",
-        "company model",
     ],
     "lynch": [
         "company model",
@@ -111,6 +111,7 @@ STREAM_FILE_PRIORITY: Dict[str, List[Path]] = {
         Path("company_memory/management_commentary/commentary_themes.json"),
     ],
     "capital allocation outcomes": [
+        Path("company_memory/capital_allocation_outcomes/capital_allocation_longitudinal_profile.json"),
         Path("company_memory/capital_allocation_outcomes/capital_allocation_outcomes.json"),
         Path("company_memory/capital_allocation_outcomes/capital_allocation_timelines.json"),
         Path("company_memory/capital_allocation_outcomes/capital_allocation_assessments.json"),
@@ -340,6 +341,97 @@ def _compact_commitments(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _compact_capital_allocation_outcomes(
+    candidates: "List[Tuple[Path, Dict[str, Any]]]",
+) -> Dict[str, Any]:
+    """Compact capital allocation stream, preferring Phase 3 longitudinal profile."""
+    longitudinal: Dict[str, Any] = {}
+    raw_outcomes: Dict[str, Any] = {}
+    for path, payload in candidates:
+        name = path.name
+        if "longitudinal_profile" in name:
+            longitudinal = payload
+        elif "capital_allocation_outcomes" in name and not longitudinal:
+            raw_outcomes = payload
+
+    if longitudinal:
+        scope = longitudinal.get("profile_scope") or {}
+        cov = longitudinal.get("amount_coverage") or {}
+        avs = longitudinal.get("allocation_activity_vs_skill") or {}
+        oi = longitudinal.get("organic_vs_inorganic") or {}
+        obs = longitudinal.get("stewardship_observations") or []
+        acq = longitudinal.get("acquisition_profile") or {}
+        psc = longitudinal.get("per_share_context") or {}
+        om = longitudinal.get("outcome_maturity") or {}
+        uq = longitudinal.get("unresolved_questions") or []
+
+        start = str(scope.get("start_period") or "").upper()
+        end = str(scope.get("end_period") or "").upper()
+        period_range = f"{start}–{end}" if start and end else start or end
+        capital_weighted = cov.get("capital_weighted_conclusions_permitted", False)
+        coverage_pct = int(cov.get("coverage_ratio", 0) * 100)
+
+        obs_texts = [
+            _truncate_text(o.get("detail", ""), 200)
+            for o in obs[:3]
+            if isinstance(o, dict) and o.get("detail")
+        ]
+        l2_plus = (
+            len(om.get("level_2_execution_verified") or [])
+            + len(om.get("level_3_operating_outcome_visible") or [])
+            + len(om.get("level_4_financial_outcome_attributable") or [])
+            + len(om.get("level_5_per_share_attributable") or [])
+        )
+        return {
+            "generated_at": longitudinal.get("generated_at"),
+            "profile_period": period_range,
+            "event_count": scope.get("total_events", 0),
+            "amount_coverage": f"{coverage_pct}% of events have known amounts. {cov.get('note', '')}",
+            "event_mix": {
+                "organic_reinvestment": oi.get("organic_event_count", 0),
+                "inorganic_m_and_a": oi.get("inorganic_event_count", 0),
+                "shareholder_distributions": oi.get("distribution_event_count", 0),
+                "balance_sheet": oi.get("balance_sheet_event_count", 0),
+            },
+            "outcome_maturity": {
+                "events_with_verified_execution": l2_plus,
+                "events_unverified": len(om.get("level_0_deployment_unverified") or []) + len(om.get("level_1_deployment_verified") or []),
+                "financial_attributable": avs.get("financial_attributable_count", 0),
+            },
+            "allocation_skill": {
+                "assessment": avs.get("skill_assessment", "UNABLE_TO_VERIFY"),
+                "basis": _truncate_text(avs.get("skill_basis", ""), 200),
+                "activity_vs_skill_note": "Allocation activity (what management did) is separate from allocation skill (whether it created value).",
+            },
+            "acquisition_profile": _truncate_text(acq.get("activity_vs_success_note", ""), 200) if isinstance(acq, dict) else "",
+            "per_share_highlights": {
+                "share_count_reduction": psc.get("share_count_reduction_documented", False),
+                "dividend_distribution": psc.get("dividend_distribution_documented", False),
+                "note": psc.get("attribution_note", ""),
+            },
+            "stewardship_observations": obs_texts,
+            "unresolved_diligence": uq[:2],
+            "capital_mix_note": "Capital-weighted conclusions permitted." if capital_weighted else cov.get("note", ""),
+            "limitations": longitudinal.get("limitations") or [],
+        }
+
+    # Fallback: compact Phase 2 raw outcomes
+    allocations = (raw_outcomes.get("allocations") or [])[:3]
+    return {
+        "allocation_count": raw_outcomes.get("allocation_count", len(allocations)),
+        "note": "Phase 3 longitudinal profile not yet available.",
+        "allocations": [
+            {
+                "id": a.get("allocation_id"),
+                "category": a.get("allocation_category"),
+                "amount_crore": a.get("amount"),
+                "periods": (a.get("deployment_periods") or [])[:3],
+            }
+            for a in allocations
+        ],
+    }
+
+
 def _compact_assessments(payload: Dict[str, Any], *, limit: int = 3) -> Dict[str, Any]:
     assessments = payload.get("assessments") or []
     compacted: List[Dict[str, Any]] = []
@@ -411,10 +503,37 @@ def _compact_management_quality(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _compact_longitudinal_current_state(lcs_items: List[Any], *, limit: int = 4) -> List[Dict[str, Any]]:
+    """Compact longitudinal_current_state items for Panel consumption.
+
+    Keeps only lifecycle-authority fields. No events, no raw text, no source_chunk.
+    Confidence level disambiguates CONFIRMED (high) from CLAIMED (low).
+    """
+    result: List[Dict[str, Any]] = []
+    for item in lcs_items:
+        if not isinstance(item, dict):
+            continue
+        credibility = str(item.get("management_credibility_signal") or "").upper()
+        current_status = str(item.get("current_status") or "unresolved")
+        conf = item.get("confidence") if isinstance(item.get("confidence"), dict) else {}
+        result.append({
+            "theme": _truncate_text(item.get("theme"), 100),
+            "current_status": current_status,
+            "management_credibility_signal": credibility,
+            "confidence_level": conf.get("level") or "low",
+            "source_period": str(item.get("source_period") or "").strip(),
+            "linked_company_model_ids": list(item.get("linked_company_model_ids") or [])[:3],
+        })
+        if len(result) >= limit:
+            break
+    return result
+
+
 def _compact_company_model(payload: Dict[str, Any]) -> Dict[str, Any]:
     business_model = payload.get("current_business_model") if isinstance(payload.get("current_business_model"), dict) else {}
-    identity = payload.get("company_identity") if isinstance(payload.get("company_identity"), dict) else {}
-    return {
+    lcs_items = payload.get("longitudinal_current_state") or []
+    lcs_compact = _compact_longitudinal_current_state(lcs_items, limit=4) if isinstance(lcs_items, list) else []
+    result: Dict[str, Any] = {
         "company_slug": payload.get("company_slug") or payload.get("company"),
         "schema_version": payload.get("schema_version"),
         "generated_at": payload.get("generated_at"),
@@ -427,6 +546,9 @@ def _compact_company_model(payload: Dict[str, Any]) -> Dict[str, Any]:
         "economic_drivers": _company_model_text_items(payload.get("economic_drivers") or [], limit=1, char_limit=120),
         "evidence_ids": _panel_citable_evidence_ids(payload, limit=3),
     }
+    if lcs_compact:
+        result["longitudinal_current_state_summary"] = lcs_compact
+    return result
 
 
 def _compact_management_progression(payload: Dict[str, Any], *, limit: int = 5) -> Dict[str, Any]:
@@ -441,10 +563,17 @@ def _compact_management_progression(payload: Dict[str, Any], *, limit: int = 5) 
             chain.get("financial_consequence") if isinstance(chain.get("financial_consequence"), dict) else {}
         )
         implication = chain.get("investor_implication") if isinstance(chain.get("investor_implication"), dict) else {}
+        # Phase 13: expose lifecycle authority fields so specialists can calibrate evidence weight
+        stream_types = list(item.get("stream_types") or [])
+        credibility = str(item.get("management_credibility_signal") or "").upper()
+        current_status = str(item.get("current_status") or "").strip()
         compacted.append(
             {
                 "theme": _truncate_text(item.get("theme") or item.get("topic"), 140),
                 "period": item.get("period") or item.get("latest_period"),
+                "stream_types": stream_types,
+                "management_credibility_signal": credibility,
+                "current_status": current_status,
                 "chain_status": str(chain.get("chain_status") or "").strip().upper(),
                 "actor": action.get("action_actor") or action.get("actor") or outcome.get("actor") or "unknown",
                 "claim_summary": _truncate_text(claim.get("text"), 180),
@@ -506,7 +635,6 @@ def _compact_financial_memory(payload: Dict[str, Any], source_dir: Path) -> Dict
             continue
         summary = {
             "module": label,
-            "source_artifact": path.name,
             "years_covered": list(module_payload.get("years_covered") or [])[:5],
             "warnings": _top_list(module_payload.get("warnings") or [], limit=1),
             "limitations": _top_list(module_payload.get("limitations") or [], limit=1),
@@ -720,7 +848,7 @@ def build_company_memory_context(
 
     max_streams = 3
     max_items_per_stream = 1
-    protected_streams = {"management progression"}
+    protected_streams = {"management progression", "capital allocation outcomes"}
     selected_streams = ordered_streams[:max_streams]
     selected_names = {name for name, _candidates in selected_streams}
     for stream_name, candidates in ordered_streams[max_streams:]:
@@ -751,7 +879,7 @@ def build_company_memory_context(
         if stream_name == "company model":
             block.update(_compact_company_model(primary_payload))
         elif stream_name == "management progression":
-            block.update(_compact_management_progression(primary_payload, limit=2))
+            block.update(_compact_management_progression(primary_payload, limit=4))
         elif stream_name == "management commitments":
             merged_commitments = deepcopy(primary_payload)
             for path, payload in candidates[1:]:
@@ -760,7 +888,9 @@ def build_company_memory_context(
                 if not merged_commitments.get("validation") and payload.get("validation"):
                     merged_commitments["validation"] = payload.get("validation")
             block.update(_compact_commitments(merged_commitments))
-        elif stream_name in {"projects", "capacity evolution", "risk evolution", "management commentary", "capital allocation outcomes"}:
+        elif stream_name == "capital allocation outcomes":
+            block.update(_compact_capital_allocation_outcomes(candidates))
+        elif stream_name in {"projects", "capacity evolution", "risk evolution", "management commentary"}:
             merged_assessments = deepcopy(primary_payload)
             for path, payload in candidates[1:]:
                 if not merged_assessments.get("timelines") and payload.get("timelines"):
