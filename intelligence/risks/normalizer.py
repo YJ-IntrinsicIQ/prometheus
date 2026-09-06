@@ -174,6 +174,11 @@ def normalize_candidate(
             materiality=progression_materiality,
             evidence_confidence=candidate.get("confidence") or "medium",
         ),
+        # Canonical evolution identity and trajectory — passed through unchanged
+        "evo_trajectory": candidate.get("evo_trajectory"),
+        "evo_canonical_id": candidate.get("evo_canonical_id"),
+        "evo_severity_by_year": candidate.get("evo_severity_by_year") or {},
+        "evo_latest_severity": candidate.get("evo_latest_severity"),
     }
 
 
@@ -255,6 +260,11 @@ def deduplicate_risks(
                     if not primary.get("source_references"):
                         primary["source_references"] = []
                     primary["source_references"].extend(secondary.get("source_references", []))
+
+                # Propagate evolution trajectory if primary lacks it
+                for _tf in ("evo_trajectory", "evo_canonical_id", "evo_severity_by_year", "evo_latest_severity"):
+                    if not primary.get(_tf) and secondary.get(_tf):
+                        primary[_tf] = secondary[_tf]
             else:
                 # Keep as separate risk
                 result.append(secondary)

@@ -156,7 +156,13 @@ class RiskDefinition:
     
     # Conviction impact
     conviction_impact: Optional[str] = None  # strengthened, weakened, unchanged, unclear
-    
+
+    # Canonical evolution identity and trajectory (propagated from multi_year/risk_evolution.json)
+    evo_canonical_id: Optional[str] = None   # e.g. "risk_foreign_exchange_risk"
+    evo_trajectory: Optional[str] = None     # "worsening" | "improving" | "recurring" | None
+    evo_severity_by_year: Dict[str, Any] = field(default_factory=dict)
+    evo_latest_severity: Optional[str] = None
+
     # Relationships
     related_commitment_ids: List[str] = field(default_factory=list)
     related_project_ids: List[str] = field(default_factory=list)
@@ -217,6 +223,8 @@ class RiskAssessment:
     what_changed: str
     why_it_changed: str
     conviction_impact: str = "unclear"
+    trajectory: Optional[str] = None          # "worsening" | "improving" | "recurring" | None
+    evo_canonical_id: Optional[str] = None    # canonical evolution risk ID for cross-artifact linking
     latest_evidence: List[str] = field(default_factory=list)
     unresolved_items: List[str] = field(default_factory=list)
     investor_implication: str = ""

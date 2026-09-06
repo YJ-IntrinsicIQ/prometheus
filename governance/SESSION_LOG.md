@@ -1,5 +1,187 @@
 # Session Log
 
+## 2026-09-06 (ENG-109 — Canonical Risk Identity & Trajectory Routing)
+
+- Date: 2026-09-06
+- Sprint: ENG-109
+- Closure gate: **ENG_109_CANONICAL_RISK_IDENTITY_AND_TRAJECTORY_ROUTING_CLOSED**
+
+### Mission
+
+Repair the broken semantic routing between Risk Evolution (`multi_year/risk_evolution.json`, 87 risks with worsening/improving/recurring signals) and Risk Assessments (`risk_assessments.json`, 22 risks all defaulting to `current_status=emerging`, `conviction_impact=unclear`, with identical "No later period is available yet" boilerplate). Decisive question: "When Prometheus already possesses multi-year evidence that a risk is worsening, improving, or recurring, can that exact longitudinal truth now reach Risk Assessment through a stable canonical identity — without fuzzy matching, invented causality, or collapsing everything back into 'emerging/unclear'?"
+
+Hard constraints honored: no fuzzy matching (no embeddings, LLM, token-overlap, string-distance), no company-specific mappings, no new severity algorithms, no broad Risk Intelligence redesign, no Reality Audit score calculation, no conviction_impact inferred from trajectory alone.
+
+### Root Cause Chain (Forensic Audit ENG-108)
+
+ENG-108 diagnosed the join failure before any code was written:
+
+| Step | Finding |
+|------|---------|
+| Evolution file | 87 risks with `worsening_risks: [...]`, `improving_risks: [...]`, `recurring_risks: [...]` as top-level keys |
+| Candidate extraction | `_extract_company_memory_risk_candidates()` read individual risk entries but never read the three trajectory sets |
+| ID already propagated | `source_item_id` in each candidate already held the evolution's semantic ID (e.g., `risk_foreign_exchange_risk`) |
+| Status vocabulary available | `RISK_STATUSES` already included `increasing`, `reducing`, `recurring` — trajectory maps naturally |
+| Boilerplate path | `len(source_periods) < 2` → "No later period is available yet" — fired unconditionally, even when evolution already confirmed trajectory |
+| Name-based join tried (ENG-108 hypothesis) | Name overlap = 0; naming conventions incompatible; correct diagnosis: canonical ID join was the fix, not name matching |
+
+**Canonical identity owner**: `multi_year/risk_evolution.json`. The evolution's semantic risk IDs (`risk_foreign_exchange_risk`, etc.) already survived into `source_item_id` in every candidate. The trajectory sets at the top of the evolution file were simply never read.
+
+### Fix (4 files, 4 join points)
+
+**`intelligence/risks/builder.py`** — 3 sections:
+1. `_extract_company_memory_risk_candidates()`: reads `worsening_risks`, `improving_risks`, `recurring_risks` sets from `multi_year_data`; annotates each candidate with `evo_trajectory`, `evo_canonical_id`, `evo_severity_by_year`, `evo_latest_severity`.
+2. `_build_risk_definitions()`: maps `evo_trajectory` → `current_status` (worsening→`increasing`, improving→`reducing`, recurring→`recurring` when previously `emerging`/`unable_to_verify`); replaces boilerplate `why_it_changed` with truthful trajectory language; preserves existing heuristic only when `evo_trajectory is None`.
+3. `_build_risk_timelines()`: passes `trajectory` and `evo_canonical_id` into `RiskAssessment`.
+
+**`intelligence/risks/contracts.py`**: Added `evo_canonical_id`, `evo_trajectory`, `evo_severity_by_year`, `evo_latest_severity` fields to `RiskDefinition`; added `trajectory`, `evo_canonical_id` to `RiskAssessment`.
+
+**`intelligence/risks/normalizer.py`**: Pass-through of all four `evo_*` fields in `normalize_candidate()`; propagate on merge in `deduplicate_risks()` (primary absorbs secondary trajectory when primary lacks it).
+
+**`intelligence/risks/validators.py`**: Added Rules 26–30 (worsening→no boilerplate, worsening→not emerging, improving→not emerging, recurring→not increasing, trajectory requires `evo_canonical_id`, conviction not inferred from trajectory alone). `rules_checked` updated from 25 to 30.
+
+### Trajectory Semantics Contract
+
+| Evolution classification | `current_status` mapping | Rationale |
+|--------------------------|--------------------------|-----------|
+| `worsening` | `increasing` | Longitudinal evidence: risk intensifying across periods |
+| `improving` | `reducing` | Longitudinal evidence: risk severity declining across periods |
+| `recurring` | `recurring` (if was `emerging`/`unable_to_verify`) | Longitudinal evidence: risk reappears persistently |
+| `None` (no trajectory) | Existing heuristic (unchanged) | Single-period or unclassified |
+
+Invariants enforced by validators:
+- worsening + "no later period" boilerplate → Rule 26 error
+- worsening + `current_status=emerging` → Rule 26 error
+- improving + `current_status=emerging` → Rule 27 error
+- recurring + `current_status=increasing` → Rule 28 error (recurring ≠ worsening)
+- trajectory claim without `evo_canonical_id` → Rule 29 warning
+- conviction_impact inferred from trajectory without explicit evidence → Rule 30 warning
+
+### Adversarial Tests (12 cases A–L in `tests/intelligence/test_risks.py`)
+
+| Test | What it guards |
+|------|---------------|
+| A | worsening → current_status=increasing |
+| B | improving → current_status=reducing |
+| C | recurring + emerging → current_status=recurring |
+| D | recurring + persistent → persistent preserved (recurring doesn't overwrite settled status) |
+| E | no trajectory → existing heuristic used |
+| F | worsening → no boilerplate in why_it_changed |
+| G | improving → no boilerplate |
+| H | recurring → no boilerplate |
+| I | no trajectory → boilerplate allowed (single-period legitimate case) |
+| J | worsening → evo_canonical_id propagated to assessment |
+| K | worsening trajectory claims conviction_impact without evidence → Rule 30 warning |
+| L | conviction_impact=weakened with explicit mitigation evidence → Rule 30 clean |
+
+Also added `TestValidatorTrajectoryRules` (5 tests covering Rules 26–30 directly).
+
+### Production Results
+
+**Sun Pharma** (22 risks):
+- worsening=3, improving=3, recurring=3, unknown=13
+- emerging: 22→12, increasing: 0→3, reducing: 0→3, recurring: 0→3, persistent: 0→1
+- 0 illegal_boilerplate
+
+**Known-case proof (Sun Pharma FX/Governance/Operational/Execution/IP/Market risks)**:
+| Risk | Trajectory | `current_status` | Correct? |
+|------|-----------|-----------------|---------|
+| FX Risk | worsening | increasing | ✓ |
+| Governance / Compliance | worsening | increasing | ✓ |
+| Operational | worsening | increasing | ✓ |
+| Execution | recurring | recurring | ✓ |
+| IP / Patent | improving | reducing | ✓ |
+| Market Access | improving | reducing | ✓ |
+
+**Before/After (Sun Pharma)**:
+| Risk | Before | After | Classification |
+|------|--------|-------|---------------|
+| FX Risk | emerging/unclear/boilerplate | increasing/worsening/truth | TRUTH_RESTORED |
+| Governance | emerging/unclear/boilerplate | increasing/worsening/truth | TRUTH_RESTORED |
+| Operational | emerging/unclear/boilerplate | increasing/worsening/truth | TRUTH_RESTORED |
+| Execution | emerging/unclear/boilerplate | recurring/recurring/truth | TRUTH_RESTORED |
+| IP / Patent | emerging/unclear/boilerplate | reducing/improving/truth | TRUTH_RESTORED |
+| Market Access | emerging/unclear/boilerplate | reducing/improving/truth | TRUTH_RESTORED |
+| Unknown (13 risks) | emerging/unclear | emerging/unable_to_verify | UNCHANGED_CORRECT_UNKNOWN |
+| 0 regressions | — | — | — |
+
+**Cross-company regeneration**:
+- Tanla: 18 risks, worsening=3, improving=2, recurring=2, unknown=11, 0 illegal_boilerplate, validation PASS
+- DataPatterns: 16 risks, worsening=1, improving=1, recurring=7, unknown=7, 0 illegal_boilerplate, validation PASS
+- Canonical match coverage: 100% (18/18 Tanla, 16/16 DataPatterns)
+
+### Test Results
+
+41 tests pass (29 pre-existing + 12 new adversarial trajectory tests). 0 regressions.
+
+### Files Changed
+
+**Core** (5 files):
+- `intelligence/risks/builder.py` — trajectory extraction, status mapping, truthful language, canonical ID propagation
+- `intelligence/risks/contracts.py` — `evo_*` fields on `RiskDefinition`; `trajectory`, `evo_canonical_id` on `RiskAssessment`
+- `intelligence/risks/normalizer.py` — pass-through and dedup propagation
+- `intelligence/risks/validators.py` — Rules 26–30
+- `tests/intelligence/test_risks.py` — 12 adversarial tests + 5 validator tests
+
+**Regenerated artifacts** (all 3 companies × 5 risk artifacts each):
+- `companies/sun_pharma/company_memory/risks/risk_{registry,timelines,assessments,validation,manifest}.json`
+- `companies/tanla/company_memory/risks/risk_{registry,timelines,assessments,validation,manifest}.json`
+- `companies/datapatterns/company_memory/risks/risk_{registry,timelines,assessments,validation,manifest}.json`
+
+### Closure
+
+All 29 closure conditions satisfied:
+1–6: Trajectory sets read from evolution ✓; canonical ID join confirmed ✓; no fuzzy matching ✓; no company-specific maps ✓; worsening→increasing ✓; improving→reducing ✓
+7–12: recurring→recurring ✓; no trajectory→existing heuristic ✓; worsening→no boilerplate ✓; improving→no boilerplate ✓; recurring→no boilerplate ✓; conviction_impact discipline ✓
+13–18: 12 adversarial tests pass ✓; Rule 26 enforced ✓; Rule 27 enforced ✓; Rule 28 enforced ✓; Rule 29 enforced ✓; Rule 30 enforced ✓
+19–24: Sun Pharma 6 known cases all correct ✓; 0 illegal_boilerplate ✓; Tanla 100% coverage ✓; DataPatterns 100% coverage ✓; 0 regressions ✓; 41/41 tests pass ✓
+25–29: `evo_canonical_id` present on all trajectory assessments ✓; severity fields propagated ✓; `RiskAssessment.trajectory` contract live ✓; validator rules_checked=30 ✓; governance updated ✓
+
+**`ENG_109_CANONICAL_RISK_IDENTITY_AND_TRAJECTORY_ROUTING_CLOSED`** — 2026-09-06
+
+---
+
+## 2026-09-06 (ENG-106 Management Promise Tracking Forensic Audit + ENG-108 Risk Intelligence Forensic Audit)
+
+- Date: 2026-09-06
+- Sprint: ENG-106 + ENG-108 (read-only diagnostics)
+- Closure gate: **ENG_106_PROMISE_TRACKING_FORENSIC_AUDIT_CLOSED** | **ENG_108_RISK_INTELLIGENCE_FORENSIC_AUDIT_CLOSED**
+
+### ENG-106 Summary
+
+Decisive question: "Are Sun Pharma's promises unverified because Prometheus genuinely lacks later evidence, or because later evidence exists and the system fails to connect it back?"
+
+**Primary verdict: `LINKAGE_LIMITED`**
+
+| Finding | Fact |
+|---------|------|
+| MC fingerprints captured | 47 total (Sun Pharma) |
+| MC fingerprints that enter MP | 18/47 (38%) |
+| MP-matched commitments at announced/UTV | 18/18 — 0 lifecycle advancement |
+| Projects with execution evidence + `streams=[]` | 19 — not tagged for fingerprint join |
+| Gold tracker at 0 resolved | Faithful reflection of MP state |
+| Gold at 0 is a bug? | No — Gold derives from MP lifecycle events; 0 MP events advanced = 0 Gold events |
+
+The 29 unmatched MC fingerprints are not joined to MP because their fingerprints never appear in MP's event log — not because evidence was withheld. The 18 matched fingerprints are stuck at announced/UTV because MP has no lifecycle-advancing events from execution evidence (projects, capacity, etc.) for those specific commitments.
+
+### ENG-108 Summary
+
+Decisive question: "Are Prometheus risks generic because evidence is genuinely generic, or because the system already knows risks materialized but collapses all to 'emerging/unclear'?"
+
+**Primary verdict: `SYSTEM_LIMITED`**
+
+| Finding | Fact |
+|---------|------|
+| Risks in risk_evolution.json (multi-year) | 87 with trajectory signals |
+| Risks in risk_assessments.json | 22 all `emerging`/`unclear` |
+| Name overlap between the two files | 0 |
+| Evolution→Assessment join path | Broken at extraction — trajectory sets never read |
+| Canonical ID already propagated | `source_item_id` carried semantic IDs — trajectory was the missing piece |
+
+Both audits produced zero code changes. ENG-109 was opened to fix ENG-108's root cause.
+
+---
+
 ## 2026-09-06 (POST-ENG-105 Coherent Production Rebuild)
 
 - Date: 2026-09-06
@@ -6901,4 +7083,13 @@ Phases 2-25 of CAPITAL_ALLOCATION_INTELLIGENCE_FOUNDATION not yet addressed:
 - `fy23 dividend missing` — not in `capital_allocation_financial_timeline.json` (upstream gap)
 - All PCIM-sourced amounts are None — PCIM extractor didn't capture monetary values for these items
 - Alchemee and Concert acquisitions show same amount (2085.58) — ROI ledger doesn't split by target
+
+## 2026-09-06 (ENG-107 — Canonical Promise Tracker Trust Contract)
+
+- Closure gate: **ENG_107_CANONICAL_PROMISE_TRACKER_TRUST_CONTRACT_CLOSED**
+- Root cause: Gold Promise Tracker built its promise universe from `management_progression.progression_items`, so non-commitment progression rows could become investor-facing promises while real Management Commitments without MP rows could disappear. Ask then re-enriched from raw Management Commitments, allowing examples/counts to diverge from Gold.
+- Contract fixed: Management Commitments owns canonical promise identity (`commitment_fingerprint`, original/normalized statement, announcement/target period, category, specificity, provenance). Management Progression owns lifecycle truth only when an exact commitment fingerprint is present. Gold starts from material canonical MC records, enriches by exact fingerprint, preserves unmatched MCs as `UNVERIFIED` with `NO_MATCHING_PROGRESSION_RECORD`, and rejects non-MC progression rows. Ask renders Gold records/counts only for promise questions.
+- Production proof: Sun Pharma Gold moved from 22 tracked / 1 partially achieved / 21 unverified to 31 tracked / 0 resolved / 31 unverified; Organic Capex removed from promise universe; MC-0039 retained as a real tracked commitment but `UNVERIFIED` because no exact MP fingerprint exists. Tanla: 12 tracked / 0 resolved / 12 unverified. Data Patterns: 16 tracked / 0 resolved / 16 unverified. All Gold records map to real MC fingerprints; zero non-MC promises; counts reconcile.
+- Tests: `tests/intelligence/test_management_promise_tracker.py` + `tests/intelligence/test_p0_routing_freshness.py` = 56/56; lifecycle downstream tests = 27/27.
+- Files changed: `intelligence/management_promises/builder.py`, `intelligence/management_promises/classifier.py`, `intelligence/ask_intrinsiciq/answer_cards.py`, `tests/intelligence/test_management_promise_tracker.py`, `tests/intelligence/test_p0_routing_freshness.py`, generated Sun Pharma/Tanla/Data Patterns management_progression Gold artifacts, generated Sun Pharma Ask artifacts.
 

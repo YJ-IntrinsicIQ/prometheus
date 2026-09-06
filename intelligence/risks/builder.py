@@ -7,7 +7,7 @@ from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from knowledge.company_memory import parse_financial_year
 
@@ -138,6 +138,11 @@ def _extract_company_memory_risk_candidates(company_root: Path) -> List[Dict[str
     candidates: List[Dict[str, Any]] = []
     multi_year = _load_json(company_root / "company_memory" / "multi_year" / "risk_evolution.json")
     if isinstance(multi_year, dict):
+        # Load trajectory classification sets from the evolution file's top-level lists
+        _worsening_ids: set = set(multi_year.get("worsening_risks") or [])
+        _improving_ids: set = set(multi_year.get("improving_risks") or [])
+        _recurring_ids: set = set(multi_year.get("recurring_risks") or [])
+
         for risk in multi_year.get("risks") or []:
             if not isinstance(risk, dict):
                 continue
@@ -157,6 +162,16 @@ def _extract_company_memory_risk_candidates(company_root: Path) -> List[Dict[str
                 continue
             raw_name = str(risk.get("normalized_risk") or description).replace("_", " ").title()
             canonical_name = _canonical_risk_name(raw_name, description)
+            evo_id = risk.get("risk_id", "")
+            # Determine trajectory from evolution classification lists (precedence: worsening > improving > recurring)
+            if evo_id in _worsening_ids:
+                evo_trajectory: Optional[str] = "worsening"
+            elif evo_id in _improving_ids:
+                evo_trajectory = "improving"
+            elif evo_id in _recurring_ids:
+                evo_trajectory = "recurring"
+            else:
+                evo_trajectory = None
             candidates.append({
                 "risk_name": canonical_name,
                 "value": description,
@@ -164,10 +179,15 @@ def _extract_company_memory_risk_candidates(company_root: Path) -> List[Dict[str
                 "category": str(risk.get("normalized_risk") or "other").split("_")[0],
                 "source_year": latest.get("source_year") or risk.get("first_seen_year"),
                 "source_artifact": "multi_year/risk_evolution.json",
-                "source_item_id": risk.get("risk_id"),
+                "source_item_id": evo_id,
                 "evidence_ids": list(risk.get("related_evidence_ids") or []),
                 "confidence": {"level": "high" if risk.get("repeated_years") else "medium"},
                 "current_status": "persistent" if risk.get("repeated_years") else "emerging",
+                # Canonical evolution identity and trajectory
+                "evo_trajectory": evo_trajectory,
+                "evo_canonical_id": evo_id,
+                "evo_severity_by_year": risk.get("severity_by_year") or {},
+                "evo_latest_severity": risk.get("latest_severity"),
             })
 
     working_capital = _load_json(company_root / "company_memory" / "financials" / "investor_financial_modules" / "working_capital_quality_drilldown.json")
@@ -339,6 +359,21 @@ def _build_risk_definitions(
         current_status = risk.get("current_status", "unable_to_verify")
         if current_status == "persistent" and len(source_periods) < 2:
             current_status = "emerging"
+
+        # Apply canonical evolution trajectory to current_status (trajectory takes precedence when available)
+        evo_trajectory: Optional[str] = risk.get("evo_trajectory")
+        evo_canonical_id: Optional[str] = risk.get("evo_canonical_id")
+        if evo_trajectory == "worsening":
+            current_status = "increasing"
+        elif evo_trajectory == "improving":
+            current_status = "reducing"
+        elif evo_trajectory == "recurring":
+            # recurring is a persistence signal, not a direction; use it only to upgrade from "emerging"
+            if current_status in ("emerging", "unable_to_verify"):
+                current_status = "recurring"
+
+        risk_name = risk.get("risk_name", "")
+        risk_name_lower = risk_name.lower() or "the risk"
         
         # Build materiality assessment
         materiality = assess_materiality(
@@ -352,9 +387,57 @@ def _build_risk_definitions(
             is_concentration_risk="concentration" in (risk.get("risk_name", "") or "").lower(),
         )
         
+        # Build what_changed / why_it_changed using trajectory truth where available.
+        # Trajectory from evolution takes precedence over period-count-based fallback.
+        if evo_trajectory == "worsening":
+            _what_changed = (
+                risk.get("what_changed")
+                or f"{risk_name} is classified as worsening in the multi-year longitudinal evidence."
+            )
+            _why_it_changed = (
+                risk.get("why_it_changed")
+                or f"The multi-year longitudinal evidence classifies {risk_name_lower} as worsening; the risk has intensified across successive periods."
+            )
+        elif evo_trajectory == "improving":
+            _what_changed = (
+                risk.get("what_changed")
+                or f"{risk_name} shows improvement in the multi-year longitudinal evidence."
+            )
+            _why_it_changed = (
+                risk.get("why_it_changed")
+                or f"The multi-year longitudinal evidence indicates improvement in {risk_name_lower}; later periods show reduced severity compared to earlier observations."
+            )
+        elif evo_trajectory == "recurring":
+            _what_changed = (
+                risk.get("what_changed")
+                or f"{risk_name} has recurred across multiple periods in the multi-year longitudinal evidence."
+            )
+            _why_it_changed = (
+                risk.get("why_it_changed")
+                or f"The multi-year longitudinal evidence classifies {risk_name_lower} as recurring; the risk has appeared persistently across successive periods without resolution."
+            )
+        else:
+            # No trajectory data from evolution — fall back to period-count heuristic
+            _what_changed = (
+                risk.get("what_changed")
+                or (
+                    f"{risk_name or 'The risk'} remains visible across {len(source_periods)} period(s)."
+                    if len(source_periods) >= 2
+                    else f"{risk_name or 'The risk'} is identified in the source evidence."
+                )
+            )
+            _why_it_changed = (
+                risk.get("why_it_changed")
+                or (
+                    "Later evidence keeps pointing to the same underlying mechanism."
+                    if len(source_periods) >= 2
+                    else "No later period is available yet to show whether the risk intensifies or recedes."
+                )
+            )
+
         definition = RiskDefinition(
             risk_id=risk.get("risk_id", f"risk_{len(definitions)}"),
-            risk_name=risk.get("risk_name", ""),
+            risk_name=risk_name,
             normalized_name=risk.get("normalized_name", ""),
             risk_category=category,
             affected_area=affected_area,
@@ -373,42 +456,30 @@ def _build_risk_definitions(
             source_references=risk.get("source_references", []),
             semantic_quality=risk.get("semantic_quality", {}),
             materiality=materiality,
-            trigger_conditions=[f"Later disclosures show that {risk.get('risk_mechanism', risk.get('risk_name', 'the risk mechanism'))} is worsening."],
-            disconfirming_evidence=[f"Later disclosures show that {risk.get('risk_mechanism', risk.get('risk_name', 'the risk mechanism'))} has materially reduced."],
+            trigger_conditions=[f"Later disclosures show that {risk.get('risk_mechanism', risk_name or 'the risk mechanism')} is worsening."],
+            disconfirming_evidence=[f"Later disclosures show that {risk.get('risk_mechanism', risk_name or 'the risk mechanism')} has materially reduced."],
             related_commitment_ids=risk.get("related_commitment_ids", []),
             related_project_ids=risk.get("related_project_ids", []),
             related_capacity_ids=risk.get("related_capacity_ids", []),
             related_financial_metrics=risk.get("related_financial_metrics", []),
-            what_changed=(
-                risk.get("what_changed")
-                or (
-                    f"{risk.get('risk_name') or risk.get('normalized_name') or 'The risk'} remains visible across {len(source_periods)} period(s)."
-                    if len(source_periods) >= 2
-                    else f"{risk.get('risk_name') or risk.get('normalized_name') or 'The risk'} is identified in the source evidence."
-                )
-            ),
-            why_it_changed=(
-                risk.get("why_it_changed")
-                or (
-                    "Later evidence keeps pointing to the same underlying mechanism."
-                    if len(source_periods) >= 2
-                    else "No later period is available yet to show whether the risk intensifies or recedes."
-                )
-            ),
+            what_changed=_what_changed,
+            why_it_changed=_why_it_changed,
             progression_summary=(
                 risk.get("progression_summary")
-                or (
-                    f"{risk.get('risk_name') or risk.get('normalized_name') or 'The risk'} remains under observation across the available periods."
-                )
+                or f"{risk_name or 'The risk'} remains under observation across the available periods."
             ),
             investor_implication=(
                 risk.get("investor_implication")
                 or (
                     "The risk remains live in the evidence and should stay in view."
-                    if current_status in {"emerging", "increasing", "persistent"}
+                    if current_status in {"emerging", "increasing", "persistent", "recurring"}
                     else "The risk remains visible, but the evidence is still too thin for a stronger judgment."
                 )
             ),
+            evo_canonical_id=evo_canonical_id,
+            evo_trajectory=evo_trajectory,
+            evo_severity_by_year=risk.get("evo_severity_by_year") or {},
+            evo_latest_severity=risk.get("evo_latest_severity"),
         )
         
         definitions.append(definition)
@@ -487,6 +558,8 @@ def _build_risk_timelines(
                 else "No later period is available yet to show whether the risk intensifies or recedes."
             ),
             conviction_impact="unclear",
+            trajectory=definition.evo_trajectory,
+            evo_canonical_id=definition.evo_canonical_id,
             latest_evidence=[s.get("artifact", "") for s in definition.source_references],
             unresolved_items=definition.unresolved_questions,
             investor_implication=definition.investor_implication,

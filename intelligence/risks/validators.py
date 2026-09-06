@@ -343,6 +343,75 @@ def validate_risk_payload(
     # 24. Duplicate risks handled conservatively
     # This is checked during deduplication
     
+    # 26. Worsening evolution must not produce "no later period" boilerplate
+    for assessment in risk_assessments:
+        if assessment.get("trajectory") == "worsening":
+            why = (assessment.get("why_it_changed") or "").lower()
+            if "no later period" in why:
+                issues.append({
+                    "rule": "worsening_no_boilerplate",
+                    "severity": "error",
+                    "risk_id": assessment.get("risk_id"),
+                    "message": "Assessment trajectory=worsening but why_it_changed contains 'no later period' boilerplate",
+                })
+            status = assessment.get("current_status", "")
+            if status == "emerging":
+                issues.append({
+                    "rule": "worsening_not_emerging",
+                    "severity": "error",
+                    "risk_id": assessment.get("risk_id"),
+                    "message": "Assessment trajectory=worsening but current_status=emerging; should be increasing",
+                })
+
+    # 27. Improving evolution must not remain at emerging status
+    for assessment in risk_assessments:
+        if assessment.get("trajectory") == "improving" and assessment.get("current_status") == "emerging":
+            issues.append({
+                "rule": "improving_not_emerging",
+                "severity": "error",
+                "risk_id": assessment.get("risk_id"),
+                "message": "Assessment trajectory=improving but current_status=emerging; should be reducing",
+            })
+
+    # 28. Recurring trajectory must not be mapped to increasing (worsening direction)
+    for assessment in risk_assessments:
+        if assessment.get("trajectory") == "recurring" and assessment.get("current_status") == "increasing":
+            issues.append({
+                "rule": "recurring_not_increasing",
+                "severity": "error",
+                "risk_id": assessment.get("risk_id"),
+                "message": "Assessment trajectory=recurring mapped to current_status=increasing; recurring ≠ worsening",
+            })
+
+    # 29. No trajectory claim without multi-period evidence (no trajectory field when single period)
+    for assessment in risk_assessments:
+        trajectory = assessment.get("trajectory")
+        if trajectory in ("worsening", "improving") and not assessment.get("evo_canonical_id"):
+            issues.append({
+                "rule": "trajectory_requires_canonical_source",
+                "severity": "warning",
+                "risk_id": assessment.get("risk_id"),
+                "message": f"Assessment claims trajectory={trajectory} but has no evo_canonical_id linking to evolution source",
+            })
+
+    # 30. Conviction impact must not be inferred solely from trajectory
+    # (conviction_impact must remain "unclear" unless specific investment-thesis evidence exists)
+    for assessment in risk_assessments:
+        trajectory = assessment.get("trajectory")
+        conviction = assessment.get("conviction_impact", "unclear")
+        if trajectory in ("worsening", "improving") and conviction in ("strengthened", "weakened"):
+            # Only flag if no matching risk in registry has explicit mitigation or counter evidence
+            risk_id = assessment.get("risk_id")
+            risk = next((r for r in risks if r.get("risk_id") == risk_id), {})
+            has_explicit_evidence = bool(risk.get("mitigation_evidence") or risk.get("counter_evidence") or risk.get("mitigations"))
+            if not has_explicit_evidence:
+                issues.append({
+                    "rule": "conviction_not_inferred_from_trajectory",
+                    "severity": "warning",
+                    "risk_id": risk_id,
+                    "message": f"conviction_impact={conviction} appears inferred from trajectory={trajectory} without explicit investment-thesis evidence",
+                })
+
     # 25. Rising conviction requires improvement evidence
     for assessment in risk_assessments:
         conviction = assessment.get("conviction_impact")
@@ -372,5 +441,5 @@ def validate_risk_payload(
         "error_count": error_count,
         "warning_count": warning_count,
         "issues": issues,
-        "rules_checked": 25,
+        "rules_checked": 30,
     }
