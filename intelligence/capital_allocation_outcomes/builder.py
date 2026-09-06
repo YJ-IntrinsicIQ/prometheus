@@ -22,8 +22,10 @@ from .contracts import (
     ALLOCATION_OUTCOMES_SCHEMA_VERSION,
 )
 from .manifest import build_capital_allocation_manifest
+from .longitudinal_profile import build_longitudinal_profile
 from .paths import (
     get_capital_allocation_assessments_path,
+    get_capital_allocation_longitudinal_profile_path,
     get_capital_allocation_manifest_path,
     get_capital_allocation_outcomes_dir,
     get_capital_allocation_outcomes_path,
@@ -1587,16 +1589,16 @@ class CapitalAllocationOutcomesBuilder:
 
     def build(self) -> Dict[str, Path]:
         payloads = build_capital_allocation_outcomes(company=self.company, company_root=self.company_root)
-        outputs = {
-            "capital_allocation_outcomes.json": payloads["capital_allocation_outcomes.json"],
-            "capital_allocation_timelines.json": payloads["capital_allocation_timelines.json"],
-            "capital_allocation_assessments.json": payloads["capital_allocation_assessments.json"],
-            "capital_allocation_validation.json": payloads["capital_allocation_validation.json"],
-            "capital_allocation_manifest.json": payloads["capital_allocation_manifest.json"],
-        }
         written: Dict[str, Path] = {}
         for filename, payload in payloads.items():
             written[filename] = write_json_file(self.output_dir / filename, payload)
+        # Phase 3: longitudinal profile (reads Phase 2 artifacts just written)
+        longitudinal_path = get_capital_allocation_longitudinal_profile_path(self.company)
+        longitudinal_path.parent.mkdir(parents=True, exist_ok=True)
+        profile = build_longitudinal_profile(self.company, self.company_root)
+        import json as _json
+        longitudinal_path.write_text(_json.dumps(profile, indent=2, ensure_ascii=False), encoding="utf-8")
+        written["capital_allocation_longitudinal_profile.json"] = longitudinal_path
         return written
 
 

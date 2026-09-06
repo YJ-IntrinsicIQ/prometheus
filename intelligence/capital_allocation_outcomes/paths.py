@@ -26,3 +26,7 @@ def get_capital_allocation_validation_path(company_slug: str) -> Path:
 def get_capital_allocation_manifest_path(company_slug: str) -> Path:
     return get_capital_allocation_outcomes_dir(company_slug) / "capital_allocation_manifest.json"
 
+
+def get_capital_allocation_longitudinal_profile_path(company_slug: str) -> Path:
+    return get_capital_allocation_outcomes_dir(company_slug) / "capital_allocation_longitudinal_profile.json"
+

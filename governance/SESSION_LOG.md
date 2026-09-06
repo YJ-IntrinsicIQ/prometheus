@@ -1,5 +1,46 @@
 # Session Log
 
+## 2026-09-06 (ENG-105 Phase 3 — Longitudinal Capital Allocation Profile)
+
+- Date: 2026-09-06
+- Sprint: ENG-105 Phase 3
+- Closure gate: **ENG_105_PHASE_3_LONGITUDINAL_CAPITAL_ALLOCATION_PROFILE_CLOSED**
+
+### Mission
+
+Transform the Phase 2 causal-attribution event ledger into a longitudinal investor intelligence profile. Aggregation-only — no AI calls, no raw-document access, no new event extraction.
+
+### Files Modified / Created
+
+- **`intelligence/capital_allocation_outcomes/longitudinal_profile.py`** (NEW) — Full profile builder: amount coverage contract, allocation mix (event counts), organic vs inorganic grouping, year-by-year timeline, outcome maturity (0-5), acquisition profile, organic reinvestment profile, shareholder return profile, balance-sheet profile, stewardship observations, activity vs skill separation, per-share context, unresolved questions, 10-rule profile validator.
+- **`intelligence/capital_allocation_outcomes/paths.py`** — Added `get_capital_allocation_longitudinal_profile_path()`.
+- **`intelligence/capital_allocation_outcomes/builder.py`** — Wired longitudinal profile into `CapitalAllocationOutcomesBuilder.build()` as final step after Phase 2 artifacts written.
+- **`tests/intelligence/test_capital_allocation_longitudinal_profile.py`** (NEW) — 15 adversarial tests.
+
+### Key Design Decisions
+
+- **Amount coverage contract**: `events_with_known_amount / total`. < 40%: `CAPITAL_MIX_INSUFFICIENT_AMOUNT_COVERAGE` blocks all capital-weighted claims. ≥ 70%: capital-weighted conclusions permitted. 40-70%: partial (describe knowns, no ranking).
+- **Allocation activity ≠ allocation skill**: `_build_activity_vs_skill()` explicitly separates what management did from whether it created value. Activity = event count. Skill = `VALUE_CREATION_EVIDENCE` evidence, which requires Phase 2 attributable financial outcome.
+- **Chronology ≠ causality**: no company-level financial trends attached to per-allocation conclusions in Phase 3 (inherits Phase 2 discipline).
+- **Maturity levels**: derived exclusively from Phase 2 state fields — no re-computation. Level 0 (deployment unverified) → 5 (per-share attributable).
+- **Validator rule 4 exemption**: `CAPITAL_MIX_UNKNOWN` observation warns against capital claims — exempt from rule that blocks capital-amount language in observations.
+- **Backward compatibility**: `build()` output dict extended with `capital_allocation_longitudinal_profile.json` key; existing keys unchanged.
+
+### Production Results
+
+| Company | Events | Coverage | Validation | Skill |
+|---|---|---|---|---|
+| Sun Pharma | 9 | HIGH (100%) | PASS (0 violations) | OUTCOMES_MOSTLY_UNVERIFIED |
+| Tanla | 15 | HIGH (100%) | PASS (0 violations) | OUTCOMES_MOSTLY_UNVERIFIED |
+
+### Test Results
+
+- 15/15 Phase 3 adversarial tests pass
+- 24/24 Phase 2 tests pass (no regressions)
+- Total: 39 tests
+
+---
+
 ## 2026-09-06 (ENG-105 Phase 2 — Capital Allocation Causal Attribution Contract)
 
 - Date: 2026-09-06
