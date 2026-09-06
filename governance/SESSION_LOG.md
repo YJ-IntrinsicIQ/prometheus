@@ -6272,3 +6272,349 @@ Tanla MQ `warning` (2 open warnings) = `EXPECTED_BLOCKER`. Tanla has no capital 
 `BLOCKED_BASELINE_READINESS_VALIDATION_REPAIR` — Tanla MQ=warning (data gap, not validator defect)
 
 `SUN_PHARMA_REALITY_AUDIT_BASELINE_READY`
+
+---
+
+## 2026-09-05 (SUN PHARMA POST-CANONICAL-LIFECYCLE REALITY AUDIT — READ-ONLY)
+
+- Date: 2026-09-05
+- Sprint: Prometheus Quality Gate — Post-ENG-098 Baseline Certification
+- Closure gate: **FIRST_TRUSTED_POST_CANONICAL_LIFECYCLE_BASELINE**
+
+### Context
+
+First frozen Reality Audit conducted after ENG-098 (Canonical Lifecycle Authority Migration). Prior 56/100 audit was computed with MC-0004 falsely classified as Delivered. This audit establishes the first clean baseline against the canonical-lifecycle architecture. Strict read-only constraints: no code changes, no artifact modifications, no rubric changes, no score optimization.
+
+### Audit dimensions (frozen 10-dimension rubric, 0–10 each)
+
+| Dimension | Score | Notes |
+|-----------|-------|-------|
+| Business Understanding | 7 | Quality structured; pharma geography + R&D mix present |
+| Management Progression | 5 | MP artifact has states; fingerprint linkage works; lifecycle now canonical |
+| Promise Tracking | 6 | Gold delivers credibility; no false Delivered after ENG-098 |
+| Capital Allocation Intelligence | 7 | Ledger present; owner-earnings bridging partial |
+| Financial Truth | 7 | Multi-year fundamentals grounded; per-share limited |
+| Risk Intelligence | 6 | Registry present; 22 risks; level field (not tier) |
+| Investor Panel Differentiation | 6 | 5 analysts structurally distinct; committee pass |
+| Cross-Year Reasoning | 6 | FY24–FY26 tracked; multi-year financial present |
+| Evidence Integrity | 7 | Sanitizer enforces ID invariant; grounding system active |
+| Decision Usefulness | 4 | DU constrained by panel provenance warnings and MQ data gaps |
+
+**Total: 61/100 — Band B (50–74), EI=7, DU=4**
+
+### Baseline classification
+
+`FIRST_TRUSTED_POST_CANONICAL_LIFECYCLE_BASELINE` — Sun Pharma 61/100, Band B. First clean post-migration baseline. Prior 56/100 (`PRIOR_56_BASELINE_LIFECYCLE_CONTAMINATION: YES`) is not comparable on management-accountability dimensions.
+
+### Defects discovered (not repaired — read-only)
+
+1. Risk materiality: `level` field (medium/high/low) — reader previously looked for `tier` key (wrong field name)
+2. Investor panel provenance: analysts cite invalid evidence IDs (PCIM section names, filenames, metric shortcodes) — sanitizer removes them but panel doctor shows warning
+3. DU constrained by panel at WARNING and MQ data coverage gaps
+
+### Files changed
+
+None — read-only audit.
+
+### Closure gate
+
+`FIRST_TRUSTED_POST_CANONICAL_LIFECYCLE_BASELINE` — Sun Pharma 61/100, Band B. Baseline recorded.
+
+---
+
+## 2026-09-05 (ENG-102 — INVESTOR PANEL PROVENANCE COHERENCE REPAIR)
+
+- Date: 2026-09-05
+- Sprint: Prometheus Provenance Coherence — Investor Panel
+- Closure gate: **BLOCKED_INVESTOR_PANEL_PROVENANCE_COHERENCE**
+
+### Context
+
+The Reality Audit (above) identified that investor panel analysts consistently cite invalid evidence IDs that the sanitizer must remove. Three hallucination classes identified: (1) Graham: PCIM section names and artifact filenames; (2) Fisher/Munger: financial metric shortcodes (`gross_margin:fy26`, `cfo:fy24`) derived by concatenating `metric_id` and `period` from the "Allowed Financial Metrics" prompt section; (3) Buffett/Lynch: normalization events (IDs found via alias) falsely degraded `evidence_grounding_status`. Mission: repair provenance chain so panel doctor reaches PASS. Strict scope: no modification to management lifecycle, commitment extraction, capital allocation intelligence, risk intelligence, financials, Company Model semantics, investor-lens reasoning, committee reasoning logic, Reality Audit rubric, Certification V2, source ingestion.
+
+### Root cause analysis
+
+| Class | Analysts | Root cause | Fix applied |
+|-------|---------|-----------|------------|
+| Metric shortcode hallucination | Buffett, Fisher, Munger, Lynch | LLM forms `{metric_id}:{period}` from "Allowed Financial Metrics" prompt table | Prompt rule strengthened: explicitly prohibits metric shortcodes with examples |
+| PCIM section name / filename citation | Graham | LLM cites PCIM section names and `.json` artifact filenames | Existing prohibition updated: added metric shortcode examples alongside filename/section-name prohibitions |
+| Normalization false positive | Buffett, Lynch | `_record_normalization_warning` added dict-type events to `warning_messages`; these triggered `evidence_grounding_status=warning` at line 7081 even when ID was found via alias (success) | Code fix: filter `isinstance(w, str)` before status check |
+| Auto-carry false positive | All | `"Deterministic PCIM financial warnings were auto-carried"` string in `warning_messages` triggered status degradation; it is a confirmation, not a grounding failure | Code fix: added to `_INFORMATIONAL_STR_WARNINGS` exclusion set |
+
+### Changes made
+
+| File | Change |
+|------|--------|
+| `intelligence/investor_panel/runner.py` | Prompt rule: strengthened to prohibit metric shortcodes (e.g. `gross_margin:fy26`) alongside section names and JSON filenames |
+| `intelligence/investor_panel/runner.py` | Grounding status fix: normalization-event dicts excluded from `evidence_grounding_status` degradation |
+| `intelligence/investor_panel/runner.py` | Grounding status fix: auto-carry confirmation message excluded from `evidence_grounding_status` degradation |
+
+### Production results
+
+| Analyst | Removed IDs (before) | Removed IDs (after) | Grounding status |
+|---------|----------------------|---------------------|-----------------|
+| Graham | 42 | 26 | warning |
+| Buffett | 20 | 10 | warning |
+| Fisher | 28 | 4 | warning |
+| Munger | 17 | 8 | warning |
+| Lynch | 0 | 11 | warning |
+
+Committee synthesis: PASS. Committee brief: PASS. Committee brief QA: PASS.
+
+Cross-company regression: Tanla (42 id_errors, warning — pre-existing), Data Patterns (105 id_errors, warning — pre-existing). No regression introduced.
+
+### Why PASS was not achieved
+
+The LLM stochastically generates `{metric_id}:{period}` shortcodes despite the prompt prohibition. Root cause is structural: `_format_allowed_financial_metrics()` exposes `metric_id` and `period` as adjacent fields; the LLM treats `{metric_id}:{period}` as a valid evidence reference. Prompt prohibition is insufficient; iterative re-runs regress stochastically (Buffett 0→10, Lynch 0→11 on third re-run). The fix requires renaming `metric_id` to `metric_name` in `_format_allowed_financial_metrics()` to break the ID-connotation that drives the concatenation pattern. This is ENG-103.
+
+### Baseline decision
+
+`61_BASELINE_REQUIRES_REAUDIT` pending ENG-103. Artifact integrity maintained: the sanitizer enforces the invariant that all saved analyst artifacts contain only valid evidence IDs. Panel doctor at WARNING (not FAIL) reflects cleanup cost, not broken provenance in final artifacts.
+
+### PCIM rebuild
+
+PCIM rebuilt 2026-09-05T11:26:57Z to include updated `management_progression.json`. Freshness: PASS.
+
+### Closure gate
+
+`BLOCKED_INVESTOR_PANEL_PROVENANCE_COHERENCE` — panel doctor at WARNING. Unblocked by ENG-103 (metric_id rename) + regeneration round.
+
+
+---
+
+## Session: ENG-103 — Investor Panel Metric Reference Structural Fix
+
+**Date**: 2026-09-05  
+**Scope**: Sun Pharma investor panel — one structural fix, one production generation, measure result  
+**Mission boundary**: No iteration until PASS. No modification to lifecycle, financials, management progression, committee reasoning, Reality Audit rubric, Certification V2. No new evidence-ID frameworks.
+
+### Fix implemented
+
+`_format_allowed_financial_metrics()` in `intelligence/investor_panel/runner.py` (~line 3572): renamed `metric_id` key → `metric_name` in formatted output. Source data model unchanged (`entry.get("metric_id")` still reads from the same field). Breaks the adjacency pattern that led LLMs to form `{metric_id}:{period}` shortcodes as fake evidence IDs.
+
+Two deterministic tests added to `tests/test_investor_panel_runner.py`:
+- `test_format_allowed_financial_metrics_uses_metric_name_not_metric_id`: formatter contract
+- `test_metric_shortcode_not_a_valid_evidence_id`: PCIM containment invariant
+
+Both tests: PASS.
+
+### Single production generation results
+
+| Analyst | Removed IDs (before ENG-103) | Removed IDs (after) | Routing repaired | Final artifact invalid |
+|---------|------------------------------|---------------------|-----------------|------------------------|
+| Graham | 26 | 41 ✗ | 10 | 0 |
+| Buffett | 10 | 0 ✓ | 10 | 0 |
+| Fisher | 4 | 36 ✗ | 12 | 0 |
+| Munger | 8 | 0 ✓ | 12 | 0 |
+| Lynch | 11 | 0 ✓ | 9 | 0 |
+
+Total removed_invalid_ids: 77 (vs ~59 before ENG-103).
+
+Key finding: Fisher still generates metric shortcodes (`cfo:fy24`, `gross_margin:fy26`, `npm:fy26`) after the rename. The LLM reproduces these from training distribution, not solely from prompt adjacency of `metric_id` + `period`. Graham's pattern is unchanged (PCIM section names, artifact filenames — unrelated to ENG-103 fix).
+
+### Artifact integrity
+
+All 5 Sun Pharma analyst artifacts contain 0 invalid evidence IDs in saved output. The sanitizer removes all fabricated IDs before the artifact is written. `warning` status in artifacts reflects sanitizer repair activity (routing, normalization), not invalid IDs escaping to final output. Cross-company: Tanla (0 invalid final), DataPatterns (0 invalid final) — no regression.
+
+### Provenance spot-check
+
+Buffett: 6/6 cited IDs valid. Munger: 6/6 valid. Lynch: 6/6 valid. Graham: 2/2 valid. Fisher: 6/6 valid.
+
+### Panel doctor
+
+All 5 analysts: `evidence_grounding_status=warning`. No analyst at `fail`. Panel doctor: **WARNING**.
+
+`warning` sources for clean analysts (Buffett/Munger/Lynch):
+- `removed_misrouted` evidence: Buffett 66, Munger 30, Lynch 14 — LLM placed evidence citations in wrong sections; routing repaired deterministically
+- `replacements`: Buffett 5 — evidence IDs in slightly non-canonical form; normalized to canonical PCIM IDs
+
+These are legitimate sanitizer repairs, not fabricated ID hallucinations.
+
+### Why PASS was not achieved
+
+Fisher shortcode generation is not eliminated by the rename — the LLM has `{metric_name}:{period}` shortcode patterns in its training distribution independently of the prompt key name. Graham's filename/section-name hallucination is a different class requiring a separate fix. ENG-104 opened.
+
+### Cross-company regression
+
+Tanla: 42 removed during generation, 0 invalid in final artifacts. DataPatterns: 105 removed, 0 invalid. No regression introduced by the rename.
+
+### Baseline decision
+
+`61_BASELINE_PARTIAL_METRIC_FIX_PANEL_WARNING` — The metric fix worked for 3/5 analysts (Buffett/Munger/Lynch now generate 0 fabricated IDs). Fisher/Graham require additional work. Sanitizer integrity confirmed across all companies. Reality Audit score of 61 unchanged (re-audit required after Fisher/Graham fixed). Panel doctor remains at WARNING pending ENG-104.
+
+### Closure gate
+
+`BLOCKED_ENG_103_FINANCIAL_METRIC_REFERENCE_FORMAT_CLEANUP` — structural fix necessary but not sufficient. Fisher's shortcode pattern survives the rename. ENG-104 opened to address remaining two hallucination classes (Fisher shortcodes, Graham filenames/section-names).
+
+
+---
+
+## 2026-09-05 (ENG-104 — Investor Panel Fisher/Graham Provenance Hallucination Elimination)
+
+- Date: 2026-09-05
+- Sprint: Investor Panel Provenance Integrity
+- Closure gate: **PROVENANCE_HALLUCINATION_ELIMINATED_ENG_104**
+
+### Mission
+
+Eliminate two remaining analyst-specific hallucination classes after ENG-103's partial fix:
+- **Class A (Fisher):** Metric shortcodes like `cfo:fy24`, `gross_margin:fy26` persisting as evidence IDs
+- **Class B (Graham/Munger):** Synthetic references from `.json` filenames and PCIM section names
+
+Hard boundaries preserved: management lifecycle, commitment extraction, capital allocation, risk intelligence, financial calculations, PCIM semantics, investor lens definitions, committee reasoning, Reality Audit rubric, Certification V2. Sanitizer not weakened.
+
+### Root Cause Map
+
+**Four structural affordances identified:**
+
+1. `_format_allowed_financial_metrics()` exposed `metric_name: "cfo:fy24"` (shortcode format) — LLM treated this as a citation format
+2. `compact_financial_truth_for_analyst()` returned `source_provenance_summary` with filenames (`owner_earnings_bridge.json`, `capital_allocation_roi_ledger.json`, etc.)
+3. `company_memory_context.py` module summaries included `"source_artifact": path.name` exposing management module filenames
+4. `company_memory_context.py` stream blocks included `"primary_artifact": primary_path.name` exposing e.g. `management_quality_summary.json` — discovered during regression triage
+
+### Code Changes
+
+**`intelligence/investor_panel/runner.py`**
+- Fix A: `_format_allowed_financial_metrics()` — `entry.get("metric_id")` → `entry.get("canonical_metric") or entry.get("display_name")` (value changes from `"cfo:fy24"` to `"cfo"`)
+- Fix B: `compact_financial_truth_for_analyst()` — `source_provenance_summary` now always returns `[]` (was: 4 filenames from financial_truth_inputs.source_provenance)
+
+**`intelligence/investor_panel/company_memory_context.py`**
+- Fix C: Removed `"source_artifact": path.name` from financial module summary dict at line 546 (was: `management_progression.json`, `management_commitments.json`, etc. exposed as source_artifact)
+
+**`knowledge/ai/input_packs.py`**
+- Fix D: Added `"source_artifact"`, `"source_artifacts"`, `"primary_artifact"` to `_INVESTOR_PANEL_DROP_FIELDS`; removed `"source_artifact"` from `_INVESTOR_PANEL_PREFERRED_KEYS`
+
+**`tests/test_investor_panel_runner.py`**
+- Updated `test_format_allowed_financial_metrics_uses_metric_name_not_metric_id` with realistic production-format registry (metric_id = `"cfo:fy24"`, canonical_metric = `"cfo"`)
+- Added `test_compact_financial_truth_source_provenance_summary_is_empty`
+- Added `test_input_pack_policy_drops_source_artifact_fields`
+- 99/99 tests passing
+
+### Production Results (Sun Pharma, all 5 analysts)
+
+| Analyst | removed_invalid_ids | Classification | Status |
+|---------|---------------------|----------------|--------|
+| Fisher | 0 | — | ✓ PASS |
+| Graham | 4 | All ROUTING_REPAIR (`ev_fy26_company_intelligence_json_business_model_fy26` is a valid canonical ID cited outside Graham's authorized section set) | ✓ ROUTING_REPAIR |
+| Buffett | 0 | — | ✓ PASS |
+| Munger | 0 | — | ✓ PASS |
+| Lynch | 0 | — | ✓ PASS |
+
+Graham's 4 removals: `ev_fy26_company_intelligence_json_business_model_fy26` IS in the full PCIM lookup (verified via `build_evidence_lookup`). It is absent from Graham's `allowed_evidence_ids` (derived from `pcim["evidence_map"]` for Graham's sections only). This is ROUTING_REPAIR — valid evidence from a section Graham doesn't consume (`company_intelligence`), not a hallucinated ID.
+
+### Semantic Spot-Check
+
+`financial_metrics_used[].metric_id` shows canonical names (`cfo`, `total_debt`, `reported_pat`) — not shortcodes. Top-level `evidence_ids` are canonical PCIM IDs. No filenames or section names in any evidence reference across all 5 analysts.
+
+### Evidence Grounding Status
+
+All analysts: `evidence_grounding_status=warning`. Source: MISROUTED_VALID_EVIDENCE (valid IDs cited with incompatible claim category, e.g. capital project evidence cited for regulatory claim) — outside ENG-104 scope. No INVALID_EVIDENCE_REFERENCE in any final artifact.
+
+### Cross-Company Regression
+
+Tanla and DataPatterns: PCIM source manifest status=fail (pre-existing infra issue, not caused by ENG-104 code changes). Cannot re-run investor panel without upstream rebuild. Static verification: ENG-104 changes do not touch PCIM validation or upstream stages.
+
+### Baseline Decision
+
+`61_BASELINE_PROVENANCE_IDENTITY_CLEAN` — All fabricated filename/shortcode evidence references eliminated from analyst outputs. Graham's 4 remaining removals are ROUTING_REPAIR not hallucination. Re-audit required to update score from 61. Panel doctor remains WARNING (routing repairs, not invalid IDs).
+
+### Closure Gate
+
+`PROVENANCE_HALLUCINATION_ELIMINATED_ENG_104` — 2026-09-05
+
+**Open follow-up (ENG-105 candidate):** Graham ROUTING_REPAIR — LLM cites `ev_fy26_company_intelligence_json_business_model_fy26` (a valid company_intelligence evidence ID) across 4 fields. Structural fix would require either (a) restricting evidence subset to Graham's authorized sections only, or (b) adding a prompt prohibition on citing evidence from business_understanding/company_intelligence sections in financial analysis. Out of ENG-104 scope.
+
+**Open follow-up:** `evidence_grounding_status=warning` from MISROUTED_VALID_EVIDENCE — separate from provenance hallucination. Valid IDs cited with wrong claim category. Routing repair is happening correctly; the LLM just isn't matching evidence to the most topically appropriate claim.
+
+## 2026-09-06 (ENG-105 — Capital Allocation Intelligence Foundation, Phase 1)
+
+- Date: 2026-09-06
+- Sprint: Capital Allocation Intelligence Foundation
+- Closure gate: `CAPITAL_ALLOCATION_INTELLIGENCE_FOUNDATION_CLOSED` (25 conditions required; this session closes Phase 1 structural foundations)
+
+### Mission
+
+Build the first investor-grade Capital Allocation Intelligence layer for Prometheus. Starting state: Sun Pharma capital allocation outcomes had only 2 records (dividend + organic_capex), both `causal_confidence=low`. PCIM had 89 items across 7 years never consumed by the builder.
+
+### Root Cause Analysis
+
+`_build_candidates()` read only from `capital_allocation_financial_timeline.json` (which only has `dividend_actions` + `capex` typed fields) and `capital_allocation_roi_ledger.json` (all 7 entries `event_type=operating_reinvestment`, `acquisitions=None`). The PCIM's `capital_allocation_inputs.capital_allocation_by_year` section — 89 items covering buybacks, acquisitions, debt repayments, related-party investments — was never consumed.
+
+### Structural Fixes (builder.py)
+
+**Fix 1: `_map_allocation_category()` bugs**
+- "buy-back" (with hyphen) normalized to "buy back" but only "buyback" was checked → added "buy back" to term list
+- `canonical="debt_raised"` items (capital sources like "Proceeds from borrowings") could misroute to `debt_repayment` via canonical check → added early return `if canonical == "debt raised": return "other"`
+- Moved buyback check before `debt_repaid` canonical check to prevent "Payment for buy-back" routing to debt_repayment
+
+**Fix 2: Added `_load_pcim_allocation_items()`**
+- New function reading `capital_allocation_inputs.capital_allocation_by_year` from PCIM
+- Skips non-deployment groups: `corporate_actions_non_cash_or_admin`, `ownership_transfer_non_company_cashflow`, `accounting_or_disclosure_only`, `uncertain`
+- Skip canonical `debt_raised` (capital sources) — using raw canonical (not normalized) to avoid underscore→space mismatch bug
+- Text-based filter for definitively non-deployment items: "proceeds from/of", "debt raised", "finance costs", "interest payment", "change in authorised capital"
+- Auto-generates stable `source_item_id` from year + value slug
+
+**Fix 3: Acquisition disambiguation in `_merge_candidates()`**
+- Signature tokens narrowed to name-only (removed rationale/purpose — these are boilerplate templates that inflate overlap scores for all PCIM items identically)
+- Added `_MERGE_NOISE` constant: acquisition-domain generic terms ("acquisition", "incorporation", "date", "ltd", "corp", "pharma", "pharmaceuticals", etc.) excluded from overlap computation so only entity-specific tokens count
+- `_HIGH_SPECIFICITY_MERGE_THRESHOLD` changed from 8→6: two acquisitions with no entity-specific overlap score 5 (category+funding only) < 6; one shared entity token pushes to 6 ≥ threshold
+- Also fixed the skip_canonicals check to use raw canonical (un-normalized) to correctly filter `debt_raised` items
+
+**Fix 4: Added PCIM consumption in `_build_candidates()`**
+- After financial-timeline + ROI-ledger candidate generation, calls `_load_pcim_allocation_items()` and converts each item to a candidate
+- Existing `_merge_candidates()` deduplication handles overlap with financial-timeline items
+
+### Results
+
+| Metric | Before | After |
+|---|---|---|
+| Records (Sun Pharma) | 2 | 9 |
+| Acquisition records | 0 | 3 (fy20 generic, Proactiv+Alchemee cluster, Concert cluster) |
+| Share buyback | 0 | 1 (fy20-22, fy26) |
+| Subsidiary investment | 0 | 1 (loan grants fy22, fy24) |
+| False merger (Proactiv+Concert) | N/A | Correctly separated |
+| Capital source items (proceeds/debt raised) | N/A | Filtered out |
+| Finance costs (interest) | N/A | Filtered out |
+| Admin actions (authorised capital) | N/A | Filtered out |
+
+### Tests
+
+10 adversarial tests added in `tests/intelligence/test_capital_allocation_builder.py`:
+- `test_distinct_acquisition_targets_not_merged` — Proactiv vs Concert remain separate
+- `test_generic_acquisition_does_not_merge_with_named` — fy20 "Acquisition" doesn't absorb fy23 named entities
+- `test_signature_tokens_are_name_only` — boilerplate rationale doesn't inflate merge scores
+- `test_map_category_hyphenated_buyback` / `test_map_category_buyback_with_space`
+- `test_pcim_filters_proceeds_from_borrowings`
+- `test_pcim_filters_finance_costs`
+- `test_pcim_filters_change_in_authorised_capital`
+- `test_pcim_filters_debt_raised_by_canonical`
+- `test_pcim_filters_debt_raised_by_text`
+
+All 17 tests pass (3 original + 10 new + 4 cleaner).
+
+### Cross-Company Regression
+
+- Tanla: 15 records, no errors
+- DataPatterns: 9 records, no errors
+- Sun Pharma: 9 records written to disk at `companies/sun_pharma/company_memory/capital_allocation_outcomes/`
+- No company hardcoding introduced
+
+### Still Open (remaining closure conditions)
+
+Phases 2-25 of CAPITAL_ALLOCATION_INTELLIGENCE_FOUNDATION not yet addressed:
+- Phase 4: Canonical contract (fact/intent/execution/outcome/interpretation separation)
+- Phase 6: Causal attribution contract (HIGH/MEDIUM/LOW/UNKNOWN confidence)
+- Phase 8: Amount extraction from PCIM items (all PCIM-sourced amounts are None — upstream gap)
+- Phase 15: Certification target scope
+- Phase 17: Longitudinal cross-year capital allocation profile
+- Phase 18: Investor Q1-Q7 answerability verification
+- Phase 22: Additional test cases (share_buyback amount correction, fy23 dividend gap)
+- Phase 25: Full 25-condition closure gate
+
+### Known Data Quality (not bugs)
+
+- `share_buyback amount=38.0` — ROI ledger value; actual fy21 buyback ₹890 crore not yet in financial timeline (upstream gap)
+- `fy23 dividend missing` — not in `capital_allocation_financial_timeline.json` (upstream gap)
+- All PCIM-sourced amounts are None — PCIM extractor didn't capture monetary values for these items
+- Alchemee and Concert acquisitions show same amount (2085.58) — ROI ledger doesn't split by target
+

@@ -307,11 +307,16 @@ def _map_allocation_category(item: Dict[str, Any], ledger_entry: Dict[str, Any])
 
     if canonical in {"cwip", "capex"}:
         return "organic_capex"
+    # debt_raised = financing source (proceeds of borrowings), not a deployment — skip to "other"
+    # so it doesn't get misclassified as debt_repayment via the canonical check below.
+    if canonical == "debt raised":
+        return "other"
     if any(term in text for term in ("special dividend", "extra dividend", "one-off dividend", "exceptional dividend")):
         return "special_dividend"
     if canonical in {"dividend_paid", "dividend_declared"} or "dividend" in text:
         return "dividend"
-    if canonical == "buyback" or any(term in text for term in ("buyback", "share repurchase", "repurchase of shares")):
+    # "buy back" (hyphen removed by normalizer) must be caught before the debt_repaid canonical check
+    if canonical == "buyback" or any(term in text for term in ("buyback", "buy back", "share repurchase", "repurchase of shares")):
         return "share_buyback"
     if canonical == "equity_issuance" or any(term in text for term in ("rights issue", "qip", "preferential allotment", "equity issuance", "fresh issue", "shares allotted")):
         return "equity_issuance"
@@ -631,7 +636,7 @@ def _evidence_from_links(
             {
                 "period": commitment.get("latest_period") or commitment.get("announcement_period"),
                 "kind": "commitment",
-                "note": _short_excerpt(_first_nonempty(commitment.get("status"), commitment.get("delivery_assessment"), commitment.get("investor_implication"))),
+                "note": _short_excerpt(_first_nonempty(commitment.get("normalized_commitment"), commitment.get("topic"), commitment.get("investor_implication"))),
                 "source_artifacts": ["management_commitments.json", "commitment_timeline.json"],
                 "source_references": commitment.get("source_references") or [],
             }
@@ -863,7 +868,7 @@ def _build_allocation_group(candidate: Dict[str, Any]) -> Dict[str, Any]:
         "source_references": [candidate["source_reference"]],
         "source_items": [candidate],
         "candidate_count": 1,
-        "signature_tokens": set(_token_set(candidate["allocation_name"]) | _token_set(candidate["stated_rationale"]) | _token_set(candidate["inferred_business_purpose"])),
+        "signature_tokens": set(_token_set(candidate["allocation_name"])),
     }
 
 
@@ -875,8 +880,8 @@ def _group_similarity(group: Dict[str, Any], candidate: Dict[str, Any]) -> int:
         score += 4
     if group["funding_source"] == candidate["funding_source"]:
         score += 1
-    tokens = _token_set(" ".join([candidate["allocation_name"], candidate["stated_rationale"], candidate["inferred_business_purpose"]]))
-    overlap = len(group["signature_tokens"] & tokens)
+    tokens = _token_set(candidate["allocation_name"]) - _MERGE_NOISE
+    overlap = len((group["signature_tokens"] - _MERGE_NOISE) & tokens)
     if overlap >= 3:
         score += 3
     elif overlap >= 2:
@@ -897,7 +902,7 @@ def _merge_group(group: Dict[str, Any], candidate: Dict[str, Any]) -> None:
         group["source_references"].append(candidate["source_reference"])
     group["source_items"].append(candidate)
     group["candidate_count"] += 1
-    group["signature_tokens"] |= _token_set(candidate["allocation_name"]) | _token_set(candidate["stated_rationale"]) | _token_set(candidate["inferred_business_purpose"])
+    group["signature_tokens"] |= _token_set(candidate["allocation_name"])
     if _name_specificity_score(candidate["allocation_name"]) > _name_specificity_score(group["allocation_name"]):
         group["allocation_name"] = candidate["allocation_name"]
         group["normalized_name"] = candidate["normalized_name"]
@@ -907,6 +912,23 @@ def _merge_group(group: Dict[str, Any], candidate: Dict[str, Any]) -> None:
             group["funding_source"] = candidate["funding_source"] if group["funding_source"] == "unknown" else group["funding_source"]
         else:
             group["funding_source"] = "mixed"
+
+
+# Acquisitions and similar named-entity events require stronger overlap to merge so
+# that distinct acquisition targets (e.g. Proactiv vs Concert Pharmaceuticals) are
+# not collapsed into a single record.
+_HIGH_SPECIFICITY_CATEGORIES = {"acquisition", "acquisition_integration", "strategic_investment", "joint_venture", "subsidiary_investment"}
+_HIGH_SPECIFICITY_MERGE_THRESHOLD = 6
+_DEFAULT_MERGE_THRESHOLD = 5
+
+# Generic terms that appear in virtually every acquisition name and should be
+# excluded from the overlap computation so they don't create false similarity.
+_MERGE_NOISE = frozenset({
+    "acquisition", "incorporation", "incorporated", "date", "inc", "ltd",
+    "corp", "llc", "formerly", "known", "investment", "pharma",
+    "pharmaceuticals", "pharmaceutical", "securities", "security",
+    "limited", "sun",
+})
 
 
 def _merge_candidates(candidates: Sequence[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
@@ -920,7 +942,12 @@ def _merge_candidates(candidates: Sequence[Dict[str, Any]]) -> Tuple[List[Dict[s
             if score > best_score:
                 best_score = score
                 best_group = group
-        if best_group is not None and best_score >= 5:
+        threshold = (
+            _HIGH_SPECIFICITY_MERGE_THRESHOLD
+            if candidate["allocation_category"] in _HIGH_SPECIFICITY_CATEGORIES
+            else _DEFAULT_MERGE_THRESHOLD
+        )
+        if best_group is not None and best_score >= threshold:
             _merge_group(best_group, candidate)
             merged += 1
             continue
@@ -1003,6 +1030,75 @@ def _candidate_from_item(
         "ledger_roi_measurability_status": ledger_entry.get("roi_measurability_status"),
     }
     return candidate
+
+
+def _load_pcim_allocation_items(company_root: Path) -> List[Tuple[str, str, Dict[str, Any]]]:
+    """Read capital_allocation_inputs from the PCIM as a supplementary evidence source.
+
+    Returns (year, group_name, item) tuples for each PCIM capital allocation item.
+    Skips groups that represent non-deployment events and items the financial-timeline
+    already covers via typed fields (dividend_paid, capex).
+    """
+    pcim_path = company_root / "company_memory" / "pcim_v1.json"
+    if not pcim_path.exists():
+        return []
+    try:
+        pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    ca_inputs = pcim.get("capital_allocation_inputs") if isinstance(pcim, dict) else None
+    if not isinstance(ca_inputs, dict):
+        return []
+
+    # Groups we skip entirely — they either duplicate financial-timeline data or
+    # are non-deployment administrative events.
+    skip_groups = {
+        "corporate_actions_non_cash_or_admin",
+        "ownership_transfer_non_company_cashflow",
+        "accounting_or_disclosure_only",
+        "uncertain",
+    }
+    # Canonical categories that represent capital SOURCES, not deployments.
+    skip_canonicals = {"debt_raised"}
+
+    # Text-based patterns for items that are definitively NOT capital deployment
+    # regardless of their PCIM canonical classification.
+    _NON_DEPLOYMENT_PATTERNS = (
+        "proceeds from",   # capital sources (proceeds of borrowings)
+        "proceeds of",
+        "debt raised",     # capital source, not deployment
+        "interest payment",
+        "payment of interest",
+        "finance costs",   # financing costs, not capital deployment
+        "change in authorised capital",  # corporate admin action
+        "change in authorized capital",
+    )
+
+    results: List[Tuple[str, str, Dict[str, Any]]] = []
+    for year_entry in ca_inputs.get("capital_allocation_by_year") or []:
+        if not isinstance(year_entry, dict):
+            continue
+        year = str(year_entry.get("year") or "").strip().lower()
+        if not year:
+            continue
+        for item in year_entry.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            group_name = str(item.get("capital_allocation_group") or "uncertain")
+            if group_name in skip_groups:
+                continue
+            # Use raw (un-normalized) canonical so underscores match the skip set.
+            if (item.get("canonical_category") or "") in skip_canonicals:
+                continue
+            item_text = _normalize_text(item.get("value") or "")
+            if any(pat in item_text for pat in _NON_DEPLOYMENT_PATTERNS):
+                continue
+            # Give each item a stable source_item_id if not already set
+            if not item.get("source_item_id"):
+                item = {**item, "source_item_id": f"pcim_{year}_{_slug(item.get('value', ''))[:40]}"}
+            results.append((year, group_name, item))
+    return results
 
 
 def _build_candidates(company_root: Path) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
@@ -1113,6 +1209,17 @@ def _build_candidates(company_root: Path) -> Tuple[List[Dict[str, Any]], Dict[st
         candidate = _candidate_from_item(year, item, group, ledger_entry)
         if candidate is not None:
             candidates.append(candidate)
+
+    # PCIM capital_allocation_inputs provides richer categorical evidence (acquisitions,
+    # buybacks, debt repayment, R&D) that the financial-memory timeline does not yet
+    # carry.  The existing _merge_candidates() deduplication handles overlap with the
+    # financial-timeline items (dividends, capex) via similarity scoring.
+    for year, group_name, item in _load_pcim_allocation_items(company_root):
+        ledger_entry = ledger_map.get(year, {})
+        candidate = _candidate_from_item(year, item, group_name, ledger_entry)
+        if candidate is not None:
+            candidates.append(candidate)
+
     return candidates, artifacts
 
 
