@@ -1,5 +1,93 @@
 # Session Log
 
+## 2026-09-06 (ENG-105 Phase 2 — Capital Allocation Causal Attribution Contract)
+
+- Date: 2026-09-06
+- Sprint: ENG-105 Phase 2
+- Closure gate: **ENG_105_PHASE_2_CAUSAL_ATTRIBUTION_CONTRACT_CLOSED**
+
+### Mission
+
+Implement the causal attribution contract for the capital allocation outcomes builder. Enforce semantic layer separation (deployment → execution → operating outcome → financial outcome → per-share). Revenue growth after an acquisition is NOT a financial outcome of the acquisition. Unknown > fabricated causality.
+
+### Causal Violations Found and Fixed
+
+**Violation 1: `_driver_evidence()` fired on generic metric names unconditionally.**
+- Condition was: `overlap >= 2 OR metric in {"revenue", "pat", "cfo", "roce", "roe", "eps"}`
+- The `OR` clause caused every allocation record to receive company-wide revenue/PAT growth as "evidence" because those metrics always exist.
+- Fix: removed the `OR metric in {...}` clause — driver evidence now requires genuine token overlap (≥ 2) between the driver text and the allocation name.
+
+**Violation 2: Generic financial fallback when no specific evidence existed.**
+- Lines 1334-1347: when `_evidence_from_links()` returned empty, the builder added `_trend_texts()` (company-wide financial patterns) and `_driver_evidence()` to `return_evidence`.
+- This fabricated causality: acquisitions, capex, and working capital all received "Revenue grew 11%" as their financial outcome evidence.
+- Fix: removed the fallback entirely. When no specific project/capacity/commitment/risk links exist, `return_evidence = []`.
+
+**Violation 3: `_financial_outcome_text()` used company-level summary_lines as financial_outcome.**
+- For investment/acquisition/capex categories, `financial_outcome` was constructed from `driver_evidence` and `summary_lines` — both company-wide aggregates.
+- Fix: `financial_outcome` now returns `"UNABLE_TO_ATTRIBUTE: ..."` for investment/deployment categories when no allocation-specific evidence exists. Only distribution/debt categories receive factual `CASH_FLOW_EFFECT` text.
+
+### New Semantic State Contract
+
+Added `_causal_attribution_states()` (pure function, no AI calls) computing 7 fields per record:
+
+| Field | Values |
+|-------|--------|
+| `deployment_state` | ANNOUNCED / COMMITTED / DEPLOYED / COMPLETED_TRANSACTION / CANCELLED / UNABLE_TO_VERIFY |
+| `execution_state` | NOT_STARTED / IN_PROGRESS / OPERATIONAL / COMPLETED / UNABLE_TO_VERIFY |
+| `operating_outcome_state` | CAPACITY_ADDED / ACQUIRED_BUSINESS_INTEGRATED / UTILIZATION_VISIBLE / NO_VERIFIED_OUTCOME / UNABLE_TO_VERIFY |
+| `financial_outcome_state` | CASH_FLOW_EFFECT / UNABLE_TO_ATTRIBUTE (+ others for future use) |
+| `per_share_consequence_state` | SHARE_COUNT_REDUCTION / OWNER_EARNINGS_EFFECT / UNABLE_TO_ATTRIBUTE |
+| `value_creation_classification` | VALUE_CREATION_EVIDENCE / VALUE_DESTRUCTION_EVIDENCE / TOO_EARLY_TO_JUDGE / UNABLE_TO_VERIFY |
+| `causal_attribution_confidence` | HIGH / MEDIUM / LOW / UNKNOWN |
+
+Layer ordering enforced: `execution_state` cannot exceed `deployment_state`. If `deployment_state=UNABLE_TO_VERIFY`, then `execution_state` is forced to `UNABLE_TO_VERIFY` regardless of project evidence.
+
+### Validator Contract
+
+Added `_validate_semantic_states()` with 7 rules:
+1. No `financial_outcome_state` other than UNABLE_TO_ATTRIBUTE/CASH_FLOW_EFFECT without specific project/capacity evidence
+2. No `VALUE_CREATION_EVIDENCE` without operational execution evidence
+3. No `SHARE_COUNT_REDUCTION` for non-buyback categories
+4. No `causal_attribution_confidence=HIGH` without specific project/capacity evidence
+5. `execution_state` cannot exceed `deployment_state=UNABLE_TO_VERIFY`
+6. `REVENUE_CONTRIBUTION` for acquisitions requires explicit attribution evidence
+7. `ACQUIRED_BUSINESS_INTEGRATED` requires project/capacity evidence
+
+### Production Results
+
+Sun Pharma 9 records:
+- All 3 acquisitions: `financial_outcome_state=UNABLE_TO_ATTRIBUTE`, `causal_attribution_confidence=UNKNOWN/MEDIUM` (MEDIUM only when project evidence exists confirming operational execution)
+- Dividend, buyback, debt_repayment: `financial_outcome_state=CASH_FLOW_EFFECT`, `causal_attribution_confidence=MEDIUM/LOW`
+- Organic capex, working capital, subsidiary loan: `financial_outcome_state=UNABLE_TO_ATTRIBUTE`, `causal_attribution_confidence=UNKNOWN`
+- **0 validator violations**
+
+Tanla 15 records:
+- 4 records had layer-ordering violations before the `deployment_state=UNABLE_TO_VERIFY` guard was added; all 4 corrected by the constraint.
+- **0 validator violations after fix**
+
+### Tests
+
+24 tests total in `tests/intelligence/test_capital_allocation_builder.py` (10 Phase 1 + 14 Phase 2):
+- `test_driver_evidence_does_not_fire_on_metric_name_alone` — core causal discipline check
+- `test_driver_evidence_fires_on_real_overlap` — ensures fix doesn't over-suppress real links
+- `test_acquisition_financial_outcome_unable_to_attribute` — acquisition ≠ attributable revenue
+- `test_acquisition_causal_confidence_unknown_without_evidence` — UNKNOWN when no links
+- `test_capex_announced_only_deployment_not_proven` — deployment ≠ execution
+- `test_acquisition_completed_but_value_creation_unknown` — transaction ≠ success
+- `test_buyback_gets_share_count_reduction` — SHARE_COUNT_REDUCTION for buyback
+- `test_dividend_financial_outcome_is_cash_flow_effect` — distribution is the outcome
+- `test_capex_financial_outcome_unable_to_attribute` — capex revenue not attributable
+- `test_validator_rejects_revenue_contribution_for_acquisition`
+- `test_validator_rejects_share_count_reduction_for_non_buyback`
+- `test_validator_rejects_execution_exceeding_deployment`
+- `test_validator_clean_for_valid_buyback`
+- `test_validator_clean_for_acquisition_with_unknown_states`
+
+### Files Modified
+
+- `intelligence/capital_allocation_outcomes/builder.py` — causal attribution fixes + semantic state contract + validator
+- `tests/intelligence/test_capital_allocation_builder.py` — 14 Phase 2 adversarial tests added
+
 ## 2026-09-04 (Coherent Production Baseline Rebuild — Sun Pharma FY26)
 
 - Date: 2026-09-04

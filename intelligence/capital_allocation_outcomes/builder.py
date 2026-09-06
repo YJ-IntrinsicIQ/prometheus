@@ -533,7 +533,7 @@ def _driver_evidence(driver_payload: Dict[str, Any], allocation_text: str) -> Li
             continue
         overlap = len(_token_set(text) & candidate_tokens)
         metric = str(attribution.get("metric") or "").lower()
-        if overlap >= 2 or metric in {"revenue", "pat", "cfo", "roce", "roe", "eps"}:
+        if overlap >= 2:
             selected.append(
                 {
                     "period": attribution.get("period"),
@@ -671,13 +671,12 @@ def _financial_outcome_text(record: Dict[str, Any], summary: Dict[str, Any], dri
         operating_outcome = _first_nonempty(
             _join_notes("project"),
             _join_notes("capacity"),
-            "; ".join(summary_lines[:2]),
             "No direct operating outcome is yet observable.",
         )
         financial_outcome = _first_nonempty(
-            "; ".join(item["note"] for item in driver_evidence[:2] if item.get("note")),
-            "; ".join(summary_lines[:2]),
-            "The broader financial trend is still too early to attribute cleanly to this allocation.",
+            _join_notes("project"),
+            _join_notes("capacity"),
+            "UNABLE_TO_ATTRIBUTE: No allocation-specific financial outcome is verifiable without a direct causal link.",
         )
         per_share_outcome = "Per-share effects remain indirect and are not yet cleanly attributable."
         balance_sheet_outcome = "The balance sheet absorbed the deployment, but the long-run return profile is still being proven."
@@ -688,29 +687,19 @@ def _financial_outcome_text(record: Dict[str, Any], summary: Dict[str, Any], dri
             "Working-capital pressure remains visible and needs more follow-up.",
         )
         financial_outcome = _first_nonempty(
-            "; ".join(summary_lines[:2]),
-            "; ".join(item["note"] for item in driver_evidence[:2] if item.get("note")),
-            "Working-capital improvement is not yet fully visible in the financial trend.",
+            _join_notes("capacity"),
+            "UNABLE_TO_ATTRIBUTE: Working-capital deployment financial outcome is not directly attributable.",
         )
         per_share_outcome = "Working-capital efficiency can support per-share compounding, but the evidence is still partial."
         balance_sheet_outcome = "The balance-sheet effect should show up through working-capital intensity and cash conversion."
     elif category in {"debt_repayment"}:
         operating_outcome = "Debt repayment does not change operations directly, but it can reduce financial pressure."
-        financial_outcome = _first_nonempty(
-            "; ".join(summary_lines[:2]),
-            "The debt-reduction effect is visible in the allocation itself, while later financial benefit remains only partially observable.",
-        )
+        financial_outcome = "CASH_FLOW_EFFECT: Debt repayment reduces financial liability; interest savings and leverage improvement are the direct financial outcomes."
         per_share_outcome = "Lower leverage may support per-share outcomes over time, but the link is indirect."
-        balance_sheet_outcome = _first_nonempty(
-            "; ".join(summary_lines[:2]),
-            "Liability burden appears lower, though the broader capital-return effect is still mixed.",
-        )
+        balance_sheet_outcome = "Balance sheet liability reduced; coverage ratios and interest expense are the verifiable outcomes."
     elif category in {"dividend", "special_dividend", "share_buyback", "equity_issuance", "retained_cash"}:
         operating_outcome = "This is primarily a capital-structure or distribution decision rather than an operating investment."
-        financial_outcome = _first_nonempty(
-            "; ".join(summary_lines[:2]),
-            "The balance-sheet and per-share effect is visible, but the operating payoff is indirect.",
-        )
+        financial_outcome = "CASH_FLOW_EFFECT: Capital returned to shareholders; the financial outcome is the distribution itself."
         if category in {"equity_issuance"}:
             per_share_outcome = "New equity can improve flexibility, but it may dilute per-share economics."
         elif category in {"share_buyback", "dividend", "special_dividend"}:
@@ -722,12 +711,164 @@ def _financial_outcome_text(record: Dict[str, Any], summary: Dict[str, Any], dri
             "The balance-sheet effect is visible, but the opportunity cost of the chosen path still matters.",
         )
     else:
-        operating_outcome = "; ".join(summary_lines[:2]) or "No direct operating outcome is yet visible."
-        financial_outcome = "; ".join(summary_lines[:2]) or "The financial outcome is still too early to judge."
+        operating_outcome = "No direct operating outcome is yet observable."
+        financial_outcome = "UNABLE_TO_ATTRIBUTE: Insufficient allocation-specific evidence to attribute a financial outcome."
         per_share_outcome = "The per-share implication is still unclear."
         balance_sheet_outcome = "The balance-sheet implication is still being worked through."
 
     return operating_outcome, financial_outcome, per_share_outcome, balance_sheet_outcome
+
+
+_INVESTMENT_CATEGORIES = frozenset({
+    "acquisition", "acquisition_integration", "strategic_investment",
+    "joint_venture", "subsidiary_investment",
+})
+_DEPLOYMENT_CATEGORIES = frozenset({
+    "organic_capex", "capacity_expansion", "maintenance_capex",
+    "product_development", "research_and_development", "technology_investment",
+})
+_DISTRIBUTION_CATEGORIES = frozenset({
+    "dividend", "special_dividend", "share_buyback",
+})
+
+
+def _causal_attribution_states(record: Dict[str, Any], evidence: Sequence[Dict[str, Any]]) -> Dict[str, str]:
+    """Compute canonical semantic state fields for each causal layer.
+
+    These layers are strictly ordered and non-interchangeable:
+    deployment → execution → operating outcome → financial outcome → per-share.
+    Revenue growth after an acquisition is NOT a financial outcome of the acquisition.
+    """
+    category = str(record.get("allocation_category") or "unknown")
+    current_status = str(record.get("current_status") or "")
+    outcome_status = str(record.get("outcome_status") or "")
+    has_project_evidence = any(e.get("kind") in {"project", "capacity"} for e in evidence)
+
+    note_text = " ".join(e.get("note", "") for e in evidence if e.get("kind") in {"project", "capacity"}).lower()
+
+    # --- Deployment state ---
+    if current_status == "cancelled" or current_status == "abandoned":
+        deployment_state = "CANCELLED"
+    elif current_status in {"deployed", "partially_deployed", "in_progress"}:
+        if category in _INVESTMENT_CATEGORIES:
+            deployment_state = "COMPLETED_TRANSACTION"
+        else:
+            deployment_state = "DEPLOYED"
+    elif current_status == "announced":
+        deployment_state = "ANNOUNCED"
+    elif current_status == "delayed":
+        deployment_state = "COMMITTED"
+    elif category in _DISTRIBUTION_CATEGORIES or category == "debt_repayment":
+        deployment_state = "COMPLETED_TRANSACTION"
+    elif record.get("amount_crore"):
+        deployment_state = "DEPLOYED"
+    else:
+        deployment_state = "UNABLE_TO_VERIFY"
+
+    # --- Execution state ---
+    if category in _DISTRIBUTION_CATEGORIES or category == "debt_repayment":
+        execution_state = "COMPLETED"
+    elif has_project_evidence and any(t in note_text for t in ("operational", "commissioned", "integrated")):
+        execution_state = "OPERATIONAL"
+    elif has_project_evidence and any(t in note_text for t in ("in progress", "ongoing", "underway")):
+        execution_state = "IN_PROGRESS"
+    elif has_project_evidence:
+        execution_state = "IN_PROGRESS"
+    else:
+        execution_state = "UNABLE_TO_VERIFY"
+    # Layer ordering: execution cannot exceed deployment
+    if deployment_state == "UNABLE_TO_VERIFY" and execution_state not in {"UNABLE_TO_VERIFY", "NOT_STARTED"}:
+        execution_state = "UNABLE_TO_VERIFY"
+
+    # --- Operating outcome state ---
+    if category in _DISTRIBUTION_CATEGORIES or category == "debt_repayment":
+        operating_outcome_state = "NO_VERIFIED_OUTCOME"
+    elif execution_state == "OPERATIONAL" and category in _DEPLOYMENT_CATEGORIES:
+        operating_outcome_state = "CAPACITY_ADDED"
+    elif execution_state == "OPERATIONAL" and category in {"acquisition", "acquisition_integration"}:
+        operating_outcome_state = "ACQUIRED_BUSINESS_INTEGRATED"
+    elif has_project_evidence:
+        operating_outcome_state = "UTILIZATION_VISIBLE"
+    else:
+        operating_outcome_state = "UNABLE_TO_VERIFY"
+
+    # --- Financial outcome state (strict: only cash transactions have attributable financial outcomes) ---
+    if category in {"dividend", "special_dividend", "share_buyback", "debt_repayment"}:
+        financial_outcome_state = "CASH_FLOW_EFFECT"
+    else:
+        # Revenue/profit growth after an acquisition or capex program is NOT attributable
+        # to that specific allocation without a direct causal link in the evidence
+        financial_outcome_state = "UNABLE_TO_ATTRIBUTE"
+
+    # --- Per-share consequence state ---
+    if category == "share_buyback":
+        per_share_consequence_state = "SHARE_COUNT_REDUCTION"
+    elif category in {"dividend", "special_dividend"}:
+        per_share_consequence_state = "OWNER_EARNINGS_EFFECT"
+    else:
+        per_share_consequence_state = "UNABLE_TO_ATTRIBUTE"
+
+    # --- Value creation classification ---
+    if category in _DEPLOYMENT_CATEGORIES and operating_outcome_state in {"CAPACITY_ADDED", "UTILIZATION_VISIBLE"}:
+        value_creation_classification = "TOO_EARLY_TO_JUDGE"
+    elif outcome_status == "negative_outcome":
+        value_creation_classification = "VALUE_DESTRUCTION_EVIDENCE"
+    elif not evidence and category not in _DISTRIBUTION_CATEGORIES and category != "debt_repayment":
+        value_creation_classification = "UNABLE_TO_VERIFY"
+    else:
+        value_creation_classification = "UNABLE_TO_VERIFY"
+
+    # --- Causal attribution confidence ---
+    if category in _DISTRIBUTION_CATEGORIES:
+        causal_attribution_confidence = "MEDIUM"
+    elif category == "debt_repayment":
+        causal_attribution_confidence = "LOW"
+    elif execution_state in {"OPERATIONAL", "COMPLETED"} and has_project_evidence:
+        causal_attribution_confidence = "MEDIUM"
+    elif has_project_evidence:
+        causal_attribution_confidence = "LOW"
+    else:
+        causal_attribution_confidence = "UNKNOWN"
+
+    return {
+        "deployment_state": deployment_state,
+        "execution_state": execution_state,
+        "operating_outcome_state": operating_outcome_state,
+        "financial_outcome_state": financial_outcome_state,
+        "per_share_consequence_state": per_share_consequence_state,
+        "value_creation_classification": value_creation_classification,
+        "causal_attribution_confidence": causal_attribution_confidence,
+    }
+
+
+def _validate_semantic_states(record: Dict[str, Any]) -> List[str]:
+    """Contract validator — returns list of violations; empty = valid."""
+    violations: List[str] = []
+    fos = record.get("financial_outcome_state", "")
+    eos = record.get("execution_state", "")
+    dos = record.get("deployment_state", "")
+    cat = str(record.get("allocation_category") or "")
+    vcc = record.get("value_creation_classification", "")
+    pss = record.get("per_share_consequence_state", "")
+    cac = record.get("causal_attribution_confidence", "")
+    evidence = record.get("return_evidence") or []
+    has_specific = any(e.get("kind") in {"project", "capacity"} for e in evidence)
+
+    if fos not in {"UNABLE_TO_ATTRIBUTE", "CASH_FLOW_EFFECT"} and not has_specific:
+        violations.append(f"financial_outcome_state={fos!r} without specific project/capacity evidence")
+    if vcc == "VALUE_CREATION_EVIDENCE" and eos not in {"OPERATIONAL", "INTEGRATED", "COMPLETED"}:
+        violations.append("VALUE_CREATION_EVIDENCE requires operational execution evidence")
+    if pss == "SHARE_COUNT_REDUCTION" and cat != "share_buyback":
+        violations.append(f"SHARE_COUNT_REDUCTION is only valid for share_buyback; got {cat!r}")
+    if cac == "HIGH" and not has_specific:
+        violations.append("causal_attribution_confidence=HIGH requires direct project/capacity evidence")
+    if dos == "UNABLE_TO_VERIFY" and eos not in {"UNABLE_TO_VERIFY", "NOT_STARTED"}:
+        violations.append(f"execution_state={eos!r} cannot exceed deployment_state=UNABLE_TO_VERIFY")
+    if cat in {"acquisition", "acquisition_integration"} and fos == "REVENUE_CONTRIBUTION":
+        violations.append("REVENUE_CONTRIBUTION for acquisition requires explicit attribution evidence; chronological overlap is insufficient")
+    if eos == "ACQUIRED_BUSINESS_INTEGRATED" and not has_specific:
+        violations.append("ACQUIRED_BUSINESS_INTEGRATED requires project/capacity evidence of integration")
+    return violations
 
 
 def _outcome_status(record: Dict[str, Any], evidence: Sequence[Dict[str, Any]]) -> str:
@@ -1331,20 +1472,8 @@ def _finalize_allocation_record(
         record["source_references"].extend(ref for ref in [candidate["source_reference"]] if ref not in record["source_references"])
 
     evidence = _evidence_from_links(record, project_lookup, capacity_lookup, commitment_lookup, risk_lookup)
-    if not evidence:
-        summary = artifacts.get("financial_memory_summary") or {}
-        driver_payload = artifacts.get("financial_driver_attribution") or {}
-        evidence.extend(
-            {
-                "period": latest_period or first_observed_period,
-                "kind": "financial_summary",
-                "note": note,
-                "source_artifacts": ["financial_memory_summary.json"],
-                "source_references": [],
-            }
-            for note in _trend_texts(summary.get("summary") or {}, record["allocation_category"])[:2]
-        )
-        evidence.extend(_driver_evidence(driver_payload, " ".join([record["allocation_name"], record["stated_rationale"], record["inferred_business_purpose"]]))[:2])
+    # NOTE: No generic financial fallback here — company-wide revenue/PAT trends are NOT
+    # causal evidence for individual allocations. Unknown > fabricated causality.
 
     return_evidence = []
     for item in evidence:
@@ -1356,8 +1485,13 @@ def _finalize_allocation_record(
         record["causal_confidence"] = "medium"
     elif record["outcome_status"] in {"partially_observed", "early_evidence"}:
         record["causal_confidence"] = "low"
+    elif not record["return_evidence"]:
+        record["causal_confidence"] = "unknown"
     else:
         record["causal_confidence"] = "low"
+    semantic_states = _causal_attribution_states(record, record["return_evidence"])
+    record.update(semantic_states)
+    record["semantic_state_violations"] = _validate_semantic_states(record)
     record["operating_outcome"], record["financial_outcome"], record["per_share_outcome"], record["balance_sheet_outcome"] = _financial_outcome_text(
         record,
         artifacts.get("financial_memory_summary", {}).get("summary") or {},
@@ -1417,6 +1551,14 @@ def _finalize_allocation_record(
         "per_share_evidence": record["per_share_evidence"],
         "balance_sheet_outcome": record["balance_sheet_outcome"],
         "causal_confidence": record["causal_confidence"],
+        "deployment_state": record.get("deployment_state", "UNABLE_TO_VERIFY"),
+        "execution_state": record.get("execution_state", "UNABLE_TO_VERIFY"),
+        "operating_outcome_state": record.get("operating_outcome_state", "UNABLE_TO_VERIFY"),
+        "financial_outcome_state": record.get("financial_outcome_state", "UNABLE_TO_ATTRIBUTE"),
+        "per_share_consequence_state": record.get("per_share_consequence_state", "UNABLE_TO_ATTRIBUTE"),
+        "value_creation_classification": record.get("value_creation_classification", "UNABLE_TO_VERIFY"),
+        "causal_attribution_confidence": record.get("causal_attribution_confidence", "UNKNOWN"),
+        "semantic_state_violations": record.get("semantic_state_violations", []),
         "return_evidence": list(record["return_evidence"]),
         "unresolved_questions": list(record["unresolved_questions"]),
         "evidence_status": record["evidence_status"],
