@@ -7093,3 +7093,153 @@ Phases 2-25 of CAPITAL_ALLOCATION_INTELLIGENCE_FOUNDATION not yet addressed:
 - Tests: `tests/intelligence/test_management_promise_tracker.py` + `tests/intelligence/test_p0_routing_freshness.py` = 56/56; lifecycle downstream tests = 27/27.
 - Files changed: `intelligence/management_promises/builder.py`, `intelligence/management_promises/classifier.py`, `intelligence/ask_intrinsiciq/answer_cards.py`, `tests/intelligence/test_management_promise_tracker.py`, `tests/intelligence/test_p0_routing_freshness.py`, generated Sun Pharma/Tanla/Data Patterns management_progression Gold artifacts, generated Sun Pharma Ask artifacts.
 
+---
+
+## 2026-09-06 (ENG-110 Phase 1 — Canonical Risk Synthesis)
+
+- Date: 2026-09-06
+- Sprint: ENG-110 Phase 1
+- Closure gate: **ENG_110_PHASE_1_CANONICAL_RISK_SYNTHESIS_CLOSED**
+
+### Mission
+
+Decisive question: "Can the canonical trajectory truth from ENG-109 (`risk_assessments.json` with worsening/improving/recurring) now reach investor-facing Ask answers — without inventing financial damage, without treating improving as resolved, and without calling recurring worsening?"
+
+Hard constraints honored: no redesign of risk extraction, no probability scoring, no arbitrary numeric risk scores, no financial damage inference from trajectory, no mitigation inference from improving trajectory, no thesis-break inference from worsening trajectory alone.
+
+### What Was Built
+
+**`intelligence/ask_intrinsiciq/answer_cards.py`** (4 additions):
+- `_canonical_risk_groups(source_bundle)` — groups `risk_assessments` by trajectory into `{worsening, improving, recurring, other}` dicts
+- `_risk_group_point(entry, label)` — formats a single risk entry as an investor-facing bullet
+- `_build_break_thesis_answer()` rewritten: canonical primary path surfaces worsening first, recurring as persistent, improving as "receding but not resolved", unknown as "financial consequence unknown"; legacy fallback retained for missing data
+- `_build_regulatory_risks_answer()` rewritten: canonical primary path with `_is_regulatory_entry()` keyword filter, correct trajectory labeling
+- `QUESTION_SOURCE_MAP` updated: both risk questions now include `risk_assessments` as primary source
+
+**`tests/intelligence/test_eng110_risk_synthesis.py`** (19 tests):
+- `TestCanonicalRiskGroups` (6): trajectory routing, empty/missing handling
+- `TestBreakThesisAnswer` (6, Tests A–F): worsening surfaced, improving not resolved, recurring not worsening, unknown no directional language, order, fallback
+- `TestRegulatoryRisksAnswer` (4, Tests G–J): governance surfaced, trajectory labeling, no conviction inference
+- `TestRiskGroupPoint` (3)
+
+### Known-Case Proof (Sun Pharma)
+
+| Risk | Trajectory | Ask answer status |
+|------|-----------|------------------|
+| Foreign Exchange Risk | worsening | surfaced as worsening |
+| Governance Risk | worsening | surfaced as worsening |
+| Operational Risk | worsening | surfaced as worsening |
+| Revenue Concentration | recurring | surfaced as persistent |
+| Execution Risk | recurring | surfaced as persistent |
+| IP Protection | improving | in improving group (not resolved) |
+| Market Risk | improving | in improving group (not resolved) |
+
+Cross-company: Tanla and DataPatterns canonical invariants PASS (no causal leakage, correct trajectory routing, both produce supported answers).
+
+### Test Results
+
+19/19 tests pass. Commit: `e01e570`.
+
+**`ENG_110_PHASE_1_CANONICAL_RISK_SYNTHESIS_CLOSED`** — 2026-09-06
+
+---
+
+## 2026-09-06 (ENG-110 Phase 2 — Panel Risk Stream Protection + Doctrine Differentiation)
+
+- Date: 2026-09-06
+- Sprint: ENG-110 Phase 2
+- Closure gate: **BLOCKED_ENG_110_PHASE_2_PANEL_AND_PRODUCTION_PROPAGATION**
+
+### Mission
+
+Decisive question: "Do all five investor lenses (Buffett, Graham, Munger, Fisher, Lynch) actually convert the same canonical risk truth into different, evidence-bounded investment judgments — and can Committee and Ask surface those without turning worsening into financial damage, improving into resolution, or recurrence into deterioration?"
+
+Hard constraints honored: no ENG-109 canonical identity redesign, no probability scoring, no numeric risk scores, no financial loss inference, no mitigation inference from improving trajectory, no thesis-break from worsening alone, no broad graph infrastructure, no Capital Allocation / Promise / Reality Audit changes, no company hardcoding.
+
+### Root Cause Found
+
+`max_streams=3` in `build_company_memory_context()` was silently dropping the "risk evolution" stream for all 5 analysts. Risk evolution is at position 4–11 in every doctrine's `DOCTRINE_MEMORY_PRIORITIES` list — outside the top-3 cutoff. The stream existed on disk (all risk data correct from ENG-109) but never reached any LLM analyst prompt.
+
+### What Was Built
+
+**`intelligence/investor_panel/company_memory_context.py`**:
+- Added `"risk evolution"` to `protected_streams` at line ~913 — risk evolution now guaranteed delivery alongside management progression and capital allocation outcomes regardless of `max_streams`
+
+**`intelligence/investor_panel/runner.py`**:
+- `DOCTRINE_DIFFERENTIATION_GUIDANCE` — added doctrine-specific `risk_interpretation` to all 5 analysts:
+  - Graham: downside/permanent-loss/balance-sheet protection framing
+  - Buffett: moat durability/owner economics framing
+  - Fisher: execution/growth/runway framing
+  - Munger: structural failure-mode/incentive/systematic-weakness framing
+  - Lynch: story/credibility/near-term framing
+- `_shared_evidence_routing_rules()` — added 5 canonical risk trajectory invariants (worsening≠financial damage, improving≠resolved, recurring≠worsening, unknown stays unknown, doctrine-specific interpretation required)
+- `_doctrine_differentiation_block()` — now includes `risk_interpretation` field in returned block
+
+**`tests/intelligence/test_eng110_panel_differentiation.py`** (28 tests):
+- `TestRiskStreamProtection` (3): risk evolution not in top-3 for any analyst, positions >2, build context delivers stream when file exists
+- `TestDoctrineDifferentiationBlocks` (7): all 5 have risk_interpretation, distinct texts, keyword-specific framing per doctrine
+- `TestCanonicalRiskInvariants` (5): worsening≠damage, improving≠resolved, recurring≠worsening, unknown stays unknown, doctrine interpretation required
+- `TestCompactRiskEvolution` (5): order, group counts, recurring≠worsening, dedup, empty
+- `TestAntiHomogenization` (3): distinct must_prioritize, distinct primary_doctrine_questions, distinct mechanisms
+- `TestCanonicalTruthPreservation` (5, Tests A–E): governance framing, FX framing, recurring framing, improving≠resolved, canonical invariants in shared rules
+
+### Verification Results (Deterministic)
+
+**Stream delivery** (all 5 analysts × 3 companies):
+| Company | Analysts | risk_evolution delivered |
+|---------|---------|------------------------|
+| Sun Pharma | all 5 | ✓ (worsening=3, recurring=3, improving=3) |
+| Tanla | all 5 | ✓ (worsening=3, recurring=2, improving=2) |
+| DataPatterns | all 5 | ✓ (worsening=1, recurring=7, improving=1) |
+
+**Ask deterministic output**:
+- `what-can-break-the-thesis`: status=supported, worsening surfaced first, recurring as persistent, improving noted without resolution claim
+- `what-regulatory-risks-remain-active`: governance risk filtered and surfaced, correct trajectory labels, no conviction inference
+
+**Canonical invariants**: PASS for all 3 companies.
+
+### Test Results
+
+28/28 tests pass. Total ENG-110 test count: 47 (19 Phase 1 + 28 Phase 2). Commit: `7e626c0`.
+
+### Blocker: PCIM Stale for Sun Pharma
+
+`management_progression.json` was modified after the PCIM was last built (ENG-098). `_assess_pcim_freshness()` returns `status=fail` for Sun Pharma. Cannot run `--stage investor_panel` or `--stage panel` for LLM regeneration without first rebuilding the PCIM. LLM-backed Panel → Committee → Ask regeneration is therefore blocked.
+
+**Steps completed deterministically** (no PCIM required):
+- Stream delivery: confirmed for all 5 analysts × 3 companies ✓
+- Doctrine differentiation: 5 distinct risk_interpretation blocks with doctrine-specific framing ✓
+- Canonical invariant rules: all 5 trajectory invariants in shared routing rules ✓
+- Ask canonical answers: trajectory-aware output correct ✓
+- Cross-company validation: Tanla and DataPatterns canonical invariants PASS ✓
+- 47 adversarial deterministic tests pass ✓
+
+**Steps blocked** (require PCIM rebuild + LLM):
+- Actual Sun Pharma Panel regeneration (LLM-backed, all 5 analysts)
+- ENG-104 provenance regression on new analyst artifacts
+- Lens differentiation classification (GENUINELY_DIFFERENTIATED / PARTIALLY_DIFFERENTIATED / GENERIC_RESTATEMENT)
+- Financial causal leakage audit on new analyst artifacts
+- Committee regeneration
+- Committee risk synthesis quality inspection
+- Ask full regeneration from new Committee
+- Decision-usefulness diagnostic
+
+### Files Changed
+
+- `intelligence/investor_panel/company_memory_context.py` — `protected_streams` addition
+- `intelligence/investor_panel/runner.py` — `DOCTRINE_DIFFERENTIATION_GUIDANCE` + `_shared_evidence_routing_rules()` + `_doctrine_differentiation_block()`
+- `tests/intelligence/test_eng110_panel_differentiation.py` — 28 new tests
+
+### Next Session Must
+
+1. Rebuild Sun Pharma PCIM: `python pipelines/run_company_pipeline.py sun_pharma --stage pcim`
+2. Regenerate all 5 analysts: `python pipelines/run_company_pipeline.py sun_pharma --stage investor_panel --regenerate-analysts`
+3. Audit ENG-104 provenance regression (0 fabricated evidence IDs expected)
+4. Inspect actual lens differentiation output per analyst
+5. Regenerate Committee: `python pipelines/run_company_pipeline.py sun_pharma --stage committee_synthesis`
+6. Regenerate Ask: `python pipelines/run_company_pipeline.py sun_pharma --stage ask_intrinsiciq`
+7. Inspect `what-can-break-the-thesis` and `what-regulatory-risks-remain-active` in full regeneration
+8. Declare `ENG_110_PHASE_2_PANEL_AND_PRODUCTION_PROPAGATION_CLOSED` if clean
+
+**`BLOCKED_ENG_110_PHASE_2_PANEL_AND_PRODUCTION_PROPAGATION`** — 2026-09-06
+
