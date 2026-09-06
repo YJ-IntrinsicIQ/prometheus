@@ -7243,3 +7243,69 @@ Hard constraints honored: no ENG-109 canonical identity redesign, no probability
 
 **`BLOCKED_ENG_110_PHASE_2_PANEL_AND_PRODUCTION_PROPAGATION`** — 2026-09-06
 
+
+---
+
+## 2026-09-06 (ENG-110 Phase 2 — Panel Risk Stream Protection + Production Closure)
+
+**Gate: `ENG_110_PHASE_2_PANEL_AND_PRODUCTION_PROPAGATION_CLOSED`**
+
+Continuation from BLOCKED state. Blocker was PCIM staleness (resolved prior session) plus budget overflow (resolved via env var override).
+
+### Resolution
+
+**Budget overflow fix**: `management_quality_inputs` = 1.4M chars causes compacted prompt of 10,764 tokens vs `hard_max_prompt_tokens=10000` default. Resolution: env var override `INVESTOR_PANEL_HARD_MAX_PROMPT_TOKENS=12000` + `INVESTOR_PANEL_TOTAL_PROMPT_BUDGET_TOKENS=12000`. This uses the documented override mechanism in `_prompt_compaction_limits()` — NOT a code change.
+
+**All 5 analysts regenerated ONCE** (2026-09-06, `pass_with_warning` — within 12K budget):
+
+| Analyst | Prompt Tokens | Compaction Status |
+|---------|---------------|-------------------|
+| buffett | 10,195 | pass_with_warning |
+| fisher | 9,385 | pass_with_warning |
+| graham | 10,168 | pass_with_warning |
+| lynch | 10,524 | pass_with_warning |
+| munger | 10,511 | pass_with_warning |
+
+### 26-Condition Closure Audit
+
+1. **Governance read fresh** ✅ — ATLAS, SESSION_LOG, BACKLOG read at session start
+2. **Phase 1/2 deterministic tests PASS** ✅ — 47/47 ENG-110 tests pass (19 Phase 1 + 28 Phase 2); 11 `test_ask_intrinsiciq.py` failures confirmed pre-existing at ENG-109 baseline (identical failure set at 953e5f5)
+3. **PCIM rebuilt (Sun Pharma)** ✅ — rebuilt 2026-09-06T11:02:12Z; freshness: PASS
+4. **Current risk truth reaches Panel input** ✅ — 9 canonical risks (3 worsening, 3 recurring, 3 improving) confirmed in Buffett stream
+5. **All 5 analysts regenerated ONCE** ✅ — artifacts written: buffett/fisher/graham/lynch/munger + panel_index
+6. **Protected risk stream reaches all 5** ✅ — worsening governance/FX/operational + recurring execution/supply-chain present in all 5 analysts' risk key_findings/red_flags
+7. **ENG-104 provenance identity clean** ✅ — invalid_eids=0 for all 5 analysts; EID repairs=0
+8. **Canonical trajectory invariants preserved** ✅ — all leakage checks pass: worsening≠financial damage ✓, improving≠resolved ✓, recurring≠worsening ✓
+9. **No financial causal leakage** ✅ — no analyst infers financial damage from trajectory label alone
+10. **No unsupported mitigation claims** ✅ — "will mitigate" / "has mitigated" / "resolved" patterns absent from all 5
+11. **Panel demonstrates meaningful doctrine differentiation** ✅ — all 5 distinct narratives; mechanism words present: buffett(stewardship/compound/durable/owner), fisher(execution/growth/product), graham(protection/downside/permanent/balance), lynch(story/simple), munger(incentive/governance)
+12. **Committee regenerated from current Panel** ✅ — committee_synthesis.json + committee_brief.md + committee_brief_qa.json written 2026-09-06
+13. **Committee preserves canonical risk truth** ✅ — worsening: 8×, trajectory: 2×, governance risk: 1×, QA status: PASS
+14. **Ask regenerated last** ✅ — ask_intrinsiciq regenerated 2026-09-06T13:52:17Z; 34 answers (25 supported, 7 partial, 2 not supported)
+15. **Break thesis answer** ✅ — `what-can-break-the-thesis` status=supported; simple_answer: "Worsening: Foreign Exchange Risk; Governance Risk; Operational Risk | Persistent: Customer and revenue concentration; Execution and delivery timing risk; Supply-chain disruption"
+16. **Regulatory answer** ✅ — `what-regulatory-risks-remain-active` status=supported; "1 regulatory or governance risk(s) tracked; 1 worsening, 0 recurring"
+17. **Monitoring signals** ✅ — `what-signals-management-quality` status=supported; "progression remains visible, but outcome evidence is incomplete"
+18. **Decision-usefulness** ✅ — risk answers are trajectory-anchored, doctrine-specific, and distinguish worsening/recurring/improving without false resolution claims
+19. **Freshness/coherence proof** ✅ — PCIM→Panel→Committee→Ask all regenerated 2026-09-06; sources found=46, sources missing=0
+20. **Pre-existing failures confirmed not ENG-110 regressions** ✅ — same 11 `test_ask_intrinsiciq.py` failures at ENG-109 (953e5f5) baseline; ENG-110 introduced 0 new test failures
+21. **Semantic before/after** ✅ — break thesis before ENG-110: generic risk list. After: canonical trajectory groups (worsening surfaced first, recurring as persistent, improving noted without resolution claim); detailed_explanation explicitly states invariant
+22. **Limitations record** — env var override used (INVESTOR_PANEL_HARD_MAX_PROMPT_TOKENS=12000); several sections replaced with limitation objects under compaction (expected — management_quality_inputs=1.4M raw chars); pre-existing test failures unchanged
+23. **Phase 2 closure decision** ✅ — all 22 substantive conditions pass; limitations are infrastructure constraints, not semantic defects
+24. **ENG-110 overall verdict** ✅ — Phase 1 CLOSED (Ask canonical trajectory routing), Phase 2 CLOSED (Panel risk stream protection + doctrine differentiation + production propagation)
+25–26. **Governance** — SESSION_LOG, BACKLOG, ATLAS updated below
+
+### Files Changed (Phase 2, already committed at 7e626c0)
+
+- `intelligence/investor_panel/company_memory_context.py` — `protected_streams` + risk stream file priority
+- `intelligence/investor_panel/runner.py` — `DOCTRINE_DIFFERENTIATION_GUIDANCE` + `_shared_evidence_routing_rules()` + `_doctrine_differentiation_block()`
+- `tests/intelligence/test_eng110_panel_differentiation.py` — 28 tests
+
+### Production Artifacts Regenerated
+
+- `companies/sun_pharma/company_memory/investor_panel/` — all 5 analyst JSON + diagnostics + panel_index
+- `companies/sun_pharma/company_memory/investor_panel/committee_synthesis.json`
+- `companies/sun_pharma/company_memory/investor_panel/committee_brief.md`
+- `companies/sun_pharma/company_memory/investor_panel/committee_brief_qa.json`
+- `companies/sun_pharma/company_memory/ask_intrinsiciq/` — all 8 Ask artifacts
+
+**`ENG_110_PHASE_2_PANEL_AND_PRODUCTION_PROPAGATION_CLOSED`** — 2026-09-06
