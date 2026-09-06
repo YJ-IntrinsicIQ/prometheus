@@ -459,6 +459,68 @@ def _compact_assessments(payload: Dict[str, Any], *, limit: int = 3) -> Dict[str
     }
 
 
+_TRAJECTORY_ORDER = ("worsening", "recurring", "improving")
+
+
+def _compact_risk_evolution(candidates: List[Any], *, limit: int = 6) -> Dict[str, Any]:
+    """Group canonical risk assessments by trajectory for analyst lenses.
+
+    Returns a dict with grouped worsening/recurring/improving/other lists
+    alongside a flat assessments list for backward compatibility.
+    """
+    primary_payload = candidates[0][1] if candidates else {}
+    all_assessments: List[Dict[str, Any]] = list(primary_payload.get("assessments") or [])
+    # Merge additional assessment sources
+    for _, payload in candidates[1:]:
+        for item in payload.get("assessments") or []:
+            if isinstance(item, dict):
+                all_assessments.append(item)
+
+    groups: Dict[str, List[Dict[str, Any]]] = {"worsening": [], "recurring": [], "improving": [], "other": []}
+    seen_ids: set = set()
+    for item in all_assessments:
+        if not isinstance(item, dict):
+            continue
+        rid = item.get("risk_id") or item.get("evo_canonical_id") or item.get("risk_name")
+        if rid and rid in seen_ids:
+            continue
+        if rid:
+            seen_ids.add(rid)
+        trajectory = item.get("trajectory") or ""
+        entry = {
+            "id": rid,
+            "risk_name": item.get("risk_name") or item.get("risk_id"),
+            "current_status": item.get("current_status"),
+            "trajectory": trajectory,
+            "what_changed": _truncate_text(item.get("what_changed"), 120),
+            "why_it_changed": _truncate_text(item.get("why_it_changed"), 120),
+            "investor_implication": _truncate_text(item.get("investor_implication"), 120),
+            "evo_canonical_id": item.get("evo_canonical_id"),
+        }
+        bucket = trajectory if trajectory in groups else "other"
+        groups[bucket].append(entry)
+
+    flat = []
+    for bucket in _TRAJECTORY_ORDER:
+        flat.extend(groups[bucket])
+    flat.extend(groups["other"])
+    flat = flat[:limit]
+
+    return {
+        "company": primary_payload.get("company") or primary_payload.get("company_slug"),
+        "schema_version": primary_payload.get("schema_version"),
+        "generated_at": primary_payload.get("generated_at"),
+        "assessment_count": len(all_assessments),
+        "worsening_count": len(groups["worsening"]),
+        "recurring_count": len(groups["recurring"]),
+        "improving_count": len(groups["improving"]),
+        "worsening": groups["worsening"][:3],
+        "recurring": groups["recurring"][:3],
+        "improving": groups["improving"][:3],
+        "assessments": flat,
+    }
+
+
 def _compact_timelines(payload: Dict[str, Any], *, limit: int = 2) -> Dict[str, Any]:
     timelines = payload.get("timelines") or payload.get("timeline") or []
     return {
@@ -890,7 +952,9 @@ def build_company_memory_context(
             block.update(_compact_commitments(merged_commitments))
         elif stream_name == "capital allocation outcomes":
             block.update(_compact_capital_allocation_outcomes(candidates))
-        elif stream_name in {"projects", "capacity evolution", "risk evolution", "management commentary"}:
+        elif stream_name == "risk evolution":
+            block.update(_compact_risk_evolution(candidates, limit=max(max_items_per_stream, 6)))
+        elif stream_name in {"projects", "capacity evolution", "management commentary"}:
             merged_assessments = deepcopy(primary_payload)
             for path, payload in candidates[1:]:
                 if not merged_assessments.get("timelines") and payload.get("timelines"):

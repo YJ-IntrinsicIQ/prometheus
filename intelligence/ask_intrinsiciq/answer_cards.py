@@ -217,7 +217,7 @@ QUESTION_DEPENDENCY_MAP: Dict[str, List[str]] = {
     "what-is-management-commentary-saying": ["management_progression", "commentary_themes"],
     "how-is-capital-allocated": ["capital_allocation_longitudinal_profile", "capital_allocation_assessments", "capital_allocation_outcomes", "management_progression", "gold_capital_allocation"],
     "what-is-the-return-on-capex": ["gold_capital_allocation", "capital_allocation_roi_ledger"],
-    "what-regulatory-risks-remain-active": ["gold_risk_evolution"],
+    "what-regulatory-risks-remain-active": ["risk_assessments", "gold_risk_evolution"],
     "what-is-committee-direction": ["committee_synthesis"],
     "where-does-the-committee-agree": ["committee_synthesis"],
     "where-does-the-committee-disagree": ["committee_synthesis"],
@@ -228,7 +228,7 @@ QUESTION_DEPENDENCY_MAP: Dict[str, List[str]] = {
     "where-would-fisher-be-curious": ["fisher_analysis"],
     "what-would-munger-avoid": ["munger_analysis"],
     "how-would-lynch-explain-it": ["lynch_analysis"],
-    "what-can-break-the-thesis": ["buffett_analysis", "committee_synthesis", "risk_evolution"],
+    "what-can-break-the-thesis": ["risk_assessments", "buffett_analysis", "committee_synthesis", "risk_evolution"],
     "which-disclosure-is-missing": ["financial_truth_pack", "committee_synthesis"],
     "what-evidence-would-change-the-view": ["committee_synthesis", "financial_truth_pack"],
     "what-needs-management-clarification": ["committee_synthesis"],
@@ -1730,6 +1730,54 @@ def _gold_promise_enrichment_from_payload(gold: Dict[str, Any]) -> Optional[str]
     return result
 
 
+def _gold_promise_display_text(record: Dict[str, Any]) -> str:
+    text = _first_string(
+        _get_string(record, "original_statement"),
+        _get_string(record, "normalized_commitment"),
+        _get_string(record, "theme"),
+    )
+    return _clean_display_phrase(text, limit_words=25)
+
+
+def _gold_promise_status_label(record: Dict[str, Any]) -> str:
+    status = _normalize_sentence(_get_string(record, "current_status"))
+    return {
+        "achieved": "Delivered",
+        "partially_achieved": "Partially Delivered",
+        "delayed": "Delayed",
+        "missed": "Missed",
+        "abandoned": "Abandoned",
+        "unverified": "Unable To Verify",
+        "in_progress": "In Progress",
+    }.get(status, "Unable To Verify")
+
+
+def _gold_promise_record_points(gold: Dict[str, Any], *, max_items: int = 4, claim_outcome: bool = False) -> List[str]:
+    records = [r for r in (gold.get("material_promises") or []) if isinstance(r, dict)]
+    if claim_outcome:
+        order = {"ACHIEVED": 0, "PARTIALLY_ACHIEVED": 1, "MISSED": 2, "DELAYED": 3, "UNVERIFIED": 4}
+        records = sorted(records, key=lambda r: (order.get(str(r.get("current_status") or "UNVERIFIED"), 5), r.get("announcement_period") or r.get("source_period") or ""))
+    pts: List[str] = []
+    seen: set[str] = set()
+    for record in records:
+        text = _gold_promise_display_text(record)
+        fingerprint = _get_string(record, "commitment_fingerprint")
+        if not text or not fingerprint or fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        period = _first_string(_get_string(record, "announcement_period"), _get_string(record, "source_period"))
+        period_prefix = f"{period.upper()}: " if period else ""
+        status = _gold_promise_status_label(record)
+        target = _get_string(record, "target_period")
+        target_note = f" (target: {target})" if target else ""
+        reason = _get_string(record, "unresolved_reason")
+        reason_note = " No matching progression record." if claim_outcome and reason == "NO_MATCHING_PROGRESSION_RECORD" else ""
+        pts.append(f"{period_prefix}{text.rstrip('.')}{target_note} — {status}.{reason_note}")
+        if len(pts) >= max_items:
+            break
+    return _clean_list(pts)[:max_items]
+
+
 def _mc_specific_promise_points(commitment_list: List[Dict[str, Any]], *, max_items: int = 4, lifecycle_index: Optional[Dict[str, Dict[str, Any]]] = None) -> List[str]:
     """Q-A: surface specific commitment items (period + commitment text + status) for investor display."""
     material = _material_commitments(commitment_list, limit=max_items + 3)
@@ -1791,16 +1839,13 @@ def _build_management_promises_answer(source_bundle: Dict[str, Any], *, business
         key_pts = _gold_promise_key_points(gold)
         answer_st = "partially_supported" if not achieved and not partially else "supported"
         thesis = "strengthens" if (achieved + partially) > missed else "neutral"
-        # Enrich with management_commitments when present: show specific items rather than aggregate only
-        mc_payload = _source_payload(source_bundle, "management_commitments")
-        mc_list = _get_record_list(mc_payload, "commitments")
-        mc_available = bool(mc_payload)
-        lifecycle_index = _management_progression_commitment_index(_source_payload(source_bundle, "management_progression"))
-        if mc_list:
-            specific_pts = _mc_specific_promise_points(mc_list, max_items=4, lifecycle_index=lifecycle_index)
-            if specific_pts:
-                type_pts = [p for p in _gold_promise_key_points(gold) if "commitment(s)" in p]
-                key_pts = _clean_list(specific_pts + type_pts[:1])[:4]
+        # Gold owns the investor-facing tracked promise universe. Use Gold records
+        # for examples so Ask cannot inflate counts with unmatched MC rows.
+        specific_pts = _gold_promise_record_points(gold, max_items=4)
+        if specific_pts:
+            type_pts = [p for p in _gold_promise_key_points(gold) if "commitment(s)" in p]
+            key_pts = _clean_list(specific_pts + type_pts[:1])[:4]
+        mc_available = bool(_source_payload(source_bundle, "management_commitments"))
         # Q-A simple_answer: describe what was promised (themes + status mix) — distinct from Q-B credibility verdict
         tracked = int(gold_summary.get("tracked_promises") or 0)
         unverified = int(sb.get("unverified", 0))
@@ -1919,22 +1964,17 @@ def _build_past_claims_answer(source_bundle: Dict[str, Any], *, business_journey
     if gold_eligible:
         gold_cred = _source_payload(source_bundle, "gold_credibility")
         gp_text = _gold_promise_enrichment_from_payload(gold_tracker)
-        # Enrich with management_commitments when present: surface claim→outcome examples
-        mc_payload = _source_payload(source_bundle, "management_commitments")
-        mc_list = _get_record_list(mc_payload, "commitments")
-        mc_available = bool(mc_payload)
-        lifecycle_index = _management_progression_commitment_index(_source_payload(source_bundle, "management_progression"))
+        mc_available = bool(_source_payload(source_bundle, "management_commitments"))
         cs = _gold_cred_summary(gold_cred) if gold_cred else None
         gw = _gold_cred_weight(gold_cred) if gold_cred else None
         # Q-B simple_answer: credibility verdict (NOT the delivery count — that's Q-A's job)
         qb_simple = cs or gw or gp_text or ""
-        # Build key_points: claim→outcome examples first, then supporting credibility context
+        # Build key_points from Gold records only; MC can enrich Gold upstream, not create
+        # a separate Ask promise universe.
         pts: List[str] = []
-        if mc_list:
-            claim_pts = _mc_claim_outcome_points(mc_list, max_items=4, lifecycle_index=lifecycle_index)
-            pts.extend(claim_pts)
-        if gp_text and gp_text not in pts:
+        if gp_text:
             pts.append(gp_text)
+        pts.extend(_gold_promise_record_points(gold_tracker, max_items=4, claim_outcome=True))
         if cs and cs not in pts:
             pts.append(cs)
         elif gw and gw not in pts:
@@ -3402,6 +3442,79 @@ def _build_buffett_answer(source_bundle: Dict[str, Any], *, business_journey_pay
 
 
 def _build_break_thesis_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
+    groups = _canonical_risk_groups(source_bundle)
+    has_canonical = any(groups[k] for k in ("worsening", "improving", "recurring"))
+
+    if has_canonical:
+        key_points: List[str] = []
+        for entry in groups["worsening"]:
+            pt = _risk_group_point(entry, "worsening")
+            if pt:
+                key_points.append(pt)
+        for entry in groups["recurring"]:
+            pt = _risk_group_point(entry, "recurring")
+            if pt:
+                key_points.append(pt)
+        # Improving risks: still potentially material, not resolved
+        improving_notes: List[str] = []
+        for entry in groups["improving"]:
+            name = _clean_display_phrase(entry.get("risk_name") or "", limit_words=8)
+            if name:
+                improving_notes.append(f"{name} (improving but not resolved)")
+        untracked_count = len(groups["other"])
+        uncertainty_parts = []
+        if untracked_count:
+            uncertainty_parts.append(
+                f"{untracked_count} tracked risk(s) have no confirmed trajectory — financial consequence unknown."
+            )
+        if improving_notes:
+            uncertainty_parts.append(
+                "Improving risks (" + ", ".join(improving_notes[:3]) + ") are receding but remain potentially material."
+            )
+        uncertainty = " ".join(uncertainty_parts) or "Financial consequence of individual risks is not yet established from available evidence."
+
+        worsening_names = [e.get("risk_name") or e.get("evo_canonical_id") or "" for e in groups["worsening"]]
+        recurring_names = [e.get("risk_name") or e.get("evo_canonical_id") or "" for e in groups["recurring"]]
+        conclusion_parts = []
+        if worsening_names:
+            conclusion_parts.append("Worsening: " + "; ".join(_clean_list(worsening_names)[:3]))
+        if recurring_names:
+            conclusion_parts.append("Persistent: " + "; ".join(_clean_list(recurring_names)[:3]))
+        simple_answer = (
+            "The thesis faces most pressure from: " + " | ".join(conclusion_parts) + "."
+            if conclusion_parts
+            else "Risk trajectory data is available but no risks are confirmed worsening or recurring."
+        )
+
+        key_points = _clean_list(key_points)[:5]
+        if not key_points:
+            key_points = _clean_list([_risk_group_point(e, e.get("trajectory") or "tracked") for e in groups["other"]])[:3]
+
+        if not key_points:
+            return _build_generic_not_supported_answer(source_bundle, business_journey_payload=business_journey_payload, products_services_payload=products_services_payload, question=question)
+
+        progression = _risk_progression(source_bundle)
+        return _draft(
+            answer_status="supported",
+            simple_answer=simple_answer,
+            why_it_matters="Worsening and recurring risks are the most reliable signals of what could pressure the thesis — not all risks carry equal weight.",
+            key_points=key_points,
+            detailed_explanation=(
+                "Trajectory-confirmed risks are grouped by direction. Worsening risks are actively deteriorating; "
+                "recurring risks have persisted across multiple periods. Improving risks are noted separately — "
+                "they are receding but not resolved. Risks without confirmed trajectory have unknown financial consequence "
+                "and are not listed as thesis-breakers."
+            ),
+            evidence_status="direct",
+            evidence_summary="Sourced from canonical risk assessments with trajectory routing from risk evolution data.",
+            evidence_points=key_points[:3],
+            uncertainty=uncertainty,
+            products_refs=[],
+            business_journey_ref=None,
+            progression=progression,
+        )
+
+    # Fallback: no canonical risk_assessments — use legacy committee/lens sources
     risks = [_strip_backend_phrasing(_clean_display_phrase(item, limit_words=18)) for item in _risk_texts(source_bundle)[:4]]
     if not risks:
         return _build_generic_not_supported_answer(source_bundle, business_journey_payload=business_journey_payload, products_services_payload=products_services_payload, question=question)
@@ -4272,7 +4385,74 @@ def _build_committee_disagree_answer(source_bundle: Dict[str, Any], *, business_
 
 # ── P3D: Regulatory Risk ──────────────────────────────────────────────────────
 
+_REGULATORY_KEYWORDS = frozenset(
+    ["governance", "regulatory", "compliance", "legal", "tax", "irs", "fda", "sebi", "rbi", "license", "permit"]
+)
+
+
+def _is_regulatory_entry(entry: Dict[str, Any]) -> bool:
+    name = (
+        (entry.get("risk_name") or "") + " " +
+        (entry.get("evo_canonical_id") or "") + " " +
+        (entry.get("current_status") or "")
+    ).lower()
+    return any(kw in name for kw in _REGULATORY_KEYWORDS)
+
+
 def _build_regulatory_risks_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
+    groups = _canonical_risk_groups(source_bundle)
+    has_canonical = any(groups[k] for k in ("worsening", "improving", "recurring", "other"))
+
+    if has_canonical:
+        all_canonical = groups["worsening"] + groups["recurring"] + groups["improving"] + groups["other"]
+        regulatory = [e for e in all_canonical if _is_regulatory_entry(e)]
+        if not regulatory:
+            # No regulatory-specific risks in canonical data — report all by trajectory instead
+            regulatory = groups["worsening"][:3] + groups["recurring"][:2]
+
+        key_pts: List[str] = []
+        for entry in regulatory[:5]:
+            traj = entry.get("trajectory") or "tracked"
+            pt = _risk_group_point(entry, traj)
+            if pt:
+                key_pts.append(pt)
+
+        worsening_count = sum(1 for e in regulatory if e.get("trajectory") == "worsening")
+        recurring_count = sum(1 for e in regulatory if e.get("trajectory") == "recurring")
+        unknown_count = sum(1 for e in regulatory if not e.get("trajectory"))
+        simple = (
+            f"{len(regulatory)} regulatory or governance risk(s) tracked; "
+            f"{worsening_count} worsening, {recurring_count} recurring."
+        )
+        uncertainty_parts = []
+        if unknown_count:
+            uncertainty_parts.append(f"{unknown_count} have no confirmed trajectory — direction and financial consequence unknown.")
+        uncertainty = (
+            " ".join(uncertainty_parts) or
+            "Regulatory outcomes can change quickly after a consent decree, enforcement action, or response letter."
+        )
+        if not key_pts:
+            return _build_unavailable_answer(question, "No active regulatory or governance risks are currently tracked.", "Canonical risk assessments are present but no regulatory themes are identified.", "")
+        return _draft(
+            answer_status="supported",
+            simple_answer=simple.strip(),
+            why_it_matters="Active regulatory risks can create forced remediation costs, market access restrictions, or reputational damage that impairs the investment case.",
+            key_points=key_pts,
+            detailed_explanation=(
+                f"{len(regulatory)} regulatory-class risk(s) tracked in canonical assessments. "
+                "Worsening risks are actively deteriorating; recurring risks have persisted across periods. "
+                "Risks without confirmed trajectory have unknown financial consequence."
+            ),
+            evidence_status="direct",
+            evidence_summary="Sourced from canonical risk assessments with trajectory routing from risk evolution data.",
+            evidence_points=key_pts[:2],
+            uncertainty=uncertainty,
+            products_refs=[],
+            business_journey_ref=None,
+            interpretation={"conclusion": simple.strip(), "thesis_impact": "weakens" if worsening_count > 0 else "neutral"},
+        )
+
+    # Fallback: use gold_risk_evolution when canonical assessments unavailable
     risk_evo = _source_payload(source_bundle, "gold_risk_evolution")
     if not risk_evo:
         return _build_unavailable_answer(question, "Risk evolution timeline is not available.", "Regulatory risk analysis requires the gold_risk_evolution artifact.", "")
@@ -4287,15 +4467,13 @@ def _build_regulatory_risks_answer(source_bundle: Dict[str, Any], *, business_jo
     ][:5]
     if not regulatory_active:
         return _build_unavailable_answer(question, "No active regulatory or governance risks are currently tracked.", "The risk evolution timeline is present but shows no WORSENING or RECURRING regulatory themes.", "")
+
     def _safe_risk_text(raw: str) -> str:
-        # Strip trailing truncation artifacts and internal enum markers before using text
         cleaned = re.sub(r"[.…]+$", "", raw.strip())
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
-        if len(cleaned) < 10:
-            return ""
-        return cleaned
+        return cleaned if len(cleaned) >= 10 else ""
 
-    key_pts: List[str] = []
+    key_pts = []
     for t in regulatory_active[:4]:
         theme = _get_string(t, "theme")
         state = str(t.get("current_state") or "").upper()
@@ -4604,6 +4782,51 @@ def _risk_texts(source_bundle: Dict[str, Any]) -> List[str]:
     for lens_key in ("buffett_analysis", "graham_analysis", "munger_analysis"):
         risks.extend(_get_string_list(_source_payload(source_bundle, lens_key), "red_flags"))
     return _clean_list(risks)
+
+
+def _canonical_risk_groups(source_bundle: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """Group canonical risk assessments by trajectory for investor-facing synthesis.
+
+    Returns {worsening, improving, recurring, other} — each a list of dicts with
+    risk_name, current_status, trajectory, why_it_changed, evo_canonical_id.
+    Empty if risk_assessments source is unavailable.
+    """
+    ra = _source_payload(source_bundle, "risk_assessments")
+    assessments = _get_record_list(ra, "assessments")
+    groups: Dict[str, List[Dict[str, Any]]] = {
+        "worsening": [], "improving": [], "recurring": [], "other": []
+    }
+    for a in assessments:
+        trajectory = a.get("trajectory") or ""
+        entry = {
+            "risk_name": _get_string(a, "risk_name") or _get_string(a, "risk_id"),
+            "current_status": _get_string(a, "current_status"),
+            "trajectory": trajectory,
+            "why_it_changed": _get_string(a, "why_it_changed"),
+            "what_changed": _get_string(a, "what_changed"),
+            "evo_canonical_id": _get_string(a, "evo_canonical_id"),
+            "investor_implication": _get_string(a, "investor_implication"),
+        }
+        if trajectory == "worsening":
+            groups["worsening"].append(entry)
+        elif trajectory == "improving":
+            groups["improving"].append(entry)
+        elif trajectory == "recurring":
+            groups["recurring"].append(entry)
+        else:
+            groups["other"].append(entry)
+    return groups
+
+
+def _risk_group_point(entry: Dict[str, Any], label: str) -> str:
+    """Format a single risk entry as an investor-facing key point."""
+    name = _clean_display_phrase(entry.get("risk_name") or "", limit_words=8)
+    why = _clean_display_phrase(entry.get("why_it_changed") or entry.get("what_changed") or "", limit_words=20)
+    if name and why:
+        return f"{name} ({label}): {why}"
+    if name:
+        return f"{name} ({label})"
+    return ""
 
 
 def _unknown_texts(items: List[Dict[str, Any]]) -> List[str]:
