@@ -1,5 +1,107 @@
 # Session Log
 
+## 2026-09-06 (POST-ENG-105 Coherent Production Rebuild)
+
+- Date: 2026-09-06
+- Closure gate: **POST_ENG105_COHERENT_PRODUCTION_REBUILD_CLOSED**
+
+### Mission
+
+Verify and rebuild all Sun Pharma investor-facing artifacts (Panel: all 5 analysts, Committee, Ask IntrinsicIQ) so every consumption surface reasons from current ENG-105 Phase 2/3 capital allocation intelligence. Core coherence question: "If an investor opens Prometheus right now, are Ask, the five investor lenses, and the Committee all reasoning from the same current ENG-105 capital-allocation truth — with no stale pre-ENG-105 causal claim surviving anywhere in the chain?"
+
+Hard constraints honored: REBUILD → VERIFY → PROVE COHERENCE only. No new capital allocation development, no new Ask development, no new Panel reasoning, no new Committee logic. "Do NOT calculate a score." "Do NOT propose the next engineering mission."
+
+### Pre-Rebuild State (Stale)
+
+All investor-facing artifacts were pre-ENG-105 at session start:
+- Answer cards (`2026-09-06T07:16:39`) — Gold was `"used_as": "primary"`, 5 tracked allocations, "1 mixed; 2 unproven"
+- Buffett analysis — "Insufficient direct evidence is available to make a confident investment lens-specific assessment."
+- Committee `critical_unknowns: []` — no capital allocation gap surfaced
+
+### Rebuild Sequence
+
+1. **Gold stale tracker audit**: `gold/capital_allocation_outcome_tracker.json` (2026-09-04T08:49:49) contains causal violation: `ORGANIC_CAPEX financial_outcome = "Revenue growth +11.2%"`. Contained: `_compact_gold_stream()` exposes only `return_status` label ("mixed return signals"), NOT the `financial_outcome` string. Active Ask path (`_build_capital_allocation_answer()` at line 3626) reads Phase 3 first, does not use Gold for core output.
+2. **Phase 4 consumer code verified**: `_build_capital_allocation_answer()` at `answer_cards.py:3626` reads Phase 3 longitudinal profile first. Dead definition at line 2443 shadowed by active version. `source_priorities["how-is-capital-allocated"]` puts Phase 3 first, Gold last.
+3. **Panel regenerated**: All 5 analysts + committee written. `python pipelines/run_company_pipeline.py sun_pharma --stage panel --regenerate-analysts`
+4. **Ask regenerated**: `python pipelines/run_company_pipeline.py sun_pharma --stage ask_intrinsiciq` → 27 supported answers.
+
+### Step 16 — Freshness Table
+
+| Artifact | Generated | Dependency generated | Fresh? |
+|---|---|---|---|
+| Phase 2 capital_allocation_outcomes.json | 2026-09-06T08:30:04Z | pre-existing Phase 1 | CURRENT |
+| Phase 3 capital_allocation_longitudinal_profile.json | 2026-09-06T08:30:04Z | same run as Phase 2 | CURRENT |
+| graham_analysis.json | 2026-09-06T09:20:17Z | Phase 3: 08:30:04Z | FRESH ✓ |
+| buffett_analysis.json | 2026-09-06T09:21:22Z | Phase 3: 08:30:04Z | FRESH ✓ |
+| fisher_analysis.json | 2026-09-06T09:22:05Z | Phase 3: 08:30:04Z | FRESH ✓ |
+| munger_analysis.json | 2026-09-06T09:22:56Z | Phase 3: 08:30:04Z | FRESH ✓ |
+| lynch_analysis.json | 2026-09-06T09:23:43Z | Phase 3: 08:30:04Z | FRESH ✓ |
+| committee_synthesis.json | 2026-09-06T09:23:45Z | Analysts: 09:20–09:23 | FRESH ✓ |
+| answer_cards.json | 2026-09-06T09:24:58Z | Phase 3 + Panel: all 09:20+ | FRESH ✓ |
+| gold CA tracker | 2026-09-04T08:49:49Z | N/A — STALE | STALE (monitored, contained) |
+
+All investor-facing artifacts post-date Phase 2/3 inputs by ~50–55 min. No timestamp inversions.
+
+### Step 17 — Version Coherence
+
+No hash fields in artifacts; `generated_at` is the version marker. All 9 investor-facing artifacts produced in a 4:41 window (09:20:17–09:24:58). Committee (09:23:45) post-dates all analysts. Answer cards (09:24:58) post-date committee. **Version coherence: CONFIRMED.**
+
+### Step 18 — Validation Matrix
+
+| Layer | Validation | Warning reason | Integrity blocker? |
+|---|---|---|---|
+| Phase 2 | PASS | None | No |
+| Phase 3 | PASS (0 violations) | None | No |
+| All 5 analysts | WARNING | Evidence grounding warnings (routing, not invalid IDs) | No |
+| Committee synthesis | PASS | None | No |
+| Ask answer_cards | 27 supported, 6 partial | Basis gaps | No |
+| ENG-104 provenance | CLEAN | 0 invalid IDs, 0 routing repairs — better than 61 baseline | No |
+| Gold CA tracker | STALE (monitored) | Not regenerated; causal violation does not propagate | No |
+
+### Step 19 — Cross-Company Smoke Tests
+
+| Company | Phase 3 selected? | Skill | Phase 2 fallback? |
+|---|---|---|---|
+| Tanla | Yes (phase3=True) | OUTCOMES_MOSTLY_UNVERIFIED | — |
+| DataPatterns | No (phase3=False) | N/A | Yes (fallback=True, explicit note) |
+
+### Step 20 — Before/After Comparison
+
+**BEFORE** (stale pre-ENG-105):
+- Ask capital allocation: Gold as `"used_as": "primary"`. "5 tracked allocations: 2 returned; 1 mixed; 2 unproven."
+- Buffett: "Insufficient direct evidence is available to make a confident investment lens-specific assessment."
+- Committee `critical_unknowns: []`.
+
+**AFTER** (current post-ENG-105):
+- Ask capital allocation: Phase 3 as `"used_as": "primary"`. 27 supported answers. 9 events, 100% amount coverage, OUTCOMES_MOSTLY_UNVERIFIED, causal diligence questions.
+- Buffett: "Active capital allocation documented...acquisition success is **unproven**...valuation of those allocations is **not attributed** to operating outcomes."
+- Committee `critical_unknowns` includes: "capital allocation (acquisitions and organic capex) lacks linked operating metrics..."
+
+**Classification**: `GENUINE_NEW_INTELLIGENCE_SURFACED` — investors now receive ENG-105 Phase 2/3 causal attribution semantics in all three consumption surfaces.
+
+### Adversarial Test (Step 10 / Step 15)
+
+Gold causal contamination search (Step 15): `OLD_GOLD_CAUSAL_CONTAMINATION_PRESENT = NO`. Hit on "acquisition success is unproven" resolved as FALSE POSITIVE — this is the CORRECT Phase 3 conclusion, not Gold contamination. No analyst says "mixed returns" for capex. Gold stale "mixed return signals" label did NOT contaminate any analyst output.
+
+### Baseline History
+
+- Reality Audit 63/100 = `HISTORICAL_MIXED_GENERATION_POST_ENG105_DIAGNOSTIC`. NOT a comparator baseline. Taken during mixed-generation state (Panel/Committee/Ask stale; Phase 2/3 current).
+- Comparator baseline remains: `61_BASELINE_PROVENANCE_IDENTITY_CLEAN`.
+- New coherent baseline: `SUN_PHARMA_POST_ENG105_COHERENT_BASELINE_READY` (2026-09-06, all investor artifacts from Phase 3 data, ENG-104 provenance clean, 0 routing repairs).
+
+### 28-Condition Closure Check
+
+All 28 conditions satisfied:
+1–5: Phase 2/3 artifacts valid; consumer code reads Phase 3 first; protected_streams wired ✓
+6–10: All 5 analysts regenerated; committee regenerated; Ask regenerated; Phase 3 primary; no path prefers Gold ✓
+11–17: ENG-104 clean; Gold causal violation contained; Buffett "unproven"; no contamination; committee unknown surfaces CA; Ask shows OUTCOMES_MOSTLY_UNVERIFIED; cross-company smoke tests pass ✓
+18–22: Freshness table clean; no timestamp inversions; before/after material change confirmed; diligence questions present; committee critical_unknowns present ✓
+23–28: Pre-rebuild 61/61 pass; Gold monitored not blocked; 63 classified correctly; 61 comparator unchanged; no new development introduced; rebuild-only discipline maintained ✓
+
+**Verdict: POST_ENG105_COHERENT_PRODUCTION_REBUILD_CLOSED**
+
+---
+
 ## 2026-09-06 (ENG-105 Phase 4 — Capital Allocation Investor Consumption Integration)
 
 - Date: 2026-09-06
