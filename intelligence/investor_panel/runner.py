@@ -417,6 +417,31 @@ BLOCKED_FINANCIAL_WARNING_REWRITES = {
     "ownership missing": "Ownership/shareholding data is invalid or quarantined and should not be used downstream.",
     "cfo/pat missing": "CFO and PAT may be present, but cash-conversion durability remains limited by coverage or reconciliation quality.",
 }
+# ENG-114: Primary investor series — basis truth is defined by these metrics.
+# Basis issues with any of these are PRIMARY series issues (cannot be suppressed).
+_PRIMARY_FINANCIAL_SERIES: frozenset = frozenset({
+    "revenue", "pat", "profit_after_tax", "cfo", "capex", "eps",
+    "eps_basic", "eps_diluted", "net_profit", "profit", "earnings",
+    "cash_from_operations", "operating_cash",
+})
+
+# ENG-114: Secondary metric signals — basis issues here do not downgrade primary series basis.
+_SECONDARY_FINANCIAL_METRIC_SIGNALS: Tuple[str, ...] = (
+    "payable", "receivable", "inventory", "cost_of_material", "employee_cost",
+    "other_expense", "finance_cost", "ebitda", "ebit", "working_capital",
+    "dividend", "buyback", "depreciation", "amortization",
+    "balance_sheet", "nwc", "debtors", "creditors", "opex", "book_value",
+)
+
+# ENG-114: Document-structure phrases that signal secondary basis conflict (resolver already handled these).
+_DOCUMENT_STRUCTURE_BASIS_PHRASES: Tuple[str, ...] = (
+    "available only in standalone",
+    "was not promoted into preferred",
+    "mismatch across financial reported information",
+    "mismatch across financial artifacts",
+    "both standalone and consolidated",
+)
+
 INVALID_SECTION_NAME_EVIDENCE_IDS = ROUTER_SECTION_NAME_DENYLIST
 FINANCIAL_LIMITATION_PATTERNS = (
     ("fcf_missing", ("free cash flow", "fcf"), "Free cash flow is unavailable or not supplied in the current PCIM."),
@@ -1411,20 +1436,69 @@ def _collect_financial_warnings(selected_pcim: Dict[str, Any], sections: List[st
 
 
 def _collect_financial_basis(selected_pcim: Dict[str, Any], sections: List[str]) -> str:
+    """Derive the canonical primary-series basis from PCIM evidence.
+
+    Returns "consolidated", "standalone", "mixed", or "unknown".
+    "mixed" means the evidence contains multiple distinct non-unknown basis values
+    or a resolved value co-exists with unknown years — indicating genuine cross-year
+    inconsistency or partial resolution.  Secondary-metric basis issues do NOT affect
+    this value; it reflects the primary investor series only.
+    """
+    all_bases: set = set()
     for section in _financial_sections_for_doctrine(sections):
         payload = selected_pcim.get(section) or {}
         if not isinstance(payload, dict):
             continue
         for key in ("basis", "basis_used"):
-            value = str(payload.get(key) or "").strip()
+            value = str(payload.get(key) or "").strip().lower()
             if value:
-                return value
+                all_bases.add(value)
         for bucket in payload.get("by_year", []) or []:
             if isinstance(bucket, dict):
-                value = str(bucket.get("basis") or bucket.get("basis_used") or "").strip()
+                value = str(bucket.get("basis") or bucket.get("basis_used") or "").strip().lower()
                 if value:
-                    return value
-    return "unknown"
+                    all_bases.add(value)
+    # Always-present fallback: multi_year_financial_inputs carries company-level basis summary.
+    myi = selected_pcim.get("multi_year_financial_inputs") or {}
+    if isinstance(myi, dict):
+        value = str(myi.get("basis_used") or "").strip().lower()
+        if value:
+            all_bases.add(value)
+
+    non_unknown = {b for b in all_bases if b not in ("unknown", "")}
+    if not non_unknown:
+        return "unknown"
+    # Cross-year inconsistency: resolved years conflict, or some years are unresolved.
+    if len(non_unknown) > 1 or "unknown" in all_bases:
+        return "mixed"
+    return next(iter(non_unknown))
+
+
+def _is_secondary_metric_basis_warning(warning: str) -> bool:
+    """True if this basis warning applies only to secondary metrics, not the primary series.
+
+    When primary basis is resolved (consolidated or standalone), secondary warnings
+    should stay visible in `allowed_warnings` but must NOT be promoted to
+    `interpretation_limits` where they would mislead analysts about primary basis.
+    """
+    lowered = str(warning or "").lower()
+    # Not a basis warning at all.
+    if not any(tok in lowered for tok in ("basis", "standalone", "consolidated")):
+        return False
+    # Mentions a primary metric as a whole word → not a secondary warning.
+    # Uses word boundaries so "profit_and_loss.cost_of_materials" does not match "profit".
+    for metric in _PRIMARY_FINANCIAL_SERIES:
+        if re.search(r'\b' + re.escape(metric) + r'\b', lowered):
+            return False
+    # Mentions a known secondary metric → secondary warning.
+    for signal in _SECONDARY_FINANCIAL_METRIC_SIGNALS:
+        if signal in lowered:
+            return True
+    # Document-structure phrase → resolver already chose primary basis; this is context only.
+    for phrase in _DOCUMENT_STRUCTURE_BASIS_PHRASES:
+        if phrase in lowered:
+            return True
+    return False
 
 
 def _normalize_financial_truth_list(value: Any) -> List[str]:
@@ -1644,7 +1718,7 @@ def _derive_financial_context(selected_pcim: Dict[str, Any], sections: List[str]
             if not metric_flags["has_diluted_shares"]:
                 missing_data.append("diluted shares missing")
                 interpretation_limits.append("Per-share analysis is limited because diluted share count is missing.")
-    if basis_used == "unknown" and any("basis" in warning.lower() for warning in warnings):
+    if basis_used in ("unknown", "mixed") and any("basis" in warning.lower() for warning in warnings):
         interpretation_limits.append("Financial basis remains unknown or unclear.")
     payables_signals_present = (
         not _section_empty(selected_pcim.get("working_capital_inputs"))
@@ -1661,10 +1735,17 @@ def _derive_financial_context(selected_pcim: Dict[str, Any], sections: List[str]
     ):
         interpretation_limits.append("cash conversion cycle unavailable")
 
+    # ENG-114: Only escalate basis warnings to interpretation_limits when they affect the
+    # primary series.  When primary basis is resolved (consolidated/standalone), secondary-
+    # metric basis warnings stay in allowed_warnings but must not pollute interpretation_limits.
+    _primary_basis_resolved = basis_used not in ("unknown", "mixed", "")
     for warning in truth_pack["allowed_financial_warnings"]:
         lowered = warning.lower()
         if "share count missing" in lowered and metric_flags["has_any_share_count"]:
             continue
+        if any(tok in lowered for tok in ("basis", "standalone", "consolidated", "comparability")):
+            if _primary_basis_resolved and _is_secondary_metric_basis_warning(warning):
+                continue  # secondary metric — stays in warnings, not interpretation_limits
         if any(token in lowered for token in ("basis", "share count", "weighted average shares", "diluted shares", "comparability", "fcf", "capex", "debt", "dilution", "qip", "payables", "payable days", "cash conversion cycle")):
             interpretation_limits.append(warning)
 
@@ -1700,17 +1781,25 @@ def _financial_instruction_block(doctrine_id: str) -> List[str]:
         "- Mention missing financial data explicitly as limitations.",
         "- Never hide uncertainty, never give buy/sell/hold, and never use valuation language.",
         "- Do not treat dividends, related-party advances, or governance ambiguity as automatic condemnation without context from supplied evidence.",
+        # ENG-114: basis authority rule — prevents secondary warnings from overriding primary basis.
+        "- `financial_assessment.primary_financial_basis.basis` is the canonical authority for statements "
+        "about whether the primary financial series (revenue, PAT, CFO, capex, EPS) is consolidated, "
+        "standalone, or unclear. Secondary metric limitations listed in `financial_interpretation_limits` "
+        "apply only to those specific metrics; they must NOT be generalized as overall basis uncertainty.",
     ]
     doctrine_specific = {
         "graham": [
             "- Focus on balance-sheet strength, debt/equity, net cash or debt, cash conversion, dividend safety, working-capital risk, and reconciliation or audit warnings.",
-            "- If share count, FCF, capex, basis, or debt mapping is missing or warning-heavy, say so explicitly.",
+            "- If share count, FCF, capex, or debt mapping is missing or warning-heavy, say so explicitly.",
             "- Do not treat dividends as a red flag by default.",
             "- If dividend or distribution evidence lacks cash-flow and leverage context, describe the limitation rather than forcing a harsher conclusion.",
         ],
         "buffett": [
             "- Focus on ROE, ROCE, ROA, profitability durability, cash conversion quality, balance-sheet strength, FCF readiness, capital allocation, and per-share economics.",
             "- If FCF or capex is missing, say owner-earnings readiness cannot be assessed rather than inferring it.",
+            # ENG-114: owner-earnings precision is limited by capex SPLIT, not by basis when basis is resolved.
+            "- Owner earnings precision is limited solely by the maintenance-versus-growth capex split being "
+            "undisclosed — NOT by basis ambiguity when `primary_financial_basis.basis` is consolidated or standalone.",
         ],
         "fisher": [
             "- Focus on revenue growth, PAT growth, EPS growth, margin expansion or compression, reinvestment intensity, working-capital build-up, and whether growth looks healthy or cash-consuming.",
@@ -1889,9 +1978,19 @@ def _deterministic_panel_output(
             [f"Missing financial section: {section}" for section in financial_missing_sections]
             + list(financial_context["missing_data"])
         )),
+        # ENG-114: Do NOT dump all financial_warnings into financial_interpretation_limits.
+        # Properly-scoped limits already live in financial_context["interpretation_limits"].
+        # Only add non-secondary-basis warnings from financial_warnings to avoid flooding the
+        # analyst prompt with secondary-metric basis issues that do not affect the primary series.
         "financial_interpretation_limits": list(dict.fromkeys(
             list(financial_context["interpretation_limits"])
-            + financial_warnings
+            + [
+                w for w in financial_warnings
+                if not (
+                    financial_context.get("basis_used", "unknown") not in ("unknown", "mixed", "")
+                    and _is_secondary_metric_basis_warning(w)
+                )
+            ]
             + (
                 ["No compact financial PCIM sections were provided for this doctrine."]
                 if not financial_context["financial_sections_consumed"]
@@ -1903,6 +2002,17 @@ def _deterministic_panel_output(
         "financial_assessment": {
             "financials_used": financial_context["financials_used"],
             "basis_used": financial_context["basis_used"],
+            # ENG-114: canonical primary-series basis — authoritative for revenue, PAT, CFO, capex, EPS.
+            # Secondary metric limitations listed separately do not affect this assessment.
+            "primary_financial_basis": {
+                "basis": financial_context["basis_used"],
+                "scope": "primary_investor_series",
+                "confidence": (
+                    "high" if financial_context["basis_used"] == "consolidated" else
+                    "resolved" if financial_context["basis_used"] == "standalone" else
+                    "unresolved"
+                ),
+            },
             "key_financial_strengths": [],
             "key_financial_concerns": [
                 f"Missing financial section: {section}" for section in financial_missing_sections
@@ -1910,6 +2020,10 @@ def _deterministic_panel_output(
             "financial_red_flags": [
                 warning for warning in financial_warnings
                 if any(token in warning.lower() for token in ("debt", "dilution", "comparability", "basis", "fcf", "capex"))
+                and not (
+                    financial_context.get("basis_used", "unknown") not in ("unknown", "mixed", "")
+                    and _is_secondary_metric_basis_warning(warning)
+                )
             ],
             "missing_financial_data": list(financial_context["missing_data"]),
             "financial_interpretation_limits": list(financial_context["interpretation_limits"]),
@@ -1996,6 +2110,9 @@ def _selected_pcim_view(pcim: Dict[str, Any], sections: List[str]) -> Dict[str, 
         "financial_panel_limited_domains",
         "financial_panel_blocked_domains",
         "investor_financial_questions",
+        # ENG-114: always include so _collect_financial_basis can resolve primary basis
+        # for all doctrines, including those that do not explicitly request this section.
+        "multi_year_financial_inputs",
     }
     for section in sections:
         if section == "evidence_map":
@@ -5373,6 +5490,8 @@ FINANCIAL_WARNING_PROVENANCE_ACTIVE = {
     "active_precision_limitation",
     "active_basis_limitation",
     "active_per_share_limitation",
+    # ENG-114: secondary-metric basis issues (payables, cost lines, etc.) — scoped to those metrics only.
+    "secondary_metric_basis_limitation",
 }
 
 
@@ -5381,6 +5500,9 @@ def _classify_financial_warning_provenance(text: str) -> str:
     if not lowered:
         return "active_precision_limitation"
     if any(token in lowered for token in ("basis", "standalone", "consolidated", "comparability")):
+        # ENG-114: distinguish secondary-metric basis issues from primary-series basis issues.
+        if _is_secondary_metric_basis_warning(text):
+            return "secondary_metric_basis_limitation"
         return "active_basis_limitation"
     if any(
         token in lowered

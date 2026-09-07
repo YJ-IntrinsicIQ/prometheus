@@ -1,5 +1,98 @@
 # Session Log
 
+## 2026-09-06 (ENG-111A — Commitment Execution Identity Contract Hardening)
+
+- Date: 2026-09-06
+- Sprint: ENG-111A
+- Closure gate: **ENG_111A_EXPLICIT_COMMITMENT_EXECUTION_IDENTITY_CONTRACT_CLOSED**
+
+### Mission
+
+Harden ENG-111 Phase 1 by removing lifecycle authority from the heuristic matching that powered `commitment_execution_links`. The ENG-111 bridge used 57-word exclusion set + ≥3 token overlap + ≥0.7 overlap ratio — constituting heuristic similarity, not canonical identity. Decisive question answered: "If every token-overlap score, stopword list, and semantic heuristic disappeared tomorrow, would Prometheus still be able to prove that this exact execution item belongs to this exact management commitment using stable canonical identity alone?" — **NO** for MC-0039 ↔ PJ-0018 (both from page 70, but through different intermediate artifacts with no shared canonical source_item_id, and safe normalization of `topic` ≠ `normalized_name`). Outcome B applies.
+
+### Forensic Verdict
+
+`EXPLICIT_IDENTITY_NOT_PRESENT` for MC-0039 ↔ PJ-0018:
+- MC-0039: `source_item_id = "management_summary.json:10"`, topic = "Centralised Dashboard House"
+- PJ-0018: `source_item_id = "projects_00003"`, normalized_name = "Centralised dashboard and in-house app..."
+- No `canonical_initiative_id` on either record. Safe normalization produces distinct strings.
+
+### Fix (4 files)
+
+1. **`intelligence/projects/builder.py`**: Renamed `_build_commitment_execution_links` → `_discover_candidate_commitment_links`. Field renamed `commitment_execution_links` → `candidate_commitment_links`. Each link now carries `relationship_authority: "CANDIDATE_ONLY"`, `relationship_type: "HEURISTIC_NAMED_INITIATIVE_OVERLAP"`, `relationship_confidence: "LOW"`. `related_commitment_ids` is no longer overwritten from heuristic results.
+
+2. **`knowledge/management_progression/producer.py`**: REMOVED `_events_from_project_execution_links()` method and its call from `_collect_events()`. No MP execution events are emitted from heuristic links. Secondary join in `_commitment_lifecycle_index()` remains as correct future contract (no-op until `canonical_commitment_reference` field added by upstream LLM extraction).
+
+3. **`tests/intelligence/test_eng111_commitment_execution_bridge.py`**: Rewrote 17 A-L tests + added Tests M and N. All verify CANDIDATE_ONLY authority, HEURISTIC_* relationship type, LOW confidence, no lifecycle advancement.
+
+4. **`tests/intelligence/test_projects.py`**: Updated `test_project_links_to_valid_management_commitment` — asserts `related_commitment_ids == []` and `candidate_commitment_links == []` for generic-vocabulary project.
+
+### Production Results (Sun Pharma)
+
+| Metric | ENG-111 | ENG-111A |
+|--------|---------|---------|
+| MC-0039 Gold status | `in_progress / ACTION_STARTED` | `null / null` (UNVERIFIED) |
+| PJ-0018 `commitment_execution_links` | Present (HIGH confidence) | ABSENT |
+| PJ-0018 `candidate_commitment_links` | — | Present (CANDIDATE_ONLY, LOW) |
+| PJ-0018 `related_commitment_ids` | `["MC-0039"]` (heuristic override) | `[]` |
+| HEURISTIC_MATCHING_IN_LIFECYCLE_AUTHORITY_PATH | 1 | **0** |
+
+Cross-company: Tanla / Ujjivan → 0 authority violations, 0 old exec_link fields.
+
+### Tests
+
+76 tests pass (19 ENG-111A bridge tests + 57 prior).
+
+---
+
+## 2026-09-06 (ENG-111 Phase 1 — Canonical Commitment→Execution Bridge)
+
+- Date: 2026-09-06
+- Sprint: ENG-111
+- Closure gate: **ENG_111_PHASE_1_CANONICAL_COMMITMENT_EXECUTION_BRIDGE_CLOSED**
+
+### Mission
+
+Build a deterministic, attributable bridge from a canonical Management Commitment (MC) to a real Project/Capacity execution item so Management Progression can consume execution truth without fuzzy thematic inference. Decisive question: "When Prometheus already has structured evidence that a named project actually progressed, can it deterministically connect that execution back to the exact management commitment that originated it — using stable identity rather than thematic similarity — and advance only the execution portion of the promise without inventing completion, economic success, or financial outcomes?"
+
+### Root Cause Chain
+
+| Defect | Location | Impact |
+|--------|----------|--------|
+| `_link_commitments()` token-overlap scoring | `intelligence/projects/builder.py` | PJ-0002/0003/0006 each had 29 MC links — UNSAFE for lifecycle |
+| PJ-0018 linked to MC-0007 (wrong MC) | projects_registry.json | MC-0039 (centralised dashboard) never received execution credit |
+| `_group_events()` only used `_theme_hint` for `multi_source_longitudinal` stream | `knowledge/management_progression/producer.py` | Commitment and project events produced different `theme_key` → separate MP items |
+| `_commitment_lifecycle_index()` only joined via `role="commitment"` event_id | `intelligence/management_promises/builder.py` | Execution events never carried commitment_fingerprint → no Gold lifecycle join |
+
+### Fix (4 files)
+
+1. **`intelligence/projects/builder.py`**: Replaced `_link_commitments()` with `_build_commitment_execution_links()`. Algorithm: `_named_initiative_words()` strips 57-word exclusion set, then requires ≥3 specific words overlap AND overlap_ratio≥0.7. Produces structured `commitment_execution_links` with `commitment_fingerprint`. Adds `import re`.
+
+2. **`knowledge/management_progression/producer.py`**: Added `_events_from_project_execution_links()` — reads HIGH-PRECISION links from projects_registry, emits execution events with `commitment_fingerprint` as public field and `_theme_hint=f"fp:{fp}"`. Updated `_events_from_commitments()` to set `_theme_hint=f"fp:{fp}"`. Updated `_group_events()` to honour `_theme_hint` for ALL stream types. Wired into `_collect_events()`.
+
+3. **`intelligence/management_promises/builder.py`**: Extended `_commitment_lifecycle_index()` — secondary join on `event.get("commitment_fingerprint")` for all events.
+
+4. **`tests/intelligence/test_eng111_commitment_execution_bridge.py`**: 17 adversarial tests A-L.
+
+### Production Results (Sun Pharma)
+
+| Metric | Before | After |
+|--------|--------|-------|
+| HIGH-PRECISION links total | 0 | 1 (MC-0039 ↔ PJ-0018) |
+| Broad contamination (PJ-0002) | 29 links | 0 |
+| MP items with both commitment+execution | 0 | 1 (`MP-0028-a91fac39...`) |
+| MC-0039 `progression_status` in Gold | None/absent | `in_progress` |
+| MC-0039 `execution_status` in Gold | None | `ACTION_STARTED` |
+| MC-0039 `evidence_ids` includes project evidence | No | Yes (`ev_projects_p70_00003`) |
+
+Cross-company: Tanla / Data Patterns / Ujjivan → 0 HIGH-PRECISION links (correct).
+
+### Tests
+
+73 tests pass: 17 new adversarial + 56 prior. 40 pre-existing collection errors in broader suite are unrelated to this work.
+
+---
+
 ## 2026-09-06 (ENG-109 — Canonical Risk Identity & Trajectory Routing)
 
 - Date: 2026-09-06
@@ -7309,3 +7402,73 @@ Continuation from BLOCKED state. Blocker was PCIM staleness (resolved prior sess
 - `companies/sun_pharma/company_memory/ask_intrinsiciq/` — all 8 Ask artifacts
 
 **`ENG_110_PHASE_2_PANEL_AND_PRODUCTION_PROPAGATION_CLOSED`** — 2026-09-06
+
+---
+
+## ENG-112 — 2026-09-07
+
+**DEFER_CANONICAL_INITIATIVE_IDENTITY_BRIDGE**
+
+Forensic audit of canonical initiative identity bridging across multi-year company memory. Finding: 3.3% MC coverage rate with no Class A (exact) identities; all current links are heuristic candidate-only (from ENG-111A). Verdict: insufficient canonical identity infrastructure to proceed with bridge. Deferred — no code changes.
+
+**`ENG_112_CANONICAL_INITIATIVE_IDENTITY_BRIDGE_DEFERRED`** — 2026-09-07
+
+---
+
+## ENG-113 — 2026-09-07
+
+**FINANCIAL_BASIS_MIXED_LIMITATION forensic audit**
+
+Forensic audit of Sun Pharma financial basis routing. Decisive finding: primary metrics (revenue, PAT, CFO, capex, EPS) are correctly tagged `consolidated` through PCIM `multi_year_financial_inputs.basis_used = "consolidated"` and `financial_quality_inputs.by_year` (7 periods, all consolidated). The defect is in the investor panel routing layer: 15 secondary-metric basis warnings (payables standalone, cost_of_materials standalone, etc.) flood `financial_interpretation_limits` and cause LLM analysts to emit `financial_assessment.basis_used = "unknown"` overriding the correct consolidated primary basis.
+
+**ENG-113 governance correction**: SESSION_LOG and BACKLOG were read fresh; ATLAS.md and PROMETHEUS_INTELLIGENCE_MANIFESTO.md were NOT read fresh before the ENG-113 governance closure claim. ENG-113 closure claim was therefore overstated procedurally. ENG-113 substantive forensic findings remain fully valid. Governance read fresh as of 2026-09-07 (this session). ENG-113 is treated as procedurally closed with this correction on record.
+
+**`ENG_113_FINANCIAL_BASIS_MIXED_LIMITATION_FORENSIC_AUDIT_CLOSED`** — 2026-09-07 (with procedural correction above)
+
+---
+
+## ENG-114 — 2026-09-07
+
+**PRIMARY_FINANCIAL_BASIS_TRUTH → INVESTOR ROUTING REPAIR**
+
+### Defect
+
+`financial_assessment.basis_used = "unknown"` emitted by all 5 analyst doctrines for Sun Pharma despite PCIM showing `consolidated` for all primary metrics across 7 years. Two root causes:
+
+1. `_collect_financial_basis` returned "unknown" for Fisher/Munger/Lynch because `financial_quality_inputs` was not in their doctrine section lists — `multi_year_financial_inputs` (which has `consolidated`) was not in `_selected_pcim_view.always_include`.
+2. `_derive_financial_context` promoted ALL basis warnings to `interpretation_limits` regardless of whether they applied to primary series metrics (revenue, PAT, CFO, capex, EPS) or secondary metrics (payables, cost_of_materials, book_value, ebitda, etc.).
+
+### Fixes Applied (`intelligence/investor_panel/runner.py`)
+
+- **`_PRIMARY_FINANCIAL_SERIES`** (new constant): canonical primary investor series
+- **`_SECONDARY_FINANCIAL_METRIC_SIGNALS`** (new constant): secondary metric signals; added `"book_value"` for book_value_per_share
+- **`_DOCUMENT_STRUCTURE_BASIS_PHRASES`** (new constant): document-structure phrases signalling secondary basis conflict; added `"mismatch across financial artifacts"`
+- **`_collect_financial_basis`** (rewritten): set-based cross-year basis detection; returns mixed/unknown/consolidated/standalone; always reads `multi_year_financial_inputs` fallback
+- **`_is_secondary_metric_basis_warning`** (new function): returns True for secondary-metric basis warnings; uses `\b` word boundary regex so `"profit_and_loss.cost_of_materials"` does not match primary metric `"profit"` 
+- **`_selected_pcim_view`**: added `"multi_year_financial_inputs"` to `always_include` so all doctrines access company-level basis summary
+- **`_derive_financial_context`**: gate added — secondary basis warnings skipped from `interpretation_limits` when primary basis is resolved
+- **`_deterministic_panel_output`**: secondary basis warnings excluded from `financial_interpretation_limits` when primary is resolved; `primary_financial_basis` added to `financial_assessment`
+- **`_financial_instruction_block`**: analyst instructions clarified — `primary_financial_basis.basis` is canonical authority for primary series; secondary limitations must NOT be generalized
+- **`_classify_financial_warning_provenance`**: new class `secondary_metric_basis_limitation` distinguishes secondary from primary basis issues
+
+### Results
+
+- All 5 doctrines: `basis_used = "consolidated"`, `basis_limits = 0` ✓
+- Tanla: all doctrines return `"unknown"` (genuine ambiguity preserved) ✓
+- Data Patterns: Graham/Buffett return `"mixed"`, Fisher returns `"standalone"` ✓
+- 18/18 ENG-114 deterministic tests pass (Steps 18A–E, 19–22, cross-company)
+- Regression: 15 pre-existing failures at baseline; 15 after ENG-114 (0 regressions)
+
+### Known Post-Repair Constraints
+
+- Sun Pharma PCIM stale (management_progression.json changed since ENG-110 build). Panel regeneration blocked by ENG-110 PCIM staleness protocol — rebuild required before regeneration.
+- Tanla unit-normalization anomaly detected: FY25 CFO ~₹402,772 Cr (suspect; likely ₹402 Cr scaled-unit error). Not within ENG-114 scope.
+- Sun Pharma D&A anomaly: FY23=205 Cr, FY26=221 Cr vs expected ~2,000–2,500 Cr. Not within ENG-114 scope.
+
+### Files Changed
+
+- `intelligence/investor_panel/runner.py` — 9 changes as documented above
+- `tests/intelligence/test_eng114_financial_basis_routing.py` — new, 18 deterministic tests
+
+**`ENG_114_PRIMARY_FINANCIAL_BASIS_INVESTOR_ROUTING_CLOSED`** — 2026-09-07
+
