@@ -2672,6 +2672,7 @@ def validate_committee_output(
         allowed=allowed_evidence_set,
     )
     manifest_sources: List[str] = []
+    _primary_basis_resolved_in_analysts = False
     for analyst_payload in included_analyst_payloads or []:
         manifest_sources.extend(
             str(item or "")
@@ -2683,6 +2684,9 @@ def validate_committee_output(
                 str(item or "")
                 for item in (assessment.get("financial_warnings_carried_forward") or [])
             )
+            _basis = assessment.get("basis_used", "unknown")
+            if _basis not in ("unknown", "mixed", ""):
+                _primary_basis_resolved_in_analysts = True
     manifest_blob = " ".join(manifest_sources).lower()
     committee_financial_blob = "\n".join(
         _flatten_strings(parsed.get("financial_committee_view", {}))
@@ -2703,7 +2707,15 @@ def validate_committee_output(
         raise ValueError(
             "major financial warning from analyst inputs was not carried forward: capex missing"
         )
-    if ("basis unknown" in manifest_blob or "basis unclear" in manifest_blob) and "basis" not in committee_financial_blob:
+    # ENG-114: skip basis carry-forward enforcement when primary basis is deterministically resolved.
+    # Secondary-metric "basis unclear" warnings (buyback, dividend, payables, etc.) remain in
+    # financial_warnings_carried_forward but must not force a committee-level basis ambiguity claim
+    # when the primary series is confirmed consolidated/standalone.
+    if (
+        ("basis unknown" in manifest_blob or "basis unclear" in manifest_blob)
+        and not _primary_basis_resolved_in_analysts
+        and "basis" not in committee_financial_blob
+    ):
         raise ValueError(
             "major financial warning from analyst inputs was not carried forward: basis unknown"
         )

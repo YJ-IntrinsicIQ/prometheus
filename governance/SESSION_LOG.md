@@ -1,5 +1,67 @@
 # Session Log
 
+## 2026-09-07 (ENG-114 — Live Production Proof & Closure)
+
+- Date: 2026-09-07
+- Sprint: ENG-114 Production Proof
+- Closure gate: **ENG_114_PRIMARY_FINANCIAL_BASIS_INVESTOR_ROUTING_PRODUCTION_CLOSED**
+
+### Mission
+
+Complete live production proof of ENG-114 financial-basis routing repair: rebuild PCIM → regenerate all 5 analyst panels → inspect basis contract → propagate through Committee → propagate through Ask.
+
+### Three Additional Production-Proof Bugs Fixed
+
+Beyond the 4 deterministic bugs from the prior session, 3 additional bugs were discovered through live panel generation:
+
+**Bug 5 — `_canonical_required_financial_warning_groups` carry-forward gate** (`runner.py`):
+Secondary "buyback: basis unclear" / "dividend: basis unclear" in `context["warnings"]` triggered the `basis_unknown` mandatory carry-forward group even when `basis_used = consolidated`. Added `_primary_basis_resolved` gate: when `basis_used not in ("unknown", "mixed", "")`, the `basis_unknown` group is skipped.
+
+**Bug 6 — Post-LLM authoritative basis override** (`runner.py`):
+LLM reading 15 secondary basis warnings in `financial_warnings_carried_forward` set its own `basis_used = "unknown"` in JSON output, overriding correct deterministic routing. Added post-LLM authoritative override: when deterministic `basis_used` is resolved, override `financial_assessment["basis_used"]` and inject `primary_financial_basis` with `authority: "pcim_deterministic"`.
+
+**Bug 7 — `_is_stale_basis_limit` filter for LLM-hallucinated limits** (`runner.py`):
+Lynch analyst LLM hallucinated: "The canonical financial basis (consolidated vs standalone) is not confirmed in the compacted truth; treat basis as unknown." Added `_is_stale_basis_limit()` to strip these hallucinated limits from `financial_interpretation_limits` when primary basis is resolved.
+
+**Bug 8 — Committee validator basis carry-forward gate** (`committee_validator.py`):
+Committee validator checked if "basis unclear" appeared in analyst `financial_warnings_carried_forward`, requiring the committee to also emit "basis" language. Secondary warnings ("buyback: basis unclear", etc.) triggered this check even with resolved primary basis. Added `_primary_basis_resolved_in_analysts` gate: skips the validator enforcement when any analyst confirms a non-unknown basis.
+
+### Production Results (Sun Pharma)
+
+| Analyst | `basis_used` | `primary_financial_basis.basis` | Confidence | Basis limits | Secondary warnings |
+|---------|-------------|--------------------------------|------------|-------------|-------------------|
+| Buffett | consolidated | consolidated | high (pcim_deterministic) | 0 | 15 (scoped) |
+| Graham  | consolidated | consolidated | high (pcim_deterministic) | 0 | 15 (scoped) |
+| Fisher  | consolidated | consolidated | high (pcim_deterministic) | 0 | 15 (scoped) |
+| Munger  | consolidated | consolidated | high (pcim_deterministic) | 0 | 15 (scoped) |
+| Lynch   | consolidated | consolidated | high (pcim_deterministic) | 0 | 15 (scoped) |
+
+Committee regenerated coherent. Ask regenerated (34 cards). Both: 0 basis false ambiguity.
+
+### Cross-Company Preservation
+
+| Company | Expected | Actual | Status |
+|---------|---------|--------|--------|
+| Tanla | unknown | unknown (all 3 doctrines) | PASS |
+| Data Patterns | mixed/unknown | mixed (both doctrines) | PASS |
+
+### Semantic Change Classification
+
+Before ENG-114: FALSE_AMBIGUITY (primary basis consolidated, stated unknown, hallucinated limits injected).
+After ENG-114: TRUTH_CORRECTION (all 5 analysts state consolidated with pcim_deterministic authority, 0 limits).
+
+### Tests
+
+20/20 ENG-114 deterministic tests pass (18 original + 2 production-proof additions: test_22b, test_22c). 0 regressions in adjacent suites. 13 pre-existing `test_ask_intrinsiciq.py` failures confirmed pre-existing (present before any ENG-114 code).
+
+### Files Changed
+
+- `intelligence/investor_panel/runner.py` — Bugs 5, 6, 7
+- `intelligence/investor_panel/committee_validator.py` — Bug 8
+- `tests/intelligence/test_eng114_financial_basis_routing.py` — 2 new production-proof tests (20 total)
+
+---
+
 ## 2026-09-06 (ENG-111A — Commitment Execution Identity Contract Hardening)
 
 - Date: 2026-09-06

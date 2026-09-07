@@ -205,6 +205,40 @@ def test_22_warning_flood_does_not_downgrade_consolidated_primary():
         assert basis_limits == [], f"{doctrine}: secondary flood produced basis limits: {basis_limits}"
 
 
+def test_22b_secondary_basis_unclear_warnings_do_not_trigger_carryforward():
+    """'buyback: basis unclear' and 'dividend: basis unclear' must not force basis_unknown carry-forward
+    when primary basis is consolidated.
+    ENG-114: _canonical_required_financial_warning_groups must gate basis_unknown on basis_used."""
+    from intelligence.investor_panel.runner import _canonical_required_financial_warning_groups
+    ctx = {
+        "basis_used": "consolidated",
+        "warnings": ["buyback: basis unclear", "dividend: basis unclear"],
+        "missing_data": [],
+        "interpretation_limits": [],
+    }
+    required = _canonical_required_financial_warning_groups(ctx)
+    group_ids = [g["warning_id"] for g in required]
+    assert "basis_unknown" not in group_ids, (
+        f"basis_unknown carry-forward must not fire for consolidated primary: groups={group_ids}"
+    )
+
+
+def test_22c_genuine_unknown_basis_still_carries_forward():
+    """basis_unknown carry-forward still fires when primary basis is genuinely unknown/mixed."""
+    from intelligence.investor_panel.runner import _canonical_required_financial_warning_groups
+    ctx = {
+        "basis_used": "unknown",
+        "warnings": ["standalone/consolidated basis unclear"],
+        "missing_data": [],
+        "interpretation_limits": [],
+    }
+    required = _canonical_required_financial_warning_groups(ctx)
+    group_ids = [g["warning_id"] for g in required]
+    assert "basis_unknown" in group_ids, (
+        f"basis_unknown carry-forward must fire for genuine unknown basis: groups={group_ids}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Cross-company preservation (TANLA_REAL_MIXED_BASIS_PRESERVED, DATA_PATTERNS_UNKNOWN_BASIS_PRESERVED)
 # ---------------------------------------------------------------------------

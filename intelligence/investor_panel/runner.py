@@ -6082,6 +6082,10 @@ def _canonical_required_financial_warning_groups(context: Dict[str, Any]) -> Lis
         context.get("missing_data", []),
         context.get("interpretation_limits", []),
     )
+    # ENG-114: primary basis resolved — secondary metric "basis unclear" phrases must not
+    # trigger the basis_unknown carry-forward. The carry-forward is appropriate only when
+    # the primary series basis is genuinely unresolved.
+    _primary_basis_resolved = context.get("basis_used", "unknown") not in ("unknown", "mixed", "")
     required: List[Dict[str, Any]] = []
     for label in (
         "fcf_missing",
@@ -6094,6 +6098,8 @@ def _canonical_required_financial_warning_groups(context: Dict[str, Any]) -> Lis
         "reconciliation_warning",
         "audit_warning",
     ):
+        if label == "basis_unknown" and _primary_basis_resolved:
+            continue  # primary basis confirmed — secondary "basis unclear" warnings must not force this
         if _financial_warning_group_matches(combined_texts, label):
             required.append(dict(FINANCIAL_WARNING_GROUP_DEFINITIONS[label]))
     return required
@@ -7268,6 +7274,43 @@ def _validate_repaired_llm_panel_output(
         open_uncertainties=open_uncertainties,
         user_facing_brief=user_facing_brief,
     )
+
+    # ENG-114: Authoritative post-LLM basis override.
+    # The deterministic PCIM resolver is the ground truth for the primary investor series.
+    # When it has resolved a non-ambiguous basis (consolidated or standalone), the LLM's
+    # basis_used — which may say "unknown" because it saw secondary metric warnings — is
+    # overridden. This does NOT suppress legitimate uncertainty for genuinely unknown or mixed
+    # companies; it only corrects cases where secondary warnings misled the LLM.
+    _det_basis = derived_financial_context.get("basis_used", "unknown")
+    if _det_basis not in ("unknown", "mixed", ""):
+        financial_assessment["basis_used"] = _det_basis
+        financial_assessment["primary_financial_basis"] = {
+            "basis": _det_basis,
+            "scope": "primary_investor_series",
+            "confidence": "high" if _det_basis == "consolidated" else "resolved",
+            "authority": "pcim_deterministic",
+        }
+        # Also filter LLM-hallucinated basis-ambiguity limits from interpretation_limits.
+        # When the primary basis is resolved, limits that say "basis unknown" or
+        # "not confirmed in compacted truth" are compaction artifacts, not real limitations.
+        def _is_stale_basis_limit(text: str) -> bool:
+            lowered = str(text).lower()
+            return any(phrase in lowered for phrase in (
+                "basis as unknown",
+                "basis unknown",
+                "not confirmed in the compacted truth",
+                "standalone/consolidated basis is unclear",
+                "financial comparability remains limited",
+                "basis remains unknown or unclear",
+            ))
+        financial_interpretation_limits = [
+            l for l in financial_interpretation_limits if not _is_stale_basis_limit(l)
+        ]
+        if financial_assessment.get("financial_interpretation_limits"):
+            financial_assessment["financial_interpretation_limits"] = [
+                l for l in financial_assessment["financial_interpretation_limits"]
+                if not _is_stale_basis_limit(l)
+            ]
 
     payload = {
         "doctrine_id": doctrine["doctrine_id"],
