@@ -31,7 +31,11 @@ from scripts.smart_chunker import chunk_pages  # noqa: E402
 from utils.noise_filter import is_noise_chunk  # noqa: E402
 
 
-PDF_PATH = ROOT / "data" / "annual_reports" / "polymatech_fy25.pdf"
+_CANONICAL_DIR = ROOT / "data" / "Processed" / "polymatech" / "fy25" / "annual_report"
+PDF_PATH = next(
+    (p for p in sorted(_CANONICAL_DIR.glob("*.pdf")) if _CANONICAL_DIR.exists()),
+    _CANONICAL_DIR / "polymatech_fy25.pdf",
+)
 CHROMA_PATH = ROOT / "chroma_db"
 COLLECTION_NAME = "company_documents"
 

@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from knowledge.company_memory import parse_financial_year
 
-from knowledge.capital_allocation_taxonomy import normalize_capital_allocation_item
+from knowledge.capital_allocation_taxonomy import normalize_capital_allocation_item, resolve_economic_role
 
 from .contracts import (
     ALLOCATION_CATEGORIES,
@@ -141,18 +141,115 @@ def _first_nonempty(*values: Any) -> str:
     return ""
 
 
-def _value_to_float(value: Any) -> Optional[float]:
+# ---------------------------------------------------------------------------
+# Unit-aware amount parser (ENG-118 Phase 1)
+# ---------------------------------------------------------------------------
+
+_RE_UNIT_CRORE = re.compile(r"\b(?:crore|crores|cr)\b", re.IGNORECASE)
+_RE_UNIT_LAKH = re.compile(r"\b(?:lakh|lakhs|lac|lacs)\b", re.IGNORECASE)
+# million/billion only trusted when accompanied by explicit INR indicator in the string
+_RE_UNIT_MILLION = re.compile(r"\b(?:million|millions|mn|mln)\b", re.IGNORECASE)
+_RE_UNIT_BILLION = re.compile(r"\b(?:billion|billions|bn)\b", re.IGNORECASE)
+# Explicit INR indicator required for million/billion trust
+_RE_INR_INDICATOR = re.compile(r"(?:INR|₹|Rs\.?|rupee|rupees)", re.IGNORECASE)
+# Non-INR currencies: unsupported for amount aggregation
+_RE_FOREIGN_CCY = re.compile(r"\b(?:USD|EUR|GBP|JPY|CNY|AUD|CAD|SGD|CHF)\b", re.IGNORECASE)
+# Per-share amounts cannot determine total capital deployment
+_RE_PER_SHARE = re.compile(r"\bper\s+(?:equity\s+)?share\b", re.IGNORECASE)
+_RE_NUMBER = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
+
+
+def _parse_amount_to_crore(value: Any) -> Optional[float]:
+    """Parse an amount to INR crore with deterministic unit authority.
+
+    Returns crore value only when unit is unambiguously attributable.
+    Returns None for: no unit, conflicting units, per-share amounts,
+    unsupported currencies, multiple semicolon-separated amounts,
+    balance-outstanding compound strings, or million/billion without
+    explicit INR currency indicator.
+    """
     if value in (None, "", [], {}):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
-    match = re.search(r"([-+]?[0-9][0-9,]*\.?[0-9]*)", str(value))
-    if not match:
+        # Numeric typed value — trust as crore (caller must verify schema contract)
+        return abs(float(value)) if value != 0 else None
+
+    s = str(value).strip()
+    if not s:
         return None
+
+    # Non-INR currency: no canonical FX conversion in current architecture
+    if _RE_FOREIGN_CCY.search(s):
+        return None
+
+    # Explicitly labelled total cash distribution outranks a per-share figure.
+    cash_total = re.search(r"(?:cash\s+outflow|total\s+(?:dividend|distribution)\s+(?:paid|amount)|amount\s+distributed)[^0-9₹]*(?:₹|INR|Rs\.?\s*)?([\d,]+(?:\.\d+)?)\s*(crore|crores|cr)\b", s, re.IGNORECASE)
+    if cash_total:
+        return float(cash_total.group(1).replace(",", ""))
+
+    # Per-share amount without an explicitly labelled total cannot determine cash outflow.
+    if _RE_PER_SHARE.search(s):
+        return None
+
+    # Semicolon-separated compound amounts are otherwise ambiguous.
+    if ";" in s:
+        return None
+
+    # "balance outstanding" and similar stock-vs-flow compound strings
+    s_lower = s.lower()
+    if "outstanding" in s_lower or "balance outstanding" in s_lower:
+        return None
+
+    # Determine unit — require exactly one unit type
+    has_crore = bool(_RE_UNIT_CRORE.search(s))
+    has_lakh = bool(_RE_UNIT_LAKH.search(s))
+    has_million = bool(_RE_UNIT_MILLION.search(s))
+    has_billion = bool(_RE_UNIT_BILLION.search(s))
+
+    # million/billion require explicit INR context — denomination is otherwise ambiguous
+    # (could be USD millions, EUR millions, etc.)
+    if (has_million or has_billion) and not _RE_INR_INDICATOR.search(s):
+        return None
+
+    unit_count = sum([has_crore, has_lakh, has_million, has_billion])
+    if unit_count == 0:
+        # Bare numeric string without explicit unit — UNIT_AMBIGUOUS
+        return None
+    if unit_count > 1:
+        # Conflicting unit labels — UNIT_AMBIGUOUS
+        return None
+
+    # Locate the unit keyword and find the primary number immediately before it
+    if has_crore:
+        unit_match = _RE_UNIT_CRORE.search(s)
+        multiplier = 1.0
+    elif has_lakh:
+        unit_match = _RE_UNIT_LAKH.search(s)
+        multiplier = 0.01  # 1 lakh = 0.01 crore
+    elif has_million:
+        unit_match = _RE_UNIT_MILLION.search(s)
+        multiplier = 0.1   # 1 INR million = 10 lakh = 0.1 crore
+    else:
+        unit_match = _RE_UNIT_BILLION.search(s)
+        multiplier = 100.0  # 1 billion = 100 crore
+
+    s_before_unit = s[: unit_match.start()]  # type: ignore[union-attr]
+    nums_before = list(_RE_NUMBER.finditer(s_before_unit))
+    if nums_before:
+        primary_str = nums_before[-1].group()  # last number before unit keyword
+    else:
+        s_after_unit = s[unit_match.end():]  # type: ignore[union-attr]
+        nums_after = list(_RE_NUMBER.finditer(s_after_unit))
+        if not nums_after:
+            return None
+        primary_str = nums_after[0].group()
+
     try:
-        return float(match.group(1).replace(",", ""))
+        primary = float(primary_str.replace(",", ""))
     except ValueError:
         return None
+
+    return abs(primary) * multiplier if primary != 0 else None
 
 
 def _company_root(company: str) -> Path:
@@ -405,29 +502,69 @@ def _infer_funding_source(allocation_category: str, item: Dict[str, Any], ledger
     return "unknown"
 
 
+_LEDGER_CRORE_FIELDS = (
+    "capex_deployed", "working_capital_deployed",
+    "product_development_or_intangible_investment", "debt_repayment",
+    "dividends", "buybacks", "acquisitions", "capital_raised",
+    "retained_earnings", "unutilised_issue_proceeds",
+)
+
+
 def _candidate_amount(item: Dict[str, Any], ledger_entry: Dict[str, Any]) -> Optional[float]:
-    fields = ("amount", "amount_crore", "amount_raised_crore", "capex_deployed", "working_capital_deployed", "product_development_or_intangible_investment", "debt_repayment", "dividends", "buybacks", "acquisitions", "capital_raised", "retained_earnings", "unutilised_issue_proceeds")
-    # Prefer the typed source item. A year-level ledger can describe another
-    # allocation family (for example capex while this item is a dividend).
-    for field in fields:
-        value = _value_to_float(item.get(field))
-        if value is not None:
-            return abs(value)
+    """Return confirmed crore amount using deterministic unit authority.
+
+    Canonical crore schema fields (amount_crore, amount_raised_crore) are trusted
+    when numeric. The generic 'amount' field is trusted when numeric (financial
+    timeline convention) or parsed with explicit unit when a string. String amounts
+    without a deterministic unit label return None. If a string amount is present
+    but ambiguous, the ledger fallback is suppressed — an ambiguous source amount
+    must not be silently replaced by a ledger estimate.
+    """
+    # Schema-guaranteed crore fields — always numeric in producer
+    for field in ("amount_crore", "amount_raised_crore"):
+        v = item.get(field)
+        if isinstance(v, (int, float)) and v != 0:
+            return abs(float(v))
+
+    # Generic 'amount' field: numeric from financial timeline (trust as crore),
+    # or string from PCIM items (must parse with unit authority).
+    amount_raw = item.get("amount")
+    if amount_raw not in (None, "", [], {}):
+        if isinstance(amount_raw, (int, float)):
+            v = float(amount_raw)
+            return abs(v) if v != 0 else None
+        # String amount: unit-aware parse only
+        parsed = _parse_amount_to_crore(amount_raw)
+        # Do NOT fall through to ledger when string is present but ambiguous:
+        # an ambiguous source amount should not be silently superseded.
+        return parsed
+
     if item.get("suppress_ledger_amount"):
         return None
-    for field in fields:
-        value = _value_to_float(ledger_entry.get(field))
-        if value is not None:
-            return abs(value)
+
+    # Ledger numeric crore fields — typed in producer, safe to trust
+    for field in _LEDGER_CRORE_FIELDS:
+        v = ledger_entry.get(field)
+        if isinstance(v, (int, float)) and v != 0:
+            return abs(float(v))
     return None
 
 
 def _amount_basis(item: Dict[str, Any], ledger_entry: Dict[str, Any], amount: Optional[float]) -> str:
     if amount is None:
+        # Check if a string amount was present but ambiguous
+        amount_raw = item.get("amount")
+        if amount_raw not in (None, "", [], {}):
+            if isinstance(amount_raw, str) and amount_raw.strip():
+                return "unit_ambiguous"
         return "unknown"
-    if _value_to_float(item.get("amount")) is not None or _value_to_float(item.get("amount_crore")) is not None:
+    for field in ("amount_crore", "amount_raised_crore"):
+        if isinstance(item.get(field), (int, float)) and item.get(field) != 0:
+            return "source_item"
+    if item.get("amount") not in (None, "", [], {}):
         return "source_item"
-    if any(_value_to_float(ledger_entry.get(field)) is not None for field in ("capital_raised", "retained_earnings", "capex_deployed", "working_capital_deployed", "product_development_or_intangible_investment", "debt_repayment", "dividends", "buybacks", "acquisitions", "related_party_flows", "unutilised_issue_proceeds")):
+    if any(isinstance(ledger_entry.get(f), (int, float)) and ledger_entry.get(f) != 0
+           for f in _LEDGER_CRORE_FIELDS):
         return "ledger_summary"
     return "derived"
 
@@ -1016,6 +1153,13 @@ def _build_allocation_group(candidate: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _group_similarity(group: Dict[str, Any], candidate: Dict[str, Any]) -> int:
+    # Dividend declarations/payments in different fiscal years are distinct
+    # events unless an explicit transaction identity proves otherwise.
+    if group["allocation_category"] in {"dividend", "special_dividend"} and candidate["source_year"] not in group["source_years"]:
+        if not candidate.get("economic_flow_id") and not candidate.get("transaction_id") and not candidate.get("deal_id"):
+            prior_amounts = {c.get("amount") for c in group.get("source_items", []) if c.get("amount") is not None}
+            if candidate.get("amount") is not None and prior_amounts and candidate.get("amount") not in prior_amounts:
+                return -1
     score = 0
     if group["allocation_category"] == candidate["allocation_category"]:
         score += 4
@@ -1147,6 +1291,9 @@ def _candidate_from_item(
         "funding_source": funding_source if funding_source in ALLOCATION_FUNDING_SOURCES else "unknown",
         "amount": amount,
         "amount_basis": amount_basis,
+        **resolve_economic_role({"action": allocation_name, "purpose": item.get("purpose"), "status": item.get("status"), "category": allocation_category, "canonical_category": allocation_category, "capital_allocation_group": group_name, **{k: item.get(k) for k in ("economic_flow_id", "transaction_id", "deal_id")}}),
+        "economic_flow_relation": item.get("economic_flow_relation") or ("LINKED_BUT_DISTINCT_FLOW" if "sale consideration" in _normalize_text(allocation_name) and "against loan" in _normalize_text(allocation_name) else "DISTINCT_FLOW"),
+        "economic_flow_authority": item.get("economic_flow_authority") or ("EXPLICIT_SOURCE_STATEMENT" if "sale consideration" in _normalize_text(allocation_name) and "against loan" in _normalize_text(allocation_name) else "NONE"),
         "stated_rationale": _first_nonempty(item.get("reasoning"), ledger_entry.get("purpose"), ledger_entry.get("investor_interpretation"), item.get("status")),
         "inferred_business_purpose": _inferred_business_purpose(allocation_category, item, ledger_entry),
         "current_status": current_status,
@@ -1379,7 +1526,23 @@ def _finalize_allocation_record(
     latest_period = deployment_periods[-1] if deployment_periods else ""
     latest_candidate = candidates[-1]
     amount = next((candidate["amount"] for candidate in reversed(candidates) if candidate.get("amount") is not None), None)
-    amount_basis = next((candidate["amount_basis"] for candidate in reversed(candidates) if candidate.get("amount") is not None), "unknown")
+    # Conflicting dividend totals across source representations are not safely
+    # resolvable by recency; retain the event but remove it from weighted totals.
+    if group["allocation_category"] in {"dividend", "special_dividend"}:
+        dividend_amounts = {round(float(c["amount"]), 6) for c in candidates if c.get("amount") is not None}
+        if len(dividend_amounts) > 1:
+            amount = None
+    if amount is not None:
+        amount_basis = "semantic_amount_ambiguous" if group["allocation_category"] in {"dividend", "special_dividend"} and len({round(float(c["amount"]), 6) for c in candidates if c.get("amount") is not None}) > 1 else next(
+            (candidate["amount_basis"] for candidate in reversed(candidates) if candidate.get("amount") is not None),
+            "unknown",
+        )
+    else:
+        # No confirmed amount: surface unit_ambiguous if any candidate had a string amount with no parseable unit
+        amount_basis = next(
+            (candidate["amount_basis"] for candidate in reversed(candidates) if candidate.get("amount_basis") == "unit_ambiguous"),
+            "unknown",
+        )
     current_status = _current_status_from_candidate(latest_candidate)
 
     project_lookup = linked["projects"]
@@ -1396,6 +1559,10 @@ def _finalize_allocation_record(
         "deployment_periods": deployment_periods,
         "amount": amount,
         "amount_basis": amount_basis,
+        "economic_role": latest_candidate.get("economic_role", "ECONOMIC_ROLE_AMBIGUOUS"),
+        "deployment_eligibility": latest_candidate.get("deployment_eligibility", "ELIGIBILITY_AMBIGUOUS"),
+        "economic_flow_relation": latest_candidate.get("economic_flow_relation", "DISTINCT_FLOW"),
+        "economic_flow_authority": latest_candidate.get("economic_flow_authority", "NONE"),
         "funding_source": group["funding_source"] if group["funding_source"] in ALLOCATION_FUNDING_SOURCES else "unknown",
         "linked_project_ids": [],
         "linked_capacity_ids": [],
@@ -1554,6 +1721,9 @@ def _finalize_allocation_record(
         "balance_sheet_outcome": record["balance_sheet_outcome"],
         "causal_confidence": record["causal_confidence"],
         "deployment_state": record.get("deployment_state", "UNABLE_TO_VERIFY"),
+        "economic_role": record.get("economic_role", "ECONOMIC_ROLE_AMBIGUOUS"),
+        "deployment_eligibility": record.get("deployment_eligibility", "ELIGIBILITY_AMBIGUOUS"),
+        "economic_flow_relation": record.get("economic_flow_relation", "DISTINCT_FLOW"),
         "execution_state": record.get("execution_state", "UNABLE_TO_VERIFY"),
         "operating_outcome_state": record.get("operating_outcome_state", "UNABLE_TO_VERIFY"),
         "financial_outcome_state": record.get("financial_outcome_state", "UNABLE_TO_ATTRIBUTE"),

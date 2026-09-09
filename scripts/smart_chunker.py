@@ -28,6 +28,25 @@ def is_mostly_numeric(text: str) -> bool:
     ) > 0.6
 
 
+def looks_like_table_row(text: str) -> bool:
+    """Keep compact table rows that would otherwise be lost as short text."""
+    if not text or not re.search(r"[A-Za-z]", text):
+        return False
+    numeric_tokens = re.findall(r"\(?\d[\d,]*(?:\.\d+)?\)?%?", text)
+    if len(numeric_tokens) < 2:
+        return False
+    return bool(
+        re.search(
+            r"\b(total|assets?|liabilities|equity|revenue|income|profit|tax|cash|"
+            r"operating|investing|financing|borrowings?|receivables?|inventories|"
+            r"investments?|goodwill|intangible|depreciation|amortisation|amortization|"
+            r"dividend|reserves?|capital|expenses?)\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
 def clean_paragraphs(text: str):
 
     raw_paragraphs = re.split(
@@ -45,10 +64,12 @@ def clean_paragraphs(text: str):
             para
         ).strip()
 
-        if len(para) < 150:
+        is_table_row = looks_like_table_row(para)
+
+        if len(para) < 150 and not is_table_row:
             continue
 
-        if is_mostly_numeric(para):
+        if is_mostly_numeric(para) and not is_table_row:
             continue
 
         paragraphs.append(

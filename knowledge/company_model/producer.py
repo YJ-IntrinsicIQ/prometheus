@@ -44,6 +44,7 @@ class CompanyModelProducer:
         self.generated_at = generated_at
         self.pcim = loaded_payload(sources, "pcim")
         self.cim = loaded_payload(sources, "cim")
+        self.management_progression = loaded_payload(sources, "management_progression")
         self.blueprints = yearly_payloads(sources, "business_blueprint")
         self.classifications = yearly_payloads(sources, "business_classification")
 
@@ -60,6 +61,7 @@ class CompanyModelProducer:
         economic_drivers = self._build_economic_drivers(latest, revenue_engines, evidence)
         dependencies = self._build_dependencies(latest, model_type, evidence)
         evolution = self._build_business_model_evolution()
+        longitudinal_current_state = self._build_longitudinal_current_state()
         uncertainties = self._build_uncertainties(customers, revenue_engines, offerings)
 
         coverage_status = "supported" if offerings and customers and revenue_engines else "partial"
@@ -91,6 +93,7 @@ class CompanyModelProducer:
             "economic_drivers": economic_drivers,
             "dependencies": dependencies,
             "business_model_evolution": evolution,
+            "longitudinal_current_state": longitudinal_current_state,
             "uncertainties": uncertainties,
             "source_manifest": self._source_manifest(coverage_status),
         }
@@ -123,6 +126,7 @@ class CompanyModelProducer:
             "economic_drivers": [],
             "dependencies": [],
             "business_model_evolution": [],
+            "longitudinal_current_state": [],
             "uncertainties": [
                 {
                     "uncertainty_id": "missing_business_model_evidence",
@@ -494,6 +498,71 @@ class CompanyModelProducer:
                 break
         return entries
 
+    def _build_longitudinal_current_state(self) -> List[Dict[str, Any]]:
+        """Compact current-state signals from multi-source longitudinal threads.
+
+        Reads Management Progression items sourced from the longitudinal system
+        and extracts the current lifecycle resolution for each material thread.
+        Company Model owns 'what is true now'; Management Progression owns the
+        full said→did→outcome chronology. This method takes only the resolved
+        current state, not the event history.
+
+        Lifecycle authority: Management Progression's current_status / management_credibility_signal.
+        'CONFIRMED' means operating/event evidence (not just management assertion) was found.
+        'PROGRESSING' means ongoing but not yet confirmed.
+        'CLAIMED' means management stated but no independent evidence.
+        An UNRESOLVED or UNPROVEN thread is preserved as unknown — never promoted to confirmed.
+        """
+        items = (self.management_progression.get("progression_items") or []) if isinstance(self.management_progression, dict) else []
+        states: List[Dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if "multi_source_longitudinal" not in (item.get("stream_types") or []):
+                continue
+            credibility = str(item.get("management_credibility_signal") or "").upper()
+            current_status = str(item.get("current_status") or "unresolved")
+            # Preserve unknown / unresolved — do not promote to confirmed state.
+            if current_status in {"abandoned", "failed", "reversed"}:
+                continue
+            # Derive source_period from latest event period.
+            events = [e for e in (item.get("events") or []) if isinstance(e, dict)]
+            latest_period = ""
+            for ev in reversed(events):
+                ep = str(ev.get("event_period") or ev.get("source_period") or "").strip()
+                if ep:
+                    latest_period = ep
+                    break
+            # Derive confidence from credibility signal.
+            if credibility == "CONFIRMED":
+                conf = confidence("high", basis=["Multi-source longitudinal: operating or event evidence confirmed"])
+            elif credibility in {"PARTIALLY_DELIVERED", "PROGRESSING"}:
+                conf = confidence("medium", basis=["Multi-source longitudinal: PROGRESSING lifecycle"])
+            elif credibility in {"CLAIMED"}:
+                conf = confidence("low", basis=["Multi-source longitudinal: management claim only, no independent confirmation"])
+            else:
+                conf = confidence("low", basis=["Multi-source longitudinal: status unresolved or unproven"])
+            # Compact evidence reference — pointer to the MP artifact only, not raw source chunk.
+            ev_ref = evidence_ref(
+                source_artifact="company_memory/management_progression/management_progression.json",
+                source_period=latest_period,
+                evidence_id=str(item.get("item_id") or ""),
+                field_path="progression_items[]",
+            )
+            states.append({
+                "state_id": f"lcs-{_slug(str(item.get('item_id') or item.get('theme') or ''))}",
+                "theme": str(item.get("theme") or ""),
+                "current_status": current_status,
+                "management_credibility_signal": credibility,
+                "linked_company_model_ids": list(item.get("linked_company_model_ids") or []),
+                "source_period": latest_period,
+                "confidence": conf,
+                "evidence": [ev_ref],
+            })
+            if len(states) >= 12:
+                break
+        return states
+
     def _build_uncertainties(self, customers: List[Dict[str, Any]], revenue_engines: List[Dict[str, Any]], offerings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         uncertainties = []
         if customers and not any(item.get("concentration_known") for item in customers):
@@ -637,6 +706,10 @@ def _year_sort_key(value: Any) -> int:
         return -1
     number = int(match.group(1))
     return number % 100 if number >= 100 else number
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:60]
 
 
 def _similar(left: Any, right: Any) -> bool:

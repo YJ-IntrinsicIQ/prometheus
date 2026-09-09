@@ -10,7 +10,12 @@ for company, year in [('polymatech', '2025'), ('tips', '2024')]:
     context = CompanyContext(company=company, year=year)
     context.create_directories()
     set_context(context)
-    pdf_path = Path('data/annual_reports') / ('%s_fy%s.pdf' % (company, str(year)[-2:]))
+    from core.inbox_paths import PROCESSED
+    _fy = 'fy%s' % str(year)[-2:]
+    _processed = PROCESSED / company / _fy / 'annual_report'
+    pdf_path = next(
+        (p for p in sorted(_processed.glob('*.pdf')) if _processed.exists()), None
+    )
     if not pdf_path.exists():
         print('%s/%s: SKIP %s' % (company, year, pdf_path))
         continue

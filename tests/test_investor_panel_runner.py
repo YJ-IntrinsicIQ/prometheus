@@ -3118,3 +3118,96 @@ def test_finalize_analyst_validation_status_persists_financial_truth_status_fiel
     assert finalized["diagnostic_only_financial_warnings"] == [
         "Internal raw financial warning labels were moved to diagnostics."
     ]
+
+
+def test_format_allowed_financial_metrics_uses_canonical_metric_not_shortcode():
+    """Formatter must use canonical_metric as metric_name value — never the metric_id shortcode (e.g. 'cfo:fy24')."""
+    from intelligence.investor_panel.runner import _format_allowed_financial_metrics
+
+    # Realistic production shape: metric_id has colon-period suffix, canonical_metric is the clean name
+    registry = [
+        {
+            "metric_id": "gross_margin:fy26",  # production shortcode — must NOT appear in output
+            "canonical_metric": "gross_margin",  # this is the correct value
+            "display_name": "Gross Margin",
+            "period": "fy26",
+            "value": 56.2,
+            "unit": "%",
+            "basis": "reported",
+            "confidence": "high",
+        },
+        {
+            "metric_id": "cfo:fy24",  # production shortcode — must NOT appear in output
+            "canonical_metric": "cfo",  # this is the correct value
+            "display_name": "Cash From Operations",
+            "period": "fy24",
+            "value": 4200.0,
+            "unit": "₹ crore",
+            "basis": "reported",
+            "confidence": "medium",
+        },
+    ]
+    result = _format_allowed_financial_metrics(registry)
+
+    assert len(result) == 2
+    for row in result:
+        assert "metric_name" in row, "formatted row must have 'metric_name' key"
+        assert "metric_id" not in row, "formatted row must NOT expose metric_id key"
+        assert "period" in row
+        assert "value" in row
+        # metric_name must never be the shortcode form "canonical:period"
+        assert ":" not in str(row["metric_name"] or ""), f"metric_name must not be a shortcode: {row['metric_name']}"
+
+    assert result[0]["metric_name"] == "gross_margin"
+    assert result[1]["metric_name"] == "cfo"
+    assert result[0]["period"] == "fy26"
+    assert result[1]["value"] == 4200.0
+
+
+def test_metric_shortcode_not_a_valid_evidence_id():
+    """Metric shortcodes like 'gross_margin:fy26' must not appear in the canonical evidence lookup."""
+    import json
+    from pathlib import Path
+    from intelligence.investor_panel.evidence_grounding import build_evidence_lookup
+
+    pcim_path = Path("companies/sun_pharma/company_memory/pcim_v1.json")
+    if not pcim_path.exists():
+        pytest.skip("Sun Pharma PCIM not present")
+
+    pcim = json.loads(pcim_path.read_text())
+    lookup = build_evidence_lookup(pcim)
+
+    invalid_shortcodes = ["gross_margin:fy26", "cfo:fy24", "owner_earnings_estimate:fy24",
+                          "npm:fy26", "conservative_fcf_after_total_capex:fy24"]
+    for shortcode in invalid_shortcodes:
+        assert shortcode not in lookup, f"metric shortcode '{shortcode}' must NOT be a canonical evidence ID"
+
+
+def test_compact_financial_truth_source_provenance_summary_is_empty():
+    """source_provenance_summary must always be [] — never expose filenames as citation affordance."""
+    # With real-looking source_provenance list
+    payload = {
+        "source_provenance": [
+            "financial_truth_pack.json",
+            "financial_quality_summary.json",
+            "owner_earnings_bridge.json",
+            "working_capital_quality_drilldown.json",
+        ],
+        "usable_current_metrics": [],
+        "financial_panel_status": "ok",
+    }
+    for analyst in ("fisher", "graham", "buffett", "munger", "lynch"):
+        result = panel_runner.compact_financial_truth_for_analyst(payload, analyst, token_budget=500)
+        assert result.get("source_provenance_summary") == [], (
+            f"{analyst}: source_provenance_summary must be [] to prevent filename hallucination, got {result.get('source_provenance_summary')}"
+        )
+
+
+def test_input_pack_policy_drops_source_artifact_fields():
+    """source_artifact, source_artifacts, primary_artifact must be stripped by policy — never passed to analyst LLM."""
+    from knowledge.ai.input_packs import _INVESTOR_PANEL_DROP_FIELDS, _INVESTOR_PANEL_PREFERRED_KEYS
+
+    assert "source_artifact" in _INVESTOR_PANEL_DROP_FIELDS, "source_artifact must be in drop fields"
+    assert "source_artifacts" in _INVESTOR_PANEL_DROP_FIELDS, "source_artifacts must be in drop fields"
+    assert "primary_artifact" in _INVESTOR_PANEL_DROP_FIELDS, "primary_artifact must be in drop fields"
+    assert "source_artifact" not in _INVESTOR_PANEL_PREFERRED_KEYS, "source_artifact must NOT be in preferred keys"

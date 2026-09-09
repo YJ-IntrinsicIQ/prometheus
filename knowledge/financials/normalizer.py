@@ -774,6 +774,13 @@ def _filtered_values_for_field(
     line_item_raw: str = "",
     table_type: str = "",
 ) -> List[Dict[str, Any]]:
+    # Fixed-asset schedules contain many accumulated-balance rows whose
+    # labels include "depreciation" only as context.  They are not the
+    # period expense and must not satisfy the canonical depreciation metric.
+    if field_name == "depreciation" and table_type == "fixed_assets":
+        label = _normalize_label(line_item_raw)
+        if "depreciation expense" not in label and "amortisation expense" not in label and "amortization expense" not in label:
+            return []
     if field_name in {"eps_basic", "eps_diluted", "face_value", "book_value_per_share", "tangible_book_value_per_share"}:
         filtered = [item for item in values if str(item.get("value_type", "") or "") == "per_share"]
         return filtered or values
@@ -833,6 +840,37 @@ def _filtered_values_for_field(
         ]
         return revenue_like_values or values
     return monetary_values
+
+
+def _fixed_asset_da_values(
+    row: Dict[str, Any],
+    *,
+    target_year: str,
+    occurrence: int,
+) -> Optional[List[Dict[str, Any]]]:
+    """Select the explicit schedule total for a fixed-asset D&A row.
+
+    Fixed-asset notes repeat ``Depreciation expense`` for comparative and
+    current closing balances and expose asset-class columns followed by a
+    Total column.  The extraction contract preserves those cells, but the
+    column labels are not period values.  Use the structural row occurrence
+    (comparative first, current second) and the explicit Total cell; never a
+    magnitude or position heuristic across unrelated candidates.
+    """
+    if str(row.get("table_type", "")) != "fixed_assets":
+        return None
+    if "depreciation expense" not in _normalize_label(row.get("line_item_raw", "")):
+        return None
+    values = [v for v in row.get("values", []) if _parse_numeric(v.get("value_raw")) is not None]
+    if len(values) < 5:
+        return None
+    selected = dict(values[-1])
+    if target_year:
+        if occurrence > 1:
+            selected["period"] = f"March 31, {target_year}"
+        else:
+            selected["period"] = f"March 31, {int(target_year) - 1}"
+    return [selected]
 
 
 def _safe_value_crore(
@@ -1743,6 +1781,7 @@ def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path
     unmapped_rows: List[Dict[str, Any]] = []
     warnings: List[str] = []
     primary_statement_bases = _primary_statement_basis_available(raw)
+    fixed_asset_da_occurrences: Dict[Tuple[str, str, str], int] = {}
 
     for table_type, rows in raw.tables.items():
         for row_obj in rows:
@@ -1750,6 +1789,14 @@ def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path
             row["table_type"] = table_type
             matches = map_line_item(table_type=table_type, line_item_raw=row.get("line_item_raw", ""))
             row_values = row.get("values", [])
+            da_key = (str(row.get("basis", "unknown")), str(row.get("page", "")), _normalize_label(row.get("line_item_raw", "")))
+            if table_type == "fixed_assets" and "depreciation expense" in da_key[2]:
+                fixed_asset_da_occurrences[da_key] = fixed_asset_da_occurrences.get(da_key, 0) + 1
+                prepared_da = _fixed_asset_da_values(
+                    row, target_year=target_year, occurrence=fixed_asset_da_occurrences[da_key]
+                )
+                if prepared_da is not None:
+                    row_values = prepared_da
             row_selected_value, row_comparative_values = _current_and_comparatives(row_values, target_year)
             if row_selected_value is None:
                 row_selected_value = _balance_sheet_unresolved_current_fallback(

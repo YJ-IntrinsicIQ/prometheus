@@ -170,11 +170,14 @@ def _build_payload_from_clean_artifacts(context) -> Dict[str, Any]:
 
 
 def _build_fallback_document_payload(context) -> Dict[str, Any]:
-    annual_report_path = Path("data/annual_reports") / f"{context.company}_{context.year}.pdf"
-    if not annual_report_path.exists():
-        annual_report_path = Path("data/annual_reports") / f"{context.company}_{context.year}.txt"
+    from core.inbox_paths import PROCESSED
+    _fy = str(context.year).lower()
+    _processed = PROCESSED / context.company / _fy / "annual_report"
+    annual_report_path = next(
+        (p for p in sorted(_processed.glob("*.pdf")) if _processed.exists()), None
+    )
 
-    if not annual_report_path.exists():
+    if not annual_report_path or not annual_report_path.exists():
         return {
             "company_id": context.company,
             "entities": [],

@@ -33,6 +33,7 @@ from intelligence.ask_intrinsiciq.paths import (
     get_validation_report_path,
 )
 from intelligence.ask_intrinsiciq.sanitizer import contains_forbidden_public_term, sanitize_public_text
+from intelligence.ask_intrinsiciq.answer_cards import _strip_backend_phrasing  # noqa: PLC0415
 from intelligence.ask_intrinsiciq.uncertainty_mapper import build_uncertainty_map, rank_uncertainties_for_question
 from intelligence.ask_intrinsiciq.validator import (
     validate_answer_cards_payload,
@@ -274,7 +275,7 @@ def test_missing_upstream_sources_return_partial_not_crash(tmp_path, monkeypatch
 
     assert result["manifest"]["generation_status"] == "partial"
     assert result["validation_report"]["status"] == "pass"
-    assert len(result["company_research_view"]["categories"]) == 5
+    assert len(result["company_research_view"]["categories"]) == 6
     assert result["source_bundle"]["source_files_missing"]
 
 
@@ -348,7 +349,7 @@ def test_generator_writes_minimal_valid_company_research_view(tmp_path, monkeypa
     assert view["company"]["reportingPeriodsCovered"] == ["fy24", "fy25"]
     assert view["coverage"]["summary"]
     assert "businessJourney" in view
-    assert len(view["categories"]) == 5
+    assert len(view["categories"]) == 6
     assert (tmp_path / "companies/acme/company_memory/ask_intrinsiciq/company_research_view.json").exists()
 
 
@@ -557,6 +558,42 @@ def test_buffett_answer_stays_compact_and_strips_backend_phrasing():
     assert len(answer["interpretation"]["negative_evidence"]) <= 3
     assert len(answer["interpretation"]["unresolved"]) <= 3
     assert len(answer["interpretation"]["what_to_watch"]) <= 3
+
+
+def test_strip_backend_phrasing_removes_parenthetical_labels():
+    # Labels that appear in parenthetical form must be stripped without leaving dangling ()
+    cases = [
+        (
+            "programs have been announced or started (ACTION_STARTED), but commitments remain (CLAIM_ONLY).",
+            "programs have been announced or started, but commitments remain.",
+        ),
+        (
+            "The outcome is inconclusive (UNVERIFIED).",
+            "The outcome is inconclusive.",
+        ),
+        (
+            "Capital return to shareholders (NOT_APPLICABLE).",
+            "Capital return to shareholders.",
+        ),
+    ]
+    for raw, expected_fragment in cases:
+        result = _strip_backend_phrasing(raw)
+        assert "()" not in result, f"Dangling parens in result: {result!r}  (input: {raw!r})"
+        # The label itself must not appear in the output
+        for label in ("ACTION_STARTED", "CLAIM_ONLY", "UNVERIFIED", "NOT_APPLICABLE"):
+            assert label.lower() not in result.lower(), f"Label {label!r} not stripped from: {result!r}"
+
+
+def test_buffett_structured_sections_drop_all_empty_point_sections():
+    # After production finalization, sections whose every point is empty must not appear
+    bundle = load_company_memory_sources("sun_pharma")
+    products_payload = {"groups": [], "summary": "", "business_model_summary": None, "customer_summary": None, "revenue_logic_summary": None, "open_questions": [], "coverage_status": "unavailable"}
+    answer_cards, _ = build_answer_cards(bundle, business_journey_payload={"summary": "", "stages": []}, products_services_payload=products_payload, company_slug="sun_pharma", generated_at="2026-08-11T00:00:00+00:00")
+
+    answer = next(a for a in answer_cards["answers"] if a["question_id"] == "what-would-buffett-focus-on")
+    secs = answer.get("structured_sections", [])
+    bad = [s.get("title") for s in secs if not any(str(p).strip() for p in (s.get("points") or []))]
+    assert not bad, f"Buffett answer has sections with all-empty points: {bad}"
 
 
 def test_validator_accepts_explicit_empty_unavailable_sections():

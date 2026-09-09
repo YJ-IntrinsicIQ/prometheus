@@ -167,7 +167,22 @@ def _load_sources(company_slug: str, companies_root: Path) -> Dict[str, Any]:
 
 def _promise_items(sources: Dict[str, Any]) -> List[Dict[str, Any]]:
     payload = sources.get("promise_tracker") or {}
-    return [item for item in payload.get("material_promises") or [] if isinstance(item, dict)]
+    # Current Gold owns the objectively verifiable accountability denominator.
+    # Strategic intents and aspirations remain context, not failed/unresolved
+    # promises.  The fallback is schema compatibility for pre-accountability Gold
+    # fixtures/artifacts only; the presence of the canonical key is authoritative,
+    # including when its value is an intentionally empty list.
+    if "accountability_promises" not in payload:
+        return [
+            item
+            for item in payload.get("material_promises") or []
+            if isinstance(item, dict)
+        ]
+    return [
+        item
+        for item in payload.get("accountability_promises") or []
+        if isinstance(item, dict)
+    ]
 
 
 def _capital_items(sources: Dict[str, Any]) -> List[Dict[str, Any]]:

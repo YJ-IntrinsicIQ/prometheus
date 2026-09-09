@@ -29,6 +29,12 @@ PRIMARY_PATTERNS: Dict[str, Tuple[str, ...]] = {
         "statement of profit and loss",
         "profit and loss statement",
         "statement of profit & loss",
+        # Quarterly reports often label the P&L as "income statement"
+        "income statement",
+        "condensed consolidated income statement",
+        "condensed income statement",
+        "consolidated income statement",
+        "condensed standalone income statement",
     ),
     "primary_balance_sheet_statement": (
         "balance sheet",
@@ -399,6 +405,15 @@ PRIMARY_CONTINUATION_ROW_PATTERNS: Dict[str, Tuple[str, ...]] = {
         "repayment of",
         "dividend paid",
         "interest paid",
+        # Indirect-method operating section (profit→adjustments→working capital)
+        "profit before tax",
+        "profit / (loss) before tax",
+        "profit/(loss) before tax",
+        "adjustments for",
+        "depreciation and amortisation",
+        "depreciation and amortization",
+        "operating profit before working capital changes",
+        "movements in working capital",
     ),
 }
 

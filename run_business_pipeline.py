@@ -115,16 +115,15 @@ def _resolve_raw_document_path(company: str, year: str, raw_document_path=None) 
         if candidate.exists():
             return candidate
 
-    default_candidates = [
-        Path("data/annual_reports") / f"{company}_fy{year[-2:]}.pdf",
-        Path("data/annual_reports") / f"{company}_fy{year[-2:]}.txt",
-        Path("data/annual_reports") / f"{company}_{year}.pdf",
-        Path("data/annual_reports") / f"{company}_{year}.txt",
-    ]
-    for candidate in default_candidates:
+    from core.inbox_paths import PROCESSED, INBOX
+    _fy = str(year).lower()
+    canonical_candidates = list(
+        sorted((PROCESSED / company / _fy / "annual_report").glob("*.pdf"))
+    ) + list(sorted(INBOX.glob(f"{company}_{_fy}*.pdf")))
+    for candidate in canonical_candidates:
         if candidate.exists():
             return candidate.resolve()
-    return Path(raw_document_path).expanduser().resolve() if raw_document_path else Path("data/annual_reports") / f"{company}_fy{year[-2:]}.pdf"
+    return PROCESSED / company / _fy / "annual_report" / f"{company}_fy{year[-2:]}.pdf"
 
 
 def run_business_pipeline(company: str, year: str, raw_document_path=None):

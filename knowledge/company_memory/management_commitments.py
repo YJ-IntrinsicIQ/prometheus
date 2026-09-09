@@ -18,6 +18,7 @@ from intelligence.progression import (
 )
 from intelligence.progression.manifest import PROGRESSION_CONTRACT_VERSION, PROGRESSION_ENGINE_VERSION
 
+from .commitment_identity import check_specificity_loss, extract_commitment_identity
 from .company_layer import _normalize_text, _promises_match, _promise_theme_key, _significant_tokens, _write_json, parse_financial_year
 from .guardrails import (
     ELIGIBLE_COMMITMENT_STATEMENTS,
@@ -64,6 +65,37 @@ ALLOWED_STATUSES = (
     "Abandoned",
     "Unable To Verify",
 )
+
+ACCOUNTABILITY_ONTOLOGY = (
+    "VERIFIABLE_COMMITMENT", "STRATEGIC_INTENT", "ASPIRATION", "POLICY_OR_PRINCIPLE"
+)
+
+
+def classify_accountability_ontology(statement: str, *, commitment_eligible: bool = False) -> str:
+    """Classify the accountability meaning without changing commitment identity.
+
+    Verification requires an observable success condition: a named subject,
+    measurable target, explicit milestone/deadline, or specific market/deal.
+    Directional verbs alone remain strategy/aspiration and are never routed to
+    the delivery tracker.
+    """
+    text = " ".join(str(statement or "").split())
+    lower = text.lower()
+    target_language = bool(re.search(r"\b(?:target|achieve|reduce|increase|by|within)\b", lower))
+    measurable = target_language and bool(re.search(r"\b(?:fy\d{2,4}|20\d{2}|\d+(?:\.\d+)?\s*%|\d+\s*(?:crore|million|billion|units?))\b", lower))
+    specific_action = bool(re.search(r"\b(?:launch|commission|acquire|enter|file|complete|install|ramp[- ]?up)\b", lower))
+    named_tokens = re.findall(r"\b[A-Z][A-Za-z0-9™-]{2,}\b", text)
+    named_subject = any(token.lower() not in {"the", "we", "company", "management", "india"} for token in named_tokens)
+    geographic_entry = bool(re.search(r"\b(?:enter|entry|launch|targeting new markets?)\b", lower)) and bool(
+        re.search(r"\b(?:japan|china|europe|australia|canada|mena|asia|africa|latin america|new geograph(?:y|ies)|new markets?)\b", lower)
+    )
+    if commitment_eligible and (measurable or (specific_action and named_subject) or geographic_entry):
+        return "VERIFIABLE_COMMITMENT"
+    if any(token in lower for token in ("policy", "maintain quality", "disciplined", "principle", "code of conduct")):
+        return "POLICY_OR_PRINCIPLE"
+    if any(token in lower for token in ("become market leader", "become the market leader", "world-class", "vision", "aspire", "unmet patient needs")):
+        return "ASPIRATION"
+    return "STRATEGIC_INTENT"
 
 SOURCE_TEXT_FIELDS = ("promise", "commitment", "statement", "value", "text", "summary")
 TEXT_CLEANUP_PREFIXES = (
@@ -515,11 +547,10 @@ def _normalize_commitment(statement: str, category: str, topic: str) -> str:
             return f"{topic} expected."
         return f"{topic} planned."
 
-    if future_marked and not stripped.endswith("expected") and not stripped.endswith("planned"):
-        if topic and _normalize_text(topic) not in stripped:
-            if category in {"Manufacturing", "Capacity", "Capex"}:
-                return f"{topic} planned."
-            return f"{topic} expected."
+    # NOTE: the aggressive collapse block that was here collapsed rich source text
+    # (e.g. "Target products specifically for emerging markets and India") to
+    # "{topic} expected." whenever the topic label wasn't in the normalized text.
+    # Removed — ENG-119A: preserve specificity that is present in source.
 
     if category == "Financial Target" and "target" not in stripped:
         if "revenue" in lowered and "growth" in lowered:
@@ -534,7 +565,12 @@ def _normalize_commitment(statement: str, category: str, topic: str) -> str:
         return "Capacity expansion planned." if future_marked else "Capacity expansion."
 
     if category == "Product" and "product launch" in stripped:
-        return "Product launch planned." if future_marked else "Product launch."
+        # Only collapse when there is no substantive content beyond the label.
+        # Rich source text (e.g. "... includes new product launches and geographic expansion...")
+        # must fall through so specificity is preserved.
+        remaining = stripped.replace("product launch", "").strip(" .,;")
+        if len(remaining.split()) <= 3:
+            return "Product launch planned." if future_marked else "Product launch."
 
     sentence = stripped[:1].upper() + stripped[1:]
     if not sentence.endswith("."):
@@ -715,6 +751,9 @@ def _extract_source_item_years(year_record: Dict[str, Any]) -> List[Dict[str, An
             if historical_accomplishment:
                 can_initiate_commitment = False
             commitment_eligible = can_initiate_commitment or (actor_type in COMPANY_ACTORS and lifecycle_update)
+            accountability_ontology = classify_accountability_ontology(
+                original_statement, commitment_eligible=commitment_eligible
+            )
             relevance = classify_business_relevance(
                 original_statement,
                 module_name="management_commitments",
@@ -821,6 +860,10 @@ def _extract_source_item_years(year_record: Dict[str, Any]) -> List[Dict[str, An
                     "semantic_quality": semantic_quality,
                     "quarantine_reason": quarantine_reason,
                     "commitment_role": "announcement" if can_initiate_commitment else "follow_up",
+                    "accountability_ontology": accountability_ontology,
+                    "verification_applicability": (
+                        "APPLICABLE" if accountability_ontology == "VERIFIABLE_COMMITMENT" else "NOT_APPLICABLE"
+                    ),
                 }
             )
 
@@ -884,6 +927,8 @@ def _build_group_from_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
         "actor_type": candidate.get("actor_type"),
         "statement_type": candidate.get("statement_type"),
         "semantic_quality": candidate.get("semantic_quality") or {},
+        "accountability_ontology": candidate.get("accountability_ontology") or "STRATEGIC_INTENT",
+        "verification_applicability": candidate.get("verification_applicability") or "NOT_APPLICABLE",
     }
 
 
@@ -1261,6 +1306,10 @@ def _build_commitment_record(company: str, group: Dict[str, Any], commitment_id:
     original_statement = group["original_statements"][0]
     if not original_statement:
         original_statement = supporting_evidence[0]["statement"]
+    commitment_identity = extract_commitment_identity(original_statement)
+    specificity_warnings = check_specificity_loss(
+        original_statement, group["normalized_commitment"], commitment_identity
+    )
     all_periods = sorted(set(group["periods_seen"]), key=_year_sort_key)
     announcement_period = group["announcement_period"]
     check_years = [p for p in all_periods if p != announcement_period]
@@ -1306,6 +1355,10 @@ def _build_commitment_record(company: str, group: Dict[str, Any], commitment_id:
         "actor_type": group.get("actor_type"),
         "statement_type": group.get("statement_type"),
         "semantic_quality": group.get("semantic_quality") or {},
+        "accountability_ontology": group.get("accountability_ontology") or "STRATEGIC_INTENT",
+        "verification_applicability": group.get("verification_applicability") or "NOT_APPLICABLE",
+        "commitment_identity": commitment_identity,
+        "specificity_warnings": specificity_warnings,
     }
 
 

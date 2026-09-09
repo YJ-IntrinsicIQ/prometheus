@@ -40,11 +40,9 @@ def resolve_financial_link_status(item: Dict[str, Any]) -> str:
     ]
 
     if not financial_texts:
-        # Check investor_implication for financial evidence
-        impl = item.get("investor_implication") or {}
-        conclusion = (impl.get("conclusion") or "").lower()
-        if any(t in conclusion for t in ("revenue", "margin", "return", "profit", "cash", "roe", "roic")):
-            return "PARTIAL"
+        # Investor interpretation is a conclusion, not financial evidence. A
+        # completion warning that says returns remain unproven must never create
+        # a financial link merely because it contains the word "returns".
         return "INSUFFICIENT_EVIDENCE"
 
     combined = " ".join(financial_texts).lower()

@@ -9,7 +9,15 @@ from typing import Any, Dict, List
 
 DEDICATED_SOURCES = {
     "company_model": "company_memory/company_model/company_model.json",
+    # Phase 12: canonical multi-source longitudinal evidence sits outside
+    # company_memory because it is built directly from source-processor outputs.
+    # Management Progression is the first downstream semantic owner that should
+    # consume its said→did→outcome lifecycle rather than reconstructing it.
+    "multi_source_longitudinal": "longitudinal/longitudinal_report.json",
     "management_commitments": "company_memory/management_commitments/management_commitments.json",
+    # Deterministic commitment verification is evidence supplied to Management
+    # Progression.  MP remains the sole lifecycle authority.
+    "promise_verification_events": "company_memory/gold/promise_verification_events.json",
     "projects_registry": "company_memory/projects/projects_registry.json",
     "project_timelines": "company_memory/projects/project_timelines.json",
     "capacity_registry": "company_memory/capacity/capacity_registry.json",
@@ -127,4 +135,3 @@ def loaded_payload(sources: ManagementProgressionSources, source_name: str) -> D
     record = sources.sources.get(source_name) or {}
     payload = record.get("payload")
     return payload if record.get("status") == "loaded" and isinstance(payload, dict) else {}
-

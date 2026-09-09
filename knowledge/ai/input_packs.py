@@ -138,6 +138,9 @@ _INVESTOR_PANEL_DROP_FIELDS = {
     "yearly_mentions",
     "full_evidence_map",
     "validation_debug",
+    "source_artifact",
+    "source_artifacts",
+    "primary_artifact",
 }
 
 _INVESTOR_PANEL_PREFERRED_KEYS = [
@@ -161,7 +164,6 @@ _INVESTOR_PANEL_PREFERRED_KEYS = [
     "signal_type",
     "evidence_ids",
     "source_year",
-    "source_artifact",
     "source_item_id",
     "page",
     "limitations",

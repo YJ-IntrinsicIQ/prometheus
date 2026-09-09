@@ -1910,7 +1910,15 @@ def validate_committee_brief_source(payload: Dict[str, Any]) -> Dict[str, Any]:
                 payload.get("top_diligence_questions"),
             ]
         )
-    text_blob = "\n".join(_flatten_strings(public_fields))
+    # Apply _clean_phrase() before forbidden-term scanning so that analyst exclusion
+    # messages containing raw diagnostic data (e.g. "buffett was excluded because final
+    # analyst evidence IDs are invalid: [{'reason': 'unknown_evidence_id'}]") are rewritten
+    # to user-safe equivalents ("Buffett was excluded because cited source references could
+    # not be verified.") before the check runs. Genuine prose leakage of internal terms
+    # (e.g. "Supported by evidence_id ev-123.") is not matched by _clean_phrase() and
+    # still triggers the forbidden-term check.
+    cleaned_strings = [_clean_phrase(s) for s in _flatten_strings(public_fields)]
+    text_blob = "\n".join(s for s in cleaned_strings if s)
     matches = find_forbidden_recommendation_language(text_blob)
     if matches:
         raise ValueError(

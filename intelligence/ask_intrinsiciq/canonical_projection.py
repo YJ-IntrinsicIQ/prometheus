@@ -400,9 +400,11 @@ def summarize_progression_item(item: Dict[str, Any], question_id: str = "") -> D
         claim_text = _question_primary_text(item, question_id) or event_text
         later_evidence = _question_later_evidence(item, question_id)
         verdict = _claim_verdict(item)
+        credibility_signal = str(item.get("management_credibility_signal") or "").strip()
         return {
             "headline": _sentence(_clean_progression_headline(_best_progression_headline(item.get("theme"), claim_text))),
             "current_state": current_state,
+            "management_credibility_signal": _humanize_label(credibility_signal) if credibility_signal else "",
             "what_changed": _sentence(_truncate(claim_text, 220)),
             "why_it_changed": _first_text(implication.get("economic_mechanism"), "Claims matter only if later evidence confirms the original promise."),
             "conviction_impact": _humanize_label(verdict),

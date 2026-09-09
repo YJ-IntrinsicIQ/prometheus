@@ -51,6 +51,7 @@ SOURCE_REGISTRY = {
     "multi_year_business_dna_evolution": "company_memory/multi_year/business_dna_evolution.json",
     # Gold intelligence layers
     "gold_promise_tracker": "company_memory/gold/management_promise_tracker.json",
+    "promise_verification_events": "company_memory/gold/promise_verification_events.json",
     "gold_capital_allocation": "company_memory/gold/capital_allocation_outcome_tracker.json",
     "gold_strategy_evolution": "company_memory/gold/strategy_evolution_timeline.json",
     "gold_risk_evolution": "company_memory/gold/risk_evolution_timeline.json",

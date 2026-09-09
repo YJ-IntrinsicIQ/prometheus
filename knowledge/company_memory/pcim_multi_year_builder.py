@@ -172,6 +172,7 @@ class PCIMMultiYearBuilder:
         promise_follow_through = self._build_promise_follow_through(artifacts["promise_tracker"])
         recurring_risks = self._build_recurring_risks(artifacts["risk_evolution"])
         capital_allocation_pattern = self._build_capital_allocation_pattern(artifacts["capital_allocation_timeline"])
+        management_progression = self._build_management_progression(artifacts["management_progression"])
 
         years_covered = self._determine_years_covered(artifacts, source_files)
         limitations = _dedupe_preserve(
@@ -190,6 +191,7 @@ class PCIMMultiYearBuilder:
             "promise_follow_through": promise_follow_through,
             "recurring_risks": recurring_risks,
             "capital_allocation_pattern": capital_allocation_pattern,
+            "management_progression": management_progression,
             "evidence_map": {
                 evidence_id: self._evidence_map[evidence_id]
                 for evidence_id in sorted(self._evidence_map.keys())
@@ -216,6 +218,7 @@ class PCIMMultiYearBuilder:
             "capital_allocation_timeline": {},
             "management_consistency": {},
             "multi_year_index": {},
+            "management_progression": {},
         }
         source_files: List[Dict[str, Any]] = []
 
@@ -225,6 +228,10 @@ class PCIMMultiYearBuilder:
             source_files.append(entry)
             key = filename.replace(".json", "")
             payloads[key] = payload
+        progression_path = self.company_root / "company_memory" / "management_progression" / "management_progression.json"
+        payload, entry = self._load_supplemental_source_file(progression_path, name="management_progression.json")
+        source_files.append(entry)
+        payloads["management_progression"] = payload
         return payloads, source_files
 
     def _load_source_file(self, path: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -261,6 +268,38 @@ class PCIMMultiYearBuilder:
         )
         return payload if isinstance(payload, dict) else {}, entry
 
+    def _load_supplemental_source_file(self, path: Path, *, name: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        entry = {
+            "name": name,
+            "path": str(path),
+            "exists": path.exists(),
+            "loaded": False,
+            "modified_at": "",
+            "content_hash": "",
+            "years_detected": [],
+            "warnings": [],
+            "supplemental": True,
+        }
+        if not path.exists():
+            return {}, entry
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            entry["modified_at"] = _iso_utc(path.stat().st_mtime)
+            entry["content_hash"] = _sha256(path)
+            entry["warnings"].append(f"Invalid JSON: {exc}")
+            return {}, entry
+        years_detected, _ = sort_fiscal_year_labels(_collect_year_labels(payload))
+        entry.update(
+            {
+                "loaded": True,
+                "modified_at": _iso_utc(path.stat().st_mtime),
+                "content_hash": _sha256(path),
+                "years_detected": years_detected,
+            }
+        )
+        return payload if isinstance(payload, dict) else {}, entry
+
     def _determine_years_available(self, artifacts: Dict[str, Dict[str, Any]]) -> Tuple[List[str], List[str]]:
         candidates: List[Any] = []
         company_year_index = artifacts.get("company_year_index") or {}
@@ -279,6 +318,8 @@ class PCIMMultiYearBuilder:
     ) -> List[str]:
         candidates: List[Any] = list((artifacts.get("multi_year_index") or {}).get("years_covered", []))
         for entry in source_files:
+            if entry.get("supplemental"):
+                continue
             if entry["loaded"] and entry["name"] not in {"company_year_index.json", "multi_year_index.json"}:
                 candidates.extend(entry.get("years_detected", []))
         years, _warnings = sort_fiscal_year_labels(candidates)
@@ -723,6 +764,87 @@ class PCIMMultiYearBuilder:
             "corporate_action_items": self._timeline_entries(timeline, "corporate_actions"),
             "accounting_disclosure_items": self._timeline_entries(timeline, "accounting_disclosures"),
             "missing_financial_evidence": list(payload.get("missing_financial_evidence", [])),
+        }
+
+    def _build_management_progression(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        items = payload.get("progression_items") or []
+        if not isinstance(items, list) or not items:
+            return {
+                "available": False,
+                "coverage_status": payload.get("coverage_status") or "insufficient_evidence",
+                "progression_items": [],
+                "limitations": ["Management Progression artifact unavailable or empty."],
+            }
+
+        compact_items: List[Dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            compact_events = []
+            for event in item.get("events", []) or []:
+                if not isinstance(event, dict):
+                    continue
+                evidence_refs = event.get("evidence") or []
+                evidence_ids = [
+                    str(ref.get("evidence_id") or "")
+                    for ref in evidence_refs
+                    if isinstance(ref, dict) and str(ref.get("evidence_id") or "").strip()
+                ]
+                for ref in evidence_refs:
+                    if not isinstance(ref, dict):
+                        continue
+                    self._register_evidence_ids(
+                        [ref.get("evidence_id")],
+                        source_year=ref.get("source_period") or event.get("source_period"),
+                        source_artifact=ref.get("source_artifact") or "management_progression/management_progression.json",
+                        source_item_id=ref.get("source_item_id") or event.get("event_id"),
+                        source_page=ref.get("source_page") or ref.get("page"),
+                    )
+                compact_events.append(
+                    {
+                        "role": event.get("role"),
+                        "event_type": event.get("event_type"),
+                        "source_period": event.get("source_period"),
+                        "event_period": event.get("event_period"),
+                        "target_period": event.get("target_period"),
+                        "actor": event.get("actor"),
+                        "verification_status": event.get("verification_status"),
+                        "evidence_ids": evidence_ids[:3],
+                    }
+                )
+            chain = item.get("synthesis_chain") if isinstance(item.get("synthesis_chain"), dict) else {}
+            financial = chain.get("financial_consequence") if isinstance(chain.get("financial_consequence"), dict) else {}
+            compact_items.append(
+                {
+                    "item_id": item.get("item_id"),
+                    "theme": item.get("theme"),
+                    "stream_types": list(item.get("stream_types") or []),
+                    "current_status": item.get("current_status"),
+                    "management_credibility_signal": item.get("management_credibility_signal"),
+                    "chain_status": chain.get("chain_status"),
+                    "financial_link_status": financial.get("link_status"),
+                    "thesis_impact": (item.get("investor_implication") or {}).get("thesis_impact"),
+                    "events": _limit(compact_events, 5),
+                    "unresolved_questions": _limit(
+                        [
+                            {
+                                "question": unresolved.get("question"),
+                                "why_it_matters": unresolved.get("why_it_matters"),
+                            }
+                            for unresolved in item.get("unresolved", []) or []
+                            if isinstance(unresolved, dict)
+                        ],
+                        3,
+                    ),
+                }
+            )
+
+        return {
+            "available": True,
+            "coverage_status": payload.get("coverage_status"),
+            "items_considered": len(items),
+            "progression_items": _limit(compact_items, 12),
+            "limitations": [],
         }
 
 

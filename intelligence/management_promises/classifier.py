@@ -137,6 +137,60 @@ def is_material_promise(item: Dict[str, Any]) -> bool:
     return False
 
 
+def _commitment_semantic_quality(commitment: Dict[str, Any]) -> Dict[str, Any]:
+    value = commitment.get("semantic_quality") or {}
+    return value if isinstance(value, dict) else {}
+
+
+def is_material_commitment_promise(commitment: Dict[str, Any]) -> bool:
+    """Return True when a canonical Management Commitment is worth Gold tracking.
+
+    Management Commitments owns the promise universe. This filter only decides
+    investor-facing materiality inside that universe; it never admits projects,
+    capital-allocation events, risks, or other non-MC progression rows.
+    """
+    if not isinstance(commitment, dict):
+        return False
+    fingerprint = str(commitment.get("commitment_fingerprint") or "").strip()
+    if not fingerprint:
+        return False
+    text = " ".join(
+        str(commitment.get(key) or "")
+        for key in ("topic", "category", "original_statement", "normalized_commitment")
+    ).lower()
+    if any(kw in text for kw in _TRIVIAL_KEYWORDS):
+        return False
+
+    semantic = _commitment_semantic_quality(commitment)
+    relevance = str(semantic.get("investor_relevance") or "").lower()
+    relevance_outcome = str(semantic.get("relevance_outcome") or "").upper()
+    materiality = str(semantic.get("materiality") or commitment.get("priority") or "").lower()
+    statement_type = str(commitment.get("statement_type") or "").lower()
+    priority = str(commitment.get("priority") or "").lower()
+
+    has_material_keyword = any(kw in text for kw in _MATERIAL_KEYWORDS)
+    has_specific_operating_commitment = any(
+        kw in text
+        for kw in (
+            "dashboard", "app", "real-time", "monitoring", "data integrity", "system", "platform",
+            "facility", "launch", "market", "customer", "capacity", "pipeline", "r&d", "research",
+        )
+    )
+    if relevance == "excluded":
+        return False
+    if relevance == "core" or relevance_outcome == "KEEP":
+        return True
+    if relevance_outcome == "QUARANTINE" and not has_specific_operating_commitment:
+        return False
+    if materiality in {"high", "medium"} and has_material_keyword:
+        return True
+    if priority == "high" and has_material_keyword:
+        return True
+    if statement_type in {"target", "guidance", "planned_action", "future_action", "strategic_priority"} and (has_material_keyword or has_specific_operating_commitment):
+        return True
+    return False
+
+
 # ── Promise type classification ────────────────────────────────────────────────
 
 _TYPE_SIGNALS: List[tuple] = [

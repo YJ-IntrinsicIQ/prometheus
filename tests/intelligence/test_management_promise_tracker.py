@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 
 import pytest
 
-from intelligence.management_promises.builder import build_management_promise_tracker
+from intelligence.management_promises.builder import build_management_promise_tracker, validate_management_promise_tracker
 from intelligence.management_promises.classifier import classify_promise_type, is_material_promise
 from intelligence.management_promises.resolver import (
     build_investor_interpretation,
@@ -379,46 +379,189 @@ def test_later_evidence_is_chronologically_ordered_after_commitment():
 # ── T13: no company/sector/year hardcoding ────────────────────────────────────
 
 def test_builder_works_for_synthetic_company_without_hardcoding(tmp_path):
-    # Create a minimal management_progression artifact
-    mp_dir = tmp_path / "synthetic_co" / "company_memory" / "management_progression"
-    mp_dir.mkdir(parents=True)
-    progression = {
-        "coverage_status": "supported",
-        "progression_items": [
-            {
-                "item_id": "MP-0001-expand_into_new_markets",
-                "theme": "Expand into new international markets with revenue growth target.",
-                "stream_types": ["commitment"],
-                "current_status": "in_progress",
-                "management_credibility_signal": "IN_PROGRESS",
-                "linked_company_model_ids": ["core_revenue_engine"],
-                "events": [
-                    _commitment_event("fy23", "We will expand into 3 new international markets by FY25.", "fy25"),
-                    {
-                        **_commitment_event("fy24", ""),
-                        "role": "action",
-                        "action_taken": "Entered 2 new markets.",
-                        "statement_text": "",
-                        "verification_status": "partially_verified",
-                    },
-                ],
-                "investor_implication": None,
-            },
-        ],
-        "management_thesis_chains": [],
-        "measurable_commitments": [],
-        "contradiction_signals": [],
-    }
-    (mp_dir / "management_progression.json").write_text(json.dumps(progression), encoding="utf-8")
+    _write_commitments(tmp_path, [
+        _mc("fp-expand", "We will expand into 3 new international markets by FY25.", category="Expansion", priority="high", target="fy25")
+    ])
+    _write_progression(tmp_path, [
+        {
+            "item_id": "MP-0001-expand_into_new_markets",
+            "theme": "Expand into new international markets with revenue growth target.",
+            "stream_types": ["commitment"],
+            "current_status": "in_progress",
+            "management_credibility_signal": "IN_PROGRESS",
+            "linked_company_model_ids": ["core_revenue_engine"],
+            "events": [
+                {**_commitment_event("fy23", "We will expand into 3 new international markets by FY25.", "fy25"), "event_id": "fp-expand"},
+                {
+                    **_commitment_event("fy24", ""),
+                    "role": "action",
+                    "action_taken": "Entered 2 new markets.",
+                    "statement_text": "",
+                    "verification_status": "partially_verified",
+                },
+            ],
+            "investor_implication": None,
+        },
+    ])
 
     result = build_management_promise_tracker("synthetic_co", companies_root=tmp_path)
 
     assert result["company_slug"] == "synthetic_co"
     assert len(result["material_promises"]) == 1
     p = result["material_promises"][0]
+    assert p["commitment_fingerprint"] == "fp-expand"
     assert p["promise_type"] in {"GROWTH_TARGET", "MARKET_EXPANSION", "CAPACITY", "OTHER"}
     assert p["current_status"] in {"UNVERIFIED", "DELAYED", "PARTIALLY_ACHIEVED"}
-    # No hardcoded company names in the output
     artifact_text = json.dumps(result)
     for hardcoded in ("sun_pharma", "ujjivan", "tanla", "pharma", "banking"):
         assert hardcoded not in artifact_text.lower(), f"Hardcoded term '{hardcoded}' found"
+
+
+# ── ENG-107: MC-first Gold trust contract ─────────────────────────────────────
+
+def _mc(
+    fingerprint: str,
+    statement: str,
+    *,
+    mc_id: str = "MC-0001",
+    topic: str = "Capacity expansion",
+    category: str = "Capacity",
+    priority: str = "high",
+    target: str = "unspecified",
+    relevance: str = "core",
+) -> Dict[str, Any]:
+    return {
+        "id": mc_id,
+        "commitment_fingerprint": fingerprint,
+        "topic": topic,
+        "category": category,
+        "announcement_period": "fy23",
+        "original_statement": statement,
+        "normalized_commitment": statement.lower(),
+        "expected_timeframe": target,
+        "priority": priority,
+        "status": "Unable To Verify",
+        "statement_type": "planned_action",
+        "confidence": "medium",
+        "semantic_quality": {
+            "investor_relevance": relevance,
+            "materiality": "medium" if priority != "low" else "low",
+            "relevance_outcome": "KEEP" if relevance == "core" else "DEMOTE",
+            "semantic_status": "pass",
+        },
+        "source_references": [{"period": "fy23", "source_item_id": f"src-{fingerprint}", "source_artifact": "management_summary.json"}],
+    }
+
+
+def _write_commitments(tmp_path: Path, commitments: List[Dict[str, Any]], company: str = "synthetic_co") -> None:
+    mc_dir = tmp_path / company / "company_memory" / "management_commitments"
+    mc_dir.mkdir(parents=True, exist_ok=True)
+    (mc_dir / "management_commitments.json").write_text(json.dumps({"commitments": commitments}), encoding="utf-8")
+
+
+def _write_progression(tmp_path: Path, items: List[Dict[str, Any]], company: str = "synthetic_co") -> None:
+    mp_dir = tmp_path / company / "company_memory" / "management_progression"
+    mp_dir.mkdir(parents=True, exist_ok=True)
+    (mp_dir / "management_progression.json").write_text(json.dumps({"progression_items": items, "measurable_commitments": []}), encoding="utf-8")
+
+
+def test_gold_retains_real_mc_without_mp_match_as_unverified(tmp_path):
+    _write_commitments(tmp_path, [_mc("fp-no-match", "Build a new facility by FY25.")])
+    _write_progression(tmp_path, [])
+
+    result = build_management_promise_tracker("synthetic_co", companies_root=tmp_path)
+
+    assert result["summary"]["tracked_promises"] == 1
+    promise = result["material_promises"][0]
+    assert promise["commitment_fingerprint"] == "fp-no-match"
+    assert promise["current_status"] == "UNVERIFIED"
+    assert promise["unresolved_reason"] == "NO_MATCHING_PROGRESSION_RECORD"
+    assert promise["source_item_id"] is None
+
+
+def test_non_mc_progression_item_is_not_gold_promise(tmp_path):
+    _write_commitments(tmp_path, [_mc("fp-real", "Launch a specific product by FY25.", category="Product", topic="Product launch")])
+    _write_progression(tmp_path, [
+        _item(
+            item_id="MP-9999-organic_capex",
+            theme="Organic Capex",
+            stream_types=["capital_allocation"],
+            current_status="partially_delivered",
+            management_credibility_signal="PARTIALLY_DELIVERED",
+            linked_company_model_ids=[],
+            events=[_outcome_event("fy24", "Revenue growth followed capital expenditure.", "partially_verified")],
+        )
+    ])
+
+    result = build_management_promise_tracker("synthetic_co", companies_root=tmp_path)
+
+    assert result["summary"]["tracked_promises"] == 1
+    assert result["material_promises"][0]["commitment_fingerprint"] == "fp-real"
+    assert "organic_capex" not in json.dumps(result).lower()
+
+
+def test_exact_fingerprint_mp_delivery_can_enrich_gold_status(tmp_path):
+    _write_commitments(tmp_path, [_mc("fp-delivered", "Commission a manufacturing facility by FY24.")])
+    _write_progression(tmp_path, [
+        _item(
+            item_id="MP-0001-delivered",
+            theme="Commission a manufacturing facility by FY24.",
+            stream_types=["commitment"],
+            current_status="delivered",
+            management_credibility_signal="DELIVERED",
+            events=[
+                {**_commitment_event("fy23", "Commission a manufacturing facility by FY24.", "fy24"), "event_id": "fp-delivered"},
+                _completion_event("fy24", "Facility commissioned.", "Revenue grew after commissioning."),
+            ],
+        )
+    ])
+
+    result = build_management_promise_tracker("synthetic_co", companies_root=tmp_path)
+
+    promise = result["material_promises"][0]
+    assert promise["commitment_fingerprint"] == "fp-delivered"
+    assert promise["source_item_id"] == "MP-0001-delivered"
+    assert promise["current_status"] == "ACHIEVED"
+    assert promise["progression_source_item_ids"] == ["MP-0001-delivered"]
+
+
+def test_broad_related_commitment_ids_do_not_establish_lifecycle(tmp_path):
+    _write_commitments(tmp_path, [_mc("fp-broad", "Create a centralised dashboard and app.", category="Technology", topic="Digital platform")])
+    item = _item(
+        item_id="MP-0020-dashboard",
+        theme="Centralised dashboard project",
+        stream_types=["project"],
+        current_status="delivered",
+        management_credibility_signal="DELIVERED",
+        events=[_completion_event("fy24", "Dashboard completed.", "")],
+    )
+    item["related_commitment_ids"] = ["MC-0001", "MC-0002", "MC-0003", "MC-0004"]
+    _write_progression(tmp_path, [item])
+
+    result = build_management_promise_tracker("synthetic_co", companies_root=tmp_path)
+
+    promise = result["material_promises"][0]
+    assert promise["current_status"] == "UNVERIFIED"
+    assert promise["unresolved_reason"] == "NO_MATCHING_PROGRESSION_RECORD"
+
+
+def test_validator_rejects_missing_or_unknown_fingerprint():
+    payload = {
+        "summary": {"tracked_promises": 1, "status_breakdown": {"unverified": 1}},
+        "material_promises": [{"current_status": "UNVERIFIED"}],
+        "resolved_promises": [],
+        "unresolved_promises": [{"current_status": "UNVERIFIED"}],
+    }
+    with pytest.raises(ValueError, match="missing commitment_fingerprint"):
+        validate_management_promise_tracker(payload, all_commitments=[_mc("fp-known", "Build capacity.")], lifecycle_index={})
+
+
+def test_validator_rejects_non_utv_without_mp_match():
+    payload = {
+        "summary": {"tracked_promises": 1, "status_breakdown": {"achieved": 1}},
+        "material_promises": [{"commitment_fingerprint": "fp-known", "current_status": "ACHIEVED"}],
+        "resolved_promises": [{"commitment_fingerprint": "fp-known", "current_status": "ACHIEVED"}],
+        "unresolved_promises": [],
+    }
+    with pytest.raises(ValueError, match="non-UTV status without matching MP"):
+        validate_management_promise_tracker(payload, all_commitments=[_mc("fp-known", "Build capacity.")], lifecycle_index={})

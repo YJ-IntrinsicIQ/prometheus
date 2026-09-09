@@ -13,7 +13,11 @@ from consolidators.capex_consolidator import merge_projects
 from filters.capex_filter import is_capex_related
 
 
-PDF_PATH = ROOT / "data" / "annual_reports" / "polymatech.pdf"
+_CANONICAL_PATH = ROOT / "data" / "Processed" / "polymatech" / "fy25" / "annual_report"
+PDF_PATH = next(
+    (p for p in sorted(_CANONICAL_PATH.glob("*.pdf")) if _CANONICAL_PATH.exists()),
+    _CANONICAL_PATH / "polymatech_fy25.pdf",
+)
 
 
 def main():

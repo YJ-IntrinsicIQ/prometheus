@@ -279,3 +279,271 @@ def test_no_company_specific_production_branches():
 
     assert 'company == "' not in producer_source
     assert "company_slug == " not in producer_source
+
+
+# ── Phase 12.1 — Company Model Longitudinal Propagation ─────────────────────
+
+
+def _mp_item(item_id: str, theme: str, *, status: str = "partially_delivered", credibility: str = "PARTIALLY_DELIVERED", streams: list | None = None, linked: list | None = None, events: list | None = None) -> dict:
+    return {
+        "item_id": item_id,
+        "theme": theme,
+        "stream_types": streams if streams is not None else ["multi_source_longitudinal"],
+        "current_status": status,
+        "management_credibility_signal": credibility,
+        "linked_company_model_ids": linked or [],
+        "events": events or [
+            {
+                "event_id": f"{item_id}:ev1",
+                "role": "completion",
+                "event_type": "product_launch",
+                "source_period": "fy25",
+                "event_period": "fy25",
+                "statement_text": "",
+                "action_taken": f"[fy25 / EARNINGS_RELEASE] {theme} confirmed by operating evidence.",
+                "verification_status": "partially_verified",
+                "evidence": [
+                    {
+                        "source_artifact": "longitudinal/longitudinal_report.json",
+                        "source_period": "fy25",
+                        "evidence_id": f"er-chunk:fy25:{item_id[:12]}",
+                        "source_item_id": item_id,
+                        "field_path": "commitments[]",
+                        "excerpt": f"{theme} confirmed.",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _mp_payload(company: str, items: list) -> dict:
+    return {
+        "schema_version": "management_progression.v1",
+        "company_slug": company,
+        "generated_at": "2026-09-03T00:00:00Z",
+        "coverage_status": "supported",
+        "progression_items": items,
+        "management_thesis_chains": [],
+        "measurable_commitments": [],
+        "contradiction_signals": [],
+        "source_manifest": {
+            "schema_version": "management_progression_manifest.v1",
+            "company_slug": company,
+            "generated_at": "2026-09-03T00:00:00Z",
+            "coverage_status": "supported",
+            "sources_used": ["longitudinal/longitudinal_report.json"],
+            "sources_missing": [],
+            "legacy_adapter_used": False,
+            "legacy_adapter_sources": [],
+            "company_mismatch_errors": [],
+        },
+    }
+
+
+class TestPhase121LongitudinalCurrentState:
+    """Phase 12.1 — longitudinal evidence enters Company Model via Management Progression."""
+
+    def _make_company(self, tmp_path: Path, company: str, mp_items: list, pcim_model: dict | None = None) -> Path:
+        root = tmp_path / "companies" / company
+        _write_json(root / "company_memory" / "management_progression" / "management_progression.json", _mp_payload(company, mp_items))
+        if pcim_model is not None:
+            _write_json(root / "company_memory" / "pcim_v1.json", _pcim_payload(company, pcim_model))
+        return root
+
+    def _default_pcim(self) -> dict:
+        return {
+            "year": "fy25",
+            "business_summary": "A specialised industrial sensor platform for machine monitoring.",
+            "business_model": "Sells sensor software and monitoring services to industrial users and enterprises.",
+            "value_creation": "Converts machine data into uptime alerts and recurring monitoring revenue.",
+            "competitive_position_summary": "Manufacturing quality and platform integration.",
+            "evidence_ids": ["ev_platform_base"],
+        }
+
+    def test_longitudinal_items_enter_company_model(self, tmp_path: Path):
+        """Gate 1: longitudinal evidence enters Company Model via Management Progression."""
+        self._make_company(tmp_path, "acme", [_mp_item("LC-X-FY25", "Platform Launch", status="partially_delivered", credibility="PARTIALLY_DELIVERED")], self._default_pcim())
+        payload = build_company_model("acme", companies_root=tmp_path / "companies", generated_at="2026-09-03T00:00:00Z")
+
+        lcs = payload.get("longitudinal_current_state", [])
+        assert len(lcs) >= 1, "longitudinal_current_state must contain items when management_progression has longitudinal threads"
+        assert lcs[0]["state_id"]
+        assert lcs[0]["theme"] == "Platform Launch"
+        assert lcs[0]["current_status"] == "partially_delivered"
+        assert lcs[0]["evidence"], "each state must carry evidence reference"
+
+    def test_management_claim_without_confirmation_is_not_confirmed(self, tmp_path: Path):
+        """Gate 2: latest management claim alone does not become confirmed current state."""
+        claimed_item = _mp_item("LC-CLAIM-FY26", "Revenue Growth Guidance", status="announced", credibility="UNABLE_TO_VERIFY")
+        self._make_company(tmp_path, "acme", [claimed_item], self._default_pcim())
+        payload = build_company_model("acme", companies_root=tmp_path / "companies", generated_at="2026-09-03T00:00:00Z")
+
+        lcs = payload.get("longitudinal_current_state", [])
+        claim_states = [s for s in lcs if s["theme"] == "Revenue Growth Guidance"]
+        assert len(claim_states) == 1
+        # Status must NOT be confirmed — it's only claimed/announced
+        assert claim_states[0]["current_status"] not in {"confirmed_operational", "delivered", "verified"}
+        # Confidence must be low when credibility is UNABLE_TO_VERIFY
+        assert claim_states[0]["confidence"]["level"] == "low"
+
+    def test_confirmed_current_state_preserved_with_high_confidence(self, tmp_path: Path):
+        """Gate 3: confirmed lifecycle state is preserved with high confidence."""
+        confirmed_item = _mp_item("LC-CONF-FY26", "Leadership Change", status="partially_delivered", credibility="CONFIRMED")
+        self._make_company(tmp_path, "acme", [confirmed_item], self._default_pcim())
+        payload = build_company_model("acme", companies_root=tmp_path / "companies", generated_at="2026-09-03T00:00:00Z")
+
+        lcs = payload.get("longitudinal_current_state", [])
+        confirmed_states = [s for s in lcs if s["theme"] == "Leadership Change"]
+        assert len(confirmed_states) == 1
+        assert confirmed_states[0]["confidence"]["level"] == "high"
+
+    def test_future_target_does_not_become_current_confirmed_state(self, tmp_path: Path):
+        """Gate 4: future management targets remain future — not promoted to confirmed current state."""
+        future_item = _mp_item("LC-FUTURE-FY28", "Capacity Target FY28", status="announced", credibility="CLAIMED")
+        future_item["events"][0]["event_period"] = "fy28"
+        self._make_company(tmp_path, "acme", [future_item], self._default_pcim())
+        payload = build_company_model("acme", companies_root=tmp_path / "companies", generated_at="2026-09-03T00:00:00Z")
+
+        lcs = payload.get("longitudinal_current_state", [])
+        future_states = [s for s in lcs if s["theme"] == "Capacity Target FY28"]
+        assert len(future_states) == 1
+        # Must remain announced, not delivered/confirmed
+        assert future_states[0]["current_status"] == "announced"
+        assert future_states[0]["confidence"]["level"] in {"low", "medium"}
+
+    def test_unresolved_state_preserved_as_unresolved(self, tmp_path: Path):
+        """Gate 7: unresolved state remains unresolved — unknown is not converted to confident assertion."""
+        unresolved_item = _mp_item("LC-UNRES-FY26", "Market Share Growth", status="in_progress", credibility="UNABLE_TO_VERIFY")
+        self._make_company(tmp_path, "acme", [unresolved_item], self._default_pcim())
+        payload = build_company_model("acme", companies_root=tmp_path / "companies", generated_at="2026-09-03T00:00:00Z")
+
+        lcs = payload.get("longitudinal_current_state", [])
+        unresolved = [s for s in lcs if s["theme"] == "Market Share Growth"]
+        assert len(unresolved) == 1
+        # Confidence must not be high when credibility is unverified
+        assert unresolved[0]["confidence"]["level"] in {"low", "medium"}
+
+    def test_evidence_ids_preserved_in_state_entries(self, tmp_path: Path):
+        """Gate 10: evidence IDs are preserved so Company Model state is traceable."""
+        item = _mp_item("LC-EV-FY25", "International Expansion", status="partially_delivered", credibility="PARTIALLY_DELIVERED")
+        self._make_company(tmp_path, "acme", [item], self._default_pcim())
+        payload = build_company_model("acme", companies_root=tmp_path / "companies", generated_at="2026-09-03T00:00:00Z")
+
+        lcs = payload.get("longitudinal_current_state", [])
+        ev_states = [s for s in lcs if s["theme"] == "International Expansion"]
+        assert len(ev_states) == 1
+        ev = ev_states[0].get("evidence", [])
+        assert ev, "evidence reference must be present"
+        assert ev[0].get("source_artifact"), "source_artifact must be set"
+        assert ev[0].get("evidence_id") or ev[0].get("source_artifact")  # provenance preserved
+
+    def test_no_raw_source_chunk_in_state_evidence(self, tmp_path: Path):
+        """Gate 11: no raw source-chunk leakage into Company Model longitudinal state."""
+        item = _mp_item("LC-CHUNK-FY25", "Capital Allocation", status="partially_delivered", credibility="PARTIALLY_DELIVERED")
+        # Inject a forbidden field into the underlying event evidence (simulating leakage attempt)
+        item["events"][0]["evidence"][0]["source_chunk"] = "RAW_LEAK"
+        self._make_company(tmp_path, "acme", [item], self._default_pcim())
+        payload = build_company_model("acme", companies_root=tmp_path / "companies", generated_at="2026-09-03T00:00:00Z")
+
+        lcs = payload.get("longitudinal_current_state", [])
+        for state in lcs:
+            for ev in state.get("evidence", []):
+                assert "source_chunk" not in ev, "source_chunk must never leak into Company Model state evidence"
+                assert "raw_text" not in ev
+                assert "full_text" not in ev
+
+    def test_company_model_does_not_duplicate_full_management_progression_events(self, tmp_path: Path):
+        """Gate 12: Company Model must not include the full event list — that belongs to Management Progression."""
+        item = _mp_item("LC-DUP-FY25", "Platform Launch", status="partially_delivered", credibility="PARTIALLY_DELIVERED")
+        self._make_company(tmp_path, "acme", [item], self._default_pcim())
+        payload = build_company_model("acme", companies_root=tmp_path / "companies", generated_at="2026-09-03T00:00:00Z")
+
+        lcs = payload.get("longitudinal_current_state", [])
+        for state in lcs:
+            assert "events" not in state, "full events list must not appear in Company Model longitudinal_current_state"
+
+    def test_abandoned_and_reversed_items_excluded(self, tmp_path: Path):
+        """Abandoned and reversed threads must not appear in current state."""
+        items = [
+            _mp_item("LC-ABAND-FY24", "Old Strategy", status="abandoned", credibility="UNABLE_TO_VERIFY"),
+            _mp_item("LC-REV-FY24", "Changed Position", status="reversed", credibility="UNABLE_TO_VERIFY"),
+            _mp_item("LC-GOOD-FY25", "Active Theme", status="in_progress", credibility="PARTIALLY_DELIVERED"),
+        ]
+        self._make_company(tmp_path, "acme", items, self._default_pcim())
+        payload = build_company_model("acme", companies_root=tmp_path / "companies", generated_at="2026-09-03T00:00:00Z")
+
+        lcs = payload.get("longitudinal_current_state", [])
+        themes = [s["theme"] for s in lcs]
+        assert "Old Strategy" not in themes, "abandoned items must be excluded"
+        assert "Changed Position" not in themes, "reversed items must be excluded"
+        assert "Active Theme" in themes, "active items must be included"
+
+    def test_non_longitudinal_mp_items_do_not_enter_longitudinal_current_state(self, tmp_path: Path):
+        """Gate 12 corollary: annual-report-only MP items must not appear in longitudinal_current_state."""
+        non_longitudinal = _mp_item("MP-PROJ-FY25", "Annual Report Project", status="in_progress", credibility="PARTIALLY_DELIVERED", streams=["project"])
+        longitudinal = _mp_item("LC-LONG-FY25", "Longitudinal Theme", status="in_progress", credibility="PARTIALLY_DELIVERED", streams=["multi_source_longitudinal"])
+        self._make_company(tmp_path, "acme", [non_longitudinal, longitudinal], self._default_pcim())
+        payload = build_company_model("acme", companies_root=tmp_path / "companies", generated_at="2026-09-03T00:00:00Z")
+
+        lcs = payload.get("longitudinal_current_state", [])
+        themes = [s["theme"] for s in lcs]
+        assert "Annual Report Project" not in themes, "non-longitudinal items must not appear in longitudinal_current_state"
+        assert "Longitudinal Theme" in themes
+
+    def test_validator_rejects_events_in_longitudinal_state(self):
+        """Validator gate: Company Model must not duplicate full Management Progression event list."""
+        payload = build_company_model("tanla", generated_at="2026-09-03T00:00:00Z")
+        # Inject events into a state entry
+        if payload.get("longitudinal_current_state"):
+            payload["longitudinal_current_state"][0]["events"] = [{"event_id": "injected"}]
+        else:
+            payload["longitudinal_current_state"] = [
+                {"state_id": "lcs-test", "theme": "Test", "current_status": "in_progress", "evidence": [], "events": [{"event_id": "injected"}]}
+            ]
+        validation = validate_company_model(payload)
+        assert validation["status"] == "fail"
+        assert any("events" in e and "Management Progression" in e for e in validation["errors"])
+
+    def test_validator_rejects_source_chunk_in_evidence(self):
+        """Validator gate: source_chunk must never appear in longitudinal state evidence."""
+        payload = build_company_model("tanla", generated_at="2026-09-03T00:00:00Z")
+        payload["longitudinal_current_state"] = [
+            {
+                "state_id": "lcs-leak",
+                "theme": "Test",
+                "current_status": "in_progress",
+                "evidence": [{"source_artifact": "x.json", "source_chunk": "RAW TEXT"}],
+            }
+        ]
+        validation = validate_company_model(payload)
+        assert validation["status"] == "fail"
+        assert any("source_chunk" in e for e in validation["errors"])
+
+    def test_management_progression_source_in_manifest(self):
+        """Gate 15/16: management_progression must appear in Company Model source manifest when available."""
+        payload = build_company_model("tanla", generated_at="2026-09-03T00:00:00Z")
+        sources_used = payload["source_manifest"]["sources_used"]
+        assert any("management_progression" in s for s in sources_used)
+
+    def test_tanla_production_regression(self):
+        """Gate 13: Tanla production regression — Company Model must validate and include longitudinal state."""
+        payload = build_company_model("tanla", generated_at="2026-09-03T00:00:00Z")
+        validation = validate_company_model(payload)
+
+        assert validation["status"] == "pass", validation["errors"]
+        assert payload["company_slug"] == "tanla"
+        assert payload["current_business_model"]["business_model_type"] == "platform"
+        lcs = payload.get("longitudinal_current_state", [])
+        assert len(lcs) >= 1, "Tanla must have longitudinal current state items from Phase 12 Management Progression"
+
+    def test_datapatterns_production_regression(self):
+        """Gate 14: Data Patterns production regression — Company Model must validate and include longitudinal state."""
+        payload = build_company_model("datapatterns", generated_at="2026-09-03T00:00:00Z")
+        validation = validate_company_model(payload)
+
+        assert validation["status"] == "pass", validation["errors"]
+        assert payload["company_slug"] == "datapatterns"
+        assert payload["current_business_model"]["business_model_type"] == "manufacturing"
+        lcs = payload.get("longitudinal_current_state", [])
+        assert len(lcs) >= 1, "Data Patterns must have longitudinal current state items from Phase 12 Management Progression"

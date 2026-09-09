@@ -4,9 +4,9 @@ import json
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
-from .classifier import classify_promise_type, is_material_promise
+from .classifier import classify_promise_type, is_material_commitment_promise
 from .resolver import (
     build_investor_interpretation,
     extract_evidence_ids,
@@ -38,6 +38,127 @@ def _load_json(path: Path) -> Dict[str, Any]:
 def _gold_output_path(company_slug: str, companies_root: Path) -> Path:
     return companies_root / company_slug / "company_memory" / _GOLD_DIR / _ARTIFACT_NAME
 
+
+def _management_commitments_path(company_slug: str, companies_root: Path) -> Path:
+    return companies_root / company_slug / "company_memory" / "management_commitments" / "management_commitments.json"
+
+
+def _management_progression_path(company_slug: str, companies_root: Path) -> Path:
+    return companies_root / company_slug / "company_memory" / "management_progression" / "management_progression.json"
+
+
+def _commitment_fingerprint(commitment: Dict[str, Any]) -> str:
+    return str(commitment.get("commitment_fingerprint") or "").strip()
+
+
+def _commitment_id(commitment: Dict[str, Any]) -> str:
+    return str(commitment.get("id") or commitment.get("commitment_id") or "").strip()
+
+
+def _commitment_period(commitment: Dict[str, Any]) -> str:
+    return str(
+        commitment.get("announcement_period")
+        or commitment.get("source_period")
+        or commitment.get("period")
+        or ""
+    ).strip()
+
+
+def _commitment_target_period(commitment: Dict[str, Any]) -> Optional[str]:
+    value = str(commitment.get("target_period") or commitment.get("expected_timeframe") or "").strip()
+    if not value or value.lower() in {"unspecified", "unknown", "not specified", "n/a", "na"}:
+        return None
+    return value
+
+
+def _commitment_source_evidence_ids(commitment: Dict[str, Any]) -> List[str]:
+    ids: List[str] = []
+    for ref in commitment.get("source_references") or []:
+        if isinstance(ref, dict):
+            eid = ref.get("evidence_id") or ref.get("source_item_id")
+            if eid and eid not in ids:
+                ids.append(str(eid))
+    for ev in commitment.get("supporting_evidence") or []:
+        if isinstance(ev, dict):
+            ref = ev.get("source_reference") or {}
+            eid = ref.get("evidence_id") or ref.get("source_item_id") if isinstance(ref, dict) else None
+            if eid and eid not in ids:
+                ids.append(str(eid))
+    return ids
+
+
+def _commitment_as_progression_seed(commitment: Dict[str, Any]) -> Dict[str, Any]:
+    statement = str(commitment.get("original_statement") or commitment.get("normalized_commitment") or commitment.get("topic") or "").strip()
+    fingerprint = _commitment_fingerprint(commitment)
+    period = _commitment_period(commitment)
+    evidence = []
+    for ref in commitment.get("source_references") or []:
+        if isinstance(ref, dict):
+            evidence.append({
+                "source_artifact": ref.get("source_artifact") or "management_commitments.json",
+                "source_period": ref.get("period") or period,
+                "evidence_id": ref.get("evidence_id") or ref.get("source_item_id"),
+                "source_item_id": ref.get("source_item_id") or _commitment_id(commitment),
+                "field_path": "commitments[]",
+                "excerpt": statement[:300],
+            })
+    return {
+        "item_id": f"MC-{fingerprint}" if fingerprint else _commitment_id(commitment) or "MC-UNKNOWN",
+        "theme": commitment.get("topic") or statement[:120],
+        "linked_company_model_ids": [],
+        "stream_types": ["commitment"],
+        "current_status": "announced",
+        "management_credibility_signal": "UNABLE_TO_VERIFY",
+        "events": [
+            {
+                "event_id": fingerprint,
+                "role": "commitment",
+                "event_type": commitment.get("category") or "management_commitment",
+                "source_period": period,
+                "event_period": period,
+                "target_period": _commitment_target_period(commitment) or "",
+                "statement_text": statement,
+                "action_taken": "",
+                "operational_outcome": "",
+                "financial_or_business_outcome": "",
+                "verification_status": "unresolved",
+                "evidence": evidence,
+            }
+        ],
+        "investor_implication": None,
+    }
+
+
+def _commitment_lifecycle_index(progression: Dict[str, Any], valid_fingerprints: Set[str]) -> Dict[str, Dict[str, Any]]:
+    index: Dict[str, Dict[str, Any]] = {}
+    for item in progression.get("progression_items") or []:
+        if not isinstance(item, dict):
+            continue
+        matched: Set[str] = set()
+        for event in item.get("events") or []:
+            if not isinstance(event, dict):
+                continue
+            role = str(event.get("role") or event.get("event_role") or "").strip().lower()
+            event_id = str(event.get("event_id") or event.get("source_item_id") or "").strip()
+            # Primary join: commitment event whose event_id IS the fingerprint.
+            if role == "commitment" and event_id in valid_fingerprints:
+                matched.add(event_id)
+            # Secondary join (future contract): execution event carrying canonical_commitment_reference
+            # set by upstream LLM extraction. No-op today; activates without code change when field exists.
+            fp_field = str(event.get("commitment_fingerprint") or "").strip()
+            if fp_field and fp_field in valid_fingerprints:
+                matched.add(fp_field)
+        for fingerprint in matched:
+            index[fingerprint] = item
+    return index
+
+
+def _merge_evidence_ids(commitment: Dict[str, Any], lifecycle_item: Dict[str, Any]) -> List[str]:
+    ids: List[str] = []
+    for eid in _commitment_source_evidence_ids(commitment) + extract_evidence_ids(lifecycle_item):
+        if eid and eid not in ids:
+            ids.append(eid)
+    return ids
 
 # ── Original statement extraction ──────────────────────────────────────────────
 
@@ -94,40 +215,92 @@ def _measurable_target(item: Dict[str, Any], measurable_commitments: List[Dict[s
 # ── Core promise builder ────────────────────────────────────────────────────────
 
 def _build_promise_record(
-    item: Dict[str, Any],
+    commitment: Dict[str, Any],
+    lifecycle_item: Dict[str, Any],
     measurable_commitments: List[Dict[str, Any]],
     promise_index: int,
 ) -> Dict[str, Any]:
-    promise_id = f"PT-{promise_index:04d}-{item['item_id'].split('-', 2)[-1][:40]}"
-    promise_type = classify_promise_type(item)
-    execution_status = resolve_execution_status(item)
-    financial_link_status = resolve_financial_link_status(item)
+    fingerprint = _commitment_fingerprint(commitment)
+    source_item_id = lifecycle_item.get("item_id") or _commitment_id(commitment)
+    promise_id = f"PT-{promise_index:04d}-{fingerprint[:12] or str(source_item_id).split('-', 2)[-1][:40]}"
+    promise_type = classify_promise_type(lifecycle_item)
+    execution_status = resolve_execution_status(lifecycle_item)
+    financial_link_status = resolve_financial_link_status(lifecycle_item)
     outcome_status = resolve_outcome_status(
-        item,
+        lifecycle_item,
         execution_status=execution_status,
         financial_link_status=financial_link_status,
     )
-    current_status = resolve_current_status(item, outcome_status, execution_status)
-    later_evidence = extract_later_evidence(item)
-    evidence_ids = extract_evidence_ids(item)
-    investor_interpretation = build_investor_interpretation(item, execution_status, outcome_status)
-    measurable = _measurable_target(item, measurable_commitments)
+    current_status = resolve_current_status(lifecycle_item, outcome_status, execution_status)
+    later_evidence = extract_later_evidence(lifecycle_item)
+    evidence_ids = _merge_evidence_ids(commitment, lifecycle_item)
+    investor_interpretation = build_investor_interpretation(lifecycle_item, execution_status, outcome_status)
+    measurable = _measurable_target(lifecycle_item, measurable_commitments)
+    no_match = not bool(lifecycle_item.get("source_item_id") or lifecycle_item.get("item_id", "").startswith("MP-"))
+
+    if no_match:
+        execution_status = "CLAIM_ONLY"
+        outcome_status = "UNVERIFIED"
+        financial_link_status = "INSUFFICIENT_EVIDENCE"
+        current_status = "UNVERIFIED"
+        later_evidence = []
+        investor_interpretation = "This commitment remains unverified because no matching Management Progression lifecycle record was found."
+
+    verification_states = {
+        str(event.get("verification_status") or "").strip().lower()
+        for event in lifecycle_item.get("events") or []
+        if isinstance(event, dict)
+    }
+    if "contradicted" in verification_states:
+        accountability_verification_state = "CONTRADICTED"
+    elif "verified" in verification_states and execution_status == "ACTION_COMPLETED":
+        accountability_verification_state = "VERIFIED"
+    elif "partially_verified" in verification_states and execution_status in {"ACTION_STARTED", "ACTION_COMPLETED"}:
+        accountability_verification_state = "PARTIALLY_VERIFIED"
+    else:
+        accountability_verification_state = "UNVERIFIED"
+
+    if commitment.get("accountability_ontology") == "VERIFIABLE_COMMITMENT":
+        if accountability_verification_state == "VERIFIED":
+            current_status = "ACHIEVED"
+            investor_interpretation = (
+                "Delivery is verified by an authoritative linked execution event. "
+                "The financial consequence remains separate and must not be inferred from completion alone."
+            )
+        elif accountability_verification_state == "PARTIALLY_VERIFIED":
+            current_status = "PARTIALLY_ACHIEVED"
+        elif accountability_verification_state == "CONTRADICTED":
+            current_status = "MISSED"
 
     record: Dict[str, Any] = {
         "promise_id": promise_id,
-        "source_item_id": item.get("item_id"),
-        "theme": (item.get("theme") or "").strip()[:200],
-        "original_statement": _original_statement(item),
-        "source_period": _source_period(item),
-        "target_period": _target_period(item),
+        "commitment_fingerprint": fingerprint,
+        "management_commitment_id": _commitment_id(commitment),
+        "source_item_id": lifecycle_item.get("item_id") if not no_match else None,
+        "theme": str(commitment.get("topic") or lifecycle_item.get("theme") or "").strip()[:200],
+        "original_statement": str(commitment.get("original_statement") or _original_statement(lifecycle_item)).strip(),
+        "normalized_commitment": str(commitment.get("normalized_commitment") or "").strip(),
+        "announcement_period": _commitment_period(commitment),
+        "source_period": _commitment_period(commitment),
+        "target_period": _commitment_target_period(commitment) or _target_period(lifecycle_item),
+        "category": commitment.get("category") or "",
+        "specificity": commitment.get("statement_type") or "",
+        "accountability_ontology": commitment.get("accountability_ontology") or "STRATEGIC_INTENT",
+        "verification_applicability": commitment.get("verification_applicability") or "NOT_APPLICABLE",
+        "materiality": ((commitment.get("semantic_quality") or {}).get("materiality") if isinstance(commitment.get("semantic_quality"), dict) else None) or commitment.get("priority") or "",
         "promise_type": promise_type,
+        "progression_status": lifecycle_item.get("current_status") or "announced",
+        "progression_confidence": (lifecycle_item.get("confidence") or {}).get("level") if isinstance(lifecycle_item.get("confidence"), dict) else commitment.get("confidence"),
+        "progression_source_item_ids": [lifecycle_item.get("item_id")] if lifecycle_item.get("item_id") and not no_match else [],
+        "unresolved_reason": "NO_MATCHING_PROGRESSION_RECORD" if no_match else "",
         "execution_status": execution_status,
         "outcome_status": outcome_status,
         "financial_link_status": financial_link_status,
         "current_status": current_status,
+        "accountability_verification_state": accountability_verification_state,
         "later_evidence": later_evidence,
         "evidence_ids": evidence_ids,
-        "linked_company_model_ids": item.get("linked_company_model_ids") or [],
+        "linked_company_model_ids": lifecycle_item.get("linked_company_model_ids") or [],
         "investor_interpretation": investor_interpretation,
     }
     if measurable:
@@ -286,25 +459,30 @@ def build_management_promise_tracker(
     companies_root = Path(companies_root)
     generated_at = generated_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
-    # Load sources
+    # Load sources. Management Commitments owns promise identity; Management
+    # Progression may only enrich lifecycle by exact commitment_fingerprint.
     memory_root = companies_root / company_slug / "company_memory"
-    progression = _load_json(memory_root / "management_progression" / "management_progression.json")
+    commitments_payload = _load_json(_management_commitments_path(company_slug, companies_root))
+    progression = _load_json(_management_progression_path(company_slug, companies_root))
     measurable_commitments = progression.get("measurable_commitments") or []
 
-    # All progression items
-    all_items = progression.get("progression_items") or []
+    all_commitments = [c for c in commitments_payload.get("commitments") or [] if isinstance(c, dict)]
+    valid_fingerprints = {_commitment_fingerprint(c) for c in all_commitments if _commitment_fingerprint(c)}
+    lifecycle_index = _commitment_lifecycle_index(progression, valid_fingerprints)
+
     trivial_count = 0
-    material_items = []
-    for item in all_items:
-        if is_material_promise(item):
-            material_items.append(item)
+    material_commitments: List[Dict[str, Any]] = []
+    for commitment in all_commitments:
+        if is_material_commitment_promise(commitment):
+            material_commitments.append(commitment)
         else:
             trivial_count += 1
 
-    # Build promise records
     promises: List[Dict[str, Any]] = []
-    for idx, item in enumerate(material_items, start=1):
-        record = _build_promise_record(item, measurable_commitments, idx)
+    for idx, commitment in enumerate(material_commitments, start=1):
+        fingerprint = _commitment_fingerprint(commitment)
+        lifecycle_item = lifecycle_index.get(fingerprint) or _commitment_as_progression_seed(commitment)
+        record = _build_promise_record(commitment, lifecycle_item, measurable_commitments, idx)
         promises.append(record)
 
     # Sort by materiality rank descending
@@ -314,26 +492,91 @@ def build_management_promise_tracker(
     resolved = [p for p in promises if p["current_status"] in ("ACHIEVED", "PARTIALLY_ACHIEVED", "MISSED", "ABANDONED")]
     unresolved = [p for p in promises if p["current_status"] not in ("ACHIEVED", "PARTIALLY_ACHIEVED", "MISSED", "ABANDONED")]
 
-    # Credibility patterns
-    credibility_patterns = _build_credibility_patterns(promises)
+    accountability_promises = [
+        p for p in promises if p.get("accountability_ontology") == "VERIFIABLE_COMMITMENT"
+    ]
+    strategic_statements = [
+        p for p in promises if p.get("accountability_ontology") != "VERIFIABLE_COMMITMENT"
+    ]
+    ontology_counts = Counter(p.get("accountability_ontology") or "STRATEGIC_INTENT" for p in promises)
+    # Credibility patterns describe the accountability denominator, not all
+    # strategic/aspirational management statements.
+    credibility_patterns = _build_credibility_patterns(accountability_promises)
 
-    # Summary
+    # Summary retains the material-statement universe for compatibility while
+    # accountability_metrics is the sole promise-delivery denominator.
     summary = _build_summary(promises, company_slug, credibility_patterns, trivial_count)
+    verification_counts = Counter(
+        p.get("accountability_verification_state") or "UNVERIFIED"
+        for p in accountability_promises
+    )
+    summary["accountability_metrics"] = {
+        "material_verifiable_commitments": len(accountability_promises),
+        "verified_commitments": verification_counts.get("VERIFIED", 0),
+        "partially_verified_commitments": verification_counts.get("PARTIALLY_VERIFIED", 0),
+        "contradicted_commitments": verification_counts.get("CONTRADICTED", 0),
+        "unresolved_verifiable_commitments": verification_counts.get("UNVERIFIED", 0),
+        "strategic_intents": ontology_counts.get("STRATEGIC_INTENT", 0),
+        "aspirations": ontology_counts.get("ASPIRATION", 0),
+        "policies_or_principles": ontology_counts.get("POLICY_OR_PRINCIPLE", 0),
+    }
 
     # Critical follow-up
     critical_followup = _build_critical_followup(promises)
 
-    return {
+    payload = {
         "schema_version": SCHEMA_VERSION,
         "company_slug": company_slug,
         "generated_at": generated_at,
         "summary": summary,
         "material_promises": promises,
+        "accountability_promises": accountability_promises,
+        "strategic_intent_statements": strategic_statements,
         "resolved_promises": resolved,
         "unresolved_promises": unresolved,
         "credibility_patterns": credibility_patterns,
         "critical_follow_up": critical_followup,
     }
+    validate_management_promise_tracker(payload, all_commitments=all_commitments, lifecycle_index=lifecycle_index)
+    return payload
+
+
+def validate_management_promise_tracker(
+    payload: Dict[str, Any],
+    *,
+    all_commitments: List[Dict[str, Any]],
+    lifecycle_index: Dict[str, Dict[str, Any]],
+) -> None:
+    mc_fingerprints = {_commitment_fingerprint(c) for c in all_commitments if _commitment_fingerprint(c)}
+    seen: Set[str] = set()
+    promises = payload.get("material_promises") or []
+    for idx, promise in enumerate(promises):
+        if not isinstance(promise, dict):
+            raise ValueError(f"Gold promise tracker invalid row at index {idx}: not an object")
+        fingerprint = str(promise.get("commitment_fingerprint") or "").strip()
+        if not fingerprint:
+            raise ValueError(f"Gold promise tracker invalid row at index {idx}: missing commitment_fingerprint")
+        if fingerprint not in mc_fingerprints:
+            raise ValueError(f"Gold promise tracker invalid row at index {idx}: fingerprint not found in Management Commitments")
+        if fingerprint in seen:
+            raise ValueError(f"Gold promise tracker invalid row at index {idx}: duplicate commitment_fingerprint")
+        seen.add(fingerprint)
+        has_lifecycle = fingerprint in lifecycle_index
+        if promise.get("current_status") != "UNVERIFIED" and not has_lifecycle:
+            raise ValueError(f"Gold promise tracker invalid row at index {idx}: non-UTV status without matching MP lifecycle evidence")
+        if promise.get("source_item_id") and not has_lifecycle:
+            raise ValueError(f"Gold promise tracker invalid row at index {idx}: non-MC progression item represented as promise")
+    summary = payload.get("summary") or {}
+    sb = summary.get("status_breakdown") or {}
+    bucket_total = sum(int(sb.get(k) or 0) for k in ("achieved", "partially_achieved", "delayed", "missed", "abandoned", "unverified"))
+    if int(summary.get("tracked_promises") or 0) != len(promises):
+        raise ValueError("Gold promise tracker summary tracked_promises does not match material_promises length")
+    if bucket_total != len(promises):
+        raise ValueError("Gold promise tracker status buckets do not reconcile to tracked_promises")
+    resolved = payload.get("resolved_promises") or []
+    unresolved = payload.get("unresolved_promises") or []
+    if len(resolved) + len(unresolved) != len(promises):
+        raise ValueError("Gold promise tracker resolved/unresolved partitions do not reconcile")
 
 
 def write_management_promise_tracker(

@@ -11,7 +11,7 @@ import re
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from core.company_context import CompanyContext  # noqa: E402
+from core.company_context import CompanyContext, CompanyMemoryContext  # noqa: E402
 from core.context_paths import investor_panel_dir  # noqa: E402
 from pipelines.pipeline_context import get_context, set_context  # noqa: E402
 from knowledge.ai import get_llm  # noqa: E402
@@ -19,6 +19,12 @@ from knowledge.ai.input_packs import call_llm_with_input_pack  # noqa: E402
 from knowledge.business_understanding import run_business_understanding  # noqa: E402
 from knowledge.company_model import write_company_model  # noqa: E402
 from knowledge.management_progression import write_management_progression  # noqa: E402
+from intelligence.management_promises.builder import write_management_promise_tracker  # noqa: E402
+from intelligence.management_promises.verification_bridge import build_verification_events  # noqa: E402
+from intelligence.capital_allocation.builder import write_capital_allocation_outcome_tracker  # noqa: E402
+from intelligence.strategy_evolution.builder import write_strategy_evolution_timeline  # noqa: E402
+from intelligence.risk_evolution_timeline.builder import write_risk_evolution_timeline  # noqa: E402
+from intelligence.management_credibility.builder import write_management_credibility_synthesis  # noqa: E402
 from knowledge.discovery_runtime import DiscoveryRuntime  # noqa: E402
 from knowledge.module_extractor import ModuleExtractor  # noqa: E402
 from knowledge.module_extractor.schema import ModuleExtractionResult  # noqa: E402
@@ -27,6 +33,10 @@ from knowledge.question_engine import QuestionRegistry  # noqa: E402
 from knowledge.retrieval.retriever import HybridRetriever  # noqa: E402
 from knowledge.company_memory import CompanyMemoryAggregateBuilder, ManagementCommitmentsBuilder, MultiYearCompanyMemoryBuilder  # noqa: E402
 from knowledge.company_memory.pcim_multi_year_builder import audit_saved_pcim_manifest  # noqa: E402
+from knowledge.company_year_eligibility import (
+    build_company_year_eligibility_manifest,
+    eligible_company_years,
+)
 from knowledge.cim_contract import CIMContractBuilder  # noqa: E402
 from knowledge.business_identity import ensure_business_identity_contract  # noqa: E402
 from knowledge.artifact_audit import run_company_artifact_audit  # noqa: E402
@@ -276,6 +286,72 @@ ALL_STAGE_SEQUENCE = [
     "cim",
     "pcim",
 ]
+COMPANY_YEAR_STAGE_SEQUENCE = [
+    "preflight",
+    "discovery",
+    "extraction",
+    "cleaning",
+    "business_understanding",
+    "business_intelligence",
+    "intelligence",
+    "financials",
+    "financial_quality",
+    "financial_basis_resolution",
+    "financial_truth_registry",
+    "financial_pcim_validation",
+]
+COMPANY_MEMORY_STAGE_SEQUENCE = [
+    "company_memory",
+    "multi_year_memory",
+    "financial_trends",
+    "financial_attribution",
+    "financial_memory",
+    "investor_financials",
+    "cim",
+    "pcim",
+    "company_model",
+    "management_progression",
+    "management_commitments",
+    "management_commentary",
+    "capital_allocation_outcomes",
+    "projects",
+    "capacity_evolution",
+    "risk_evolution",
+    "management_quality",
+    "audit",
+    "panel",
+    "panel_doctor",
+    "investor_briefs",
+    "ask_intrinsiciq",
+]
+PIPELINE_SCOPE_CLASSIFICATION = {
+    "meta_only": ("all", "production", "company_year"),
+    "company_year": {
+        "sequence": COMPANY_YEAR_STAGE_SEQUENCE,
+        "subsumed": (
+            "financial_discovery",
+            "financial_extraction",
+            "financial_normalization",
+            "financial_validation",
+            "financial_reconciliation",
+            "financial_ratios",
+            "financial_growth",
+            "corporate_actions",
+            "shareholding_pattern",
+        ),
+        "rationale": "The year meta-stage owns the full year-scoped financial umbrella; leaf financial stages are executed inside financials.",
+    },
+    "company_memory": {
+        "sequence": COMPANY_MEMORY_STAGE_SEQUENCE,
+        "subsumed": (
+            "investor_panel",
+            "committee_synthesis",
+            "committee_brief",
+            "committee_brief_qa",
+        ),
+        "rationale": "The company-memory meta-stage owns the investor-panel umbrella; the committee leaf stages execute inside panel.",
+    },
+}
 PRODUCTION_STAGE_SEQUENCE = [
     "preflight",
     "discovery",
@@ -297,62 +373,28 @@ PRODUCTION_STAGE_SEQUENCE = [
 ]
 STAGE_SEQUENCE_PROFILES = {
     "all": ALL_STAGE_SEQUENCE,
+    "company_year": COMPANY_YEAR_STAGE_SEQUENCE,
+    "company_memory": COMPANY_MEMORY_STAGE_SEQUENCE,
     "production": PRODUCTION_STAGE_SEQUENCE,
 }
-YEAR_REQUIRED_STAGES = {
-    "all",
-    "production",
-    "business_understanding",
-    "business_intelligence",
-    "financial_discovery",
-    "financial_extraction",
-    "financial_normalization",
-    "financial_validation",
-    "financial_reconciliation",
-    "financial_basis_resolution",
-    "financial_truth_registry",
-    "financial_ratios",
-    "financial_growth",
-    "corporate_actions",
-    "shareholding_pattern",
-    "financial_pcim_validation",
-    "financials",
-    "discovery",
-    "extraction",
-    "cleaning",
-    "intelligence",
-}
-COMPANY_LEVEL_STAGES = {
-    "company_memory",
-    "company_model",
-    "management_progression",
-    "management_commitments",
-    "management_commentary",
-    "capital_allocation_outcomes",
-    "management_quality",
-    "projects",
-    "capacity_evolution",
-    "multi_year_memory",
-    "cim",
-    "pcim",
-    "audit",
-    "investor_panel",
-    "investor_briefs",
-    "committee_synthesis",
-    "committee_brief",
-    "committee_brief_qa",
-    "panel_doctor",
-    "financial_trends",
-    "financial_attribution",
-    "financial_memory",
-    "investor_financials",
-    "ask_intrinsiciq",
-}
+# Stage scope sets are derived from STAGE_CATALOG after it is defined.
 STAGE_CATALOG = {
     "all": {
         "description": "Runs the canonical year-level pipeline in dependency order.",
         "requires": ["company", "year", "raw annual report", "non-empty chunks"],
         "outputs": ["run_summary.json", "year intelligence artifacts", "cim_v1.json", "pcim_v1.json"],
+        "llm_calls": True,
+        "scope": "company/year",
+        "year_required": True,
+    },
+    "company_year": {
+        "description": "Runs the full company/year pipeline, including the canonical financial bundle and year-level truth outputs.",
+        "requires": ["company", "year", "raw annual report", "non-empty chunks"],
+        "outputs": [
+            "run_summary.json",
+            "year intelligence artifacts",
+            "companies/<company>/<year>/financials/*",
+        ],
         "llm_calls": True,
         "scope": "company/year",
         "year_required": True,
@@ -624,9 +666,9 @@ STAGE_CATALOG = {
         "scope": "company/year",
         "year_required": True,
     },
-        "company_memory": {
-        "description": "Builds company-level aggregate memory from yearly intelligence snapshots.",
-        "requires": ["at least one valid yearly intelligence snapshot"],
+    "company_memory": {
+        "description": "Runs the company-memory and downstream investor-intelligence orchestration anchored to existing yearly intelligence snapshots.",
+        "requires": ["at least one valid yearly intelligence snapshot", "company context only; eligible yearly snapshots are discovered internally"],
         "outputs": ["companies/<company>/company_memory/*"],
         "llm_calls": False,
         "scope": "company",
@@ -853,6 +895,23 @@ STAGE_CATALOG = {
 }
 
 
+def _derive_stage_scope_sets(stage_catalog):
+    year_required = {
+        stage_name
+        for stage_name, metadata in stage_catalog.items()
+        if metadata.get("year_required")
+    }
+    company_level = {
+        stage_name
+        for stage_name, metadata in stage_catalog.items()
+        if metadata.get("scope") == "company" and not metadata.get("year_required")
+    }
+    return year_required, company_level
+
+
+YEAR_REQUIRED_STAGES, COMPANY_LEVEL_STAGES = _derive_stage_scope_sets(STAGE_CATALOG)
+
+
 def get_discovery_steps():
     from discovery.project_discovery import main as project_discovery_main  # noqa: E402
     from discovery.promise_discovery import main as promise_discovery_main  # noqa: E402
@@ -985,27 +1044,21 @@ def _iter_raw_document_candidates(context):
             seen.add(path.name)
             candidates.append(path)
 
-    legacy_candidates = [
-        Path("data/annual_reports") / f"{context.company}_{context.year}.pdf",
-        Path("data/annual_reports") / f"{context.company}_{context.year}.txt",
-        Path("data/annual_reports") / f"{context.company}_{context.year}.md",
-    ]
-
-    normalized_year = str(context.year).lower()
-    if normalized_year.startswith("fy") and len(normalized_year) > 2:
-        year_suffix = normalized_year[-2:]
-        legacy_candidates.extend(
-            [
-                Path("data/annual_reports") / f"{context.company}_fy{year_suffix}.pdf",
-                Path("data/annual_reports") / f"{context.company}_fy{year_suffix}.txt",
-                Path("data/annual_reports") / f"{context.company}_fy{year_suffix}.md",
-            ]
-        )
-
-    for candidate in legacy_candidates:
-        if candidate.exists() and candidate.name not in seen:
-            seen.add(candidate.name)
-            candidates.append(candidate)
+    from core.inbox_paths import PROCESSED, INBOX
+    _fy = str(context.year).lower()
+    _processed_annual = PROCESSED / context.company / _fy / "annual_report"
+    canonical_candidates = []
+    if _processed_annual.exists():
+        for path in sorted(_processed_annual.iterdir()):
+            if path.is_file() and path.suffix.lower() in SUPPORTED_RAW_DOC_SUFFIXES:
+                if path.name not in seen:
+                    seen.add(path.name)
+                    canonical_candidates.append(path)
+    for _inbox_path in sorted(INBOX.glob(f"{context.company}_{_fy}*.pdf")):
+        if _inbox_path.name not in seen:
+            seen.add(_inbox_path.name)
+            canonical_candidates.append(_inbox_path)
+    candidates.extend(canonical_candidates)
 
     return candidates
 
@@ -1078,16 +1131,7 @@ def _ensure_context(stage_name, context):
 
 def _valid_years_for_company(company):
     company_root = Path("companies") / company
-    valid_years = []
-    for year_dir in sorted(company_root.iterdir()) if company_root.exists() else []:
-        if not year_dir.is_dir() or not year_dir.name.lower().startswith("fy"):
-            continue
-        intelligence_dir = year_dir / "intelligence"
-        company_intelligence = _load_json_payload(intelligence_dir / "company_intelligence.json")
-        business_classification = _load_json_payload(intelligence_dir / "business_classification.json")
-        if isinstance(company_intelligence, dict) and company_intelligence and isinstance(business_classification, dict) and business_classification:
-            valid_years.append(year_dir.name)
-    return valid_years
+    return eligible_company_years(company=company, company_root=company_root)
 
 
 def _require_company_level_intelligence(company, stage_name):
@@ -1102,6 +1146,29 @@ def _require_company_level_intelligence(company, stage_name):
             f"{stage_name}: only one valid year is available for {company}; multi-year conclusions remain limited"
         )
     return valid_years, warnings
+
+
+def _build_company_memory_context(company):
+    eligible_years = tuple(_valid_years_for_company(company))
+    if not eligible_years:
+        raise RuntimeError(
+            f"company_memory requires at least one valid yearly intelligence snapshot for {company}"
+        )
+    context = CompanyMemoryContext(company=company, eligible_years=eligible_years)
+    context.year_eligibility_manifest = build_company_year_eligibility_manifest(
+        company=company,
+        company_root=Path("companies") / company,
+    )
+    context.create_directories()
+    return context
+
+
+def _ensure_sequence_context(company_slug, profile_name, context):
+    if context is not None:
+        return context
+    if profile_name == "company_memory":
+        return _build_company_memory_context(company_slug)
+    raise RuntimeError(f"{profile_name} requires a company/year context")
 
 
 def _run_preflight(context):
@@ -1160,7 +1227,7 @@ def _run_preflight(context):
     if not pdf_docs:
         raise RuntimeError(
             f"Discovery requires at least one PDF annual report for {context.company} {context.year}. "
-            f"Checked: {context.raw_dir} and data/annual_reports"
+            f"Checked: {context.raw_dir}, data/Processed/{context.company}/{context.year}/annual_report, data/Inbox"
         )
 
     chunk_path = _ensure_clean_chunks(context)
@@ -2314,6 +2381,17 @@ def run_capital_allocation_outcomes_stage(company, context=None):
     timelines = _load_json_file(timelines_path) if timelines_path.exists() else {}
     assessments = _load_json_file(assessments_path) if assessments_path.exists() else {}
     validation = _load_json_file(validation_path) if validation_path.exists() else {}
+    # Derive Gold artifacts immediately after capital allocation outcomes are written
+    try:
+        gold_path = write_capital_allocation_outcome_tracker(company)
+        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+    except Exception:
+        pass  # Gold layer is best-effort; never block the capital allocation stage
+    try:
+        gold_path = write_strategy_evolution_timeline(company, companies_root=Path("companies"))
+        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+    except Exception:
+        pass  # Gold layer is best-effort; never block the pipeline stage
     print("[CAPITAL ALLOCATION OUTCOMES]")
     print(f"Company: {company}")
     print(f"Valid Years: {', '.join(valid_years)}")
@@ -2449,6 +2527,12 @@ def run_risk_evolution_stage(company, context=None):
     valid_years, warnings = _require_company_level_intelligence(company, "risk_evolution")
     company_root = Path("companies") / company
     written_paths = build_risk_evolution(company, companies_root=Path("companies"))
+    try:
+        gold_path = write_risk_evolution_timeline(company, companies_root=Path("companies"))
+        if isinstance(written_paths, dict):
+            written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+    except Exception:
+        pass  # Gold layer is best-effort; never block the base risk stage
     output_dir = company_root / "company_memory" / "risks"
     registry_path = output_dir / "risk_registry.json"
     assessments_path = output_dir / "risk_assessments.json"
@@ -2610,10 +2694,24 @@ def run_company_model_stage(company, context=None):
 def run_management_progression_stage(company, context=None):
     if context is not None:
         set_context(context)
+    # Canonical order: MC identity/ontology -> deterministic verification
+    # evidence -> MP lifecycle -> derived Gold/credibility.
+    build_verification_events(company, Path("companies"))
     written_paths = write_management_progression(company)
     output_dir = Path("companies") / company / "company_memory" / "management_progression"
     validation = _load_json_file(output_dir / "management_progression_validation.json")
     payload = _load_json_file(output_dir / "management_progression.json")
+    # Derive Gold artifact immediately after progression is written
+    try:
+        gold_path = write_management_promise_tracker(company)
+        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+    except Exception:
+        pass  # Gold layer is best-effort; never block the progression stage
+    try:
+        gold_path = write_management_credibility_synthesis(company, companies_root=Path("companies"))
+        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+    except Exception:
+        pass  # Gold layer is best-effort; never block the progression stage
     print("[MANAGEMENT PROGRESSION]")
     print(f"Company: {company}")
     print(f"Output Dir: {output_dir}")
@@ -2636,6 +2734,16 @@ def run_audit_stage(company, context=None, fix_safe=False):
             companies_root=Path("companies"),
         )
     )
+    try:
+        gold_path = write_risk_evolution_timeline(company, companies_root=Path("companies"))
+        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+    except Exception:
+        pass  # Gold layer is best-effort; never block audit
+    try:
+        gold_path = write_management_credibility_synthesis(company, companies_root=Path("companies"))
+        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+    except Exception:
+        pass  # Gold layer is best-effort; never block audit
     output_dir = Path("companies") / company / "audit"
     print("[ARTIFACT AUDIT]")
     print(f"Company: {company}")
@@ -3207,7 +3315,10 @@ def _validate_analyst_output(company, analyst, context=None):
             or "fail"
         ).strip().lower()
 
-        hard_failures = list(finalization_summary.get("hard_failures", []) or analyst_artifact.get("hard_failures", []) or [])
+        if isinstance(finalization_summary, dict) and "hard_failures" in finalization_summary:
+            hard_failures = list(finalization_summary.get("hard_failures") or [])
+        else:
+            hard_failures = list(analyst_artifact.get("hard_failures", []) or [])
         active_unresolved_claims = list(finalization_summary.get("active_unresolved_claims", []) or [])
 
         if hard_failures or active_unresolved_claims:
@@ -4055,6 +4166,7 @@ def _build_stage_output_map(context):
         "financial_truth_registry": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_TRUTH_REGISTRY_OUTPUT_FILES],
         "financial_ratios": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_RATIO_OUTPUT_FILES],
         "financial_growth": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_GROWTH_OUTPUT_FILES],
+        "financial_quality": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_QUALITY_OUTPUT_FILES],
         "corporate_actions": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_CORPORATE_ACTION_OUTPUT_FILES],
         "shareholding_pattern": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_SHAREHOLDING_OUTPUT_FILES],
         "financials": lambda: [str(context.financials_dir / "financial_audit_report.json")],
@@ -4102,9 +4214,20 @@ def _build_stage_output_map(context):
             str(Path("companies") / context.company / "company_memory" / "financials" / filename)
             for filename in FINANCIAL_MEMORY_OUTPUT_FILES
         ],
+        "financial_trends": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "financials" / filename)
+            for filename in FINANCIAL_TRENDS_OUTPUT_FILES
+        ],
+        "financial_attribution": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "financials" / filename)
+            for filename in FINANCIAL_ATTRIBUTION_OUTPUT_FILES
+        ],
         "investor_financials": lambda: [
             str(Path("companies") / context.company / "company_memory" / "financials" / "investor_financial_modules" / filename)
             for filename in INVESTOR_FINANCIAL_MODULE_OUTPUT_FILES
+        ],
+        "investor_briefs": lambda: [
+            str(Path("companies") / context.company / "company_memory" / "investor_panel" / "briefs")
         ],
         "audit": lambda: [
             str(Path("companies") / context.company / "audit" / "company_artifact_audit.json"),
@@ -4113,6 +4236,7 @@ def _build_stage_output_map(context):
             str(Path("companies") / context.company / "audit" / "financial_quality_scorecard.md"),
         ],
         "panel": lambda: [str(Path("companies") / context.company / "company_memory" / "investor_panel" / "panel_run_summary.json")],
+        "panel_doctor": lambda: [str(Path("companies") / context.company / "company_memory" / "panel_doctor_report.json")],
         "ask_intrinsiciq": lambda: [
             str(Path("companies") / context.company / "company_memory" / "ask_intrinsiciq" / filename)
             for filename in ASK_INTRINSICIQ_OUTPUT_FILES
@@ -4121,6 +4245,7 @@ def _build_stage_output_map(context):
             str(Path("companies") / context.company / "company_memory" / "company_model" / filename)
             for filename in COMPANY_MODEL_OUTPUT_FILES
         ],
+        "company_memory": lambda: [str(Path("companies") / context.company / "company_memory" / "company_memory.json")],
         "management_progression": lambda: [
             str(Path("companies") / context.company / "company_memory" / "management_progression" / filename)
             for filename in MANAGEMENT_PROGRESSION_OUTPUT_FILES
@@ -4373,15 +4498,37 @@ def _run_stage_by_name(stage_name, context, *, stage_outputs, options, state):
                 }
         run_financials_stage(context=context)
         return {"status": "pass", "outputs": stage_outputs["financials"]()}
+    if stage_name == "financial_quality":
+        run_financial_quality_stage(company=company, context=context)
+        return {"status": "pass", "outputs": stage_outputs["financial_quality"]()}
+    if stage_name == "financial_basis_resolution":
+        run_financial_basis_resolution(context=context)
+        return {"status": "pass", "outputs": stage_outputs["financial_basis_resolution"]()}
+    if stage_name == "financial_truth_registry":
+        run_financial_truth_registry(context=context)
+        return {"status": "pass", "outputs": stage_outputs["financial_truth_registry"]()}
     if stage_name == "financial_memory":
         run_financial_memory_stage(company=company, context=context)
         return {"status": "pass", "outputs": stage_outputs["financial_memory"]()}
+    if stage_name == "financial_trends":
+        run_financial_trends_stage(company=company, context=context)
+        return {"status": "pass", "outputs": stage_outputs["financial_trends"]()}
+    if stage_name == "financial_attribution":
+        run_financial_attribution_stage(company=company, context=context)
+        return {"status": "pass", "outputs": stage_outputs["financial_attribution"]()}
     if stage_name == "investor_financials":
         run_investor_financials_stage(company=company, context=context)
         return {"status": "pass", "outputs": stage_outputs["investor_financials"]()}
     if stage_name == "financial_pcim_validation":
         run_financial_pcim_validation_stage(context=context)
         return {"status": "pass", "outputs": stage_outputs["financial_pcim_validation"]()}
+    if stage_name == "company_memory":
+        written_paths = run_company_memory_stage(company=company, context=context)
+        outputs = [str(path) for path in written_paths.values()] if isinstance(written_paths, dict) else [str(path) for path in written_paths]
+        return {"status": "pass", "outputs": sorted(outputs)}
+    if stage_name == "investor_briefs":
+        run_investor_briefs_stage(company=company, context=context)
+        return {"status": "pass", "outputs": stage_outputs["investor_briefs"]()}
     if stage_name == "audit":
         run_audit_stage(company=company, context=context, fix_safe=options.get("fix_safe", False))
         payload = _load_audit_payload(company)
@@ -4403,6 +4550,9 @@ def _run_stage_by_name(stage_name, context, *, stage_outputs, options, state):
             regenerate_analysts=options.get("regenerate_analysts", False),
         )
         return {"status": "pass", "outputs": stage_outputs["panel"]()}
+    if stage_name == "panel_doctor":
+        run_panel_doctor_stage(company=company, context=context)
+        return {"status": "pass", "outputs": stage_outputs["panel_doctor"]()}
     if stage_name == "ask_intrinsiciq":
         _ensure_audit_allows_customer_output(company)
         run_ask_intrinsiciq_stage(company=company, context=context, force=options.get("force", False))
@@ -4417,7 +4567,7 @@ def _run_stage_by_name(stage_name, context, *, stage_outputs, options, state):
 
 
 def run_stage_sequence(company_slug, stages, options=None, context=None, profile_name="custom"):
-    context = _ensure_context(profile_name, context)
+    context = _ensure_sequence_context(company_slug, profile_name, context)
     set_context(context)
     options = dict(options or {})
     options["_profile_name"] = profile_name
@@ -4459,6 +4609,7 @@ def print_stage_catalog():
     for stage_name in [
         "all",
         "production",
+        "company_year",
         "discovery",
         "financial_discovery",
         "financial_extraction",
@@ -4533,6 +4684,7 @@ def build_parser():
         choices=[
             "all",
             "production",
+            "company_year",
             "business_understanding",
             "business_intelligence",
             "financial_discovery",
@@ -4629,7 +4781,7 @@ def main():
 
     if args.stage in YEAR_REQUIRED_STAGES and not args.year:
         parser.error(f"year is required for --stage {args.stage}")
-    if args.stage in COMPANY_LEVEL_STAGES and args.year and args.stage != "panel_doctor":
+    if args.stage in COMPANY_LEVEL_STAGES and args.year and args.stage not in {"panel", "panel_doctor"}:
         parser.error(f"--stage {args.stage} is company-level and does not accept a year argument")
 
     context = None
@@ -4649,6 +4801,30 @@ def main():
             PRODUCTION_STAGE_SEQUENCE,
             context=context,
             profile_name="production",
+            options={
+                "fix_safe": args.fix_safe,
+                "include_evidence_ids": args.include_evidence_ids,
+                "regenerate_analysts": args.regenerate_analysts,
+            },
+        )
+    elif args.stage == "company_year":
+        run_stage_sequence(
+            args.company,
+            COMPANY_YEAR_STAGE_SEQUENCE,
+            context=context,
+            profile_name="company_year",
+            options={
+                "fix_safe": args.fix_safe,
+                "include_evidence_ids": args.include_evidence_ids,
+                "regenerate_analysts": args.regenerate_analysts,
+            },
+        )
+    elif args.stage == "company_memory":
+        run_stage_sequence(
+            args.company,
+            COMPANY_MEMORY_STAGE_SEQUENCE,
+            context=context,
+            profile_name="company_memory",
             options={
                 "fix_safe": args.fix_safe,
                 "include_evidence_ids": args.include_evidence_ids,
@@ -4701,8 +4877,6 @@ def main():
         run_management_progression_stage(company=args.company, context=context)
     elif args.stage == "financial_pcim_validation":
         run_financial_pcim_validation_stage(context=context)
-    elif args.stage == "company_memory":
-        run_company_memory_stage(company=args.company, context=context)
     elif args.stage == "management_commitments":
         run_management_commitments_stage(company=args.company, context=context)
     elif args.stage == "management_commentary":

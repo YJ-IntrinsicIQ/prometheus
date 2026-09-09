@@ -105,6 +105,7 @@ def validate_company_model(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     _validate_coherence(payload, errors, warnings)
     _validate_specificity(payload, errors, warnings)
+    _validate_longitudinal_current_state(payload, errors, warnings)
     status = "fail" if errors else "warning" if warnings else "pass"
     return {
         "schema_version": "company_model_validation.v1",
@@ -161,6 +162,35 @@ def _validate_specificity(payload: Dict[str, Any], errors: List[str], warnings: 
         errors.append("business description lacks enough specificity to identify the business without company name")
     if len(str(business.get("economic_mechanism") or "").split()) < 8:
         errors.append("economic_mechanism is too thin")
+
+
+def _validate_longitudinal_current_state(payload: Dict[str, Any], errors: List[str], warnings: List[str]) -> None:
+    states = payload.get("longitudinal_current_state")
+    if states is None:
+        return
+    if not isinstance(states, list):
+        errors.append("longitudinal_current_state must be a list")
+        return
+    for index, item in enumerate(states):
+        if not isinstance(item, dict):
+            errors.append(f"longitudinal_current_state[{index}] must be an object")
+            continue
+        for required_key in ("state_id", "theme", "current_status"):
+            if not str(item.get(required_key) or "").strip():
+                errors.append(f"longitudinal_current_state[{index}].{required_key} is required")
+        for ev in (item.get("evidence") or []):
+            if not isinstance(ev, dict):
+                continue
+            for forbidden_key in ("source_chunk", "raw_text", "full_text"):
+                if forbidden_key in ev:
+                    errors.append(
+                        f"longitudinal_current_state[{index}].evidence contains forbidden key '{forbidden_key}' — raw source text must not leak into Company Model"
+                    )
+        # Company Model must not duplicate Management Progression's full event history.
+        if "events" in item:
+            errors.append(
+                f"longitudinal_current_state[{index}] must not include 'events' — full chronology belongs to Management Progression"
+            )
 
 
 def _important_terms(text: str) -> List[str]:

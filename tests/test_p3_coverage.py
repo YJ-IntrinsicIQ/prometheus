@@ -275,6 +275,7 @@ def test_question_index_consistent_with_catalog():
     assert catalog_ids == index_ids, f"QUESTION_INDEX out of sync. Catalog-only: {catalog_ids - index_ids}, Index-only: {index_ids - catalog_ids}"
 
 
+
 def test_all_catalog_questions_have_builders():
     catalog_ids = {q["id"] for cat in QUESTION_CATALOG for q in cat["questions"]}
     missing = [qid for qid in catalog_ids if qid not in ANSWER_BUILDERS]

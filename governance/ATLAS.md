@@ -12,6 +12,10 @@ The Prometheus Intelligence Manifesto in this folder is the governing product do
 
 ## 2. Current Phase & Sprint
 
+**POST-ENG116 REALITY AUDIT (2026-09-07, CLOSED):** Read-only 10-dimension audit of Sun Pharma production artifacts post-ENG116. Score: **57/100, Band B** (prior ENG-110 baseline: 69/100; delta: -12). Top capabilities: cross-year financial reasoning (7), evidence integrity (7), capital allocation framework (6). Top bottlenecks: (1) promise/lifecycle verification pipeline — 31 promises captured, 0 verified; lifecycle_stage=None for all 25 MP items (SYSTEM_LIMITED); (2) D&A cross-year gap — ENG-116 corrected only FY23/FY26; FY24/FY25 D&A anomalous vs. corrected years (ENG-120 open); (3) capital conclusions gate — 3/9 events unit_ambiguous, conclusions blocked (SOURCE_LIMITED). Strategic verdict: `PROMISING_BUT_NOT_INVESTOR_GRADE`. Next highest leverage gap: `ENG-119` — promise verification pipeline. Gate: `SUN_PHARMA_POST_ENG116_TRUSTED_REALITY_AUDIT_CLOSED`.
+
+**ENG-118 PHASE 2 ECONOMIC-FLOW CONTRACT (2026-09-07):** Capital-allocation amounts are weighted only when unit authority and economic eligibility both resolve. Canonical roles distinguish deployment, distribution, deleveraging, capital source, balance-sheet stock, disposal proceeds, sanctioned-not-deployed, operating expense, and ambiguous. Ineligible events remain qualitative. Trusted weighted coverage is measured against all tracked events; same numeric amount is not an economic-flow identity.
+
 - Phase: Phase 15.3 — Formal Investor Certification V2 Baseline Execution (BLOCKED 2026-09-04 · `BLOCKED_CERTIFICATION_TARGET_SCOPE_UNFROZEN`).
 - Sprint: Architecture Review Round 1.
 - Rule: Documentation-only work unless a later sprint explicitly authorizes production code changes. The Ask IntrinsicIQ v0 frontend scaffold is an explicitly authorized production-code exception for `apps/ask-intrinsiciq/`.
@@ -150,6 +154,7 @@ Artifact roles:
 - `knowledge/archetypes`: curated archetype-pack registry activated by Business DNA for deterministic normalization.
 - `knowledge/financials`: canonical fundamentals schema, unit-normalization, validation, corporate-action, and ownership-tracking contract.
 - Financial monetary normalization: canonical normalized unit is INR crore (`value_crore`), while original reported value/unit must always be preserved.
+- Capital-allocation amount authority: `known_amount_crore` may contain only deterministically unit-attributed source amounts. Unitless, unsupported-currency, per-share, or ambiguous multi-number capital-allocation strings must remain qualitatively traceable with `amount_basis = "unit_ambiguous"` and must not enter amount-weighted conclusions.
 - Financial schema rule: no LLM-calculated ratios or derived math belongs in the schema layer.
 - Financial-memory eligibility is company-generic and year-complete: before building `financial_year_index.json`, the financial-memory stage must deterministically refresh `financial_quality_summary.json` for every discovered fiscal-year directory that has normalized fundamentals, then build the separate company-memory quality summary. A missing historical year-level quality artifact must not silently reduce a multi-year company to one usable year when the underlying validated financial artifacts are present.
 - Investor-panel freshness is fail-closed: saved PCIM must not be used when governed `financial_truth_pack.json` or `investor_financial_modules_manifest.json` is newer than `pcim_v1.json`; CIM/PCIM must be rebuilt first. Analyst financial prompt compaction must order dated financial buckets and current metrics latest-year-first, while retaining older periods as trend context, and series-valued metrics must resolve their latest point by fiscal-year value rather than source-list position.
@@ -426,3 +431,8 @@ Regenerate stale committee synthesis artifacts against the new financial committ
 - Cross-year basis logic: if any year has a different basis from the others (mixed), `basis_used = "mixed"`. If all years are unknown, `basis_used = "unknown"`. If a single non-unknown basis is consistent across all years, that basis is returned.
 - Genuine mixed-basis companies (Tanla) and genuine unknown-basis companies (Data Patterns by_year) must not be forced to `consolidated`. The gate is semantic: secondary-metric warnings are excluded; legitimate primary-metric ambiguity is preserved.
 
+## Management Accountability Ontology (ENG-119D)
+
+- Management Commitments owns statement identity and `accountability_ontology`; its `status` remains lifecycle-neutral.
+- `verification_applicability=APPLICABLE` only for `VERIFIABLE_COMMITMENT`. Strategic intent, aspiration, and policy/principle records remain available for longitudinal strategy analysis but are excluded from delivery denominators.
+- Management Progression remains the sole lifecycle authority. The strict verification bridge consumes only material verifiable commitments, Gold derives separate accountability/strategy views, and Ask consumes those canonical views.

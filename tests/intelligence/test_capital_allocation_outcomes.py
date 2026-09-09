@@ -369,7 +369,7 @@ def test_capital_allocation_outcomes_builder_links_and_progresses(tmp_path, monk
     assert written["capital_allocation_outcomes.json"] == Path("companies") / "acme" / "company_memory" / "capital_allocation_outcomes" / "capital_allocation_outcomes.json"
 
 
-def test_capital_allocation_outcomes_builder_merges_duplicate_wording(tmp_path, monkeypatch):
+def test_capital_allocation_outcomes_keeps_distinct_period_dividends_separate(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_dividend_fixture(tmp_path, "acme")
 
@@ -377,9 +377,9 @@ def test_capital_allocation_outcomes_builder_merges_duplicate_wording(tmp_path, 
     output_dir = tmp_path / "companies" / "acme" / "company_memory" / "capital_allocation_outcomes"
     outcomes = json.loads((output_dir / "capital_allocation_outcomes.json").read_text(encoding="utf-8"))
 
-    assert outcomes["allocation_count"] == 1
-    assert outcomes["allocations"][0]["allocation_category"] == "dividend"
-    assert outcomes["allocations"][0]["deployment_periods"] == ["fy23", "fy24"]
+    assert outcomes["allocation_count"] == 2
+    assert all(item["allocation_category"] == "dividend" for item in outcomes["allocations"])
+    assert sorted(item["deployment_periods"] for item in outcomes["allocations"]) == [["fy23"], ["fy24"]]
 
 
 def test_capital_allocation_outcomes_validator_catches_unsupported_outcome():

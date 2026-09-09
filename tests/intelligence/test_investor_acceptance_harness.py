@@ -398,8 +398,8 @@ class TestFullTrace:
         assert len(checks) == 8, f"Expected 8 semantic checks, got {len(checks)}"
 
     @pytest.mark.skipif(not COMPANY_ROOT.exists(), reason="sun_pharma company directory not found")
-    def test_verdict_is_accepted_or_rejected(self, source_bundle: dict[str, Any]) -> None:
-        """H6d: verdict is always 'ACCEPTED' or 'REJECTED'."""
+    def test_verdict_is_valid_v2_tier(self, source_bundle: dict[str, Any]) -> None:
+        """H6d: verdict is always a valid V2 three-tier value: ACCEPTED, PARTIAL, or REJECTED."""
         for qid in QUESTION_SETS["recovery_baseline"]:
             trace = trace_question(
                 qid,
@@ -409,8 +409,13 @@ class TestFullTrace:
                 company_root=COMPANY_ROOT,
                 run_timestamp="2026-09-01T00:00:00Z",
             )
-            assert trace["verdict"] in ("ACCEPTED", "REJECTED"), (
+            assert trace["verdict"] in ("ACCEPTED", "PARTIAL", "REJECTED"), (
                 f"{qid}: unexpected verdict {trace['verdict']!r}"
+            )
+            assert "verdict_rationale" in trace, f"{qid}: verdict_rationale missing from trace"
+            assert "critical_failures_detected" in trace, f"{qid}: critical_failures_detected missing"
+            assert isinstance(trace["critical_failures_detected"], list), (
+                f"{qid}: critical_failures_detected must be a list"
             )
 
 
@@ -445,13 +450,16 @@ class TestAcceptanceSummary:
         assert "highest_severity_defect" in sf
 
     @pytest.mark.skipif(not COMPANY_ROOT.exists(), reason="sun_pharma company directory not found")
-    def test_at_least_one_question_rejected(self, acceptance_summary: dict[str, Any]) -> None:
-        """H7e: Prometheus baseline has at least one REJECTED question (no false pass)."""
-        rejected = acceptance_summary.get("rejected", 0)
-        assert rejected >= 1, (
-            "Expected at least 1 rejection in the recovery_baseline set. "
-            f"Got {rejected} rejections. "
-            "If all 5 pass, Prometheus has no known defects — which contradicts the 42/100 audit."
+    def test_at_least_one_question_not_accepted(self, acceptance_summary: dict[str, Any]) -> None:
+        """H7e: Prometheus baseline has at least one non-ACCEPTED question (no false full-pass).
+        V2: PARTIAL counts as a non-pass verdict alongside REJECTED.
+        """
+        accepted = acceptance_summary.get("accepted", 0)
+        total = acceptance_summary.get("questions_tested", 0)
+        assert accepted < total, (
+            f"Expected at least 1 non-ACCEPTED question (PARTIAL or REJECTED) in the recovery_baseline set. "
+            f"Got {accepted}/{total} ACCEPTED. "
+            "If all questions ACCEPTED, Prometheus has no known defects — which contradicts the 42/100 audit."
         )
 
     @pytest.mark.skipif(not COMPANY_ROOT.exists(), reason="sun_pharma company directory not found")

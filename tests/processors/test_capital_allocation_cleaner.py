@@ -73,18 +73,18 @@ def test_capital_allocation_cleaner_rejects_ambiguous_periods(tmp_path, monkeypa
             encoding="utf-8",
         )
 
-        try:
-            create_cleaner().run()
-        except ValueError as exc:
-            message = str(exc)
-            assert "invalid or unsupported period resolution" in message
-            assert '"failure_class": "PERIOD_RESOLUTION_UNSUPPORTED"' in message
-            assert '"company": "tanla"' in message
-            assert '"module": "capital_allocations"' in message
-            assert '"raw_period": "2021"' in message
-            assert '"source_period": "fy22"' in message
-        else:
-            raise AssertionError("Expected ambiguous capital allocation to fail validation")
+        # Ambiguous periods are quarantined (local rejection) rather than hard-failing.
+        # The cleaner must produce 0 cleaned items — the item is rejected, not promoted.
+        cleaned = create_cleaner().run()
+        assert len(cleaned) == 0, (
+            f"Ambiguous capital allocation must be quarantined (0 cleaned items); got {cleaned}"
+        )
+        output_path = context.extracted_dir / "clean_capital_allocation.json"
+        if output_path.exists():
+            output = json.loads(output_path.read_text(encoding="utf-8"))
+            assert len(output) == 0, (
+                f"clean_capital_allocation.json must be empty for ambiguous item; got {output}"
+            )
     finally:
         set_context(None)
 

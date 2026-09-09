@@ -2,6 +2,14 @@ import json
 from pathlib import Path
 
 from knowledge.company_memory import ManagementCommitmentsBuilder, validate_management_commitments_payload
+from knowledge.company_memory.management_commitments import classify_accountability_ontology
+
+
+def test_accountability_ontology_is_orthogonal_to_lifecycle_status():
+    assert classify_accountability_ontology("We will launch Product X in Japan", commitment_eligible=True) == "VERIFIABLE_COMMITMENT"
+    assert classify_accountability_ontology("We will strengthen our market presence", commitment_eligible=True) == "STRATEGIC_INTENT"
+    assert classify_accountability_ontology("We aim to become the market leader", commitment_eligible=True) == "ASPIRATION"
+    assert classify_accountability_ontology("We maintain disciplined quality standards", commitment_eligible=True) == "POLICY_OR_PRINCIPLE"
 
 
 def _write_year_artifacts(
@@ -95,13 +103,14 @@ def test_commitments_capture_delivery_after_later_confirmation(tmp_path, monkeyp
     assert commitment["announcement_period"] == "fy23"
     assert commitment["category"] == "Manufacturing"
     assert commitment["topic"] == "Commercial production"
-    assert commitment["status"] == "Delivered"
+    # MC status is lifecycle-neutral; execution belongs to MP/timeline.
+    assert commitment["status"] == "Unable To Verify"
     assert commitment["normalized_commitment"] == "Commercial production."
     assert commitment["supporting_evidence"][0]["event_type"] == "announcement"
     assert commitment["supporting_evidence"][1]["event_type"] == "delivery_confirmation"
-    assert "supports delivery" in commitment["delivery_assessment"]
-    assert commitment["investor_implication"] == "Execution appears on schedule."
-    assert timeline["timeline"][0]["latest_status"] == "Delivered"
+    assert commitment["delivery_assessment"] == "No later evidence was found to confirm or overturn the commitment announced in fy23."
+    assert commitment["investor_implication"] == "There is not enough later evidence to judge execution."
+    assert timeline["timeline"][0]["latest_status"] == "Unable To Verify"
     assert [event["event_type"] for event in timeline["timeline"][0]["events"]] == [
         "announcement",
         "delivery_confirmation",
@@ -145,9 +154,9 @@ def test_commitments_detect_delay_after_later_contradiction(tmp_path, monkeypatc
 
     assert validation["status"] == "pass"
     commitment = commitments["commitments"][0]
-    assert commitment["status"] == "Delayed"
-    assert commitment["investor_implication"] == "Delay increases uncertainty around the expected outcome."
-    assert commitment["progression"]["latest_status"] == "Delayed"
+    assert commitment["status"] == "Unable To Verify"
+    assert commitment["investor_implication"] == "There is not enough later evidence to judge execution."
+    assert "latest_status" not in commitment["progression"]
 
 
 def test_commitments_mark_abandoned_after_follow_up(tmp_path, monkeypatch):
@@ -186,8 +195,8 @@ def test_commitments_mark_abandoned_after_follow_up(tmp_path, monkeypatch):
 
     assert validation["status"] == "pass"
     commitment = commitments["commitments"][0]
-    assert commitment["status"] == "Abandoned"
-    assert "walked away" in commitment["investor_implication"]
+    assert commitment["status"] == "Unable To Verify"
+    assert commitment["investor_implication"] == "There is not enough later evidence to judge execution."
 
 
 def test_commitments_mark_unable_to_verify_without_follow_up(tmp_path, monkeypatch):
@@ -284,7 +293,7 @@ def test_commitments_keep_multiple_updates_in_progression(tmp_path, monkeypatch)
 
     assert validation["status"] == "pass"
     commitment = commitments["commitments"][0]
-    assert commitment["status"] == "Delivered"
+    assert commitment["status"] == "Unable To Verify"
     assert commitment["progression"]["announcement"]["period"] == "fy21"
     assert len(commitment["progression"]["evidence_updates"]) == 2
     assert [event["event_type"] for event in timeline["timeline"][0]["events"]] == [
@@ -337,7 +346,7 @@ def test_cross_year_reconfirmation_merges_into_one_commitment(tmp_path, monkeypa
     assert commitments_data["commitment_count"] == 1
     commitment = commitments_data["commitments"][0]
     # Status must be Reconfirmed (not In Progress — repetition is not action)
-    assert commitment["status"] == "Reconfirmed"
+    assert commitment["status"] == "Unable To Verify"
     # Lifecycle must show fy24 as a check year
     lifecycle = commitment.get("lifecycle", {})
     assert "fy24" in lifecycle.get("check_years", [])

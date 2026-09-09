@@ -112,6 +112,58 @@ _COMMON_CURRENCIES = {
     "gbp": "GBP",
 }
 
+_DEPLOYMENT_ELIGIBILITY = {
+    "deployment": "ELIGIBLE_DEPLOYMENT",
+    "distribution": "ELIGIBLE_DISTRIBUTION",
+    "deleveraging": "ELIGIBLE_DELEVERAGING",
+    "capital_source": "INELIGIBLE_CAPITAL_SOURCE",
+    "balance_stock": "INELIGIBLE_BALANCE_STOCK",
+    "disposal": "INELIGIBLE_DISPOSAL_PROCEEDS",
+    "announced": "INELIGIBLE_ANNOUNCED_NOT_DEPLOYED",
+    "operating_expense": "INELIGIBLE_OPERATING_EXPENSE",
+    "ambiguous": "ELIGIBILITY_AMBIGUOUS",
+}
+
+
+def resolve_economic_role(item: Dict[str, Any]) -> Dict[str, str]:
+    """Resolve economic role from explicit, high-signal source semantics.
+
+    This is deliberately conservative: a unit-confirmed amount is not enough
+    to make an event a deployment.  Unclear stock/flow or source/use semantics
+    remain qualitative and are excluded from weighted totals.
+    """
+    text = _combined_text(item)
+    # Explicit identity is the only authority for SAME_ECONOMIC_FLOW.
+    if item.get("economic_flow_id") or item.get("transaction_id") or item.get("deal_id"):
+        return {"economic_role": "ECONOMIC_ROLE_AMBIGUOUS", "deployment_eligibility": _DEPLOYMENT_ELIGIBILITY["ambiguous"], "economic_flow_relation": "SAME_ECONOMIC_FLOW", "economic_flow_authority": "EXPLICIT_STRUCTURED_ID"}
+    category = _normalize_text(item.get("canonical_category") or item.get("category"))
+    group = _normalize_text(item.get("capital_allocation_group"))
+    if any(x in text for x in ("sanctioned", "sanctioned facility", "approved limit", "available facility", "credit line")):
+        return {"economic_role": "ANNOUNCED_OR_SANCTIONED_NOT_DEPLOYED", "deployment_eligibility": _DEPLOYMENT_ELIGIBILITY["announced"]}
+    if any(x in text for x in ("proceeds from", "proceeds of", "equity issuance", "shares issued", "loan availed", "debt raised", "borrowings received", "fresh issue")) or group == "financing_actions":
+        if any(x in text for x in ("repaid", "repayment", "debt repayment", "loan repayment", "lease liability payment")):
+            return {"economic_role": "BALANCE_SHEET_DELEVERAGING", "deployment_eligibility": _DEPLOYMENT_ELIGIBILITY["deleveraging"]}
+        return {"economic_role": "CAPITAL_SOURCE", "deployment_eligibility": _DEPLOYMENT_ELIGIBILITY["capital_source"]}
+    if any(x in text for x in ("repaid", "repayment", "debt repayment", "loan repayment", "lease liability payment")):
+        result = {"economic_role": "BALANCE_SHEET_DELEVERAGING", "deployment_eligibility": _DEPLOYMENT_ELIGIBILITY["deleveraging"]}
+        if "sale consideration" in text and "against loan" in text:
+            result.update({"economic_flow_relation": "LINKED_BUT_DISTINCT_FLOW", "economic_flow_authority": "EXPLICIT_SOURCE_STATEMENT"})
+        return result
+    if any(x in text for x in ("sale of", "sold", "divested", "disposal proceeds", "sale consideration received")):
+        return {"economic_role": "DISPOSAL_PROCEEDS", "deployment_eligibility": _DEPLOYMENT_ELIGIBILITY["disposal"]}
+    if any(x in text for x in ("balance", "carried at cost", "outstanding balance", "closing balance", "aggregate investments", "rental deposit")):
+        return {"economic_role": "BALANCE_SHEET_STOCK", "deployment_eligibility": _DEPLOYMENT_ELIGIBILITY["balance_stock"]}
+    if any(x in text for x in ("dividend paid", "dividend declared", "dividend")):
+        return {"economic_role": "DISTRIBUTION_DIVIDEND", "deployment_eligibility": _DEPLOYMENT_ELIGIBILITY["distribution"]}
+    if any(x in text for x in ("buyback", "buy back", "repurchase of shares", "share repurchase")):
+        return {"economic_role": "DISTRIBUTION_BUYBACK", "deployment_eligibility": _DEPLOYMENT_ELIGIBILITY["distribution"]}
+    if any(x in text for x in ("operating expense", "expense incurred", "research expense", "r&d expense")):
+        return {"economic_role": "OPERATING_EXPENSE", "deployment_eligibility": _DEPLOYMENT_ELIGIBILITY["operating_expense"]}
+    if any(x in text for x in ("purchase consideration", "acquired for", "acquisition", "capital expenditure", "capex", "invested during the year", "capital contribution", "paid for")):
+        role = "DEPLOYMENT_ACQUISITION" if any(x in text for x in ("acquisition", "purchase consideration", "acquired for")) else "DEPLOYMENT_ORGANIC_CAPEX"
+        return {"economic_role": role, "deployment_eligibility": _DEPLOYMENT_ELIGIBILITY["deployment"]}
+    return {"economic_role": "ECONOMIC_ROLE_AMBIGUOUS", "deployment_eligibility": _DEPLOYMENT_ELIGIBILITY["ambiguous"], "economic_flow_relation": "UNKNOWN_FLOW_RELATION", "economic_flow_authority": "NONE"}
+
 
 def _normalize_text(value: Any) -> str:
     return " ".join(_INLINE_SPACE_RE.sub(" ", str(value or "").lower()).split())
@@ -230,6 +282,9 @@ def normalize_capital_allocation_item(item: Dict[str, Any]) -> Dict[str, Any]:
     normalized.update(classification)
     normalized["currency"] = item.get("currency") or _extract_currency(item.get("amount"))
     normalized["evidence_ids"] = list(item.get("evidence_ids") or [])
+    normalized.update(resolve_economic_role(normalized))
+    normalized["economic_flow_relation"] = item.get("economic_flow_relation") or normalized.get("economic_flow_relation") or "DISTINCT_FLOW"
+    normalized["economic_flow_authority"] = item.get("economic_flow_authority") or normalized.get("economic_flow_authority") or "NONE"
     normalized.pop("source_chunk", None)
     return normalized
 

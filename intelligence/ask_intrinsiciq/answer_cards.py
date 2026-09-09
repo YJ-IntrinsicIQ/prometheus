@@ -1631,31 +1631,7 @@ def _gold_promise_enrichment(source_bundle: Dict[str, Any]) -> Optional[str]:
     gold = _source_payload(source_bundle, "gold_promise_tracker")
     if not gold:
         return None
-    summary = gold.get("summary") or {}
-    tracked = int(summary.get("tracked_promises") or 0)
-    sb = summary.get("status_breakdown") or {}
-    unverified = int(sb.get("unverified", 0) if isinstance(sb, dict) else 0)
-    achieved = int(sb.get("achieved", 0) if isinstance(sb, dict) else 0)
-    partially = int(sb.get("partially_achieved", 0) if isinstance(sb, dict) else 0)
-    if not tracked:
-        return None
-    frags = [f"{tracked} commitments tracked"]
-    if achieved:
-        frags.append(f"{achieved} delivered")
-    if partially:
-        frags.append(f"{partially} partially delivered")
-    if unverified:
-        frags.append(f"{unverified} unverified")
-    patterns = gold.get("credibility_patterns") or []
-    # patterns may be list of dicts with "description" key
-    pattern_text = ""
-    if patterns:
-        p0 = patterns[0]
-        pattern_text = str(p0.get("description") or "") if isinstance(p0, dict) else str(p0)
-    result = "; ".join(frags) + "."
-    if pattern_text:
-        result += " " + pattern_text
-    return result
+    return _gold_promise_enrichment_from_payload(gold)
 
 
 def _is_gold_eligible(payload: Optional[Dict[str, Any]], min_promises: int = 1) -> tuple:
@@ -1671,13 +1647,11 @@ def _is_gold_eligible(payload: Optional[Dict[str, Any]], min_promises: int = 1) 
 def _gold_promise_key_points(gold: Dict[str, Any]) -> List[str]:
     """Build structured key points from Gold Promise Tracker summary fields."""
     summary = gold.get("summary") or {}
-    sb = summary.get("status_breakdown") or {}
-    tb = summary.get("promise_type_breakdown") or {}
-    tracked = int(summary.get("tracked_promises") or 0)
-    achieved = int(sb.get("achieved", 0))
-    partially = int(sb.get("partially_achieved", 0))
-    missed = int(sb.get("missed", 0))
-    unverified = int(sb.get("unverified", 0))
+    accountability = summary.get("accountability_metrics") or {}
+    achieved = int(accountability.get("verified_commitments", 0))
+    partially = int(accountability.get("partially_verified_commitments", 0))
+    missed = int(accountability.get("contradicted_commitments", 0))
+    unverified = int(accountability.get("unresolved_verifiable_commitments", 0))
     pts: List[str] = []
     gp_text = _gold_promise_enrichment_from_payload(gold)
     if gp_text:
@@ -1693,11 +1667,12 @@ def _gold_promise_key_points(gold: Dict[str, Any]) -> List[str]:
         delivery_frags.append(f"{unverified} unverified")
     if delivery_frags:
         pts.append("; ".join(delivery_frags) + ".")
-    type_pts = [
-        f"{count} {ptype.replace('_', ' ').lower()} commitment(s)"
-        for ptype, count in tb.items()
-        if isinstance(count, int) and count > 0
-    ]
+    type_counts: Dict[str, int] = {}
+    for record in gold.get("accountability_promises") or []:
+        if isinstance(record, dict):
+            ptype = str(record.get("promise_type") or "OTHER")
+            type_counts[ptype] = type_counts.get(ptype, 0) + 1
+    type_pts = [f"{count} {ptype.replace('_', ' ').lower()} commitment(s)" for ptype, count in type_counts.items()]
     pts.extend(type_pts[:2])
     return _clean_list(pts)[:4]
 
@@ -1705,18 +1680,29 @@ def _gold_promise_key_points(gold: Dict[str, Any]) -> List[str]:
 def _gold_promise_enrichment_from_payload(gold: Dict[str, Any]) -> Optional[str]:
     """Build promise summary string directly from an already-loaded Gold payload."""
     summary = gold.get("summary") or {}
-    tracked = int(summary.get("tracked_promises") or 0)
+    accountability = summary.get("accountability_metrics") or {}
+    if not accountability:
+        tracked = int(summary.get("tracked_promises") or 0)
+        if not tracked:
+            return None
+        sb = summary.get("status_breakdown") or {}
+        frags = [f"{tracked} commitments tracked"]
+        for key, label in (("achieved", "delivered"), ("partially_achieved", "partially delivered"), ("unverified", "unverified")):
+            count = int(sb.get(key, 0)) if isinstance(sb, dict) else 0
+            if count:
+                frags.append(f"{count} {label}")
+        return "; ".join(frags) + "."
+    tracked = int(accountability.get("material_verifiable_commitments") or 0)
     if not tracked:
         return None
-    sb = summary.get("status_breakdown") or {}
-    unverified = int(sb.get("unverified", 0) if isinstance(sb, dict) else 0)
-    achieved = int(sb.get("achieved", 0) if isinstance(sb, dict) else 0)
-    partially = int(sb.get("partially_achieved", 0) if isinstance(sb, dict) else 0)
-    frags = [f"{tracked} commitments tracked"]
+    unverified = int(accountability.get("unresolved_verifiable_commitments", 0))
+    achieved = int(accountability.get("verified_commitments", 0))
+    partially = int(accountability.get("partially_verified_commitments", 0))
+    frags = [f"{tracked} material objectively verifiable commitments tracked"]
     if achieved:
-        frags.append(f"{achieved} delivered")
+        frags.append(f"{achieved} verified")
     if partially:
-        frags.append(f"{partially} partially delivered")
+        frags.append(f"{partially} partially verified")
     if unverified:
         frags.append(f"{unverified} unverified")
     patterns = gold.get("credibility_patterns") or []
@@ -1753,7 +1739,7 @@ def _gold_promise_status_label(record: Dict[str, Any]) -> str:
 
 
 def _gold_promise_record_points(gold: Dict[str, Any], *, max_items: int = 4, claim_outcome: bool = False) -> List[str]:
-    records = [r for r in (gold.get("material_promises") or []) if isinstance(r, dict)]
+    records = [r for r in (gold.get("accountability_promises") or gold.get("material_promises") or []) if isinstance(r, dict)]
     if claim_outcome:
         order = {"ACHIEVED": 0, "PARTIALLY_ACHIEVED": 1, "MISSED": 2, "DELAYED": 3, "UNVERIFIED": 4}
         records = sorted(records, key=lambda r: (order.get(str(r.get("current_status") or "UNVERIFIED"), 5), r.get("announcement_period") or r.get("source_period") or ""))
@@ -1831,6 +1817,7 @@ def _build_management_promises_answer(source_bundle: Dict[str, Any], *, business
     gold_eligible, gold_fallback_reason = _is_gold_eligible(gold)
     if gold_eligible:
         gold_summary = gold.get("summary") or {}
+        accountability = gold_summary.get("accountability_metrics") or {}
         sb = gold_summary.get("status_breakdown") or {}
         achieved = int(sb.get("achieved", 0))
         partially = int(sb.get("partially_achieved", 0))
@@ -1847,9 +1834,13 @@ def _build_management_promises_answer(source_bundle: Dict[str, Any], *, business
             key_pts = _clean_list(specific_pts + type_pts[:1])[:4]
         mc_available = bool(_source_payload(source_bundle, "management_commitments"))
         # Q-A simple_answer: describe what was promised (themes + status mix) — distinct from Q-B credibility verdict
-        tracked = int(gold_summary.get("tracked_promises") or 0)
-        unverified = int(sb.get("unverified", 0))
-        delivery_count = achieved + partially
+        tracked = int(accountability.get("material_verifiable_commitments", gold_summary.get("tracked_promises") or 0))
+        unverified = int(accountability.get("unresolved_verifiable_commitments", sb.get("unverified", 0)))
+        strategic_count = int(accountability.get("strategic_intents", 0))
+        aspiration_count = int(accountability.get("aspirations", 0))
+        delivery_count = int(accountability.get("verified_commitments", achieved)) + int(
+            accountability.get("partially_verified_commitments", partially)
+        )
         tb = gold_summary.get("promise_type_breakdown") or {}
         type_labels = sorted([ptype.replace("_", " ").lower() for ptype, count in tb.items() if isinstance(count, int) and count > 0])
         if type_labels:
@@ -1864,6 +1855,14 @@ def _build_management_promises_answer(source_bundle: Dict[str, Any], *, business
             )
         else:
             qa_simple = gp_text or f"{tracked} management commitments tracked."
+        if accountability:
+            qa_simple = (
+                f"Of {tracked} material objectively verifiable commitment(s), "
+                f"{delivery_count} have delivery evidence and {unverified} remain unresolved. "
+                f"Separately, {strategic_count} strategic intent statement(s)"
+                + (f" and {aspiration_count} aspiration(s)" if aspiration_count else "")
+                + " are tracked outside the accountability denominator."
+            )
         # Fix uncertainty note: only reference management_commitments as missing when it actually is absent
         uncertainty = (
             "Full commitment-level detail and individual claim evidence requires the management_commitments source."
@@ -1968,7 +1967,24 @@ def _build_past_claims_answer(source_bundle: Dict[str, Any], *, business_journey
         cs = _gold_cred_summary(gold_cred) if gold_cred else None
         gw = _gold_cred_weight(gold_cred) if gold_cred else None
         # Q-B simple_answer: credibility verdict (NOT the delivery count — that's Q-A's job)
-        qb_simple = cs or gw or gp_text or ""
+        accountability = (gold_tracker.get("summary") or {}).get("accountability_metrics") or {}
+        if accountability:
+            denominator = int(accountability.get("material_verifiable_commitments", 0))
+            verified = int(accountability.get("verified_commitments", 0))
+            partial = int(accountability.get("partially_verified_commitments", 0))
+            insufficient = 0
+            unresolved = int(accountability.get("unresolved_verifiable_commitments", 0))
+            strategic = int(accountability.get("strategic_intents", 0))
+            aspirations = int(accountability.get("aspirations", 0))
+            qb_simple = (
+                f"Of {denominator} material objectively verifiable commitment(s), {verified} are verified, "
+                f"{partial} partially verified, {insufficient} lack sufficient evidence, and {unresolved} remain unresolved. "
+                f"Separately, {strategic} strategic intent statement(s)"
+                + (f" and {aspirations} aspiration(s)" if aspirations else "")
+                + " are not counted as failed promises."
+            )
+        else:
+            qb_simple = cs or gw or gp_text or ""
         # Build key_points from Gold records only; MC can enrich Gold upstream, not create
         # a separate Ask promise universe.
         pts: List[str] = []
@@ -4054,9 +4070,12 @@ def _build_promise_types_answer(source_bundle: Dict[str, Any], *, business_journ
     gold = _source_payload(source_bundle, "gold_promise_tracker")
     if not gold:
         return _build_unavailable_answer(question, "Gold Promise Tracker is not available.", "Promise type analysis requires the tracker.", "Regenerate Gold artifacts.")
-    summary = gold.get("summary") or {}
-    tb = summary.get("promise_type_breakdown") or {}
-    tracked = int(summary.get("tracked_promises") or 0)
+    records = [item for item in gold.get("accountability_promises") or [] if isinstance(item, dict)]
+    tb: Dict[str, int] = {}
+    for item in records:
+        ptype = str(item.get("promise_type") or "OTHER")
+        tb[ptype] = tb.get(ptype, 0) + 1
+    tracked = len(records)
     if not tb or not tracked:
         return _build_unavailable_answer(question, "Promise type breakdown is unavailable.", "The tracker exists but lacks type classification.", "")
     type_pts: List[str] = []
@@ -4090,10 +4109,10 @@ def _build_overdue_promises_answer(source_bundle: Dict[str, Any], *, business_jo
     if not gold:
         return _build_unavailable_answer(question, "Gold Promise Tracker is not available.", "Overdue promise analysis requires the tracker.", "")
     summary = gold.get("summary") or {}
-    sb = summary.get("status_breakdown") or {}
-    missed = int(sb.get("missed", 0))
-    delayed = int(sb.get("delayed", 0))
-    resolved = gold.get("resolved_promises") or []
+    accountability = summary.get("accountability_metrics") or {}
+    missed = int(accountability.get("contradicted_commitments", 0))
+    delayed = 0
+    resolved = gold.get("accountability_promises") or []
     missed_promises = [p for p in resolved if str(p.get("current_status") or p.get("outcome_status") or "").upper() in ("MISSED", "DELAYED")]
     if not missed_promises and missed == 0 and delayed == 0:
         return _draft(
@@ -4145,17 +4164,17 @@ def _build_delivered_promises_answer(source_bundle: Dict[str, Any], *, business_
     if not gold:
         return _build_unavailable_answer(question, "Gold Promise Tracker is not available.", "Delivery analysis requires the tracker.", "")
     summary = gold.get("summary") or {}
-    sb = summary.get("status_breakdown") or {}
-    achieved = int(sb.get("achieved", 0))
-    partially = int(sb.get("partially_achieved", 0))
-    resolved = gold.get("resolved_promises") or []
+    accountability = summary.get("accountability_metrics") or {}
+    achieved = int(accountability.get("verified_commitments", 0))
+    partially = int(accountability.get("partially_verified_commitments", 0))
+    resolved = gold.get("accountability_promises") or []
     delivered = [p for p in resolved if str(p.get("current_status") or p.get("outcome_status") or "").upper() in ("ACHIEVED", "PARTIALLY_ACHIEVED")]
     if not delivered and achieved == 0 and partially == 0:
         return _draft(
             answer_status="partially_supported",
-            simple_answer="No commitments are currently recorded as fully delivered. The tracker shows mostly unverified status across 13 tracked items.",
+            simple_answer=f"No commitments are currently recorded as verified. {int(accountability.get('unresolved_verifiable_commitments', 0))} material verifiable commitment(s) remain unresolved.",
             why_it_matters="Delivery track record is the only reliable test of whether management's stated intent translates into execution.",
-            key_points=["0 commitments achieved; 0 partially delivered; 11 unverified."],
+            key_points=[f"0 commitments verified; 0 partially verified; {int(accountability.get('unresolved_verifiable_commitments', 0))} unresolved."],
             detailed_explanation="Unverified does not mean failed — it means no later evidence is available to confirm delivery.",
             evidence_status="partial",
             evidence_summary="Gold Promise Tracker — summary status breakdown.",
@@ -4202,9 +4221,9 @@ def _build_missed_promises_answer(source_bundle: Dict[str, Any], *, business_jou
     if not gold:
         return _build_unavailable_answer(question, "Gold Promise Tracker is not available.", "Miss analysis requires the tracker.", "")
     summary = gold.get("summary") or {}
-    sb = summary.get("status_breakdown") or {}
-    missed = int(sb.get("missed", 0))
-    resolved = gold.get("resolved_promises") or []
+    accountability = summary.get("accountability_metrics") or {}
+    missed = int(accountability.get("contradicted_commitments", 0))
+    resolved = gold.get("accountability_promises") or []
     missed_items = [p for p in resolved if str(p.get("current_status") or p.get("outcome_status") or "").upper() == "MISSED"]
     if not missed_items and missed == 0:
         return _draft(

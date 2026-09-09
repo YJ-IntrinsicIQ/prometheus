@@ -473,3 +473,74 @@ class TestNoHardcoding:
         for qid in p0_questions:
             assert qid in QUESTION_DEPENDENCY_MAP, f"{qid} missing from QUESTION_DEPENDENCY_MAP"
             assert len(QUESTION_DEPENDENCY_MAP[qid]) >= 1, f"{qid} has empty dependency list"
+
+
+# ── ENG-107: Ask must not invent a promise universe outside Gold ──────────────
+
+def test_ask_management_promises_examples_come_from_gold_records_only() -> None:
+    bundle = _fake_bundle({
+        "gold_promise_tracker": {
+            "summary": {
+                "tracked_promises": 1,
+                "status_breakdown": {"unverified": 1},
+                "promise_type_breakdown": {"CAPACITY": 1},
+            },
+            "material_promises": [
+                {
+                    "commitment_fingerprint": "fp-gold",
+                    "management_commitment_id": "MC-0001",
+                    "original_statement": "Build a new injectable manufacturing line by FY25.",
+                    "announcement_period": "fy23",
+                    "current_status": "UNVERIFIED",
+                    "promise_type": "CAPACITY",
+                }
+            ],
+            "credibility_patterns": [],
+        },
+        "management_commitments": {
+            "commitments": [
+                {"commitment_fingerprint": "fp-gold", "topic": "Capacity", "original_statement": "Build a new injectable manufacturing line by FY25.", "status": "Unable To Verify"},
+                {"commitment_fingerprint": "fp-extra", "topic": "Product launch", "original_statement": "Launch unrelated extra product.", "status": "Delivered"},
+            ]
+        },
+    })
+    from intelligence.ask_intrinsiciq.answer_cards import QUESTION_INDEX
+    answer = _build_management_promises_answer(bundle, business_journey_payload={}, products_services_payload={}, question=QUESTION_INDEX["what-has-management-promised"])
+
+    text = " ".join(answer.get("key_points") or []) + " " + str(answer.get("simple_answer") or "")
+    assert "1 commitment" in text
+    assert "injectable manufacturing line" in text
+    assert "unrelated extra product" not in text
+    assert "Delivered" not in text
+
+
+def test_ask_past_claims_examples_cannot_strengthen_beyond_gold() -> None:
+    bundle = _fake_bundle({
+        "gold_promise_tracker": {
+            "summary": {"tracked_promises": 1, "status_breakdown": {"unverified": 1}},
+            "material_promises": [
+                {
+                    "commitment_fingerprint": "fp-gold",
+                    "management_commitment_id": "MC-0001",
+                    "original_statement": "Improve service standards using independent assessment.",
+                    "announcement_period": "fy23",
+                    "current_status": "UNVERIFIED",
+                    "unresolved_reason": "NO_MATCHING_PROGRESSION_RECORD",
+                }
+            ],
+        },
+        "gold_credibility": {"summary": {"management_credibility_summary": "Track record remains unverified."}},
+        "management_commitments": {
+            "commitments": [
+                {"commitment_fingerprint": "fp-gold", "original_statement": "Improve service standards using independent assessment.", "status": "Delivered", "delivery_assessment": "Later evidence supports delivery."},
+            ]
+        },
+    })
+    from intelligence.ask_intrinsiciq.answer_cards import QUESTION_INDEX
+    answer = _build_past_claims_answer(bundle, business_journey_payload={}, products_services_payload={}, question=QUESTION_INDEX["did-past-claims-come-true"])
+
+    text = " ".join(answer.get("key_points") or [])
+    assert "Unable To Verify" in text
+    assert "No matching progression record" in text
+    assert "supports delivery" not in text
+    assert "Delivered" not in text

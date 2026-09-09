@@ -20,6 +20,8 @@ class CompanyModelSources:
 
 
 GOVERNED_SOURCE_FILES = {
+    # Phase 12.1: canonical multi-source longitudinal current-state via Management Progression
+    "management_progression": "company_memory/management_progression/management_progression.json",
     "pcim": "company_memory/pcim_v1.json",
     "cim": "company_memory/cim_v1.json",
     "company_memory_index": "company_memory/company_memory_index.json",

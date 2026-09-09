@@ -121,10 +121,19 @@ def _maturity_level(rec: Dict[str, Any]) -> int:
 
 def _amount_coverage(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     total = len(records)
-    known = [r for r in records if r.get("amount") not in (None, "", 0)]
+    # ENG-118 Phase 1: only deterministically parsed amounts count as "known".
+    # Events with amount=None but amount_basis="unit_ambiguous" are qualitatively
+    # preserved but excluded from coverage and weighted totals.
+    eligible = [r for r in records if not r.get("deployment_eligibility") or r.get("deployment_eligibility") in {"ELIGIBLE_DEPLOYMENT", "ELIGIBLE_DISTRIBUTION", "ELIGIBLE_DELEVERAGING"}]
+    known = [r for r in eligible if r.get("amount") not in (None, "", 0)]
     known_count = len(known)
-    ratio = known_count / total if total else 0.0
-    if ratio >= _COVERAGE_HIGH:
+    unit_ambiguous_count = sum(
+        1 for r in records
+        if r.get("amount") in (None, "", 0) and r.get("amount_basis") == "unit_ambiguous"
+    )
+    ratio = known_count / len(eligible) if eligible else 0.0
+    trusted_ratio = known_count / total if total else 0.0
+    if ratio >= _COVERAGE_HIGH and trusted_ratio >= _COVERAGE_HIGH:
         status = "HIGH"
         capital_weighted_permitted = True
         note = "Capital-weighted conclusions are permitted."
@@ -142,11 +151,22 @@ def _amount_coverage(records: List[Dict[str, Any]]) -> Dict[str, Any]:
             "CAPITAL_MIX_INSUFFICIENT_AMOUNT_COVERAGE: event-pattern analysis only; "
             "no capital-weighted conclusions permitted."
         )
+    if unit_ambiguous_count:
+        note += (
+            f" {unit_ambiguous_count} event(s) have source amounts with unresolvable unit context"
+            " and are excluded from amount-weighted conclusions."
+        )
     return {
         "events_with_known_amount": known_count,
-        "events_without_amount": total - known_count,
+        "events_economically_eligible": len(eligible),
+        "events_ineligible": total - len(eligible),
+        "events_with_weighted_eligible_amount": known_count,
+        "events_without_amount": len(eligible) - known_count,
+        "events_with_unit_ambiguous_amount": unit_ambiguous_count,
         "total_events": total,
         "coverage_ratio": round(ratio, 3),
+        "trusted_weighted_coverage_ratio": round(trusted_ratio, 3),
+        "unit_amount_coverage_ratio": round((len([r for r in records if r.get("amount") not in (None, "", 0)]) / total), 3) if total else 0.0,
         "coverage_status": status,
         "capital_weighted_conclusions_permitted": capital_weighted_permitted,
         "note": note,
@@ -164,6 +184,8 @@ def _build_allocation_mix(records: List[Dict[str, Any]], cov: Dict[str, Any]) ->
         "amount_events_known": 0,
     })
     for r in records:
+        if r.get("deployment_eligibility") and r.get("deployment_eligibility") not in {"ELIGIBLE_DEPLOYMENT", "ELIGIBLE_DISTRIBUTION", "ELIGIBLE_DELEVERAGING"}:
+            continue
         cat = r.get("allocation_category", "unknown")
         by_cat[cat]["event_count"] += 1
         amt = r.get("amount")
@@ -746,6 +768,7 @@ def build_longitudinal_profile(
     # Load outcomes for period + amount metadata
     periods_by_id: Dict[str, List[str]] = {}
     amounts_by_id: Dict[str, Any] = {}
+    amount_basis_by_id: Dict[str, str] = {}
     if outcomes_path.exists():
         try:
             outcomes_data = json.loads(outcomes_path.read_text(encoding="utf-8"))
@@ -753,6 +776,7 @@ def build_longitudinal_profile(
                 aid = alloc.get("allocation_id", "")
                 periods_by_id[aid] = alloc.get("deployment_periods") or []
                 amounts_by_id[aid] = alloc.get("amount")
+                amount_basis_by_id[aid] = alloc.get("amount_basis", "unknown")
         except (OSError, json.JSONDecodeError):
             pass
 
@@ -765,6 +789,7 @@ def build_longitudinal_profile(
         r = dict(a)
         r["deployment_periods"] = periods_by_id.get(aid, [])
         r["amount"] = amounts_by_id.get(aid)
+        r["amount_basis"] = amount_basis_by_id.get(aid, "unknown")
         records.append(r)
 
     # Compute amount coverage

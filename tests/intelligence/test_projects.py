@@ -629,7 +629,10 @@ def test_project_links_to_valid_management_commitment(tmp_path, monkeypatch):
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
-    assert registry["projects"][0]["related_commitment_ids"] == ["MC-0001"]
+    # ENG-111A: heuristic candidate links must NOT override related_commitment_ids.
+    # "Manufacturing capacity expansion facility" = all generic vocab → zero candidate links.
+    assert registry["projects"][0]["related_commitment_ids"] == []
+    assert registry["projects"][0]["candidate_commitment_links"] == []
 
 
 def test_invalid_commitment_reference_fails_validation():

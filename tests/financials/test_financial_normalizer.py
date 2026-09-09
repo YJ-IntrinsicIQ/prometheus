@@ -6,9 +6,28 @@ import pytest
 
 from knowledge.financials.ratio_calculator import calculate_financial_ratios
 from knowledge.financials.reconciler import build_financial_reconciliation_report
-from knowledge.financials.normalizer import _face_value_from_excerpt, _select_value, normalize_financial_tables, write_normalized_fundamentals
+from knowledge.financials.normalizer import _face_value_from_excerpt, _select_value, _fixed_asset_da_values, normalize_financial_tables, write_normalized_fundamentals
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_fixed_asset_depreciation_uses_explicit_total_and_current_occurrence():
+    row = _row("fixed_assets", "Depreciation expense", [
+        ("March 31, 2026", "2,133.3", 213.33),
+        ("March 31, 2024", "9,026.1", 902.61),
+        ("March 31, 2025", "251.6", 25.16),
+        ("PERIOD_COLUMN_UNRESOLVED", "196.8", 19.68),
+        ("PERIOD_COLUMN_UNRESOLVED", "394.7", 39.47),
+        ("PERIOD_COLUMN_UNRESOLVED", "12,002.5", 1200.25),
+    ], basis="consolidated", page=264)
+    selected = _fixed_asset_da_values(row, target_year="2026", occurrence=2)
+    assert selected and selected[0]["value_raw"] == "12,002.5"
+    assert selected[0]["period"] == "March 31, 2026"
+
+
+def test_fixed_asset_accumulated_balance_cannot_satisfy_depreciation():
+    row = _row("fixed_assets", "Accumulated amortisation and impairment As at March", [("March 31, 2026", "31,", None)], basis="consolidated")
+    assert _fixed_asset_da_values(row, target_year="2026", occurrence=1) is None
 
 
 def _write_json(path: Path, payload) -> None:

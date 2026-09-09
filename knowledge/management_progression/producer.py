@@ -193,6 +193,7 @@ class ManagementProgressionProducer:
         events: List[Dict[str, Any]] = []
         events.extend(self._events_from_multi_source_longitudinal())
         events.extend(self._events_from_commitments())
+        events.extend(self._events_from_promise_verification())
         events.extend(self._events_from_projects())
         events.extend(self._events_from_capacity())
         events.extend(self._events_from_commentary())
@@ -310,6 +311,77 @@ class ManagementProgressionProducer:
 
         return results
 
+    def _events_from_promise_verification(self) -> List[Dict[str, Any]]:
+        """Convert deterministic bridge results into lifecycle evidence for MP.
+
+        The bridge establishes commitment-to-event identity.  It does not set
+        lifecycle state: this adapter supplies the linked event to MP, whose
+        normal event-role rules remain authoritative.
+        """
+        payload = loaded_payload(self.sources, "promise_verification_events")
+        observable = {
+            str(item.get("event_id") or ""): item
+            for item in payload.get("observable_events") or []
+            if isinstance(item, dict) and item.get("event_id")
+        }
+        results: List[Dict[str, Any]] = []
+        for result in payload.get("promise_classifications") or []:
+            if not isinstance(result, dict):
+                continue
+            state = str(result.get("verification_state") or "").upper()
+            fingerprint = str(result.get("commitment_fingerprint") or "").strip()
+            if not fingerprint or state not in {"VERIFIED", "PARTIALLY_VERIFIED", "CONTRADICTED"}:
+                continue
+            for linked_id in result.get("linked_event_ids") or []:
+                event = observable.get(str(linked_id))
+                if not event:
+                    continue
+                event_status = str(event.get("status") or "").lower()
+                if state in {"VERIFIED", "PARTIALLY_VERIFIED"} and event_status not in {
+                    "completed", "partially_completed"
+                }:
+                    continue
+                role = "reversal" if state == "CONTRADICTED" else (
+                    "completion" if state == "VERIFIED" else "milestone"
+                )
+                source_period = str(event.get("evidence_period") or event.get("event_period") or "")
+                event_period = str(event.get("action_period") or event.get("event_period") or source_period)
+                evidence_ids = [str(value) for value in event.get("evidence_ids") or [] if str(value)]
+                evidence = [
+                    evidence_ref(
+                        source_artifact=str(event.get("source_file") or "company_memory/gold/promise_verification_events.json"),
+                        source_period=source_period,
+                        evidence_id=evidence_ids[0] if evidence_ids else str(linked_id),
+                        source_item_id=str(linked_id),
+                        field_path="promise_classifications[].linked_event_ids",
+                        excerpt=str(event.get("evidence_text") or "")[:500],
+                    )
+                ]
+                results.append(
+                    self._event(
+                        event_id=f"verification:{fingerprint}:{linked_id}",
+                        role=role,
+                        event_type=_event_type_from_text(str(event.get("evidence_text") or event.get("event_type") or "")),
+                        source_period=source_period,
+                        event_period=event_period,
+                        actor="company",
+                        action_taken=str(event.get("evidence_text") or ""),
+                        # MP's event contract requires completion evidence text in
+                        # an outcome field. Synthesis still treats completion as
+                        # action-only unless the text contains a distinct result.
+                        operational_outcome=str(event.get("evidence_text") or ""),
+                        verification_status={
+                            "VERIFIED": "verified",
+                            "PARTIALLY_VERIFIED": "partially_verified",
+                            "CONTRADICTED": "contradicted",
+                        }[state],
+                        evidence=evidence,
+                        stream_type="promise_verification",
+                        theme_hint=f"fp:{fingerprint}",
+                    )
+                )
+        return results
+
     def _events_from_commitments(self) -> List[Dict[str, Any]]:
         payload = loaded_payload(self.sources, "management_commitments")
         results = []
@@ -328,10 +400,11 @@ class ManagementProgressionProducer:
             # MC is not a lifecycle authority (lifecycle_authority="management_progression").
             # All commitment events start as "unresolved"; lifecycle is derived from action/completion
             # events sourced from projects, capacity, commentary, and capital_allocation_outcomes.
+            fp = _pick(item, "commitment_fingerprint", "commitment_id", "promise_id", default=f"commitment_{len(results)+1}")
             results.append(
                 self._event(
                     # Prefer stable fingerprint over ordinal MC-XXXX id for cross-system linkage.
-                    event_id=_pick(item, "commitment_fingerprint", "commitment_id", "promise_id", default=f"commitment_{len(results)+1}"),
+                    event_id=fp,
                     role="commitment",
                     event_type=_event_type_from_text(text),
                     source_period=period,
@@ -340,6 +413,9 @@ class ManagementProgressionProducer:
                     verification_status="unresolved",
                     evidence=evidence,
                     stream_type="commitment",
+                    # Fingerprint-keyed hint so execution events with the same fp
+                    # group into the same MP item regardless of text phrasing.
+                    theme_hint=f"fp:{fp}",
                 )
             )
         return results
@@ -692,7 +768,9 @@ class ManagementProgressionProducer:
     def _group_events(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         groups: Dict[str, List[Dict[str, Any]]] = {}
         for event in events:
-            key_text = event.get("_theme_hint") if event.get("_stream_type") == "multi_source_longitudinal" else ""
+            # Honour _theme_hint for ALL stream types so that commitment events and
+            # their execution counterparts (carrying the same fp: hint) land in one group.
+            key_text = event.get("_theme_hint") or ""
             key = theme_key(key_text or _event_primary_text(event) or _event_grouping_text(event))
             groups.setdefault(key, []).append(event)
         items = []

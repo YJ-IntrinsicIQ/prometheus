@@ -38,9 +38,13 @@ class ExtractedValue:
     value_crore: Optional[float]
     value_type: str = "unknown"
     raw_number: Optional[float] = None
+    # Canonical period role assigned by the quarterly annotation pass.
+    # Empty string means "not yet annotated" (annual processing never sets this).
+    # Quarterly processing calls knowledge.financials.period_roles.annotate_period_roles().
+    period_role: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d = {
             "period": self.period,
             "value_raw": self.value_raw,
             "unit_hint": self.unit_hint,
@@ -49,6 +53,9 @@ class ExtractedValue:
             "value_type": self.value_type,
             "raw_number": self.raw_number,
         }
+        if self.period_role:
+            d["period_role"] = self.period_role
+        return d
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "ExtractedValue":
@@ -59,6 +66,7 @@ class ExtractedValue:
             currency_hint=str(payload.get("currency_hint", "")),
             value_crore=payload.get("value_crore"),
             value_type=str(payload.get("value_type", "unknown")),
+            period_role=str(payload.get("period_role", "")),
             raw_number=payload.get("raw_number"),
         )
 

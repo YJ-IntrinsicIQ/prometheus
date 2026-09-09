@@ -108,6 +108,162 @@ def test_chronology_preserves_source_event_target_and_resolved_periods(tmp_path:
     assert event["verification_status"] == "partially_verified"
 
 
+def test_multi_source_longitudinal_feeds_management_progression(tmp_path: Path):
+    _write_json(tmp_path / "companies" / "acme" / "company_memory" / "company_model" / "company_model.json", _company_model("acme"))
+    _write_json(
+        tmp_path / "companies" / "acme" / "longitudinal" / "longitudinal_report.json",
+        {
+            "schema_version": "9.0",
+            "company": "acme",
+            "source_periods": ["Q4 FY26", "FY27"],
+            "source_families_present": ["EARNINGS_CALL_TRANSCRIPT", "EXCHANGE_DISCLOSURE"],
+            "commitment_count": 1,
+            "lifecycle_counts": {"CONFIRMED": 1},
+            "commitments": [
+                {
+                    "commitment_id": "LC-PLATFORM-FY27",
+                    "theme_slug": "platform_launch",
+                    "theme_label": "Customer messaging platform launch",
+                    "claim_domain": "COMMITMENT",
+                    "lifecycle": "CONFIRMED",
+                    "claimed_period": "Q4 FY26",
+                    "claimed_by": "Chief Executive Officer",
+                    "claimed_source": "TRANSCRIPT",
+                    "claimed_text": "Management expects to launch a customer messaging platform by Q2 FY27.",
+                    "confirmed_period": "FY27",
+                    "confirmed_source": "EXCHANGE_DISCLOSURE",
+                    "confirmed_text": "The customer messaging platform was launched for enterprise customers.",
+                    "evidence": [
+                        {
+                            "evidence_id": "call-1",
+                            "source_period": "Q4 FY26",
+                            "source_type": "EARNINGS_CALL_TRANSCRIPT",
+                            "claim_domain": "COMMITMENT",
+                            "speaker_role": "MANAGEMENT",
+                            "speaker": "CEO",
+                            "target_period": "Q2 FY27",
+                            "text": "Management expects to launch a customer messaging platform by Q2 FY27.",
+                        },
+                        {
+                            "evidence_id": "filing-1",
+                            "source_period": "FY27",
+                            "source_type": "EXCHANGE_DISCLOSURE",
+                            "claim_domain": "FACTUAL_EVENT",
+                            "speaker": "company",
+                            "text": "The customer messaging platform was launched for enterprise customers.",
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+
+    payload = build_management_progression("acme", companies_root=tmp_path / "companies", generated_at="2026-09-03T00:00:00Z")
+    validation = validate_management_progression(payload)
+    events = [event for item in payload["progression_items"] for event in item["events"]]
+
+    assert validation["status"] == "pass"
+    assert "longitudinal/longitudinal_report.json" in payload["source_manifest"]["sources_used"]
+    assert any(event["source_period"] == "Q4 FY26" and event["target_period"] == "Q2 FY27" for event in events)
+    assert any(event["role"] == "completion" and event["event_period"] == "FY27" for event in events)
+    assert all(event["evidence"][0]["source_artifact"] == "longitudinal/longitudinal_report.json" for event in events)
+
+
+def test_multi_source_unproven_commitment_stays_unresolved(tmp_path: Path):
+    _write_json(tmp_path / "companies" / "acme" / "company_memory" / "company_model" / "company_model.json", _company_model("acme"))
+    _write_json(
+        tmp_path / "companies" / "acme" / "longitudinal" / "longitudinal_report.json",
+        {
+            "schema_version": "9.0",
+            "company": "acme",
+            "commitments": [
+                {
+                    "commitment_id": "LC-GTM-FY26",
+                    "theme_slug": "gtm_investment",
+                    "theme_label": "GTM investment",
+                    "claim_domain": "STRATEGIC_PRIORITY",
+                    "lifecycle": "UNPROVEN",
+                    "claimed_period": "Q4 FY26",
+                    "claimed_by": "CFO",
+                    "claimed_source": "TRANSCRIPT",
+                    "claimed_text": "Management is investing in GTM and expects benefits in coming quarters.",
+                    "unproven_reason": "No later source confirms operating or financial payoff.",
+                    "evidence": [
+                        {
+                            "evidence_id": "call-gtm",
+                            "source_period": "Q4 FY26",
+                            "source_type": "EARNINGS_CALL_TRANSCRIPT",
+                            "claim_domain": "STRATEGIC_PRIORITY",
+                            "speaker_role": "MANAGEMENT",
+                            "text": "Management is investing in GTM and expects benefits in coming quarters.",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    payload = build_management_progression("acme", companies_root=tmp_path / "companies", generated_at="2026-09-03T00:00:00Z")
+    item = payload["progression_items"][0]
+    event = item["events"][0]
+
+    assert item["current_status"] == "announced"
+    assert event["verification_status"] == "unresolved"
+    assert item["investor_implication"]["thesis_impact"] == "unresolved"
+    assert item["unresolved"]
+
+
+def test_multi_source_financial_consequence_is_distinct_from_claim(tmp_path: Path):
+    _write_json(tmp_path / "companies" / "acme" / "company_memory" / "company_model" / "company_model.json", _company_model("acme"))
+    _write_json(
+        tmp_path / "companies" / "acme" / "longitudinal" / "longitudinal_report.json",
+        {
+            "schema_version": "9.0",
+            "company": "acme",
+            "commitments": [
+                {
+                    "commitment_id": "LC-MARGIN-FY26",
+                    "theme_slug": "profitability",
+                    "theme_label": "Margin improvement programme",
+                    "claim_domain": "FINANCIAL_METRIC",
+                    "lifecycle": "PROGRESSING",
+                    "claimed_period": "FY25",
+                    "claimed_source": "ANNUAL_REPORT",
+                    "claimed_text": "Management described a margin improvement programme for enterprise products.",
+                    "financial_consequence": "[Q1 FY27 / EARNINGS_RELEASE] Gross margin improved as enterprise product mix improved.",
+                    "evidence": [
+                        {
+                            "evidence_id": "annual-margin",
+                            "source_period": "FY25",
+                            "source_type": "ANNUAL_REPORT",
+                            "claim_domain": "STRATEGIC_PRIORITY",
+                            "speaker": "company",
+                            "text": "Management described a margin improvement programme for enterprise products.",
+                        },
+                        {
+                            "evidence_id": "release-margin",
+                            "source_period": "Q1 FY27",
+                            "source_type": "EARNINGS_RELEASE",
+                            "claim_domain": "FINANCIAL_METRIC",
+                            "speaker": "company",
+                            "text": "Gross margin improved as enterprise product mix improved.",
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+
+    payload = build_management_progression("acme", companies_root=tmp_path / "companies", generated_at="2026-09-03T00:00:00Z")
+    events = [event for item in payload["progression_items"] for event in item["events"]]
+
+    assert {event["role"] for event in events} == {"statement", "outcome"}
+    outcome = [event for event in events if event["role"] == "outcome"][0]
+    assert outcome["event_type"] == "financial_outcome"
+    assert outcome["source_period"] == "Q1 FY27"
+    assert outcome["evidence"][0]["evidence_id"] == "release-margin"
+
+
 def test_distinct_statement_action_and_outcome_events_are_not_collapsed(tmp_path: Path):
     _write_json(tmp_path / "companies" / "acme" / "company_memory" / "company_model" / "company_model.json", _company_model("acme"))
     _write_json(

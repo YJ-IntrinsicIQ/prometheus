@@ -119,6 +119,12 @@ DATE_PERIOD_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+# Matches "Q1 FY27", "Q2FY26", "Q3 FY 2025" etc. — checked BEFORE FY_PERIOD_RE so
+# quarterly column headers are not silently stripped to bare "FY27" labels.
+QUARTERLY_FY_PERIOD_RE = re.compile(
+    r"\bQ([1-4])\s*[-/]?\s*FY\s?(\d{2,4})\b",
+    re.IGNORECASE,
+)
 FY_PERIOD_RE = re.compile(r"\bFY\s?(\d{2,4})\b", re.IGNORECASE)
 UNIT_WORD_RE = re.compile(r"\b(units?|shares?)\b", re.IGNORECASE)
 MONTH_ONLY_RE = re.compile(r"^(january|february|march|april|may|june|july|august|september|october|november|december)$", re.IGNORECASE)
@@ -430,8 +436,9 @@ def _strip_column_headers(text: str) -> str:
         if updated == cleaned:
             break
         cleaned = updated
+    # Strip bare FY labels and quarterly FY labels ("Q1 FY27", "FY26", etc.)
     cleaned = re.sub(
-        r"^(?:\s*FY\s?\d{2,4})+",
+        r"^(?:\s*(?:Q[1-4]\s*[-/]?\s*)?FY\s?\d{2,4})+",
         "",
         cleaned,
         flags=re.IGNORECASE,
@@ -443,6 +450,7 @@ def _strip_column_headers(text: str) -> str:
 def _extract_periods(text: str) -> List[str]:
     periods: List[str] = []
     seen: set[str] = set()
+    # Step 1: date-based periods ("as at March 31, 2026" → "March 31, 2026")
     for match in DATE_PERIOD_RE.finditer(text):
         label = _clean_text(match.group(1))
         if label:
@@ -450,7 +458,35 @@ def _extract_periods(text: str) -> List[str]:
             if key not in seen:
                 seen.add(key)
                 periods.append(label)
+    # Step 2: quarterly-first ("Q1 FY27") — must come before bare FY so the full
+    # label is preserved and "Q1 FY27" / "Q1 FY26" / "FY26" are stored as distinct
+    # column headers rather than collapsing "Q1 FY27" → "FY27".
+    # Track the character spans of quarterly matches so step 3 can skip bare FY
+    # labels that fall INSIDE a quarterly label (e.g. the "FY27" inside "Q1 FY27")
+    # but still capture standalone "FY26" that appears outside any quarterly match.
+    quarterly_spans: list[tuple[int, int]] = []
+    for match in QUARTERLY_FY_PERIOD_RE.finditer(text):
+        q_num = match.group(1)
+        fy_num = match.group(2)
+        label = f"Q{q_num} FY{fy_num}"
+        key = label.lower()
+        # Always record the span so FY_PERIOD_RE can exclude embedded FY labels
+        # in every occurrence, even when the quarterly label is already in seen.
+        quarterly_spans.append((match.start(), match.end()))
+        if key not in seen:
+            seen.add(key)
+            periods.append(label)
+    # Step 3: bare FY years ("FY26", "FY2026") — only if not already seen AND not
+    # positioned inside a quarterly span already captured in step 2.
     for match in FY_PERIOD_RE.finditer(text):
+        # Skip the FY that is contained within a quarterly pattern (e.g. "FY26"
+        # inside "Q1 FY26") — but DO add standalone "FY26" that appears elsewhere.
+        in_quarterly = any(
+            qs <= match.start() and match.end() <= qe
+            for qs, qe in quarterly_spans
+        )
+        if in_quarterly:
+            continue
         label = f"FY{match.group(1)}"
         key = label.lower()
         if key not in seen:
@@ -616,7 +652,8 @@ def _split_rows(table_text: str, table_type: str) -> Tuple[List[Tuple[str, List[
                     continue
                 values: List[str] = []
                 index += 1
-                while index < len(tokens) and _is_number_token(tokens[index]) and len(values) < max(expected_values, 4):
+                value_limit = 12 if table_type == "fixed_assets" else max(expected_values, 4)
+                while index < len(tokens) and _is_number_token(tokens[index]) and len(values) < value_limit:
                     values.append(tokens[index])
                     index += 1
                 if len(values) >= expected_values and _row_values_look_table_like(values):
@@ -646,7 +683,8 @@ def _split_rows(table_text: str, table_type: str) -> Tuple[List[Tuple[str, List[
                 continue
             values = [token]
             index += 1
-            while index < len(tokens) and _is_number_token(tokens[index]) and len(values) < max(expected_values, 4):
+            value_limit = 12 if table_type == "fixed_assets" else max(expected_values, 4)
+            while index < len(tokens) and _is_number_token(tokens[index]) and len(values) < value_limit:
                 values.append(tokens[index])
                 index += 1
             if len(values) >= expected_values and _row_values_look_table_like(values):
@@ -1309,6 +1347,18 @@ def _extract_rows_from_chunk(
 
     table_text = _trim_table_text(text, destination_table_type)
     row_pairs, row_warnings, rejected_labels = _split_rows(table_text, destination_table_type)
+    if destination_table_type == "fixed_assets" and "total" in table_text.lower():
+        repaired_pairs: List[Tuple[str, List[str]]] = []
+        for label, values in row_pairs:
+            normalized_label = _clean_text(label).lower()
+            if "depreciation expense" in normalized_label and len(values) >= 5:
+                # Fixed-assets notes list asset-class components followed by an
+                # explicit Total column. Preserve the authoritative total only;
+                # component cells remain available in the source document.
+                repaired_pairs.append((label, [values[-1]]))
+            else:
+                repaired_pairs.append((label, values))
+        row_pairs = repaired_pairs
     if not row_pairs:
         return [], row_warnings, rejected_labels, score, item, []
 
@@ -1448,9 +1498,11 @@ def _extract_primary_statement_with_assembly(
         #                       can never beat the actual primary statement spans even
         #                       when it produces more raw rows.
         #   4. basis_score    — consolidated > standalone > unknown
-        #   5. span_width     — number of distinct chunks assembled (wider = more
-        #                       likely to be a genuine multi-page statement)
-        #   6. row_count      — total extracted rows (tie-break within same span_width)
+        #   5. row_count      — total extracted rows (a denser span is more likely the
+        #                       actual primary statement than a note fragment that happens
+        #                       to span multiple chunks)
+        #   6. span_width     — number of distinct chunks assembled (tie-break within
+        #                       same row_count)
         #   7. score          — table-context score
         def assembly_completeness_key(item):
             row_pairs, anchor_item, score, _, _, _, all_row_chunk_ids, span_chunk_ids = item
@@ -1464,7 +1516,7 @@ def _extract_primary_statement_with_assembly(
             semantic_hints = PRIMARY_STATEMENT_SEMANTIC_HINTS.get(destination_table_type, ())
             all_labels_lower = " ".join(label.lower() for label, _ in row_pairs)
             semantic_score = 1 if semantic_hints and any(hint in all_labels_lower for hint in semantic_hints) else 0
-            return (unit_score, period_score, semantic_score, basis_score, span_width, row_count, score)
+            return (unit_score, period_score, semantic_score, basis_score, row_count, span_width, score)
 
         assembled_results.sort(key=assembly_completeness_key, reverse=True)
         all_row_pairs, anchor_item, score, row_warnings, all_rejected_labels, anchor_chunk_id, all_row_chunk_ids, span_chunk_ids = assembled_results[0]

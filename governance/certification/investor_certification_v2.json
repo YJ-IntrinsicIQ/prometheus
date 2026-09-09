@@ -1,0 +1,605 @@
+{
+  "_comment": "INVESTOR_CERTIFICATION_V2.0 — Canonical frozen contract. Do not edit after freeze. Version changes require a new ID and new baseline.",
+  "certification_id": "INVESTOR_CERTIFICATION_V2.0",
+  "frozen_at": "2026-09-03",
+  "frozen_by_phase": "Prometheus Phase 15.2",
+  "status": "FROZEN",
+
+  "product_claim": "Prometheus provides serious long-term investors with reliable, evidence-backed intelligence about companies derived from canonical document processing — enabling informed investor judgment about business model evolution, financial progression, management accountability, material risks, and multi-lens investor analysis. It must show what changed, why it changed, and whether conviction should change as a result.",
+
+  "question_count": 25,
+
+  "questions": [
+    {
+      "question_id": "what-does-company-do",
+      "wording": "What does the company do?",
+      "domain": "business_understanding",
+      "capability_tested": "Business model identification and evolution",
+      "canonical_evidence_type": ["cim", "pcim", "business_journey"],
+      "investor_decision": "Understand what is actually being built and sold before further analysis"
+    },
+    {
+      "question_id": "who-are-the-customers",
+      "wording": "Who are the customers?",
+      "domain": "business_understanding",
+      "capability_tested": "Customer segmentation, concentration, and dependency",
+      "canonical_evidence_type": ["cim", "pcim"],
+      "investor_decision": "Assess revenue concentration risk and demand quality"
+    },
+    {
+      "question_id": "how-does-it-make-money",
+      "wording": "How does it make money?",
+      "domain": "business_understanding",
+      "capability_tested": "Revenue model, pricing power, and margin structure",
+      "canonical_evidence_type": ["cim", "pcim", "financial_truth_pack"],
+      "investor_decision": "Evaluate business economics and sustainability of earnings"
+    },
+    {
+      "question_id": "are-profits-converting-into-cash",
+      "wording": "Are profits converting into cash?",
+      "domain": "financial_intelligence",
+      "capability_tested": "Cash conversion quality — CFO vs PAT, working capital dynamics",
+      "canonical_evidence_type": ["financial_truth_pack", "per_share_compounding_analysis"],
+      "investor_decision": "Determine whether reported earnings represent real economic value"
+    },
+    {
+      "question_id": "what-is-owner-earnings",
+      "wording": "What is owner earnings?",
+      "domain": "financial_intelligence",
+      "capability_tested": "Owner earnings estimation — Buffett-style FCF proxy",
+      "canonical_evidence_type": ["per_share_compounding_analysis", "financial_truth_pack"],
+      "investor_decision": "Estimate true distributable earnings to gauge business value"
+    },
+    {
+      "question_id": "is-working-capital-a-concern",
+      "wording": "Is working capital a concern?",
+      "domain": "financial_intelligence",
+      "capability_tested": "Working capital trends, receivables/payables quality",
+      "canonical_evidence_type": ["financial_truth_pack", "per_share_compounding_analysis"],
+      "investor_decision": "Detect cash consumption risks hidden in balance-sheet dynamics"
+    },
+    {
+      "question_id": "are-per-share-economics-improving",
+      "wording": "Are per-share economics improving?",
+      "domain": "financial_intelligence",
+      "capability_tested": "Multi-year per-share compounding — EPS, BVPS, FCF/share across periods",
+      "canonical_evidence_type": ["per_share_compounding_analysis"],
+      "investor_decision": "Assess whether value per owner unit is growing over time"
+    },
+    {
+      "question_id": "what-has-management-promised",
+      "wording": "What has management promised?",
+      "domain": "management_accountability",
+      "capability_tested": "Commitment tracking — stated targets, timelines, and stated expected outcomes",
+      "canonical_evidence_type": ["gold_promise_tracker", "management_commitments"],
+      "investor_decision": "Establish accountability baseline before evaluating execution"
+    },
+    {
+      "question_id": "did-past-claims-come-true",
+      "wording": "Did past claims come true?",
+      "domain": "management_accountability",
+      "capability_tested": "Promise-to-outcome tracking — longitudinal credibility assessment",
+      "canonical_evidence_type": ["gold_promise_tracker", "gold_credibility", "management_progression"],
+      "investor_decision": "Judge whether management can be trusted on forward guidance"
+    },
+    {
+      "question_id": "what-projects-are-underway",
+      "wording": "What projects are underway?",
+      "domain": "operational_intelligence",
+      "capability_tested": "Active project tracking — current lifecycle state, not historical events",
+      "canonical_evidence_type": ["projects_registry"],
+      "investor_decision": "Understand near-term execution commitments and capital absorption",
+      "temporal_filter_required": true,
+      "note": "Answers must reflect currently active projects; pre-2020 events serving as active projects is CF-A003"
+    },
+    {
+      "question_id": "how-is-capacity-changing",
+      "wording": "How is capacity changing?",
+      "domain": "operational_intelligence",
+      "capability_tested": "Capacity expansion, utilization, and milestone progress",
+      "canonical_evidence_type": ["capacity_registry"],
+      "investor_decision": "Evaluate operational scale trajectory and capital deployment efficiency"
+    },
+    {
+      "question_id": "what-is-management-commentary-saying",
+      "wording": "What is management commentary saying?",
+      "domain": "management_accountability",
+      "capability_tested": "Recurring management narrative — emphasis shifts, confidence changes over time",
+      "canonical_evidence_type": ["commentary_themes", "management_progression"],
+      "investor_decision": "Detect changing management priorities and confidence signals"
+    },
+    {
+      "question_id": "how-is-capital-allocated",
+      "wording": "How is capital allocated?",
+      "domain": "financial_intelligence",
+      "capability_tested": "Capital deployment history — capex, dividends, buybacks, M&A, and outcomes",
+      "canonical_evidence_type": ["gold_capital_allocation", "capital_allocation_outcomes"],
+      "investor_decision": "Assess whether capital is deployed for owner benefit or destroyed"
+    },
+    {
+      "question_id": "what-incentives-matter",
+      "wording": "What incentives matter?",
+      "domain": "management_accountability",
+      "capability_tested": "Management incentive structure — compensation, equity, and performance alignment",
+      "canonical_evidence_type": ["cim", "pcim"],
+      "investor_decision": "Determine whether management incentives align with long-term owner value"
+    },
+    {
+      "question_id": "what-can-break-the-thesis",
+      "wording": "What can break the thesis?",
+      "domain": "risk_and_diligence",
+      "capability_tested": "Material risk identification — fragility, concentration, competitive threats",
+      "canonical_evidence_type": ["gold_risk_evolution", "risk_registry", "committee_synthesis"],
+      "investor_decision": "Identify scenarios under which the investment case fails"
+    },
+    {
+      "question_id": "which-disclosure-is-missing",
+      "wording": "Which disclosure is missing?",
+      "domain": "risk_and_diligence",
+      "capability_tested": "Disclosure gap identification — what has not been disclosed that matters",
+      "canonical_evidence_type": ["committee_synthesis", "gold_promise_tracker"],
+      "investor_decision": "Identify information asymmetry and IR engagement priorities"
+    },
+    {
+      "question_id": "what-evidence-would-change-the-view",
+      "wording": "What evidence would change the view?",
+      "domain": "risk_and_diligence",
+      "capability_tested": "Conviction sensitivity — what data or event would materially update judgment",
+      "canonical_evidence_type": ["committee_synthesis"],
+      "investor_decision": "Establish monitoring priorities and position-sizing triggers"
+    },
+    {
+      "question_id": "what-needs-management-clarification",
+      "wording": "What needs management clarification?",
+      "domain": "risk_and_diligence",
+      "capability_tested": "Unresolved material questions requiring management response",
+      "canonical_evidence_type": ["committee_synthesis", "management_progression"],
+      "investor_decision": "Prepare targeted management meeting or IR call agenda"
+    },
+    {
+      "question_id": "what-should-i-ask-ir",
+      "wording": "What should I ask IR?",
+      "domain": "risk_and_diligence",
+      "capability_tested": "Investor Relations question generation — precision questions on gaps",
+      "canonical_evidence_type": ["committee_synthesis"],
+      "investor_decision": "Obtain missing evidence through formal IR engagement"
+    },
+    {
+      "question_id": "what-remains-unresolved",
+      "wording": "What remains unresolved?",
+      "domain": "risk_and_diligence",
+      "capability_tested": "Open unknowns — material uncertainties still unresolved after full evidence review",
+      "canonical_evidence_type": ["committee_synthesis", "management_progression"],
+      "investor_decision": "Quantify residual uncertainty before position sizing"
+    },
+    {
+      "question_id": "what-would-graham-worry-about",
+      "wording": "What would Graham worry about?",
+      "domain": "investor_judgment",
+      "capability_tested": "Graham lens — downside protection, margin of safety, balance-sheet resilience",
+      "canonical_evidence_type": ["buffett_analysis", "graham_analysis"],
+      "investor_decision": "Apply value investing stress-test focused on capital preservation"
+    },
+    {
+      "question_id": "what-would-buffett-focus-on",
+      "wording": "What would Buffett focus on?",
+      "domain": "investor_judgment",
+      "capability_tested": "Buffett lens — moat, owner economics, management quality, capital allocation",
+      "canonical_evidence_type": ["buffett_analysis", "committee_synthesis"],
+      "investor_decision": "Apply quality investor framework focused on long-term compounding"
+    },
+    {
+      "question_id": "where-would-fisher-be-curious",
+      "wording": "Where would Fisher be curious?",
+      "domain": "investor_judgment",
+      "capability_tested": "Fisher lens — growth runway, product pipeline, R&D, customer relationships, execution",
+      "canonical_evidence_type": ["fisher_analysis"],
+      "investor_decision": "Apply growth investor framework focused on long-term revenue expansion"
+    },
+    {
+      "question_id": "what-would-munger-avoid",
+      "wording": "What would Munger avoid?",
+      "domain": "investor_judgment",
+      "capability_tested": "Munger lens — fragility, incentive misalignment, complexity risk, failure modes",
+      "canonical_evidence_type": ["munger_analysis"],
+      "investor_decision": "Apply inversion-first framework to identify avoidable losses"
+    },
+    {
+      "question_id": "how-would-lynch-explain-it",
+      "wording": "How would Lynch explain it?",
+      "domain": "investor_judgment",
+      "capability_tested": "Lynch lens — business story, category identification, expectations vs operating reality",
+      "canonical_evidence_type": ["lynch_analysis"],
+      "investor_decision": "Apply accessible narrative framework to crystallize investment thesis"
+    }
+  ],
+
+  "domains": {
+    "business_understanding": {
+      "question_ids": ["what-does-company-do", "who-are-the-customers", "how-does-it-make-money"],
+      "essential_floor": false
+    },
+    "financial_intelligence": {
+      "question_ids": [
+        "are-profits-converting-into-cash", "what-is-owner-earnings",
+        "is-working-capital-a-concern", "are-per-share-economics-improving",
+        "how-is-capital-allocated"
+      ],
+      "essential_floor": true,
+      "floor_rule": "At least 1 question in this domain must be ACCEPTED"
+    },
+    "management_accountability": {
+      "question_ids": [
+        "what-has-management-promised", "did-past-claims-come-true",
+        "what-is-management-commentary-saying", "what-incentives-matter"
+      ],
+      "essential_floor": true,
+      "floor_rule": "At least 1 question in this domain must be ACCEPTED"
+    },
+    "operational_intelligence": {
+      "question_ids": ["what-projects-are-underway", "how-is-capacity-changing"],
+      "essential_floor": false
+    },
+    "risk_and_diligence": {
+      "question_ids": [
+        "what-can-break-the-thesis", "which-disclosure-is-missing",
+        "what-evidence-would-change-the-view", "what-needs-management-clarification",
+        "what-should-i-ask-ir", "what-remains-unresolved"
+      ],
+      "essential_floor": false
+    },
+    "investor_judgment": {
+      "question_ids": [
+        "what-would-graham-worry-about", "what-would-buffett-focus-on",
+        "where-would-fisher-be-curious", "what-would-munger-avoid",
+        "how-would-lynch-explain-it"
+      ],
+      "essential_floor": false
+    }
+  },
+
+  "verdict_taxonomy": {
+    "ACCEPTED": {
+      "definition": "The answer is materially reliable and decision-useful for a serious long-term investor. It answers the question, uses supported evidence, preserves important uncertainty, avoids material semantic errors, and contains no critical failure.",
+      "evaluator_rule": "All applicable semantic checks PASS (N/A checks excluded) AND no critical failures detected."
+    },
+    "PARTIAL": {
+      "definition": "The answer contains useful and materially correct intelligence, but an important limitation prevents investor-grade acceptance. Typical causes: incomplete chronology, weak financial linkage, material unknown omitted, insufficient source breadth, important investor implication missing, or evidence exists but the answer underuses it. A PARTIAL answer must NOT contain a critical failure.",
+      "evaluator_rule": "Hard-floor checks PASS (evidence_backed=PASS AND internally_consistent=PASS) AND no critical failures detected AND at least one soft-floor check FAILS."
+    },
+    "REJECTED": {
+      "definition": "The answer is materially unreliable, misleading, unusable, or fails to answer the question. Includes: unsupported major conclusion, materially wrong period or state, critical semantic distortion, fabricated evidence, or an answer too incomplete to support investor judgment.",
+      "evaluator_rule": "Any of: evidence_backed=FAIL, internally_consistent=FAIL, answer_status=not_supported (where evidence exists), OR any critical failure detected."
+    }
+  },
+
+  "hard_floor_checks": ["evidence_backed", "internally_consistent"],
+
+  "soft_floor_checks": ["specific", "longitudinal", "economically_relevant", "non_generic", "decision_useful", "uncertainty_aware"],
+
+  "critical_failure_taxonomy": {
+    "auto_detectable": {
+      "CF-A001": {
+        "id": "CF-A001",
+        "name": "Internal contradiction",
+        "definition": "answer_status contradicts evidence_status (e.g., answer_status=not_supported but evidence_status=direct; or answer_status=supported but evidence_status=missing)",
+        "evaluator_rule": "internally_consistent semantic check = FAIL",
+        "severity": "CRITICAL",
+        "auto_detectable": true
+      },
+      "CF-A002": {
+        "id": "CF-A002",
+        "name": "Stale artifact serving materially wrong data",
+        "definition": "The saved answer card was generated before a key dependency artifact was updated, and the live builder now produces a materially different status than the saved card. This means the user is receiving outdated intelligence.",
+        "evaluator_rule": "STALE_ARTIFACT defect present AND saved_vs_live_diverges=true AND status divergence is material (not_supported vs supported)",
+        "severity": "CRITICAL",
+        "auto_detectable": true
+      },
+      "CF-A003": {
+        "id": "CF-A003",
+        "name": "Temporally outdated event presented as current project",
+        "definition": "A project event from before 2020 appears in key_points for the 'what-projects-are-underway' question, suggesting an outdated regulatory or project event is being served as a currently active project.",
+        "evaluator_rule": "question_id=what-projects-are-underway AND BAD_UPSTREAM_INTELLIGENCE defect AND key_point contains year pattern 201x",
+        "severity": "CRITICAL",
+        "auto_detectable": true
+      },
+      "CF-A004": {
+        "id": "CF-A004",
+        "name": "Builder template language in user output",
+        "definition": "Backend builder template language appears in user-facing key_points (e.g., 'investment lens implication', 'regenerate the progression', 'improve upstream progression').",
+        "evaluator_rule": "BAD_RENDERING defect AND _TEMPLATE_PATTERNS regex matches key_points text",
+        "severity": "CRITICAL",
+        "auto_detectable": true
+      }
+    },
+    "manual_audit_required": {
+      "CF-M001": {
+        "id": "CF-M001",
+        "name": "Fabricated material evidence",
+        "definition": "The answer asserts a material fact as established that is not traceable to any canonical evidence source. The claim does not exist in the sourced evidence.",
+        "evaluator_rule": "Manual auditor reads answer and verifies claimed facts against evidence_summary and provenance",
+        "severity": "CRITICAL",
+        "auto_detectable": false
+      },
+      "CF-M002": {
+        "id": "CF-M002",
+        "name": "Management promise presented as delivered outcome",
+        "definition": "A management commitment or forward-looking target is presented as a confirmed delivered outcome without delivery evidence.",
+        "evaluator_rule": "Manual auditor checks that delivery-status claims have corresponding evidence, not just commitment text",
+        "severity": "CRITICAL",
+        "auto_detectable": false
+      },
+      "CF-M003": {
+        "id": "CF-M003",
+        "name": "Announced project presented as operational",
+        "definition": "A project that was announced or planned is described in the answer as currently operational without operational evidence.",
+        "evaluator_rule": "Manual auditor verifies project lifecycle state in answer against projects_registry evidence",
+        "severity": "CRITICAL",
+        "auto_detectable": false
+      },
+      "CF-M004": {
+        "id": "CF-M004",
+        "name": "Material contradiction silently resolved",
+        "definition": "Canonical evidence sources materially contradict each other on a key claim, and the answer presents one side as certain without surfacing the disagreement.",
+        "evaluator_rule": "Manual auditor checks that conflicting evidence signals are surfaced or explained, not silently resolved",
+        "severity": "CRITICAL",
+        "auto_detectable": false
+      },
+      "CF-M005": {
+        "id": "CF-M005",
+        "name": "Unsupported financial causality",
+        "definition": "The answer asserts a causal financial relationship (e.g., 'capacity expansion caused revenue growth') without evidential support for the causal mechanism.",
+        "evaluator_rule": "Manual auditor verifies causal claims have mechanistic evidence, not just correlation",
+        "severity": "CRITICAL",
+        "auto_detectable": false
+      },
+      "CF-M006": {
+        "id": "CF-M006",
+        "name": "Future target presented as current fact",
+        "definition": "A management forward guidance target or future-period expectation is presented as a current business fact.",
+        "evaluator_rule": "Manual auditor checks that forward-looking statements are labeled as targets/expectations, not current state",
+        "severity": "CRITICAL",
+        "auto_detectable": false
+      },
+      "CF-M007": {
+        "id": "CF-M007",
+        "name": "Order or contract value treated as recognized revenue",
+        "definition": "An order win, backlog entry, or contract value is presented as revenue in the answer without evidence of recognition.",
+        "evaluator_rule": "Manual auditor verifies that order/contract figures are not conflated with recognized revenue",
+        "severity": "CRITICAL",
+        "auto_detectable": false
+      }
+    }
+  },
+
+  "numeric_scoring": {
+    "enabled": false,
+    "rationale": "Numeric scoring adds false precision to a fundamentally judgment-based evaluation. The historical non-reproducible baseline (63/100) was lost precisely because its formula was never recorded. V2 deliberately avoids this failure mode. The three-tier verdict system (ACCEPTED/PARTIAL/REJECTED) with grade taxonomy provides sufficient diagnostic signal for engineering decisions without implying spurious quantitative comparability. If future evidence suggests numeric scoring adds genuine diagnostic value not captured by verdict distribution, this decision should be revisited in a new certification version."
+  },
+
+  "investor_grade_gate": {
+    "conditions": {
+      "min_accepted_count": 15,
+      "min_accepted_pct": 0.60,
+      "max_rejected_count": 2,
+      "critical_failures_must_be_zero": true,
+      "essential_domain_floors": {
+        "financial_intelligence": {"min_accepted": 1},
+        "management_accountability": {"min_accepted": 1}
+      }
+    },
+    "logic": "ALL conditions must be satisfied simultaneously. The gate fails if any single condition is not met. Domain floors cannot be averaged away by other domain excellence.",
+    "investor_grade_rationale": "A system should not pass investor-grade merely because business summaries are excellent while financial causality or management accountability is unsafe. The floor requirements prevent domain-specific blindness from hiding behind aggregate acceptance rates."
+  },
+
+  "grade_taxonomy": {
+    "enabled": true,
+    "grades": {
+      "CERTIFIED": {
+        "label": "CERTIFIED",
+        "definition": "Passes the investor-grade gate. All conditions met: ≥60% ACCEPTED, ≤2 REJECTED, 0 critical failures, essential domain floors satisfied.",
+        "investor_grade_pass": true
+      },
+      "NEAR_CERTIFICATION": {
+        "label": "NEAR_CERTIFICATION",
+        "definition": "Passes 4 of 5 investor-grade gate conditions. Critical failures must still be 0. Close to investor-grade but one material gap remains.",
+        "conditions": {
+          "critical_failures_must_be_zero": true,
+          "gate_conditions_met": {"min": 4, "of": 5}
+        },
+        "investor_grade_pass": false
+      },
+      "DEVELOPING": {
+        "label": "DEVELOPING",
+        "definition": "No critical failures, but does not meet NEAR_CERTIFICATION threshold. The system produces useful intelligence with significant gaps.",
+        "conditions": {
+          "critical_failures_must_be_zero": true,
+          "below_near_certification": true
+        },
+        "investor_grade_pass": false
+      },
+      "UNSAFE": {
+        "label": "UNSAFE",
+        "definition": "Any critical failure present, OR fewer than 8 questions ACCEPTED. The system has material reliability problems that preclude investor use.",
+        "conditions": {
+          "any_critical_failure": true,
+          "or_accepted_count_below": 8
+        },
+        "investor_grade_pass": false
+      }
+    },
+    "grade_determination_order": ["UNSAFE", "CERTIFIED", "NEAR_CERTIFICATION", "DEVELOPING"]
+  },
+
+  "evaluator": {
+    "type": "deterministic_rule_based",
+    "llm_judge": false,
+    "implementation_module": "pipelines.run_investor_acceptance",
+    "verdict_function": "_determine_verdict_v2",
+    "critical_failure_function": "_detect_critical_failures_v2",
+    "semantic_checks": [
+      "specific", "longitudinal", "evidence_backed", "internally_consistent",
+      "economically_relevant", "uncertainty_aware", "non_generic", "decision_useful"
+    ],
+    "stability": "Fully deterministic — no stochastic elements. Same inputs always produce same verdict.",
+    "retry_policy": "Not applicable — deterministic evaluator requires no retry.",
+    "manual_audit_required_for": ["CF-M001", "CF-M002", "CF-M003", "CF-M004", "CF-M005", "CF-M006", "CF-M007"],
+    "manual_audit_note": "Phase 15.3 must include a human auditor review pass for all manual-audit critical failures before certification is declared complete."
+  },
+
+  "evidence_boundary": {
+    "canonical_source": "intelligence.ask_intrinsiciq.loader.load_company_memory_sources",
+    "allowed_sources": "All registered canonical company-memory sources (SOURCE_REGISTRY in loader.py)",
+    "forbidden": [
+      "Manually selected or curated evidence",
+      "Custom per-question context injected outside the canonical loader",
+      "Hidden operator prompts or hints",
+      "Raw document chunks not processed through canonical pipeline"
+    ],
+    "side_channel_allowed": ["business_journey.json", "products_services.json"],
+    "note": "Side-channel payloads (business_journey, products_services) are permitted as they are produced by the canonical pipeline and not manually curated per-question."
+  },
+
+  "answer_generation_path": {
+    "function": "intelligence.ask_intrinsiciq.answer_cards.build_answer_for_question",
+    "dispatch": "ANSWER_BUILDERS dispatch map in answer_cards.py",
+    "llm_calls": false,
+    "model": "deterministic",
+    "settings": "Not applicable — answer generation is fully deterministic",
+    "note": "Certification evaluates what the investor actually receives. The answer is the structured output of build_answer_for_question(), not any internal artifact."
+  },
+
+  "provenance_requirements": {
+    "required_for_accepted": "evidence_summary.status must be 'direct', 'derived', or 'partial' — not 'missing'",
+    "required_for_partial": "Same as ACCEPTED — hard floor. Missing evidence → REJECTED.",
+    "source_traceability": "sources_accessed log must contain at least one substantive (non-metadata) source for answers claiming supported status",
+    "internal_paths_forbidden_in_output": true,
+    "raw_chunks_forbidden_in_output": true
+  },
+
+  "temporal_discipline": {
+    "material_period_confusion_severity": "CRITICAL — wrong fiscal/event/target period producing material semantic error qualifies as CF-M006 or CF-A003 depending on detectability",
+    "source_period_must_match_claim_period": true,
+    "pre_2020_events_as_current_projects": "CF-A003 — auto-detected",
+    "future_target_as_current_fact": "CF-M006 — manual audit required"
+  },
+
+  "financial_causality_rules": {
+    "correlation_is_not_attribution": "An answer must not assert causal financial relationships without mechanistic evidence. Stating that capacity expansion was followed by revenue growth does not prove causation.",
+    "order_value_is_not_revenue": "Contract/order values must not be presented as recognized revenue without recognition evidence.",
+    "capacity_announced_is_not_operational": "Capacity announcements must not be presented as operational achievements without utilization evidence.",
+    "management_expectation_is_not_outcome": "Management forward guidance must be labeled as targets/expectations, not current facts.",
+    "severity": "CF-M005, CF-M007 for violations — manual audit required"
+  },
+
+  "panel_committee_evaluation": {
+    "differentiation_required": true,
+    "differentiation_definition": "Each investor lens (Graham, Buffett, Fisher, Munger, Lynch) must surface lens-specific concerns or observations — not generic analysis that any lens could produce.",
+    "graham_required_focus": ["downside protection", "margin of safety", "balance-sheet resilience", "financial conservatism"],
+    "buffett_required_focus": ["moat", "owner economics", "management quality", "capital allocation"],
+    "fisher_required_focus": ["growth runway", "products/R&D", "customers", "execution quality"],
+    "munger_required_focus": ["fragility", "incentive misalignment", "complexity risk", "failure modes"],
+    "lynch_required_focus": ["business story", "category classification", "expectations vs operating reality"],
+    "committee_evaluation": {
+      "consensus_surfacing": "Committee must surface shared convictions where they exist",
+      "disagreement_surfacing": "Committee must surface genuine disagreements — identical outputs from all lenses fail the non_generic check",
+      "critical_unknowns": "Committee must identify unresolved material questions"
+    }
+  },
+
+  "investor_usefulness_definition": {
+    "definition": "An answer is investor-useful if it: (1) answers the real question asked, not a tangential variant; (2) identifies material facts specific to this company; (3) distinguishes confirmed fact from interpretation or expectation; (4) preserves important uncertainty explicitly; (5) explains implications for investor judgment; (6) surfaces what matters for ongoing monitoring.",
+    "not_investor_useful": [
+      "Generic boilerplate applicable to any company in the sector",
+      "Factually correct but non-specific summaries without company-specific evidence",
+      "Answers that list risks without identifying which ones are material for this company",
+      "Verbose answers that dump citations without investor-relevant synthesis",
+      "Answers that say UNKNOWN to all questions (correct uncertainty ≠ universal agnosticism)"
+    ],
+    "correct_unknown_is_acceptable": "When genuine disclosure gaps exist, a well-reasoned 'evidence insufficient to establish this — here is what would be needed' answer CAN be ACCEPTED. The system should not be penalized for honest uncertainty preservation."
+  },
+
+  "disclosure_limitation_policy": {
+    "definition": "A disclosure limitation occurs when the company has genuinely not disclosed information that would be required to answer the question. This is distinct from a system failure where the evidence exists but Prometheus fails to use it.",
+    "system_failure": "Evidence exists in canonical sources but Prometheus fails to surface it — evaluator should REJECT or PARTIAL depending on severity.",
+    "disclosure_limitation": "Company has not disclosed the relevant information — a correct uncertainty-preserving answer can be ACCEPTED.",
+    "examples_of_correct_disclosure_limitation_responses": [
+      "Exact customer names are not disclosed in available documents; customer concentration risk is signaled by revenue segment disclosures.",
+      "Maintenance vs growth capex split is not disclosed; owner earnings cannot be precisely estimated but an upper bound is derivable.",
+      "Diluted share count for FY22 was not confirmed in available filings; the FY22 per-share figure carries a precision limitation."
+    ]
+  },
+
+  "persistence_contract": {
+    "certification_metadata_required": [
+      "certification_id",
+      "certification_contract_sha256",
+      "git_commit_sha",
+      "run_timestamp",
+      "company_slug",
+      "answer_generation_path",
+      "evaluator_type"
+    ],
+    "per_question_artifact_required": [
+      "question_id",
+      "question_wording",
+      "domain",
+      "verdict",
+      "critical_failures_detected",
+      "manual_audit_required_flags",
+      "semantic_checks",
+      "defect_classes",
+      "sources_accessed",
+      "evidence_status",
+      "answer_status",
+      "key_points",
+      "simple_answer_excerpt"
+    ],
+    "aggregate_artifact_required": [
+      "question_count",
+      "accepted_count",
+      "partial_count",
+      "rejected_count",
+      "critical_failures_count",
+      "domain_results",
+      "investor_grade_gate_result",
+      "grade",
+      "investor_grade_pass"
+    ],
+    "storage_path_pattern": "acceptance_reports/<company>/v2/<run_timestamp>/",
+    "files_required": [
+      "acceptance_reports/<company>/v2/<run_timestamp>/acceptance_summary_v2.json",
+      "acceptance_reports/<company>/v2/<run_timestamp>/question_traces/<question_id>.json"
+    ],
+    "immutability_rule": "Once a V2 run is written, the trace files must not be modified. A new run creates a new timestamped directory."
+  },
+
+  "versioning_rules": {
+    "PATCH": "Documentation corrections or non-semantic clarifications only. Hash changes but verdict outcomes unchanged. NOT a new baseline.",
+    "MINOR": "Extension of question set or non-breaking evaluator additions. Requires judgment on whether baseline remains comparable. May require partial re-evaluation.",
+    "MAJOR": "Any change to: question wording, verdict semantics, critical failure definitions, investor-grade gate formula, evaluator logic, or evidence boundary. ALWAYS creates a new certification version (V3.0, etc.) and requires a new baseline run.",
+    "silent_edit_policy": "FORBIDDEN. Any change to the contract must produce a hash change and be reflected in certification_id."
+  },
+
+  "anti_gaming_analysis": {
+    "longer_answers": "Mitigated by non_generic check (rejects boilerplate) and specific check (requires named entities/metrics)",
+    "always_unknown": "Mitigated by decision_useful check (no actionable content fails) and specific check (no named entities fails)",
+    "always_listing_risks": "Mitigated by non_generic check (generic sector risk fails) and specific check (requires company-specific evidence)",
+    "citation_dumping": "Mitigated by non_generic check and internally_consistent check",
+    "identical_investor_personas": "Mitigated by non_generic check on panel questions — generic analysis that any lens could produce fails",
+    "committee_flattening": "Mitigated by non_generic check on committee-sourced answers",
+    "financial_causality_gaming": "CF-M005 auto-audit required — unsupported causality is a critical failure",
+    "verbosity_as_quality": "Mitigated: checks test specific investor-relevant content, not word count"
+  },
+
+  "impossible_standard_review": {
+    "undisclosed_customer_names": "ACCEPTABLE — correct uncertainty preservation is investor-grade",
+    "unknown_capex_breakdown": "ACCEPTABLE — correct limitation disclosure with upper bound estimate is investor-grade",
+    "unquantified_utilization": "ACCEPTABLE — correct identification of this as a monitoring question is investor-grade",
+    "missing_management_quantification": "ACCEPTABLE — noting absence of quantification is correct investor guidance",
+    "judgment_on_available_evidence_only": "REQUIRED — Prometheus certifies based on what has been disclosed and processed, not what could theoretically exist"
+  },
+
+  "contract_sha256": "4769d7f3328e0a54973b2ce396ca5df23ada8bcd8574f1899e2926cb5e56ebb4",
+  "contract_sha256_note": "SHA-256 computed over canonical JSON with this field set to empty string. See compute_contract_hash() in tests/certification/test_v2_contract_integrity.py"
+}

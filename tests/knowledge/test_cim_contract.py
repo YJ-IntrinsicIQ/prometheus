@@ -7,6 +7,11 @@ from knowledge.cim_contract import CIMContractBuilder
 from pipelines import run_company_pipeline
 
 
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def _write_year_artifacts(base_dir: Path, company: str, year: str, *, complete: bool = True):
     intelligence_dir = base_dir / "companies" / company / year / "intelligence"
     intelligence_dir.mkdir(parents=True, exist_ok=True)
@@ -536,6 +541,75 @@ def test_pcim_includes_compact_multi_year_inputs_when_available(tmp_path, monkey
     assert multi_year["strategy_evolution"]["possible_strategy_shifts"][0]["note"].startswith("Removed themes indicate")
     assert "source_chunk" not in json.dumps(multi_year)
     assert "ev_fy24_company_intelligence_risk_1" in multi_year["evidence_map"]
+
+
+def test_pcim_includes_compact_management_progression_inputs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_year_artifacts(tmp_path, "acme", "fy24")
+    _write_year_artifacts(tmp_path, "acme", "fy25")
+    _write_multi_year_artifacts(tmp_path, "acme")
+    _write_json(
+        tmp_path / "companies" / "acme" / "company_memory" / "management_progression" / "management_progression.json",
+        {
+            "schema_version": "management_progression.v1",
+            "company_slug": "acme",
+            "coverage_status": "supported",
+            "progression_items": [
+                {
+                    "item_id": "MP-0001-platform",
+                    "theme": "Customer messaging platform launch",
+                    "stream_types": ["multi_source_longitudinal"],
+                    "current_status": "announced",
+                    "management_credibility_signal": "UNABLE_TO_VERIFY",
+                    "investor_implication": {"thesis_impact": "unresolved"},
+                    "unresolved": [
+                        {
+                            "question": "Did platform launch create customer adoption?",
+                            "why_it_matters": "Completion without adoption does not prove value creation.",
+                        }
+                    ],
+                    "synthesis_chain": {
+                        "chain_status": "CLAIM_ONLY",
+                        "financial_consequence": {"link_status": "unproven"},
+                    },
+                    "events": [
+                        {
+                            "event_id": "LC-1:claim",
+                            "role": "commitment",
+                            "event_type": "product_launch",
+                            "source_period": "Q4 FY26",
+                            "event_period": "Q4 FY26",
+                            "target_period": "Q2 FY27",
+                            "actor": "management",
+                            "verification_status": "unresolved",
+                            "evidence": [
+                                {
+                                    "source_artifact": "longitudinal/longitudinal_report.json",
+                                    "source_period": "Q4 FY26",
+                                    "evidence_id": "call-1",
+                                    "source_item_id": "LC-1",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    pcim = json.loads(CIMContractBuilder(company="acme").build()["pcim_v1.json"].read_text())
+    progression = pcim["multi_year_inputs"]["management_progression"]
+    item = progression["progression_items"][0]
+    event = item["events"][0]
+
+    assert progression["available"] is True
+    assert item["stream_types"] == ["multi_source_longitudinal"]
+    assert item["chain_status"] == "CLAIM_ONLY"
+    assert item["financial_link_status"] == "unproven"
+    assert event["target_period"] == "Q2 FY27"
+    assert event["evidence_ids"] == ["call-1"]
+    assert "call-1" in pcim["multi_year_inputs"]["evidence_map"]
+    assert "source_chunk" not in json.dumps(progression)
 
 
 def test_pcim_validator_rejects_source_chunk_anywhere_in_pcim(tmp_path, monkeypatch):

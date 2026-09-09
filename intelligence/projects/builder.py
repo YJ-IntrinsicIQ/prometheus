@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -187,43 +188,84 @@ def _dedupe_project_events(project_id: str, candidate_records: Sequence[Dict[str
     return events
 
 
-def _link_commitments(projects: List[Dict[str, Any]], commitments: List[Dict[str, Any]]) -> None:
-    commitment_lookup = commitments
-    for project in projects:
-        project_text = " ".join(
-            [
-                project.get("project_name") or "",
-                project.get("normalized_name") or "",
-                project.get("objective") or "",
-                project.get("business_rationale") or "",
-            ]
-        ).lower()
-        related: List[Tuple[int, str]] = []
-        for commitment in commitment_lookup:
-            commitment_text = " ".join(
-                [
-                    commitment.get("topic") or "",
-                    commitment.get("normalized_commitment") or "",
-                    commitment.get("investor_implication") or "",
-                    commitment.get("delivery_assessment") or "",
-                ]
-            ).lower()
-            score = 0
-            if commitment.get("id"):
-                score += 1
-            if commitment.get("category") and commitment.get("category").lower() in project_text:
-                score += 2
-            project_tokens = set(project_text.split())
-            commitment_tokens = set(commitment_text.split())
-            if len(project_tokens & commitment_tokens) >= 3:
-                score += 3
-            elif len(project_tokens & commitment_tokens) >= 2:
-                score += 2
-            if any(term in project_text for term in ("facility", "capacity", "manufacturing", "plant", "line")) and any(term in commitment_text for term in ("capacity", "manufacturing", "facility", "capex", "expansion")):
-                score += 2
-            if score >= 5:
-                related.append((score, commitment["id"]))
-        project["related_commitment_ids"] = [item[1] for item in sorted(related, key=lambda item: (-item[0], item[1]))]
+# Words too generic to distinguish one named initiative from another.
+# Anything in this set is excluded before computing named-initiative overlap.
+_NAMED_INITIATIVE_EXCLUSIONS = {
+    "growth", "expansion", "capacity", "platform", "efficiency", "business",
+    "bounded", "control", "deliver", "delivery", "direction", "execution",
+    "focus", "improve", "operating", "operational", "objective", "readiness",
+    "project", "product", "development", "support",
+    "advance", "capability", "increase", "management", "positioning", "speed",
+    "strengthen",
+    "specialty", "generic", "pharmaceutical", "pharma", "medicine", "drug",
+    "manufacture", "manufacturing", "facility", "facilities", "plant", "plants",
+    "technology", "innovation", "research", "digital", "automation", "quality",
+    "regulatory", "compliance", "market", "markets", "global", "india",
+    "customer", "patients", "patient", "healthcare", "health",
+    "pipeline", "portfolio", "revenue", "profitability", "margin", "cost",
+    "strategy", "strategic", "initiative", "program", "programme",
+    "service", "services", "solution", "solutions", "network", "system",
+    "international", "domestic", "emerging", "developed", "geography",
+    "organic", "inorganic", "acquisition", "investment", "capital",
+    "continue", "ensure", "drive", "build", "create", "leverage", "pursue",
+    "maintain", "achieve", "identify", "develop", "invest", "expand",
+    "commercialise", "commercialize", "launch", "establish", "implement",
+    "enhance", "optimize", "accelerate",
+    "robust", "strong", "comprehensive", "integrated", "differentiated",
+    "advanced", "innovative", "sustainable", "diversified",
+    "year", "years", "quarter", "annual", "next", "long", "term",
+    "company", "companies", "enterprise", "organisation", "organization",
+}
+
+
+def _named_initiative_words(text: str) -> set:
+    """Return specific words that identify a named initiative (strips generic vocab)."""
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    return {w for w in words if len(w) >= 4 and w not in _NAMED_INITIATIVE_EXCLUSIONS}
+
+
+def _discover_candidate_commitment_links(project: Dict[str, Any], commitments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Candidate-discovery heuristic: named-initiative word overlap between project and MC.
+
+    AUTHORITY: CANDIDATE_ONLY — output MUST NOT be used to advance any lifecycle.
+    No output from this function may enter Management Progression as an authoritative
+    event, and no Gold/Ask consumer may treat these as confirmed relationships.
+
+    Retained for informational display and future human-review workflows only.
+    Canonical lifecycle links require explicit identity set during upstream extraction
+    (canonical_commitment_reference field populated by the extraction LLM).
+    """
+    project_text = " ".join([
+        project.get("project_name") or "",
+        project.get("normalized_name") or "",
+    ]).lower()
+    project_specific = _named_initiative_words(project_text)
+    if len(project_specific) < 3:
+        return []
+
+    links = []
+    for commitment in commitments:
+        fp = (commitment.get("commitment_fingerprint") or "").strip()
+        if not fp:
+            continue
+        commitment_specific = _named_initiative_words(commitment.get("normalized_commitment") or "")
+        if len(commitment_specific) < 3:
+            continue
+        overlap = project_specific & commitment_specific
+        overlap_ratio = len(overlap) / max(len(project_specific), 1)
+        if len(overlap) >= 3 and overlap_ratio >= 0.7:
+            basis_words = sorted(overlap)[:6]
+            links.append({
+                "commitment_fingerprint": fp,
+                "commitment_id": commitment.get("id") or "",
+                # ponytail: CANDIDATE_ONLY — heuristic overlap; no lifecycle authority
+                "relationship_authority": "CANDIDATE_ONLY",
+                "relationship_type": "HEURISTIC_NAMED_INITIATIVE_OVERLAP",
+                "relationship_confidence": "LOW",
+                "relationship_basis": f"Named initiative word overlap '{' '.join(basis_words)}' (heuristic; not authoritative)",
+                "evidence_ids": [],
+            })
+    return links
 
 
 def _build_project_record(company: str, group: Dict[str, Any], project_id: str, commitments: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -241,6 +283,7 @@ def _build_project_record(company: str, group: Dict[str, Any], project_id: str, 
         "expected_cost": group["expected_cost"],
         "location": group["location"],
         "related_commitment_ids": list(group.get("related_commitment_ids") or []),
+        "candidate_commitment_links": [],
         "source_references": list(group["source_references"]),
         "confidence": build_confidence(
             max((item.get("confidence", {}).get("level") for item in group["confidence"]), key=lambda level: {"high": 3, "medium": 2, "low": 1, "unavailable": 0}.get(str(level), 0), default="unavailable"),
@@ -249,7 +292,8 @@ def _build_project_record(company: str, group: Dict[str, Any], project_id: str, 
         ),
         "semantic_quality": (group.get("source_items") or [{}])[0].get("semantic_quality") or {},
     }
-    _link_commitments([project], commitments)
+    project["candidate_commitment_links"] = _discover_candidate_commitment_links(project, commitments)
+    # related_commitment_ids: NOT overwritten from heuristic candidate links — CANDIDATE_ONLY authority.
     timeline = build_timeline(project, candidate_events, unresolved_questions=[])
     impact = assess_project_impact(project, timeline)
     project_status = str(timeline.get("current_state") or _project_status_from_events(timeline.get("events") or []))

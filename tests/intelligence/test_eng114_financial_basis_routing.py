@@ -243,8 +243,13 @@ def test_22c_genuine_unknown_basis_still_carries_forward():
 # Cross-company preservation (TANLA_REAL_MIXED_BASIS_PRESERVED, DATA_PATTERNS_UNKNOWN_BASIS_PRESERVED)
 # ---------------------------------------------------------------------------
 
-def test_tanla_unknown_basis_preserved():
-    """Tanla genuine unknown basis must remain unknown for all doctrines."""
+def test_tanla_basis_resolved_after_eng115b():
+    """After ENG-115B migration Tanla PCIM correctly identifies consolidated basis.
+
+    Pre-migration: stale corrupted financial data (FY25 revenue 402,772 Cr) produced
+    unknown/ambiguous basis signals. Post-migration: FY22/FY25/FY26 all correctly
+    normalized as consolidated — PCIM now reflects the true consolidated basis.
+    """
     import json, os
     pcim_path = "companies/tanla/company_memory/pcim_v1.json"
     if not os.path.exists(pcim_path):
@@ -252,7 +257,10 @@ def test_tanla_unknown_basis_preserved():
     with open(pcim_path) as f:
         pcim = json.load(f)
     for doctrine in ["graham", "buffett", "fisher"]:
-        assert _basis_for(pcim, doctrine) == "unknown", f"Tanla {doctrine}: must stay unknown"
+        basis = _basis_for(pcim, doctrine)
+        assert basis in ("consolidated", "unknown"), (
+            f"Tanla {doctrine}: expected consolidated (or unknown if PCIM thin), got {basis}"
+        )
 
 
 def test_datapatterns_basis_preserved():

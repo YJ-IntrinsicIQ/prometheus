@@ -1,5 +1,554 @@
 # Session Log
 
+## 2026-09-08 (ENG-119A: Commitment Specificity and Entity Preservation — Production Closed)
+
+- Closure gate: **ENG_119A_COMMITMENT_SPECIFICITY_AND_ENTITY_PRESERVATION_PRODUCTION_CLOSED**
+- Mission: fix upstream management-commitment extraction so specificity present in source statements survives normalization; add structured `commitment_identity` block with named_subjects, geography, extracted_timelines; add specificity-loss validator; cross-company regression clean.
+
+### Specificity-Loss Audit (Pre-Fix — 31 material Sun Pharma promises)
+
+| Classification | Count | Description |
+|----------------|-------|-------------|
+| SOURCE_LIMITED | 22 | Source statements genuinely have no named entity, target, or measurable outcome — cannot be verified regardless of extraction quality |
+| SPECIFIC_ENTITY_PRESERVED | 6 | Named entity present in source AND survived normalization |
+| EXTRACTION_LIMITED | 3 | Specificity present in source but LOST in `normalized_commitment` |
+
+### Root Cause: `_normalize_commitment()` aggressive collapse
+
+Two loss paths in `knowledge/company_memory/management_commitments.py`:
+
+1. **Lines 518-522 (primary):** When `future_marked AND topic label not in stripped text` → collapsed entire rich statement to `"{topic} expected."`. Example: "Target products specifically for emerging markets and India" → "Product launch expected." — lost "India", "emerging markets".
+
+2. **Lines 536-537 (secondary):** When `category == "Product" AND "product launch" in stripped text` → collapsed even rich surrounding text to "Product launch planned/." regardless of substantive content.
+
+### Fixes Applied
+
+1. **`knowledge/company_memory/management_commitments.py`**: Removed lines 518-522. Fixed lines 536-537 to add substantive-content guard (`remaining = stripped.replace("product launch","").strip(); len(remaining.split()) <= 3` → only collapse when nearly empty).
+
+2. **`knowledge/company_memory/commitment_identity.py`** (new): Generic entity catalog (`_PHARMA_ENTITIES`) + geography list + timeline regex. `extract_commitment_identity(original_statement)` → `{named_subjects, geography, extracted_timelines}`. `check_specificity_loss(original, normalized, identity)` → warning codes.
+
+3. **`_build_commitment_record()`**: Added `commitment_identity = extract_commitment_identity(original_statement)` and `specificity_warnings = check_specificity_loss(...)` to every MC record output.
+
+### Sun Pharma Production Proof (Post-Fix — 31 material promises)
+
+| Classification | Count | Description |
+|----------------|-------|-------------|
+| SOURCE_LIMITED | 22 | Source genuinely generic — unchanged |
+| SPECIFIC_ENTITY_PRESERVED | 8 | Up from 6 — MC-0021 ("india") and MC-0027 ("india") now correctly preserved |
+| EXTRACTION_LIMITED | 1 | Only MC-0024 (FY18/FY22 timelines stripped by `_strip_timeframe_phrases` — by design; captured in `extracted_timelines`) |
+
+- 6 named_subjects extracted across 5 MCs (MC-0002, 0004, 0008, 0029, 0032)
+- 13 geography mentions captured, 3 extracted_timelines captured
+- 1 COMMITMENT_TIMELINE_LOSS warning on MC-0024 (correct — FY timelines stripped from normalized form, preserved in structured field)
+- `FALSE_IDENTITY_LINKS = 0` (bridge unchanged, reads `original_statement`)
+- Bridge summary: 1 VERIFIED, 1 INSUFFICIENT_EVIDENCE, 29 UNVERIFIED — identical to pre-fix (correct, bridge already read `original_statement`)
+- `COMPANY_SPECIFIC_COMMITMENT_EXTRACTION_LOGIC = 0` — hardcoding audit clean
+
+### Tests
+
+- 8 ENG-119A tests (A–H): product+geography preserved, generic → empty named_subjects, molecule captured, facility captured, fiscal year in extracted_timelines, adversarial no invented subjects, multi-subject Nafamostat+AQCH, specificity-loss warning fires
+- 8/8 pass; 9/9 ENG-119 bridge tests still pass; 17/17 combined pass
+- No new regressions (21 pre-existing test_p1b2/p1b3 failures unchanged)
+
+### Cross-company Regression
+
+- Tanla + Data Patterns re-extracted: OK (0 named_subjects, 0 warnings — correct, their commitments are generic)
+
+### Files Changed
+
+- `knowledge/company_memory/management_commitments.py` — removed lines 518-522 (specificity collapse), fixed line 536-537 (product-launch collapse guard), added import + `commitment_identity` + `specificity_warnings` fields to record
+- `knowledge/company_memory/commitment_identity.py` — new shared extraction module
+- `tests/intelligence/test_eng119a_commitment_specificity.py` — 8 tests A–H
+- `companies/sun_pharma/company_memory/management_commitments/management_commitments.json` — re-extracted with new fields
+- `governance/BACKLOG.md` — ENG-119A row added
+
+---
+
+## 2026-09-08 (ENG-119: Canonical Promise Verification Bridge — Production Closed)
+
+- Closure gate: **ENG_119_PROMISE_VERIFICATION_BRIDGE_PRODUCTION_CLOSED**
+- Mission: deterministic generic bridge from MC commitment → observable event → verification state → MP lifecycle → Gold tracker
+
+### Architecture
+
+- New module: `intelligence/management_promises/verification_bridge.py`
+- Identity rule: exact canonical named entity substring match (case-insensitive) in BOTH commitment text AND observable event evidence_text
+- Prohibited (enforced in bridge_contract field): fuzzy similarity, token overlap, LLM judgment as identity authority, same year/category as proof, company-specific mappings
+- Authoritative link conditions (ALL must hold): (1) entity exact match, (2) event_type compatible with commitment category, (3) evidence_period ≥ announcement_period, (4) status = completed or partially_completed (not announced)
+- Verification states: VERIFIED / PARTIALLY_VERIFIED / CONTRADICTED / UNVERIFIED / INSUFFICIENT_EVIDENCE
+- MP remains sole lifecycle authority; bridge produces evidence TO MP, does NOT update lifecycle
+
+### Observable Event Sources
+
+- Per-year `{company}/{yr}/intelligence/management_summary.json` → key_initiatives (completed actions), company_results (confirmed results)
+- `company_memory/projects/projects_registry.json` → execution_status + evidence_periods for named entities
+- major_promises excluded (forward-looking, not execution evidence)
+- Named entity catalog: ILUMYA, ILUMETRI, NIDLEGY, DEURUXOLITINIB, LEQSELVI, UNLOXCYT, ORGANON, TOANSA, HALOL, MADURANTHAKAM/MKM, NAFAMOSTAT, AQCH
+- 15 observable events catalogued for Sun Pharma
+
+### Sun Pharma Production Proof (31 material promises)
+
+| State | Count | Key example |
+|-------|-------|-------------|
+| VERIFIED | 1 | MC-0008/PT-0005: "Ramp-up ILUMYA prescriptions in Japan and Australia" → FY22 management_summary key_initiatives: "Launched Ilumya / Ilumetri… Japan 2020… Australia 2018" |
+| INSUFFICIENT_EVIDENCE | 1 | MC-0004/PT-0002: Nafamostat Mesilate + AQCH (COVID-19 products named; no execution evidence in catalog) |
+| UNVERIFIED | 29 | All generic Product launch / Business expansion / Financial target commitments with no specific named entity in text |
+
+- Zero heuristic links (all 1 link via named_entity_exact identity_basis)
+- Output: `companies/sun_pharma/company_memory/gold/promise_verification_events.json`
+
+### Root Cause of 29 UNVERIFIED
+
+The 29 generic commitments (e.g., "Build a strong pipeline of branded generics", "Enhance presence in high growth markets", "Focus on developing differentiated products") contain NO specific named product, facility, or deal identifier. By design the bridge correctly returns UNVERIFIED — fabricating verification for unnamed commitments is precisely what the identity contract prohibits.
+
+### Tests
+
+- 9 focused tests (A–I): schema, zero heuristic links, MC-0008 VERIFIED, generic = UNVERIFIED, named-entity/no-event = INSUFFICIENT_EVIDENCE, prohibited patterns documented, lifecycle_authority, VERIFIED has evidence, ILUMYA launch in catalog
+- All 9 pass. No regressions in adjacent suite (pre-existing `test_ask_intrinsiciq.py` failures confirmed at ENG-109 baseline; 0 ENG-119 regressions)
+
+### Files Changed
+
+- `intelligence/management_promises/verification_bridge.py` — new module
+- `tests/intelligence/test_eng119_promise_verification_bridge.py` — 9 tests
+- `companies/sun_pharma/company_memory/gold/promise_verification_events.json` — production output
+- `governance/BACKLOG.md` — ENG-119 row updated to Completed
+- `governance/SESSION_LOG.md` — this entry
+
+---
+
+## 2026-09-08 (Sun Pharma Post-ENG121 Strict Reality Audit — Trusted Baseline Reset)
+
+- Closure gate: **SUN_PHARMA_POST_ENG121_STRICT_REALITY_AUDIT_CLOSED**
+- Score: **59/100 | Band B** (prior strict baseline ENG-116: 57/100; delta: +2)
+- Audit type: strict, 10-dimension, same rubric as 57 audit. READ ONLY. No code/artifacts modified.
+
+### Production Coherence
+
+- `STRICT_REALITY_AUDIT_PRODUCTION_COHERENCE = PARTIAL_PASS`
+- Financial chain (normalized→truth pack→PCIM): post-ENG-121 ✓
+- Panel/Committee/Ask: Sep 7 artifacts (PRE-ENG-121) — temporal propagation gap, not data corruption
+- PCIM OE bridge residual: `depreciation_and_amortization = 1143.14` for FY23 (ENG-116 value; informational field; OE calculation unaffected)
+- PCIM internal `generated_at` = Sep 6 (CIMContractBuilder timestamp preservation artifact); file mod Sep 8 confirms ENG-121 rebuild ✓
+- Panel analysts did NOT cite D&A in any key_findings, red_flags, or user_facing_brief — stale context had no investor-visible effect
+- `FIXED_ASSETS_SUBSET_CANONICAL_LEAKAGE = 1` (PCIM OE bridge informational field only)
+
+### ENG-121 D&A Truth Verification
+
+- `ENG121_DA_TRUTH_VERIFIED = YES`
+- FY20: 2,052.78 / FY21: 2,079.95 / FY22: 2,143.74 / FY23: **2,529.43** / FY24: 2,556.64 / FY25: 2,575.39 / FY26: **2,937.85** Cr
+- All 7: source_statement=cash_flow, source_section_type=primary_cash_flow_statement, is_primary_statement=True ✓
+
+### Dimension Scores
+
+| Dimension | Previous Strict (57) | Current Strict (59) | Delta |
+|---|---:|---:|---:|
+| Business Understanding | 5 | 5 | 0 |
+| Management Progression | 4 | 4 | 0 |
+| Promise Tracking | 4 | 4 | 0 |
+| Capital Allocation Intelligence | 6 | 6 | 0 |
+| Financial Truth | 7 | **8** | **+1** |
+| Risk Intelligence | 5 | 5 | 0 |
+| Investor Panel Differentiation | 6 | 6 | 0 |
+| Cross-Year Reasoning | 7 | 7 | 0 |
+| Evidence Integrity | 7 | **8** | **+1** |
+| Decision Usefulness | 6 | 6 | 0 |
+| **TOTAL** | **57** | **59** | **+2** |
+
+### Fixed Questions
+
+| Question | Previous | Current | Change |
+|---|---|---|---|
+| what-has-management-promised | PARTIAL | PARTIAL | Unchanged — 31/31 unverified |
+| did-past-claims-come-true | PARTIAL | PARTIAL | Unchanged — 0/31 resolved |
+| what-projects-are-underway | PARTIAL | PARTIAL | Unchanged — 9 with execution evidence |
+| what-would-buffett-focus-on | STRONG | STRONG | Unchanged |
+| are-per-share-economics-improving | STRONG | STRONG | Unchanged — EPS 20.4% CAGR |
+
+### Critical Claims: 13/14 SUPPORTED, 1 CONTRADICTED
+
+- CONTRADICTED: PCIM OE bridge FY23 D&A = 1,143.14 Cr (should be 2,529.43) — informational field residual, non-calculation-affecting
+- All 14 primary investor-facing claims verified SUPPORTED
+
+### ENG-121 Previous D&A Observations
+
+- "D&A cross-year inconsistency" (1 PARTIALLY_SUPPORTED at 57 audit) → **INVALIDATED_BY_ENG121** ✓
+- "D&A full-year audit incomplete — 5/7 years unverified" (top bottleneck #2) → **INVALIDATED_BY_ENG121** ✓
+- "D&A-dependent analysis unreliable" → **WEAKENED_BY_ENG121** (substrate fixed; panel/ask propagation incomplete)
+
+### ENG-121 Investor Impact
+
+- `MATERIAL_TRUST_GAIN_LIMITED_USEFULNESS_GAIN`
+- Financial truth substrate: materially improved (homogeneous D&A series, primary-source authority)
+- Investor-facing output: unchanged (Panel/Ask pre-ENG-121; no D&A chart in visual summaries; panel analysts used CFO/capex not D&A)
+
+### Top Strengths
+
+1. Financial Truth Substrate (CFO/EPS/OE/D&A all now reliable across 7 years)
+2. Capital Allocation Intellectual Integrity (honest restraint; weighted conclusions blocked where evidence insufficient)
+3. Evidence Provenance (0 invalid IDs; source traceability to PDF page and line item)
+
+### Top Bottlenecks
+
+1. Promise/Lifecycle Verification — 31/0 resolved, 25 MP items lifecycle_stage=None. `SYSTEM_LIMITED`
+2. Risk Trajectory Coverage — 13/22 trajectory=None (59% unknown). `MIXED`
+3. Panel/Ask Propagation Lag — financial truth corrections don't auto-reach investor output. `SYSTEM_LIMITED`
+
+### ENG-119 Priority
+
+- `ENG_119_CONFIRMED_NEXT` — promise verification remains highest-leverage gap
+
+### Strategic Verdict
+
+- `PROMISING_BUT_NOT_INVESTOR_GRADE`
+- Manipulation resistance: HIGH
+- Trusted new baseline: `SUN_PHARMA_POST_ENG121_STRICT_TRUSTED_BASELINE = 59/100`
+- Next highest leverage: `ENG-119 — Promise Verification Pipeline`
+
+---
+
+## 2026-09-08 (ENG-121: Sun Pharma Cash Flow D&A Extraction Repair — Production Closure)
+
+- Closure gate: **ENG_121_CASH_FLOW_DA_EXTRACTION_REPAIR_PRODUCTION_CLOSED**
+
+### Root Causes
+
+Two independent failures caused the `PARTIAL_CASH_FLOW_STATEMENT_EXTRACTION_FAILURE` identified in ENG-120:
+
+**FY23** — stale `clean_chunks.json` generated by the pre-ENG-121 smart_chunker (commit `0f06c54`). That version had `if len(para) < 150: continue` with no table-row exception. The D&A paragraph "Depreciation and amortisation expense 25,294.3 21,437.4" (~56 chars) was silently dropped. No fix needed in code — current `smart_chunker.py` already has `looks_like_table_row()` with "depreciation"/"amortisation" keywords. Fix: regenerate `clean_chunks.json` for FY23 using the current chunker.
+
+**FY26** — `PRIMARY_CONTINUATION_ROW_PATTERNS["primary_cash_flow_statement"]` in `knowledge/financials/discovery.py` was missing all patterns for the indirect-method operating section (profit before tax → adjustments → working capital). Without ≥2 matching signals, chunk 589/590 (page 246, consolidated CF) never passed `_is_primary_continuation_candidate()` and was skipped. Fix: added 8 patterns including "profit before tax", "adjustments for", "depreciation and amortisation", "operating profit before working capital changes", "movements in working capital".
+
+### Verification
+
+- PDF raw text confirmed D&A present on page 210 (FY23) and page 246 (FY26) — no PDF extraction failure.
+- Post-repair `clean_chunks.json` (FY23): 788 → 810 chunks; chunk 532 contains `"25,294.3"`.
+- `raw_financial_tables.json` (FY23): CF D&A row `line_item_raw='Adjustments for: \x07Depreciation and amortisation expense'`, value=2529.43 Cr, `is_primary_statement=True`.
+- `raw_financial_tables.json` (FY26): CF D&A row value=2937.85 Cr, `is_primary_statement=True`.
+
+### Propagation Chain (both years)
+
+`clean_chunks.json` → `raw_financial_tables.json` → `normalized_fundamentals.json` → `financial_fact_registry.json` → `financial_quality_summary.json` → `financial_trends.json` → `company_memory/financials/financial_truth_pack.json` → `pcim_v1.json` / `cim_v1.json`
+
+### Canonical D&A Series (all from `cash_flow` source, Cr)
+
+| FY | Value | Prev (stale) |
+|----|-------|-------------|
+| FY20 | 2,052.78 | — |
+| FY21 | 2,079.95 | — |
+| FY22 | 2,143.74 | — |
+| FY23 | **2,529.43** | 1,143.14 (fixed-assets note) |
+| FY24 | 2,556.64 | — |
+| FY25 | 2,575.39 | — |
+| FY26 | **2,937.85** | 1,203.89 (fixed-assets note) |
+
+### Test Results
+
+- 15/15 ENG-121 focused tests (A–I) pass (`tests/financials/test_eng121_cf_da_extraction_repair.py`)
+- 465/465 broader financial test suite pass (excluding pre-existing broken `test_financial_pcim_integration.py`)
+- Cross-company regression: Tanla FY22–FY26 D&A unchanged; Data Patterns FY23–FY25 D&A unchanged
+
+### Hard Constraints Honoured
+
+- No per-company hardcoding; discovery fix is generic (applies to any company using indirect-method CF)
+- No FY24 comparative substituted for FY23 primary extraction
+- No Reality Audit run
+- ENG-119 not started
+
+### Files Changed
+
+- `knowledge/financials/discovery.py` — added 8 CF indirect-method operating-section patterns to `PRIMARY_CONTINUATION_ROW_PATTERNS["primary_cash_flow_statement"]`
+- `companies/sun_pharma/fy23/extracted/clean_chunks.json` — regenerated (788 → 810 chunks)
+- `companies/sun_pharma/fy23/financials/` — all financial artifacts regenerated
+- `companies/sun_pharma/fy26/financials/` — all financial artifacts regenerated
+- `companies/sun_pharma/company_memory/financials/financial_truth_pack.json` — regenerated, generated_at 2026-09-08T08:39:24Z
+- `companies/sun_pharma/company_memory/pcim_v1.json` / `cim_v1.json` — rebuilt
+- `tests/financials/test_eng121_cf_da_extraction_repair.py` — new, 15 focused tests
+
+**`ENG_121_CASH_FLOW_DA_EXTRACTION_REPAIR_PRODUCTION_CLOSED`** — 2026-09-08
+
+---
+
+## 2026-09-07 (Sun Pharma Post-ENG116 Reality Audit)
+
+- Closure gate: **SUN_PHARMA_POST_ENG116_TRUSTED_REALITY_AUDIT_CLOSED**
+- Score: **57/100 | Band B** (prior baseline ENG-110: 69/100; delta: -12)
+- Audit type: read-only, 10-dimension, 34-step production checkpoint. No code modified, no artifacts regenerated.
+- Fixed questions: 2 STRONG (per-share economics, Buffett focus), 3 PARTIAL (promises, past claims, projects underway), 0 BROKEN.
+- Critical claim spot check: 12 claims — 11 SUPPORTED, 1 PARTIALLY_SUPPORTED (D&A cross-year inconsistency: ENG-116 corrected FY23/FY26 only; FY24/FY25 D&A at ~2500 Cr vs. corrected ~1200 Cr — anomalous gap not in ENG-116 scope).
+- Top strengths: cross-year financial reasoning (OE trajectory, EPS CAGR 20.4%), evidence integrity (0 grounding warnings), capital allocation framework (honest conclusions gate).
+- Top bottlenecks: (1) promise/lifecycle verification pipeline SYSTEM_LIMITED — 31 promises, 0 verified; 25 MP items, lifecycle_stage=None; (2) D&A full-year audit incomplete — 5/7 years unverified; (3) capital conclusions SOURCE_LIMITED — 3/9 events unit_ambiguous.
+- Strategic verdict: PROMISING_BUT_NOT_INVESTOR_GRADE. Management accountability loop is open. Financial truth for OE/EPS/CFO is investor-grade; D&A-dependent analysis is unreliable across full 7-year window.
+- Next highest leverage gap: promise verification pipeline — connect management_promise_tracker to observable financial/operational results.
+- Manipulation resistance: HIGH. System self-limits correctly (coverage gates, conclusions blocked, 0 grounding warnings, honest uncertainty).
+- Report: `SUN_PHARMA_POST_ENG116_REALITY_AUDIT.md`
+
+## 2026-09-07 (ENG-116 Phase 2D: Sun Pharma D&A Integrity Repair — Production Closure)
+
+- Closure gate: **ENG_116_SUN_PHARMA_DA_INTEGRITY_REPAIR_PRODUCTION_CLOSED**
+- Root cause: D&A stale values (205.29 Cr FY23, 220.97 Cr FY26) were component values from a millions-to-crore conversion artefact (2052.9/10, 2209.7/10). Financial fact registries were already corrected to 1143.14 / 1203.89 Cr in a prior session but downstream propagation was incomplete.
+- Propagation repair: `financial_truth_pack.json` rebuilt (stale 205.29/220.97 eliminated); `owner_earnings_bridge.json` rebuilt; all 5 investor panel diagnostics regenerated from corrected PCIM; `cim_v1.json` and `pcim_v1.json` rebuilt via torch-mocked CIMContractBuilder (pre-existing torch/numpy env issue bypassed for rebuild only).
+- Stale value audit: 0 occurrences of 205.29 or 220.97 anywhere in `companies/sun_pharma/company_memory/` (excluding raw source tables).
+- Owner earnings invariant: FY23 OE=2873.75 Cr (CFO 4959.33 + capex −2085.58); FY26 OE=8809.81 Cr (CFO 12419.18 + capex −3609.37). D&A informational only — OE unaffected.
+- Financial audit: pass, 0 warnings, 0 hard failures.
+- Cross-company: no stale Sun Pharma D&A values in Tanla or Data Patterns; 46/46 investor panel context tests pass.
+- Pre-existing regressions: 12 tests in test_ask_intrinsiciq.py failing before this work (schema evolution — investor-panel category added), plus torch-dependent cim_contract test. 2 category count assertions updated (5→6) to match current schema.
+- Pipeline topology gap: CIMContractBuilder requires torch-free path for rebuild; currently handled by sys.modules mock. No production code hardcoding of D&A values.
+
+## 2026-09-07 (ENG-118 Phase 2D: Dividend Source Reconciliation & Closure)
+
+- Root cause: allocation grouping merged distinct dividend events across fiscal years by generic wording/category; CAO-0006 then inherited the latest FY26 `Dividend paid` amount (16,034.08) while also carrying FY22 PCIM text (`₹2/share; cash outflow ₹26 crore`).
+- Shared fix: distinct-period dividend events no longer merge without explicit flow identity. FY22 remains an eligible distribution with unknown/ambiguous amount; FY25 and FY26 retain separate source amounts. No per-share arithmetic inference.
+- Tanla rebuild: 17 events, validation PASS; CAO-0006 FY22 amount unavailable, weighted excluded. Trusted weighted coverage 35.3%; capital-weighted conclusions remain false.
+- Focused Phase 2 regressions: 38 passed. ENG-105 causal contract and ENG-116 unchanged. Phase 2 semantic integrity is closed with uncertainty preserved.
+
+## 2026-09-07 (ENG-118 Phase 2C: Dividend Amount Authority)
+
+- Traced Tanla CAO-0006: source representations conflict between a typed financial-timeline dividend amount and PCIM text containing per-share plus an explicit cash-outflow figure. The current merged evidence does not establish one authoritative period total without source reconciliation.
+- Added generic semantic selection for explicitly labelled cash totals; conflicting dividend totals are retained as `ELIGIBLE_DISTRIBUTION` with unknown/ambiguous amount and excluded from weighted totals. No per-share × shares inference was added.
+- 38 focused Phase 1/2A/2B/2C tests pass. Tanla outcomes/profile validation pass; trusted weighted coverage is 26.7% and weighted conclusions remain blocked.
+- Phase status: **ENG_118_PHASE_2_PARTIAL** pending upstream dividend-source reconciliation; no ENG-116/ENG-119 work.
+
+## 2026-09-07 (ENG-118 Phase 2B: Economic-Flow Identity & Residual Semantic Closure)
+
+- Added explicit economic-flow relationship metadata. Structured transaction/deal IDs are the only `SAME_ECONOMIC_FLOW` authority; explicit sale-consideration-against-loan language is `LINKED_BUT_DISTINCT_FLOW`. Equal amounts and text similarity remain non-authoritative.
+- Tanla Gamooga sale is excluded as disposal proceeds; linked debt settlement remains eligible deleveraging. ESOP-related records remain ambiguous/contained because no authoritative shared identity is present in current evidence.
+- Per-share dividend semantics remain protected; the current Tanla dividend total is still an upstream source/unit-quality issue and was not guessed or multiplied.
+- 35 focused Phase 2B/Phase 2A regressions pass. Tanla and Sun Pharma outcomes/profile validation pass; both remain weighted-conclusion blocked (trusted weighted coverage 33.3% / 55.6%).
+- Ask regeneration remains subject to the pre-existing unrelated committee-direction validation failure. ENG-116 untouched.
+- Phase status: **BLOCKED_ENG_118_PHASE_2_CAPITAL_DEPLOYMENT_ELIGIBILITY_AND_ECONOMIC_FLOW_INTEGRITY** pending dividend semantic owner and ESOP identity evidence.
+
+## 2026-09-07 (ENG-118 Phase 2: Capital Deployment Eligibility & Economic-Flow Integrity)
+
+- Shared taxonomy now resolves conservative economic roles and deployment eligibility; Phase 1 amount authority remains unchanged.
+- Weighted universe includes only eligible deployment, distribution, or deleveraging events. Capital sources, balance-sheet stocks, disposal proceeds, sanctioned facilities, operating expense, and ambiguous roles remain qualitative.
+- Added trusted weighted coverage across all tracked events; Tanla is 5/15 (33.3%), Sun Pharma 5/9 (55.6%), so capital-weighted conclusions are blocked for both despite unit coverage of 73.3% / 66.7%.
+- Production rebuilds: Tanla and Sun Pharma capital-allocation outcomes/profile validation PASS. Focused tests: 28 passed; prior taxonomy/profile regressions remain green.
+- Phase status: **ENG_118_PHASE_2_PARTIAL**. Same-flow authoritative identity and ESOP pair resolution remain open; ENG-116 untouched.
+
+## 2026-09-07 (ENG-117 Forensic Audit + ENG-118 Phase 1: Capital Amount Unit Authority)
+
+- Date: 2026-09-07
+- Sprint: ENG-117 / ENG-118 Phase 1
+- Closure gate: **ENG_118_PHASE_1_CAPITAL_AMOUNT_UNIT_AUTHORITY_AND_CONTAINMENT_CLOSED**
+
+### Mission
+
+ENG-117: Forensic audit of capital allocation amount unit corruption (read-only, 44 data-collection steps). ENG-118 Phase 1: Deterministic repair of unit corruption in `_candidate_amount()` — unit-aware string parser, ledger fallback suppression, `unit_ambiguous` amount basis, Phase 3 coverage semantics fix.
+
+### Root Cause (ENG-117)
+
+`_candidate_amount()` in `builder.py` called `_value_to_float()` which stripped all unit labels and treated the first number as crore. Consequences:
+- FY20 raw rupees `INR 20,000,000` → 20,000,000 Cr (10M× inflation)
+- FY26 lakhs `INR 12,280.86 lakhs` → 12,280.86 Cr (100× inflation)
+- Tanla Phase 3 total: 41,666,006 Cr (fictional)
+
+### ENG-118 Phase 1 Fix
+
+**`intelligence/capital_allocation_outcomes/builder.py`** — replaced `_value_to_float()` with `_parse_amount_to_crore()`: unit-authority contract (explicit lakh/crore/million/billion keywords required; bare numeric strings → `None`; million/billion without INR indicator → `None` (currency ambiguous); per-share strings → `None`; semicolon compound → `None`; `suppress_ledger_amount` flag honoured). `_candidate_amount()` now returns `None` for ambiguous amount strings (does NOT fall through to ledger). `_amount_basis()` returns `"unit_ambiguous"` when source amount present but unit unresolvable.
+
+**`intelligence/capital_allocation_outcomes/longitudinal_profile.py`** — `build_longitudinal_profile()` now loads and propagates `amount_basis` from outcomes; `_amount_coverage()` counts `events_with_unit_ambiguous_amount`; note includes ambiguous count.
+
+**`_finalize_allocation_record()`** — secondary lookup scans for `amount_basis=="unit_ambiguous"` when no confirmed amount exists (prevents collapse to `"unknown"`).
+
+### Results
+
+| Company | Before | After | Notes |
+|---|---|---|---|
+| Tanla | 41,666,006.72 Cr | 16,740.44 Cr | 41.6B Cr corruption eliminated |
+| Tanla coverage | 100% (false) | 73.3% (11/15) | `capital_weighted_conclusions_permitted=True` (≥70%) |
+| Tanla unit_ambiguous | 0 | 4 | CAO-0001/0004/0005 (raw rupees), CAO-0003 (bare numeric) |
+| Sun Pharma | ~24,311 Cr (partial) | 10,086 Cr (6 events) | 3 "In Million" events → UNIT_AMBIGUOUS |
+| Sun Pharma coverage | — | 66.7% (6/9) | `capital_weighted_conclusions_permitted=False` (<70%) |
+
+### Tests
+
+57 adversarial tests in `tests/intelligence/test_eng118_phase1_capital_amount_unit_authority.py` — 57/57 pass. Zero new regressions.
+
+### Artifacts Regenerated
+
+| Artifact | Status |
+|---|---|
+| Tanla Phase 2 (`capital_allocation_outcomes.json`) | ✓ Rebuilt |
+| Tanla Phase 3 (`capital_allocation_longitudinal_profile.json`) | ✓ Rebuilt |
+| Tanla Ask answer cards | ✓ Regenerated (stale 20001821/21618440 Cr values eliminated; now 18.2 Cr) |
+| Sun Pharma Phase 2 (`capital_allocation_outcomes.json`) | ✓ Rebuilt |
+| Sun Pharma Phase 3 (`capital_allocation_longitudinal_profile.json`) | ✓ Rebuilt |
+
+### Downstream Containment
+
+- Ask `_build_capital_allocation_answer()` gates capital-weighted breakdown on `capital_weighted_conclusions_permitted` (line 3793) — partial coverage shows note, never fabricates amounts. CONFIRMED.
+- ENG-105 causal attribution contract (`_causal_attribution_states`, `causal_attribution_confidence`) untouched. CONFIRMED.
+- Panel/Committee do not directly consume numeric Phase 3 data. No Panel/Committee regeneration required.
+
+### Stale Value Search
+
+| Search Target | Files Checked | Result |
+|---|---|---|
+| 20001821 (Tanla R&D Cr) | All Tanla *.json | CLEARED (answer_cards regenerated) |
+| 21618440 (Tanla unknown Cr) | All Tanla *.json | CLEARED (answer_cards regenerated) |
+| 41666006 (Tanla total) | All Tanla *.json | NOT PRESENT in non-CA artifacts |
+
+### Deferred Phase 2 Defects (ENG-118 Phase 2)
+
+| ID | Description | Source |
+|---|---|---|
+| CAO-0006 | Dividend `amount_crore=-16034.08` — financial extractor quality bug; value appears to be in lakhs (actual ~160 Cr); extractor frozen in Phase 1 | `capital_allocation_timeline.json` |
+| CAO-0001/0004/0005 | Balance-sheet-stock inclusions — these are cumulative stock amounts, not deployment flows | Tanla |
+| CAO-0009/0015 | Capital-source inclusions — equity issuance and working-capital financing amounts | Tanla |
+| CAO-0002/0007 | ESOP-related double-count — same source yields both R&D and organic_capex events | Tanla |
+| Sun Pharma CAO-0002/0005/0006 | "In Million" without INR indicator — correctly UNIT_AMBIGUOUS now; coverage 66.7% → `capital_weighted_conclusions_permitted=False` | Sun Pharma |
+
+### Closure Gate
+
+`ENG_118_PHASE_1_CAPITAL_AMOUNT_UNIT_AUTHORITY_AND_CONTAINMENT_CLOSED`
+
+Conditions satisfied:
+1. `_value_to_float()` removed — no bare number extraction
+2. `_parse_amount_to_crore()` implemented — unit-authority contract enforced
+3. Bare numeric strings → `None`
+4. Million/billion without INR indicator → `None`
+5. Per-share strings → `None`
+6. Semicolon compound strings → `None`
+7. Foreign currency strings → `None`
+8. Explicit lakh/crore/million/billion correctly converted
+9. Ambiguous source amount does NOT fall through to ledger
+10. `amount_basis="unit_ambiguous"` set for ambiguous string amounts
+11. `_finalize_allocation_record()` surfaces `unit_ambiguous` basis when all candidates ambiguous
+12. Phase 3 `amount_basis` loaded and propagated from Phase 2
+13. `events_with_unit_ambiguous_amount` counted in Phase 3 coverage
+14. Note includes unit_ambiguous count
+15. Tanla Phase 2 rebuilt — 4 unit_ambiguous events correct
+16. Tanla Phase 3 rebuilt — coverage 73.3%, `capital_weighted_conclusions_permitted=True`
+17. Tanla total: 16,740 Cr (was 41,666,006 Cr) — 41.6B Cr corruption eliminated
+18. Sun Pharma Phase 2 rebuilt — 3 unit_ambiguous events correct
+19. Sun Pharma Phase 3 rebuilt — coverage 66.7%, `capital_weighted_conclusions_permitted=False`
+20. Tanla Ask answer cards regenerated — stale inflated values eliminated
+21. Stale value search: 20001821, 21618440, 41666006 — CLEARED in Tanla artifacts
+22. Ask containment confirmed — `capital_weighted_conclusions_permitted` gate prevents fabrication
+23. ENG-105 causal contract confirmed untouched
+24. Data Patterns smoke: 3 events all `source_item` basis, no share count string leakage
+25. 57 adversarial unit-authority tests — 57/57 PASS
+26. 507 additional tests PASS (regression suite)
+27. 16 pre-existing failures confirmed pre-existing (test files modified before ENG-118)
+28. Zero new regressions introduced
+29. ENG-116 untouched (financial extractor frozen)
+30. ENG-105 architecture unchanged (causal logic untouched)
+31. Deferred Phase 2 defects documented (CAO-0006, balance-sheet-stock, capital-source, ESOP)
+32. BACKLOG updated with ENG-117 (closed) + ENG-118 (Phase 1 closed, Phase 2 open)
+33. SESSION_LOG updated
+
+---
+
+## 2026-09-07 (Tanla Post-ENG115B: Investor Propagation & Production Coherence Closure)
+
+- Date: 2026-09-07
+- Sprint: Post-ENG115B Investor Propagation
+- Closure gate: **TANLA_POST_ENG115B_INVESTOR_PROPAGATION_CLOSED**
+
+### Mission
+
+Full downstream investor propagation after ENG-115B corrected Tanla's financial unit artifacts. Included: prompt-budget fix, panel regeneration (all 5 analysts), committee synthesis, Ask IntrinsicIQ, plus a 31-step audit across stale-value detection, ENG-104 provenance, timestamp chain coherence, regression suite, cross-company smoke, and ENG-116 isolation.
+
+### Root Cause: Prompt Budget Overflow
+
+ENG-115B's corrected PCIM caused Tanla investor panel regeneration to fail. Root cause:
+- `management_quality_inputs` = 857,816 chars raw
+- Compacted 19-section prompt (Buffett): 10,422–11,753 tokens at minimum compaction limits
+- Old hard ceiling: `DEFAULT_TOTAL_PROMPT_BUDGET_TOKENS=9000`, `DEFAULT_HARD_MAX_PROMPT_TOKENS=10000`
+- All 5 analysts raised `ValueError: prompt still exceeds budget at minimum limits`
+
+**Fix:** `intelligence/investor_panel/runner.py` lines 74–75:
+```
+DEFAULT_TOTAL_PROMPT_BUDGET_TOKENS = 12000  # was 9000
+DEFAULT_HARD_MAX_PROMPT_TOKENS = 13000      # was 10000
+```
+Ceiling raised to accommodate PCIM-rich companies; compaction loop still shrinks for smaller PCIMs.
+
+### Artifacts Regenerated (2026-09-07)
+
+| Artifact | Status | Key Results |
+|----------|--------|-------------|
+| Panel (5 analysts) | ✓ Generated 18:11–18:15Z | rating=mixed, basis_used=consolidated, financial_warnings_carried_forward=0 |
+| Committee synthesis | ✓ Generated 18:21Z | consensus_rating=N/A, direction=weakening |
+| Committee brief | ✓ Generated 18:21Z | 7,785 chars, consensus_strength=medium |
+| Committee brief QA | ✓ Generated 18:21Z | status=pass |
+| Ask IntrinsicIQ | ✓ Generated 18:22Z | 24 supported, 8 partial, 2 not supported |
+
+### Audit Results
+
+| Check | Result |
+|-------|--------|
+| PCIM stale-value scan (402772, 320597, 74433) | CLEAN |
+| Panel/Committee/Ask stale Cr-scale values | CLEAN |
+| Downstream artifact "stale" hits | ALL LEGITIMATE (raw_lakhs provenance field) |
+| ENG-104 provenance (invalid evidence IDs) | CLEAN (0 removed) |
+| Financial basis (all analysts) | consolidated |
+| Timestamp chain (PCIM → Panel → Committee → Ask) | COHERENT ✓ |
+| Regression suite (678 tests) | PASS (13 pre-existing torch/numpy env failures) |
+| Cross-company budget smoke (Sun Pharma 6.6MB, Data Patterns 4.4MB) | PASS (ceiling raise, no floor change) |
+| ENG-116 isolation (Sun Pharma D&A anomaly) | CONFIRMED ISOLATED ✓ |
+
+### Pre-existing Bug Noted (Not Fixed Here)
+
+`companies/tanla/company_memory/capital_allocation_outcomes/capital_allocation_longitudinal_profile.json`: `known_amount_crore` inflated to 20M+ Cr (ENG-105 unit error, dated 2026-09-06, predates this session). Visible in Ask IntrinsicIQ answer for capital allocation. Tracked as separate task.
+
+### Files Changed
+
+- `intelligence/investor_panel/runner.py` — Budget constants (lines 74–75)
+
+---
+
+## 2026-09-07 (ENG-115 Forensic Audit + ENG-115B Stale Unit-Artifact Migration)
+
+- Date: 2026-09-07
+- Sprint: ENG-115 / ENG-115B
+- Closure gate: **ENG_115B_STALE_UNIT_ARTIFACT_MIGRATION_CLOSED**
+
+### ENG-115 Forensic Audit
+
+Read-only trace of Tanla FY25 revenue anomaly (~₹402,772 Cr, expected ~₹4,000 Cr).
+
+**Root cause confirmed:** `_unit_hint()` in `knowledge/financials/extractor.py` at commit `3d0aad5` had two defects:
+1. Explicit regex `([a-z₹.\s]+?)(?: unless|...)` failed on "₹ lakhs, **unless**" — comma not in character class
+2. Fallback candidate scan had "cr" BEFORE "lakhs" with plain `in` substring — "credit" in "Income tax expense/(credit):" matched "cr" first → returned `unit_hint="cr"` not `"lakhs"`
+
+Result: normalizer applied `value ÷ 100` treating lakhs as crores → 100× overstatement (402,772.15 Cr stored vs actual 4,027.72 Cr).
+
+**True fix date:** 2026-08-19 (commit `34c6fe2`, "Robustness Phase I") — `UNIT_HINT_CANDIDATES` reordered (lakhs before cr), `_unit_token_present()` with word-boundary `\b` guard for "cr".
+
+Root-cause classification: `UNIT_ERROR_PRIMARILY_SOURCE_EXTRACTION`
+Engineering decision: `REGENERATE_STALE_ARTIFACTS_ONLY`
+
+### ENG-115B Stale Unit-Artifact Migration
+
+**Corruption inventory (company-years generated before fix date 2026-08-19):**
+
+| Company-FY | Classification | Revenue (Before) | Revenue (After) |
+|------------|---------------|-----------------|----------------|
+| Tanla FY22 consolidated | CONFIRMED_CORRUPTION | 320,597 Cr | 3,206 Cr |
+| Tanla FY25 consolidated | CONFIRMED_CORRUPTION | 402,772 Cr | 4,028 Cr |
+| Tanla FY26 standalone | CONFIRMED_CORRUPTION | 74,434 Cr | 4,418 Cr (consolidated) |
+| Tanla FY23, FY24 | EXPOSED_BUT_CORRECT | — | Not regenerated |
+| Sun Pharma all years | NOT_EXPOSED (post-fix) | — | Not touched |
+| Datapatterns all years | NOT_EXPOSED (crores) | — | Not touched |
+
+**Assembly scoring bug discovered and fixed during migration:**
+`_assemble_primary_statement_rows()` sort key had `span_width` (position 5) before `row_count` (position 6). A 2-chunk note fragment (CHK-000530+531, 11 rows, Capital Management) outranked a 1-chunk actual consolidated BS (CHK-000407, 34 rows). Fix: swapped to `row_count` before `span_width`. This is a generic extractor improvement (not company-specific).
+
+**Artifacts regenerated per company-year:** extraction → normalization → validation → ratios → growth → truth_registry.
+
+**Company memory rebuilt:** CIM+PCIM, financial memory, multi-year memory, company memory stages all clean. Verified: no `value_crore > 50,000 Cr` in PCIM; FY22/FY25/FY26 revenue correct in CIM.
+
+**Panel regeneration:** FAILED due to pre-existing prompt budget overflow (`management_quality_inputs=857,096 chars` raw → exceeds compaction budget). Pre-existing limitation (ENG-013/018 scope). Panel remains stale from 2026-08-12.
+
+**ENG-104 provenance:** unaffected (structural provenance fixes in `extractor.py`, `company_memory_context.py`, `input_packs.py` untouched).
+
+**ENG-116 isolation:** All Sun Pharma artifacts confirmed untouched (generated 2026-08-24 to 2026-09-04, none modified today).
+
+**Cross-year coherence:** FY22→FY23→FY24→FY25→FY26 revenue: 3,205→3,354→3,927→4,028→4,418 Cr — plausible growth trajectory for Tanla.
+
+**FY20 status:** Different defect class (absolute rupees format, no lakh/crore declaration). Out of scope for ENG-115B.
+
 ## 2026-09-07 (ENG-114 — Live Production Proof & Closure)
 
 - Date: 2026-09-07
@@ -7534,3 +8083,12 @@ Forensic audit of Sun Pharma financial basis routing. Decisive finding: primary 
 
 **`ENG_114_PRIMARY_FINANCIAL_BASIS_INVESTOR_ROUTING_CLOSED`** — 2026-09-07
 
+## 2026-09-08 — ENG-119D production ontology migration
+
+- Regenerated Sun Pharma Management Commitments: 47 records, all lifecycle-neutral; 4 verifiable commitments, 37 strategic intents, 6 aspirations.
+- Gold material subset remains 31: 2 objectively verifiable, 24 strategic intents, 5 aspirations.
+- Strict bridge result on the two applicable records: 1 VERIFIED, 1 UNVERIFIED, zero fuzzy links.
+- Ask now reports the two-record accountability denominator separately from 29 non-verifiable strategic/aspirational statements.
+- Tanla migrated with 2 material verifiable commitments; Data Patterns has no current commitment corpus. Lifecycle ownership and fingerprints remain unchanged.
+
+**`ENG_119D_COMMITMENT_ONTOLOGY_AND_ACCOUNTABILITY_SEMANTICS_PRODUCTION_CLOSED`** — 2026-09-08
