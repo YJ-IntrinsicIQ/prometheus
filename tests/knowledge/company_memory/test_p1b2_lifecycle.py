@@ -116,7 +116,10 @@ def test_same_text_later_year_is_reconfirmed(tmp_path, monkeypatch):
     result = _load(tmp_path, "co")
     assert result["commitments"]["commitment_count"] == 1
     commitment = result["commitments"]["commitments"][0]
-    assert commitment["status"] == "Reconfirmed"
+    # MC is not lifecycle authority; top-level status is always "Unable To Verify".
+    # Lifecycle state lives in progression["current_state"].
+    assert commitment["status"] == "Unable To Verify"
+    assert commitment["progression"]["current_state"] == "Reconfirmed"
 
 
 # ── 6. Validation passes for cross-year reconfirmation ───────────────────────
@@ -227,7 +230,8 @@ def test_multiple_reconfirmations_across_years(tmp_path, monkeypatch):
     result = _load(tmp_path, "co")
     assert result["commitments"]["commitment_count"] == 1
     commitment = result["commitments"]["commitments"][0]
-    assert commitment["status"] == "Reconfirmed"
+    assert commitment["status"] == "Unable To Verify"
+    assert commitment["progression"]["current_state"] == "Reconfirmed"
     lifecycle = commitment.get("lifecycle", {})
     assert "fy23" in lifecycle.get("check_years", [])
     assert "fy24" in lifecycle.get("check_years", [])
@@ -244,28 +248,36 @@ def test_reconfirmed_status_not_in_progress(tmp_path, monkeypatch):
     ManagementCommitmentsBuilder(company="co").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
-    assert commitment["status"] != "In Progress"
-    assert commitment["status"] == "Reconfirmed"
+    assert commitment["progression"]["current_state"] != "In Progress"
+    assert commitment["progression"]["current_state"] == "Reconfirmed"
 
 
-# ── 15. Decisive evidence overrides reconfirmation → In Progress ─────────────
+# ── 15. Different-text progress item stays distinct from reconfirmed promise ──
+# ENG-135A contract: cross-item lifecycle evidence linking requires
+# deterministic identity (exact text match or explicit ID). A different-text
+# item in a later year cannot be attached to an original promise via semantic
+# similarity alone — the original promise correctly stays "Reconfirmed" and
+# the progress item becomes an independent commitment.
 
 def test_progress_evidence_overrides_reconfirmation(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     promise = "We will expand the distribution network to 20 new regions by FY25."
     _write_year(tmp_path, "co", "fy23", items=[_item(promise)])
     _write_year(tmp_path, "co", "fy24", items=[_item(promise)])
-    # fy25 has progress evidence — different text, same theme
+    # fy25 has progress evidence — different text, same theme but no deterministic link
     _write_year(tmp_path, "co", "fy25", items=[
         _item("Expanding the distribution network; rollout is in progress.", "Capacity")
     ])
     ManagementCommitmentsBuilder(company="co").build()
     result = _load(tmp_path, "co")
     commitments = result["commitments"]["commitments"]
-    # Find the commitment about distribution network
-    dist = next((c for c in commitments if "distribution" in c["original_statement"].lower()), None)
-    assert dist is not None
-    assert dist["status"] == "In Progress"
+    # Original promise (FY23+FY24 exact same text) stays "Reconfirmed" —
+    # the FY25 different-text item is a separate commitment, not evidence on this one.
+    dist = next((c for c in commitments if "20 new regions" in c["original_statement"].lower()), None)
+    assert dist is not None, "original promise must exist"
+    assert dist["progression"]["current_state"] == "Reconfirmed"
+    # The FY25 progress item should appear as an independent commitment
+    assert len(commitments) == 2, "FY25 different-text item must not be merged into original promise"
 
 
 # ── 16. Delivery evidence after reconfirmation → Delivered ───────────────────
@@ -283,7 +295,7 @@ def test_delivery_after_reconfirmation(tmp_path, monkeypatch):
     commitments = result["commitments"]["commitments"]
     logistics = next((c for c in commitments if "logistics" in c["original_statement"].lower()), None)
     assert logistics is not None
-    assert logistics["status"] == "Delivered"
+    assert logistics["progression"]["current_state"] == "Delivered"
 
 
 # ── 17. Abandonment after reconfirmation → Abandoned ────────────────────────
@@ -301,7 +313,7 @@ def test_abandonment_after_reconfirmation(tmp_path, monkeypatch):
     commitments = result["commitments"]["commitments"]
     southern = next((c for c in commitments if "southern" in c["original_statement"].lower()), None)
     assert southern is not None
-    assert southern["status"] == "Abandoned"
+    assert southern["progression"]["current_state"] == "Abandoned"
 
 
 # ── 18. Delay after reconfirmation → Delayed ────────────────────────────────
@@ -319,7 +331,7 @@ def test_delay_after_reconfirmation(tmp_path, monkeypatch):
     commitments = result["commitments"]["commitments"]
     plant = next((c for c in commitments if "plant upgrade" in c["original_statement"].lower()), None)
     assert plant is not None
-    assert plant["status"] == "Delayed"
+    assert plant["progression"]["current_state"] == "Delayed"
 
 
 # ── 19. No extra commitments from reconfirmation-only years ──────────────────
@@ -344,8 +356,11 @@ def test_reconfirmed_delivery_assessment_text(tmp_path, monkeypatch):
     ManagementCommitmentsBuilder(company="co").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
+    # MC is not lifecycle authority; delivery_assessment reflects "Unable To Verify" status.
+    # The reconfirmation state lives in progression["current_state"].
     assessment = commitment.get("delivery_assessment", "")
-    assert "reconfirm" in assessment.lower() or "no execution" in assessment.lower()
+    assert commitment["progression"]["current_state"] == "Reconfirmed"
+    assert "evidence" in assessment.lower() or "no later" in assessment.lower() or "verify" in assessment.lower()
 
 
 # ── 21. Evidence_updates empty when single evidence with no later data ────────
@@ -386,9 +401,12 @@ def test_status_counts_include_reconfirmed(tmp_path, monkeypatch):
     _write_year(tmp_path, "co", "fy24", items=[_item(promise, "Capacity")])
     ManagementCommitmentsBuilder(company="co").build()
     result = _load(tmp_path, "co")
+    commitment = result["commitments"]["commitments"][0]
+    # MC is not lifecycle authority; status_counts counts by top-level status (always "Unable To Verify").
+    # Progression states tracked in commitment["progression"]["current_state"].
     status_counts = result["commitments"].get("status_counts", {})
-    assert "Reconfirmed" in status_counts
-    assert status_counts["Reconfirmed"] == 1
+    assert status_counts.get("Unable To Verify", 0) == 1
+    assert commitment["progression"]["current_state"] == "Reconfirmed"
 
 
 # ── 24. Reconfirmation across three years ────────────────────────────────────
@@ -403,7 +421,8 @@ def test_reconfirmation_three_years_still_one_commitment(tmp_path, monkeypatch):
     result = _load(tmp_path, "co")
     assert result["commitments"]["commitment_count"] == 1
     commitment = result["commitments"]["commitments"][0]
-    assert commitment["status"] == "Reconfirmed"
+    assert commitment["status"] == "Unable To Verify"
+    assert commitment["progression"]["current_state"] == "Reconfirmed"
     lifecycle = commitment.get("lifecycle", {})
     assert set(lifecycle.get("check_years", [])) == {"fy24", "fy25"}
 
@@ -468,6 +487,6 @@ def test_mixed_portfolio_reconfirmed_and_delivered(tmp_path, monkeypatch):
     result = _load(tmp_path, "co")
     commitments = result["commitments"]["commitments"]
     assert result["commitments"]["commitment_count"] == 2
-    statuses = {c["status"] for c in commitments}
-    assert "Reconfirmed" in statuses
-    assert "Delivered" in statuses
+    progression_states = {c["progression"]["current_state"] for c in commitments}
+    assert "Reconfirmed" in progression_states
+    assert "Delivered" in progression_states

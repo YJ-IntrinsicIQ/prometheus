@@ -601,7 +601,7 @@ def _build_unresolved_questions(records: List[Dict[str, Any]]) -> List[str]:
     if acqs:
         questions.append(
             "What specific revenue, margin, or cash-flow outcome can be linked to the "
-            "completed acquisitions (Alchemee, Concert, legacy)?"
+            "completed acquisitions?"
         )
     organic = [r for r in records if r.get("allocation_category") in _ORGANIC]
     if organic:
