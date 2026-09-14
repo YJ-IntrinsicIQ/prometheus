@@ -37,6 +37,10 @@ CAPACITY_OPERATING_HINTS = (
 
 def _status_from_text(status_text: str, utilization_status: str | None = None) -> str:
     text = _normalize_text(status_text).lower()
+    # "recently announced" / "newly announced" unambiguously means not yet operational — guard
+    # must run before any keyword that may appear later in the same passage (e.g. section headers)
+    if any(term in text for term in ("recently announced", "newly announced", "recently entered into")):
+        return "announced"
     if any(term in text for term in FINANCIAL_DEPLOYMENT_HINTS) and not any(term in text for term in CAPACITY_OPERATING_HINTS):
         return "funded"
     if any(term in text for term in ("cancelled", "canceled", "abandoned", "dropped", "shutdown")):

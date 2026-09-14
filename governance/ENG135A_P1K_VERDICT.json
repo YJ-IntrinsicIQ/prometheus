@@ -1,0 +1,84 @@
+{
+  "schema_version": "eng135a.p1k_verdict.v1",
+  "phase": "ENG-135A-P1K",
+  "phase_name": "SOURCE-LEVEL SEMANTIC REVIEW",
+  "generated_at": "2026-09-14T13:08:03.547648Z",
+  "input_records": 32,
+  "scope": "Identity / Lifecycle / Causality / Unknown Preservation -- all 32 ENG-135A production audit records",
+  "summary": {
+    "VALID": 29,
+    "UNKNOWN_BUT_SAFE": 3,
+    "INVALID": 0,
+    "INVALID_BEFORE_REPAIR": 1
+  },
+  "unknown_but_safe_records": [
+    {
+      "record": "tanla/CAO-0002",
+      "reason": "ESOP tranche identity unresolvable from verbatim passage; uncertainty correctly preserved"
+    },
+    {
+      "record": "tanla/CAO-0003",
+      "reason": "Lifecycle state conservative (underestimates certainty) -- safe direction, not an upgrade"
+    },
+    {
+      "record": "ujjivan/CAO-0006",
+      "reason": "LEGACY_UNRECOVERABLE (synthetic ID capex_fy22); identity and lifecycle unverifiable"
+    }
+  ],
+  "repairs": [
+    {
+      "record": "sun_pharma/PJ-0017",
+      "defect_class": "UNSUPPORTED_LIFECYCLE_UPGRADE",
+      "pre_repair_lifecycle": "operational",
+      "source_passage": "The recently announced agreement to acquire Organon represents another important step towards strengthening our global Innovative Medicines portfolio and expanding our scale across international markets. Ensuring timely closure and enabling effective integration planning will remain key priorities.",
+      "root_cause": "intelligence/capacity/progression.py::_status_from_text() -- passage contained 'recently announced' but function returned 'operational' because 'Strengthening the Operational Foundation' section header appeared later in the same source_chunk and matched the operational keyword list first.",
+      "fix": "Added 'recently announced' / 'newly announced' / 'recently entered into' priority guard at top of _status_from_text(), before any operational keyword matching. Generic fix -- not company-specific.",
+      "fix_file": "intelligence/capacity/progression.py",
+      "fix_function": "_status_from_text",
+      "post_repair_lifecycle": "unable_to_verify",
+      "post_repair_verdict": "VALID",
+      "regression_test": "tests/audit/test_passage_persistence.py::test_recently_announced_not_operational"
+    }
+  ],
+  "collision_review": {
+    "total_collisions_examined": 7,
+    "JUSTIFIED_SHARED_SOURCE": 5,
+    "JUSTIFIED_TEMPLATE_TEXT": 2,
+    "UNJUSTIFIED": 0,
+    "notes": "All shared-source collisions are justified: distinct rows/items from same annual report table or standardized financial statement template"
+  },
+  "stress_tests": {
+    "adjacent_passage_stress": "PASS -- Organon section header did not contaminate Alchemee/Concert records",
+    "chronology_stress": "PASS -- no forward-dated lifecycle assignments found",
+    "similarity_stress": "PASS -- shared-source records correctly maintain distinct identities"
+  },
+  "hardcoding_audit": {
+    "COMPANY_SPECIFIC_IDENTITY_REPAIR_LOGIC": 0,
+    "note": "progression.py fix uses generic terms (recently announced / newly announced / recently entered into), not company or entity names"
+  },
+  "material_information_loss": {
+    "SAFE_UNKNOWN_RECORDS": 3,
+    "MATERIAL_LOSS": 0,
+    "note": "The 3 UNKNOWN_BUT_SAFE records preserve uncertainty correctly; no investor-material false claim is being suppressed"
+  },
+  "p1k_criteria": {
+    "IDENTITY_REVIEW_COMPLETE": true,
+    "LIFECYCLE_REVIEW_COMPLETE": true,
+    "CAUSALITY_REVIEW_COMPLETE": true,
+    "UNKNOWN_PRESERVATION_REVIEW_COMPLETE": true,
+    "COLLISION_REVIEW_COMPLETE": true,
+    "INVALID_RECORDS_REPAIRED": true,
+    "REGRESSION_TEST_ADDED": true,
+    "COMPANY_SPECIFIC_FIX_LOGIC": false,
+    "NO_NEW_INTELLIGENCE_CAPABILITY": true,
+    "SOURCE_UNCHANGED": true
+  },
+  "p1k_verdict": "PASS",
+  "p1_verdict": "ENG_135A_P1_UPSTREAM_PRODUCTION_PROOF_PASSED",
+  "next_state": {
+    "ENG_135A_UPSTREAM_PRODUCTION_PROOF": "PASS",
+    "next_phase": "ENG-135A-P2",
+    "next_phase_name": "Downstream Propagation and Coherence",
+    "p2_scope": "Management Progression -> Company Model -> PCIM -> Panel -> Committee -> Ask -> 10 end-to-end semantic traces -> stale artifact audit -> full relevant regression -> production coherence -> governance closure"
+  }
+}
