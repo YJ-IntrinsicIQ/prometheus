@@ -9101,3 +9101,70 @@ Formal closure: ENG_135A_ACTION_IDENTITY_AND_EXECUTION_EVIDENCE_INTEGRITY_PRODUC
 **ENG-135 status**: READY_FOR_REVALIDATION.  
 **P2A verdict**: PASS.  
 **Final closure**: ENG_135A_ACTION_IDENTITY_AND_EXECUTION_EVIDENCE_INTEGRITY_PRODUCTION_CLOSED.
+
+---
+
+## ENG-135 — Economic Attribution Revalidation (2026-09-14)
+
+**Phase**: ENG-135 Revalidation on certified ENG-135A foundation
+**Gate**: ENG_135_ECONOMIC_ATTRIBUTION_PRODUCTION_REVALIDATED
+
+**Foundation used**: ENG_135A = PRODUCTION_CLOSED | P2A = PASSED | 10/10 traces | Downstream semantic drift = 0
+
+**Branch**: development | HEAD: 7986e27 | Code changes: NONE (revalidation only)
+
+**Pre-revalidation matrix** (historical reference):
+| Company | Total | Direct | Strong | Assoc | No-Ev | Neg |
+|---------|-------|--------|--------|-------|-------|-----|
+| sun_pharma | 42 | 4 | 0 | 5 | 33 | 0 |
+| tanla | 48 | 5 | 0 | 7 | 35 | 1 |
+| datapatterns | 40 | 3 | 0 | 5 | 32 | 0 |
+| ujjivan | 33 | 0 | 0 | 3 | 30 | 0 |
+
+**Post-revalidation matrix** (fresh regeneration 2026-09-14T14:18Z):
+| Company | Total | Direct | Strong | Assoc | No-Ev | Neg |
+|---------|-------|--------|--------|-------|-------|-----|
+| sun_pharma | 42 | 4 | 0 | 2 | 36 | 0 |
+| tanla | 48 | 5 | 0 | 4 | 38 | 1 |
+| datapatterns | 40 | 3 | 0 | 4 | 33 | 0 |
+| ujjivan | 42 | 2 | 0 | 3 | 37 | 0 |
+
+**Material classification changes (9 total)**:
+- Sun/Tanla/DataPatterns: ASSOC reduced (risk_remediation cases lost contaminated attribution basis → NO_OUTCOME_EVIDENCE). Conservative direction.
+- Ujjivan: total 33→42 (9 new CAO records added by repaired CAO artifact); direct 0→2 (CAO-0001 debt_repayment + CAO-0009 dividend now correctly reach DIRECTLY_ATTRIBUTABLE).
+
+**Integrity checks** (all PASS):
+- Identity integrity: 0 cross-initiative contaminations
+- Lifecycle integrity: 0 lifecycle errors
+- Attribution contract: CONFIRMED (9 semantic contracts preserved)
+- Direct attribution: 14/14 reviewed, 0 invalid (all are deterministic transactions)
+- Strongly supported: 0/0 (none exist — correct)
+- Acquisition review: 12 records, 0 errors (all acquisitions ≤ ASSOCIATED_NOT_ATTRIBUTABLE)
+- Capacity/capex review: 0 errors (capex→later revenue never upgraded)
+- Deterministic transactions: 14/14, all fc=deterministic_transaction_consequence
+- Unknown preservation: 0 errors
+- Chronology stress: 0 errors (CHRONOLOGY_IS_NOT_CAUSALITY contract active)
+- Per-share discipline: PASS
+- Investor judgment discipline: PASS
+- Collision audit: 0 unjustified (75 flagged = JUSTIFIED_TEMPLATE_TEXT)
+
+**Source-level sample**: 20 records (Sun≥6, Tanla≥5, DataPatterns≥5, Ujjivan≥4). Artifact: `governance/ENG135_REVALIDATION_SAMPLE.json`
+
+**End-to-end traces**: 8/8 PASS (Sun×3, Tanla×2, DataPatterns×1, Ujjivan×2; acquisition/capex/deterministic/unknown types covered)
+
+**Propagation**:
+- PCIM: wiring function verified correct; artifact stale due to pre-existing embedder environment issue (same constraint as ENG-135A-P2)
+- Panel: all 4 doctrines have economic_attribution_inputs in evidence_required_from_pcim
+- Ask: which-investments-created-value correctly distinguishes confirmed/associated/no-outcome
+
+**Regression**: 14/14 (test_passage_persistence) + 41/41 (test_eng135_economic_attribution) + 28/28 (test_eng135a_evidence_integrity) = **83/83 PASS**. NEW_REGRESSIONS=0.
+
+**Hardcoding audit**: COMPANY_SPECIFIC_PRODUCTION_DECISION_LOGIC=0. One documentation string ("Sun Pharma does not disclose...") in builder.py limitations array — not decision logic. Cleanup task spawned.
+
+**Artifacts**: `governance/ENG135_REVALIDATION_VERDICT.json`, `governance/ENG135_REVALIDATION_SAMPLE.json`
+
+**Final verdict**: ENG_135_ECONOMIC_ATTRIBUTION_PRODUCTION_REVALIDATED
+
+**ENG-135 status**: PRODUCTION_CLOSED
+
+**Next mission**: ENG-138 — Answer Contract Last-Mile Sanitization
