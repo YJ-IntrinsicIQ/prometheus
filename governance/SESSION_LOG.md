@@ -9071,3 +9071,33 @@ cross-company tanla/datapatterns/ujjivan no-recently-announced confirmation).
 Regression suite: 14/14 PASS (test_passage_persistence.py).
 P2 verdict: PASS. 
 Formal closure: ENG_135A_ACTION_IDENTITY_AND_EXECUTION_EVIDENCE_INTEGRITY_PRODUCTION_CLOSED.
+
+---
+
+## ENG-135A-P2A — Three Missing End-to-End Semantic Traces (2026-09-14)
+
+**Phase**: P2A Closure Addendum  
+**Gate**: ENG_135A_P2A_CLOSURE_ADDENDUM_PASSED
+
+**Objective**: Add 3 cross-company traces to reach the originally required >=10 end-to-end trace closure standard.
+
+**Traces completed (new)**:
+
+| # | Company | Claim | Records | Verdict |
+|---|---------|-------|---------|---------|
+| 8 | Tanla | ValueFirst acquisition — causal discipline (ROI claim -> action -> later financials) | MP-0152, CAO-0011, PJ-0007 | PASS |
+| 9 | DataPatterns | Capacity Expansion — unknown preservation (UNABLE_TO_VERIFY -> NO_OUTCOME_EVIDENCE through all hops) | CAO-0003 | PASS |
+| 10 | Ujjivan | Debt Repayment — DIRECTLY_ATTRIBUTABLE (deterministic transaction exception) + 9/11 sparse items preserved NO_OUTCOME_EVIDENCE | CAO-0001 | PASS |
+
+**Semantic drift totals**: IDENTITY_DRIFT=0, LIFECYCLE_DRIFT=0, CAUSAL_DRIFT=0, UNKNOWN_PRESERVATION_ERRORS=0.
+
+**Causal discipline**: Tanla ValueFirst ROI claim (>20% on payout, FY24 CEO letter) correctly surfaced as verbatim management claim through PCIM; CAO independently maintains NO_OUTCOME_EVIDENCE. No layer inverts temporal sequence into causal attribution.
+
+**Unknown preservation**: Ujjivan — 9/11 allocations correctly remain NO_OUTCOME_EVIDENCE with UNABLE_TO_VERIFY execution. DIRECTLY_ATTRIBUTABLE restricted to debt_repayment only (deterministic transaction exception).
+
+**Artifact**: `governance/ENG135A_P2A_VERDICT.json`  
+**Regression**: 14/14 PASS (no code changes — P2A is verification only).  
+**Total end-to-end traces**: 10/10 (7 from P2 + 3 new from P2A).  
+**ENG-135 status**: READY_FOR_REVALIDATION.  
+**P2A verdict**: PASS.  
+**Final closure**: ENG_135A_ACTION_IDENTITY_AND_EXECUTION_EVIDENCE_INTEGRITY_PRODUCTION_CLOSED.
