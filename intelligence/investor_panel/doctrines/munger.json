@@ -24,7 +24,10 @@
   "evidence_required_from_pcim": [
     "governance_and_incentive_inputs",
     "risk_inputs",
+    "business_economics_inputs",
     "management_quality_inputs",
+    "management_execution_inputs",
+    "economic_attribution_inputs",
     "cash_conversion_inputs",
     "balance_sheet_strength_inputs",
     "working_capital_inputs",

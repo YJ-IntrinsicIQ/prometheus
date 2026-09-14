@@ -44,6 +44,13 @@ def _write_inputs(root: Path) -> None:
     annual = company / "fy22" / "intelligence"
     annual.mkdir(parents=True)
     (annual / "management_summary.json").write_text(json.dumps({"key_initiatives": ["ILUMYA launched in Japan and Australia"], "company_results": []}))
+    # Per-company entity registry (required after ENG-133 de-hardcoding of verification_bridge.py)
+    cm_dir = company / "company_memory"
+    cm_dir.mkdir(parents=True, exist_ok=True)
+    (cm_dir / "verification_entities.json").write_text(json.dumps({
+        "company": "sample_co",
+        "entities": [{"entity": "ilumya", "event_type": "PRODUCT_LAUNCH", "action_hint": "launched"}],
+    }))
 
 
 def _bundle(**payloads: dict) -> dict:

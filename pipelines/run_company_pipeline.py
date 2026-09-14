@@ -55,6 +55,7 @@ from intelligence.investor_panel import (  # noqa: E402
     InvestorPanelRunner,
     find_forbidden_recommendation_language,
 )
+from intelligence.investor_panel.committee_validator import CANONICAL_DISAGREEMENT_TYPES  # noqa: E402
 from intelligence.ask_intrinsiciq import generate_ask_intrinsiciq_view  # noqa: E402
 from intelligence.projects import ProjectsBuilder  # noqa: E402
 from intelligence.capacity import CapacityEvolutionBuilder  # noqa: E402
@@ -2526,13 +2527,17 @@ def run_risk_evolution_stage(company, context=None):
         set_context(context)
     valid_years, warnings = _require_company_level_intelligence(company, "risk_evolution")
     company_root = Path("companies") / company
-    written_paths = build_risk_evolution(company, companies_root=Path("companies"))
+    # Gold owns canonical cross-year risk trajectory.  Build it before Risk
+    # Registry so consequence/response accountability is never hydrated from
+    # the previous generation's Gold artifact.
+    gold_path = None
     try:
         gold_path = write_risk_evolution_timeline(company, companies_root=Path("companies"))
-        if isinstance(written_paths, dict):
-            written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
     except Exception:
         pass  # Gold layer is best-effort; never block the base risk stage
+    written_paths = build_risk_evolution(company, companies_root=Path("companies"))
+    if gold_path is not None and isinstance(written_paths, dict):
+        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
     output_dir = company_root / "company_memory" / "risks"
     registry_path = output_dir / "risk_registry.json"
     assessments_path = output_dir / "risk_assessments.json"
@@ -2722,6 +2727,13 @@ def run_management_progression_stage(company, context=None):
     for filename in sorted(written_paths):
         print(f"- {filename}")
     return written_paths
+
+
+def run_economic_attribution_stage(company, context=None):
+    if context is not None:
+        set_context(context)
+    from intelligence.economic_attribution.runner import run as _run_economic_attribution
+    _run_economic_attribution(company)
 
 
 def run_audit_stage(company, context=None, fix_safe=False):
@@ -4046,11 +4058,7 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
         if not isinstance(item, dict):
             synthesis_failures.append("committee_synthesis: areas_of_disagreement contains non-object item")
             continue
-        if item.get("disagreement_type") not in {
-            "true_disagreement",
-            "different_emphasis",
-            "risk_weighting_difference",
-        }:
+        if item.get("disagreement_type") not in CANONICAL_DISAGREEMENT_TYPES:
             synthesis_failures.append("committee_synthesis: disagreement_type missing")
             break
     if list(normalization.get("unresolved_ids", []) or []):
@@ -4875,6 +4883,8 @@ def main():
         run_company_model_stage(company=args.company, context=context)
     elif args.stage == "management_progression":
         run_management_progression_stage(company=args.company, context=context)
+    elif args.stage == "economic_attribution":
+        run_economic_attribution_stage(company=args.company, context=context)
     elif args.stage == "financial_pcim_validation":
         run_financial_pcim_validation_stage(context=context)
     elif args.stage == "management_commitments":

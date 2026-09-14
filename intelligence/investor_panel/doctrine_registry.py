@@ -9,6 +9,8 @@ VALID_PCIM_SECTIONS = {
     "business_understanding",
     "financial_strength_inputs",
     "management_quality_inputs",
+    "management_execution_inputs",
+    "economic_attribution_inputs",
     "growth_quality_inputs",
     "moat_inputs",
     "capital_allocation_inputs",

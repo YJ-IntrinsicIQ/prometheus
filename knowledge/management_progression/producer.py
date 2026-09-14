@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from .contract import SCHEMA_VERSION, confidence, evidence_ref
 from .evidence_adapter import ManagementProgressionSources, load_management_progression_sources, loaded_payload
 from .linker import build_cross_year_links, duplicate_key, link_company_model_ids, theme_key
-from .synthesis import build_synthesis_chain
+from .synthesis import build_execution_outcome_summary, build_synthesis_chain
 from .validator import validate_management_progression
 
 
@@ -177,6 +177,7 @@ class ManagementProgressionProducer:
         coverage = "supported" if len(items) >= 2 else "partial" if items else "insufficient_evidence"
         consistency_data = loaded_payload(self.sources, "management_consistency")
         cross_year = build_cross_year_links(items, consistency_data=consistency_data or None)
+        execution_outcomes = build_execution_outcome_summary(items)
         return {
             "schema_version": SCHEMA_VERSION,
             "company_slug": self.company_slug,
@@ -186,6 +187,7 @@ class ManagementProgressionProducer:
             "management_thesis_chains": cross_year["management_thesis_chains"],
             "measurable_commitments": cross_year["measurable_commitments"],
             "contradiction_signals": cross_year["contradiction_signals"],
+            "management_execution_outcomes": execution_outcomes,
             "source_manifest": self._source_manifest(coverage),
         }
 

@@ -20,6 +20,7 @@ from .contracts import (
     ALLOCATION_OUTCOMES_GENERATOR_VERSION,
     ALLOCATION_OUTCOMES_MANIFEST_SCHEMA_VERSION,
     ALLOCATION_OUTCOMES_SCHEMA_VERSION,
+    OUTCOME_ATTRIBUTION_LEVELS,
 )
 from .manifest import build_capital_allocation_manifest
 from .longitudinal_profile import build_longitudinal_profile
@@ -295,6 +296,7 @@ def _build_source_reference(
     evidence_ids: Sequence[Any] | None = None,
     capital_allocation_group: str | None = None,
     canonical_category: str | None = None,
+    extraction_item_id: Any = None,
 ) -> Dict[str, Any]:
     reference = {
         "source_year": source_year,
@@ -303,6 +305,7 @@ def _build_source_reference(
         "source_page": source_page,
         "short_excerpt": _short_excerpt(short_excerpt),
         "evidence_ids": [str(item) for item in (evidence_ids or []) if str(item).strip()],
+        "extraction_item_id": extraction_item_id,
     }
     if capital_allocation_group:
         reference["capital_allocation_group"] = capital_allocation_group
@@ -604,6 +607,7 @@ def _compact_source_item(year: str, item: Dict[str, Any], group: str) -> Dict[st
         evidence_ids=item.get("evidence_ids") or [],
         capital_allocation_group=group,
         canonical_category=item.get("canonical_category"),
+        extraction_item_id=item.get("extraction_item_id"),
     )
 
 
@@ -689,44 +693,45 @@ def _driver_evidence(driver_payload: Dict[str, Any], allocation_text: str) -> Li
 
 
 def _link_records(record: Dict[str, Any], records: Sequence[Dict[str, Any]], *, fields: Sequence[str], id_field: str, threshold: int = 5) -> List[str]:
-    record_text = _normalize_text(" ".join(str(record.get(field) or "") for field in ("allocation_name", "normalized_name", "stated_rationale", "inferred_business_purpose", "progression_summary")))
-    record_tokens = _token_set(record_text)
-    linked: List[Tuple[int, str]] = []
+    # Similar business purposes are not initiative identity.  Keep threshold in
+    # the signature for callers, but never use similarity as execution authority.
+    matches: List[Tuple[str, str]] = []
+    identity_fields = ("canonical_initiative_id", "transaction_id", "initiative_id", "source_fingerprint")
+    label_fields = ("allocation_name", "normalized_name", "project_name", "capacity_name", "commitment_name", "risk_name")
+    generic = {"acquisition", "integration", "expansion", "project", "capacity", "investment", "capital", "allocation", "organic", "capex", "new", "business"}
+
+    def labels(value: Dict[str, Any]) -> set:
+        result = set()
+        for field in label_fields:
+            label = _normalize_text(str(value.get(field) or ""))
+            if label and set(label.split()) - generic:
+                result.add(label)
+        return result
+
+    source_labels = labels(record)
     for item in records:
-        item_text = _normalize_text(" ".join(str(item.get(field) or "") for field in fields))
-        item_tokens = _token_set(item_text)
-        score = len(record_tokens & item_tokens)
-        if record.get("allocation_category") and record.get("allocation_category").replace("_", " ") in item_text:
-            score += 2
-        if item_text and record_text and (record_text in item_text or item_text in record_text):
-            score += 2
-        if score >= threshold and item.get(id_field):
-            linked.append((score, str(item.get(id_field))))
-    linked.sort(key=lambda pair: (-pair[0], pair[1]))
-    return [item[1] for item in linked]
+        if not item.get(id_field):
+            continue
+        if record.get("company") and item.get("company") and record["company"] != item["company"]:
+            continue
+        # Conflicting explicit identity must not be rescued by an equal label.
+        if any(record.get(key) and item.get(key) and record[key] != item[key] for key in identity_fields):
+            continue
+        reason = next((key for key in identity_fields if record.get(key) and record.get(key) == item.get(key)), None)
+        if not reason and source_labels & labels(item):
+            reason = "exact_unambiguous_normalized_identity"
+        if reason:
+            matches.append((str(item[id_field]), reason))
+    unique = {identity for identity, _ in matches}
+    if len(unique) != 1:
+        return []
+    return sorted(unique)
 
 
 def _link_acquisition_records(record: Dict[str, Any], projects: Sequence[Dict[str, Any]]) -> List[str]:
     if record.get("allocation_category") not in {"acquisition", "acquisition_integration"}:
         return []
-    record_text = _normalize_text(" ".join(str(record.get(field) or "") for field in ("allocation_name", "normalized_name", "stated_rationale", "inferred_business_purpose")))
-    record_tokens = _token_set(record_text)
-    linked: List[Tuple[int, str]] = []
-    for project in projects:
-        project_text = _normalize_text(
-            " ".join(
-                str(project.get(field) or "")
-                for field in ("project_name", "normalized_name", "objective", "business_rationale", "project_type")
-            )
-        )
-        project_tokens = _token_set(project_text)
-        score = len(record_tokens & project_tokens)
-        if "acquisition" in project_text or "integration" in project_text:
-            score += 2
-        if score >= 4 and project.get("project_id"):
-            linked.append((score, str(project.get("project_id"))))
-    linked.sort(key=lambda pair: (-pair[0], pair[1]))
-    return [item[1] for item in linked]
+    return _link_records(record, projects, fields=("project_name", "normalized_name"), id_field="project_id")
 
 
 def _evidence_from_links(
@@ -871,6 +876,55 @@ _DISTRIBUTION_CATEGORIES = frozenset({
 })
 
 
+_DIRECTLY_ATTRIBUTABLE_CATEGORIES = frozenset({
+    "dividend", "special_dividend", "share_buyback", "debt_repayment",
+})
+
+# ENG-122: Five-tier outcome attribution.
+# HEURISTIC_CAUSAL_ATTRIBUTION_PATHS = 0 — no token-overlap or temporal inference.
+def _determine_outcome_attribution(record: Dict[str, Any], evidence: Sequence[Dict[str, Any]]) -> str:
+    """Classify the evidence quality for economic value attribution.
+
+    Strictly evidence-gated: does NOT use temporal sequence as causality proxy.
+
+    DIRECTLY_ATTRIBUTABLE  — transaction itself IS the economic event (distributions, debt repayment),
+                             or source explicitly attributes a financial outcome to this allocation.
+    STRONGLY_SUPPORTED     — multiple convergent project/capacity evidence items confirm both
+                             execution and an explicit positive outcome signal in the record.
+    ASSOCIATED_NOT_ATTRIBUTABLE — execution confirmed by evidence, but financial outcome attribution
+                             to this specific allocation is not explicit in any source.
+    NO_OUTCOME_EVIDENCE    — deployment visible but no execution or downstream evidence available.
+    NEGATIVE_OUTCOME       — explicit evidence of delay, abandonment, or value destruction.
+    """
+    category = str(record.get("allocation_category") or "")
+    outcome_status = str(record.get("outcome_status") or "")
+    current_status = str(record.get("current_status") or "")
+    execution_state = str(record.get("execution_state") or "")
+
+    # Negative: explicit failure / abandonment in record or evidence
+    if outcome_status == "negative_outcome" or current_status in {"abandoned", "superseded"}:
+        return "NEGATIVE_OUTCOME"
+
+    # Directly attributable: the cash transaction itself IS the economic event.
+    # No causal inference required — distribution/repayment is self-evidencing.
+    if category in _DIRECTLY_ATTRIBUTABLE_CATEGORIES:
+        return "DIRECTLY_ATTRIBUTABLE"
+
+    # Strongly supported: multiple explicit project/capacity evidence items AND execution is confirmed.
+    # This is still NOT a claim of revenue/earnings attribution — it claims visible operating proof.
+    specific = [e for e in evidence if e.get("kind") in {"project", "capacity"}]
+    if execution_state == "OPERATIONAL" and len(specific) >= 2:
+        return "STRONGLY_SUPPORTED"
+
+    # Associated but not attributable: execution trace confirmed, but financial outcome cannot be
+    # cleanly attributed to this specific allocation without an explicit source statement.
+    if specific or execution_state in {"OPERATIONAL", "IN_PROGRESS"}:
+        return "ASSOCIATED_NOT_ATTRIBUTABLE"
+
+    # No outcome evidence: deployment is recorded but no downstream execution or outcome trace.
+    return "NO_OUTCOME_EVIDENCE"
+
+
 def _causal_attribution_states(record: Dict[str, Any], evidence: Sequence[Dict[str, Any]]) -> Dict[str, str]:
     """Compute canonical semantic state fields for each causal layer.
 
@@ -924,9 +978,9 @@ def _causal_attribution_states(record: Dict[str, Any], evidence: Sequence[Dict[s
         operating_outcome_state = "NO_VERIFIED_OUTCOME"
     elif execution_state == "OPERATIONAL" and category in _DEPLOYMENT_CATEGORIES:
         operating_outcome_state = "CAPACITY_ADDED"
-    elif execution_state == "OPERATIONAL" and category in {"acquisition", "acquisition_integration"}:
+    elif execution_state == "OPERATIONAL" and category in {"acquisition", "acquisition_integration"} and note_text.strip() == "integrated":
         operating_outcome_state = "ACQUIRED_BUSINESS_INTEGRATED"
-    elif has_project_evidence:
+    elif has_project_evidence and note_text.strip() in {"materially_utilized", "partially_utilized", "underutilized"}:
         operating_outcome_state = "UTILIZATION_VISIBLE"
     else:
         operating_outcome_state = "UNABLE_TO_VERIFY"
@@ -969,6 +1023,8 @@ def _causal_attribution_states(record: Dict[str, Any], evidence: Sequence[Dict[s
     else:
         causal_attribution_confidence = "UNKNOWN"
 
+    outcome_attribution = _determine_outcome_attribution(record, evidence)
+
     return {
         "deployment_state": deployment_state,
         "execution_state": execution_state,
@@ -977,6 +1033,7 @@ def _causal_attribution_states(record: Dict[str, Any], evidence: Sequence[Dict[s
         "per_share_consequence_state": per_share_consequence_state,
         "value_creation_classification": value_creation_classification,
         "causal_attribution_confidence": causal_attribution_confidence,
+        "outcome_attribution": outcome_attribution,
     }
 
 
@@ -990,6 +1047,7 @@ def _validate_semantic_states(record: Dict[str, Any]) -> List[str]:
     vcc = record.get("value_creation_classification", "")
     pss = record.get("per_share_consequence_state", "")
     cac = record.get("causal_attribution_confidence", "")
+    oa = record.get("outcome_attribution", "")
     evidence = record.get("return_evidence") or []
     has_specific = any(e.get("kind") in {"project", "capacity"} for e in evidence)
 
@@ -1007,6 +1065,15 @@ def _validate_semantic_states(record: Dict[str, Any]) -> List[str]:
         violations.append("REVENUE_CONTRIBUTION for acquisition requires explicit attribution evidence; chronological overlap is insufficient")
     if eos == "ACQUIRED_BUSINESS_INTEGRATED" and not has_specific:
         violations.append("ACQUIRED_BUSINESS_INTEGRATED requires project/capacity evidence of integration")
+    # ENG-122: outcome_attribution contract
+    if oa not in OUTCOME_ATTRIBUTION_LEVELS:
+        violations.append(f"outcome_attribution={oa!r} is not a valid OUTCOME_ATTRIBUTION_LEVEL")
+    if oa == "STRONGLY_SUPPORTED" and not has_specific:
+        violations.append("outcome_attribution=STRONGLY_SUPPORTED requires project/capacity evidence")
+    if oa == "DIRECTLY_ATTRIBUTABLE" and cat not in _DIRECTLY_ATTRIBUTABLE_CATEGORIES:
+        violations.append(f"DIRECTLY_ATTRIBUTABLE requires a distribution or repayment category; got {cat!r}")
+    if oa == "ASSOCIATED_NOT_ATTRIBUTABLE" and cat in _DIRECTLY_ATTRIBUTABLE_CATEGORIES:
+        violations.append(f"ASSOCIATED_NOT_ATTRIBUTABLE must not be assigned to distribution/repayment category {cat!r}")
     return violations
 
 
@@ -1730,6 +1797,7 @@ def _finalize_allocation_record(
         "per_share_consequence_state": record.get("per_share_consequence_state", "UNABLE_TO_ATTRIBUTE"),
         "value_creation_classification": record.get("value_creation_classification", "UNABLE_TO_VERIFY"),
         "causal_attribution_confidence": record.get("causal_attribution_confidence", "UNKNOWN"),
+        "outcome_attribution": record.get("outcome_attribution", "NO_OUTCOME_EVIDENCE"),
         "semantic_state_violations": record.get("semantic_state_violations", []),
         "return_evidence": list(record["return_evidence"]),
         "unresolved_questions": list(record["unresolved_questions"]),

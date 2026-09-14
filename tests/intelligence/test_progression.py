@@ -341,5 +341,5 @@ def test_management_commitments_remains_conservative_and_no_llm_call(tmp_path, m
     assert commitments["commitment_count"] == 1
     commitment = commitments["commitments"][0]
     assert commitment["status"] == "Unable To Verify"
-    assert commitment["progression"]["latest_status"] == "Unable To Verify"
-    assert commitment["progression"]["unresolved_questions"] == ["No later evidence confirmed the commitment."]
+    assert commitment["progression"]["current_state"] == "Unable To Verify"
+    assert commitment["progression"]["unresolved_questions"] == ["Canonical lifecycle status is owned by management_progression, not management_commitments."]

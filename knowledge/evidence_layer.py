@@ -711,6 +711,46 @@ def build_evidence_quality(item: Dict[str, Any], *, module_name: str) -> Dict[st
     }
 
 
+def _capacity_execution_evidence(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Validate extracted status against its source, not against the model label.
+
+    A named subject in parentheses is an explicit source identity, not a fuzzy
+    match. Multi-subject passages without a scoped excerpt remain unresolved.
+    This validates evidence only; Management Progression owns lifecycle.
+    """
+    source = _normalize_text(item.get("source_chunk"))
+    if not source:
+        return item.get("execution_evidence_validation")
+    label = _normalize_text(item.get("capacity_type") or item.get("value"))
+    identities = [label] + re.findall(r"\(([^()]+)\)", label)
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", source) if s.strip()]
+    scoped = [s for s in sentences if any(
+        identity and re.search(r"(?<!\w)" + re.escape(identity) + r"(?!\w)", s, re.I)
+        for identity in identities
+    )]
+    if not scoped and len(sentences) == 1:
+        scoped = sentences
+    excerpt = " ".join(scoped)
+    pending = bool(re.search(
+        r"\b(?:agreement to (?:acquire|purchase)|(?:closing|closure) (?:is )?pending|"
+        r"subject to (?:closing|regulatory|approval)|awaiting (?:closure|approval)|"
+        r"signed (?:an? |the )?agreement|integration planning|"
+        r"(?:expected|planned|scheduled) to (?:become|be) operational)\b", excerpt, re.I
+    ))
+    negated = bool(re.search(r"\b(?:not|not yet|never) (?:been )?(?:operational|commissioned|completed|integrated)\b", excerpt, re.I))
+    status = "announced" if pending else "unable_to_verify" if negated else _capacity_status_from_text(excerpt)
+    return {
+        "source_status": item.get("status"),
+        "supported_status": status,
+        "source_excerpt": excerpt,
+        "source_entity": label,
+        "source_item_id": item.get("item_id"),
+        "page": item.get("page"),
+        "evidence_ids": list(item.get("evidence_ids") or []),
+        "reason": "pending_execution_not_completion" if pending else "negated_execution" if negated else "source_scoped_status" if excerpt else "unresolved_source_subject",
+    }
+
+
 def infer_generic_fields(item: Dict[str, Any], *, module_name: str) -> Dict[str, Any]:
     profile = get_module_profile(module_name)
     inferred = deepcopy(item)
@@ -725,6 +765,7 @@ def infer_generic_fields(item: Dict[str, Any], *, module_name: str) -> Dict[str,
     if "status" not in inferred or inferred.get("status") is None:
         inferred["status"] = ""
     if module_name == "capacity_expansions":
+        source_validation = _capacity_execution_evidence(inferred)
         status_sources = [
             inferred.get("status"),
             inferred.get("source_chunk"),
@@ -742,6 +783,9 @@ def infer_generic_fields(item: Dict[str, Any], *, module_name: str) -> Dict[str,
         derived_status = _capacity_status_from_text(status_text)
         if derived_status != "unable_to_verify" or not _normalize_text(inferred.get("status")):
             inferred["status"] = derived_status
+        if source_validation:
+            inferred["execution_evidence_validation"] = source_validation
+            inferred["status"] = source_validation["supported_status"]
     if "actor" not in inferred or inferred.get("actor") is None:
         inferred["actor"] = classify_actor_type(" ".join(_normalize_text(value) for value in inferred.values() if isinstance(value, str)))
     if "time_reference" not in inferred or inferred.get("time_reference") is None:

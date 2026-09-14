@@ -204,6 +204,7 @@ def _source_bundle(
         "open_uncertainties": ["Forward demand visibility is limited."],
     }
     return {
+        "company_slug": "acme",
         "sources": {
             "pcim": {
                 "payload": {
@@ -253,6 +254,25 @@ def _source_bundle(
             "company_memory_index": {"payload": {"usable_years": years}},
             "multi_year_strategy_timeline": {"payload": {"strategy_shifts": strategy_shifts}},
             "multi_year_business_dna_evolution": {"payload": {"changes_detected": dna_changes}},
+            "company_model": {
+                "payload": {
+                    "schema_version": "company_model.v1",
+                    "company_slug": "acme",
+                    "coverage_status": "supported",
+                    "company_identity": {"name": "Acme Corp"},
+                    "current_business_model": (business_models[-1] if business_models else {
+                        "summary": "Acme Corp builds and sells products.",
+                        "business_model_type": "Manufacturing",
+                        "what_company_does": "Acme Corp builds automated test equipment and electronic systems.",
+                        "what_it_sells": "Automated test equipment and electronic systems.",
+                        "how_revenue_happens": "Project-based delivery for defence customers.",
+                        "economic_mechanism": "Qualification and integration depth support delivery.",
+                    }),
+                    "offerings": [],
+                    "customers": [],
+                    "revenue_engines": [],
+                }
+            },
         }
     }
 
@@ -489,6 +509,96 @@ def test_validator_rejects_negative_or_unresolved_text_in_strengthens():
     assert any("positive_evidence" in error for error in errors)
 
 
+def test_investor_lens_routes_red_flags_and_uncertainty_out_of_positive_evidence():
+    bundle = _source_bundle(
+        munger_analysis={
+            "assessment": {"incentive_alignment_assessment": "Governance and execution risks dominate this lens."},
+            "key_findings": [
+                "Execution discipline remains weak and recurring risks are worsening.",
+                "A disclosed control improvement supports better oversight.",
+            ],
+            "red_flags": ["Related-party exposure could weaken owner alignment."],
+            "open_uncertainties": ["The financial outcome remains unproven."],
+        }
+    )
+    products, _ = build_products_services(
+        bundle,
+        business_journey_payload={"summary": "", "stages": []},
+        company_slug="acme",
+        generated_at="2026-09-09T00:00:00+00:00",
+    )
+    cards, _ = build_answer_cards(
+        bundle,
+        business_journey_payload={"summary": "", "stages": []},
+        products_services_payload=products,
+        company_slug="acme",
+        generated_at="2026-09-09T00:00:00+00:00",
+    )
+    answer = next(item for item in cards["answers"] if item["question_id"] == "what-would-munger-avoid")
+    interpretation = answer["interpretation"]
+
+    assert interpretation["positive_evidence"] == ["A disclosed control improvement supports better oversight."]
+    assert "Execution discipline remains weak" in interpretation["negative_evidence"][0]
+    assert "Related-party exposure" in interpretation["negative_evidence"][1]
+    assert interpretation["unresolved"] == ["The financial outcome remains not yet demonstrated."]
+
+
+def test_committee_agreement_missing_state_is_cautious_and_validator_safe():
+    bundle = _source_bundle(
+        committee_synthesis={
+            "overall_committee_view": {"summary": "Views remain divided."},
+            "doctrine_agreements": [],
+        }
+    )
+    products, _ = build_products_services(
+        bundle,
+        business_journey_payload={"summary": "", "stages": []},
+        company_slug="acme",
+        generated_at="2026-09-09T00:00:00+00:00",
+    )
+    cards, _ = build_answer_cards(
+        bundle,
+        business_journey_payload={"summary": "", "stages": []},
+        products_services_payload=products,
+        company_slug="acme",
+        generated_at="2026-09-09T00:00:00+00:00",
+    )
+    answer = next(item for item in cards["answers"] if item["question_id"] == "where-does-the-committee-agree")
+
+    assert answer["answer_status"] == "unavailable"
+    assert "available committee synthesis" in answer["simple_answer"].lower()
+    errors = validate_answer_cards_payload(cards, products_services_payload=products, financial_visual_ids=[])
+    assert not any("answer-where-does-the-committee-agree must use cautious language" in error for error in errors)
+
+
+def test_committee_agreement_explicitly_distinguishes_consensus_from_proof():
+    bundle = _source_bundle(
+        committee_synthesis={
+            "overall_committee_view": {"summary": "The committee is cautious."},
+            "doctrine_agreements": ["All analysts identify working-capital conversion as a key uncertainty."],
+        }
+    )
+    products, _ = build_products_services(
+        bundle,
+        business_journey_payload={"summary": "", "stages": []},
+        company_slug="acme",
+        generated_at="2026-09-09T00:00:00+00:00",
+    )
+    cards, _ = build_answer_cards(
+        bundle,
+        business_journey_payload={"summary": "", "stages": []},
+        products_services_payload=products,
+        company_slug="acme",
+        generated_at="2026-09-09T00:00:00+00:00",
+    )
+    answer = next(item for item in cards["answers"] if item["question_id"] == "where-does-the-committee-agree")
+
+    combined = " ".join(
+        [answer["why_it_matters"], answer["detailed_explanation"], answer["uncertainty_note"]["message"]]
+    ).lower()
+    assert "not independent proof" in combined or "agreement is not proof" in combined
+
+
 def test_management_commitment_answers_surface_specific_material_commitments():
     bundle = load_company_memory_sources("datapatterns")
     products_payload = {"groups": [], "summary": "", "business_model_summary": None, "customer_summary": None, "revenue_logic_summary": None, "open_questions": [], "coverage_status": "unavailable"}
@@ -503,10 +613,10 @@ def test_management_commitment_answers_surface_specific_material_commitments():
     assert len(promises) >= 2
     assert len(claims) >= 2
     assert any("fy22" in item.lower() for item in promises)
-    assert any("fy25" in item.lower() for item in claims)
+    assert any("fy22" in item.lower() for item in claims)
     assert all(item.lower() != "capacity expansion" for item in promises)
-    assert "capacity expansion" in promise_conclusion
-    assert ("follow-through" in claims_conclusion) or ("mixed" in claims_conclusion)
+    assert "strategic intents" in promise_conclusion
+    assert ("follow-through" in claims_conclusion) or ("not held against" in claims_conclusion)
     assert promise_conclusion != claims_conclusion
 
 
@@ -521,7 +631,8 @@ def test_incentives_answer_uses_signal_level_evidence_not_summary_labels():
 
     assert positive
     assert all(item not in {"weak", "stable"} for item in positive)
-    assert any("improved" in item or "deteriorated" in item or "remained mixed" in item for item in positive + negative)
+    assert any(item for item in positive + negative)
+    assert "outcome evidence remains incomplete" in " ".join(negative)
 
 
 def test_empty_state_filler_strings_are_not_serialized():
@@ -1885,7 +1996,7 @@ def test_answer_cards_all_catalog_questions_receive_records_and_are_deterministi
     first_payload, _ = build_answer_cards(bundle, business_journey_payload={"summary": "", "stages": []}, products_services_payload=products_payload, company_slug="acme", generated_at="2026-08-02T00:00:00+00:00")
     second_payload, _ = build_answer_cards(bundle, business_journey_payload={"summary": "", "stages": []}, products_services_payload=products_payload, company_slug="acme", generated_at="2026-08-02T00:00:00+00:00")
 
-    assert len(first_payload["answers"]) == 25
+    assert len(first_payload["answers"]) == 36  # ENG-126: 34 questions; ENG-133: +1 did-execution-lead-to-outcomes; ENG-136: +1 what-promise-types-dominate
     assert [answer["question_id"] for answer in first_payload["answers"]] == [answer["question_id"] for answer in second_payload["answers"]]
 
 

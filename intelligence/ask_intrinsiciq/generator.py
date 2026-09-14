@@ -151,7 +151,9 @@ def _build_company_identity(company_slug: str, source_bundle: Dict[str, Any]) ->
     company_model = ((source_bundle.get("sources") or {}).get("company_model") or {}).get("payload") or {}
     identity = company_model.get("company_identity") if isinstance(company_model.get("company_identity"), dict) else {}
     current_model = company_model.get("current_business_model") if isinstance(company_model.get("current_business_model"), dict) else {}
-    company_name = str(identity.get("name") or company_slug.replace("-", " ").title()).strip()
+    pcim_payload = ((source_bundle.get("sources") or {}).get("pcim") or {}).get("payload") or {}
+    pcim_company_name = str(pcim_payload.get("company") or "").strip()
+    company_name = str(identity.get("name") or pcim_company_name or company_slug.replace("-", " ").title()).strip()
     industry = _first_nonempty(current_model.get("business_model_type"), "")
     description = _first_nonempty(
         current_model.get("what_company_does"),
@@ -218,8 +220,13 @@ def _extract_reporting_periods(source_bundle: Dict[str, Any]) -> List[str]:
         return sorted({period for period in periods if period})
     truth_pack = ((source_bundle.get("sources") or {}).get("financial_truth_pack") or {}).get("payload") or {}
     covered = truth_pack.get("years_covered") or []
-    if isinstance(covered, list):
+    if isinstance(covered, list) and covered:
         return [str(year) for year in covered if str(year).strip()]
+    # Fall back to PCIM available_years
+    pcim = ((source_bundle.get("sources") or {}).get("pcim") or {}).get("payload") or {}
+    pcim_years = pcim.get("available_years") or []
+    if isinstance(pcim_years, list):
+        return [str(y) for y in pcim_years if str(y).strip()]
     return []
 
 

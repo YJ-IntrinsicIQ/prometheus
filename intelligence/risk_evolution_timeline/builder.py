@@ -85,6 +85,9 @@ _MATERIAL_TERMS = (
     "execution",
     "delivery",
     "governance",
+    "foreign exchange",
+    "currency",
+    "fx exposure",
 )
 
 _MITIGATION_STARTED_TERMS = (
@@ -236,6 +239,27 @@ def _contains_any(text: str, terms: Sequence[str]) -> bool:
     return any(term in lowered for term in terms)
 
 
+def _explicit_same_disclosure_response(text: Any) -> str:
+    """Return a response only when the risk disclosure itself links it.
+
+    This deliberately excludes nearby initiatives and generic risk-management
+    prose: without a shared identity they are not authority for a risk-specific
+    management response.
+    """
+    value = " ".join(str(text or "").split()).strip()
+    if not value:
+        return ""
+    patterns = (
+        r"\b(?:company|management)\s+seeks?\s+to\s+(?:limit|reduce|mitigate|manage)\b.{0,120}?\bthrough\s+([^.;)]+)",
+        r"\b(?:risk|exposure)\s+is\s+(?:limited|reduced|mitigated|managed)\s+(?:by|through)\s+([^.;)]+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, value, flags=re.IGNORECASE)
+        if match:
+            return _short(match.group(0), 220)
+    return ""
+
+
 def _evidence_ids(value: Any) -> List[str]:
     ids: List[str] = []
     if isinstance(value, dict):
@@ -280,6 +304,7 @@ def normalize_risk_theme(value: Any, description: Any = "") -> Tuple[str, str]:
         (("customer concentration", "revenue concentration", "churn", "customer experience"), "customer concentration / retention", "customer"),
         (("acquisition", "integration", "contingent liabilit", "impairment", "patent dispute"), "acquisition integration", "acquisition_integration"),
         (("cyber", "data protection", "privacy", "security breach"), "cyber / data-protection", "cyber_operational"),
+        (("foreign exchange", "currency risk", "currency fluctuation", "fx exposure"), "foreign-exchange risk", "currency"),
         (("supply", "supplier", "raw material", "vendor", "procurement"), "supply-chain disruption", "supply_chain"),
         (("technology", "technical debt", "obsolescence", "disruption"), "technology disruption", "technology"),
         (("execution", "project", "delivery", "deadline", "implementation"), "execution and delivery", "execution"),
@@ -682,11 +707,34 @@ def _build_theme_records(sources: Dict[str, Any]) -> List[Dict[str, Any]]:
                 severity_delta=delta,
             )
 
+        # A response stated inside the same risk disclosure has exact risk
+        # identity. Preserve it as acknowledged/planned evidence; wording such
+        # as "seeks to" does not establish execution or effectiveness.
+        same_disclosure_responses: List[Dict[str, Any]] = []
+        for event in timeline:
+            response = _explicit_same_disclosure_response(event.get("evidence"))
+            if not response:
+                continue
+            same_disclosure_responses.append(
+                {
+                    "period": event.get("period"),
+                    "event_type": "mitigation_started",
+                    "evidence": response,
+                    "management_response": response,
+                    "financial_or_operating_effect": "",
+                    "evidence_ids": list(event.get("evidence_ids") or []),
+                    "source_artifact": event.get("source_artifact"),
+                    "source_item_id": event.get("source_item_id"),
+                    "response_identity_basis": "same_risk_disclosure",
+                }
+            )
+
         linked_mitigations = [
             link["event"]
             for link in mitigation_links
             if link["theme"] == theme or link["risk_type"] == risk_type
         ]
+        timeline.extend(same_disclosure_responses)
         timeline.extend(linked_mitigations)
         timeline = sorted(timeline, key=lambda e: (_period_sort_key(e.get("period")), str(e.get("event_type") or "")))
         resolution_periods = {

@@ -37,6 +37,8 @@
     "multi_year_financial_inputs",
     "capital_allocation_inputs",
     "management_quality_inputs",
+    "management_execution_inputs",
+    "economic_attribution_inputs",
     "governance_and_incentive_inputs",
     "multi_year_inputs",
     "evidence_map",

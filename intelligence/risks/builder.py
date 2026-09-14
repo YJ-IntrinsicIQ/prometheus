@@ -20,6 +20,9 @@ from .contracts import (
     RiskProgressionAdapter,
     RISK_CATEGORIES,
     RISK_STATUSES,
+    RISK_CONSEQUENCE_STATUSES,
+    MANAGEMENT_RESPONSE_STATUSES,
+    EFFECTIVENESS_STATUSES,
 )
 from .manifest import build_risk_manifest
 from .materiality import assess_materiality
@@ -346,8 +349,154 @@ def _enrich_risks(
     return enriched
 
 
+def _load_gold_risk_attribution(company_root: Path) -> Dict[str, Dict[str, Any]]:
+    """Load gold risk_evolution_timeline and index by evo_canonical_id for consequence/response lookup.
+
+    Returns {evo_canonical_id: theme_record} — used to populate ENG-125 accountability chain.
+    Gracefully returns empty dict if the gold timeline doesn't exist yet.
+    """
+    gold_path = company_root / "company_memory" / "gold" / "risk_evolution_timeline.json"
+    if not gold_path.exists():
+        return {}
+    try:
+        data = json.loads(gold_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    index: Dict[str, Dict[str, Any]] = {}
+    for theme in data.get("risk_themes") or []:
+        # Index by both the canonical slug form and the theme_id
+        theme_slug = "risk_" + str(theme.get("theme") or "").lower().replace(" ", "_").replace("-", "_")
+        index[theme_slug] = theme
+        tid = str(theme.get("risk_theme_id") or "")
+        if tid:
+            index[tid] = theme
+        # The multi-year evolution record is the canonical identity owner used
+        # by Risk Registry.  Gold preserves that exact id on its source events;
+        # index it directly rather than attempting a theme-name/fuzzy join.
+        for event in theme.get("timeline") or []:
+            if not isinstance(event, dict):
+                continue
+            source_item_id = str(event.get("source_item_id") or "").strip()
+            if source_item_id.startswith("risk_"):
+                index[source_item_id] = theme
+    return index
+
+
+def _map_gold_to_accountability(theme: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """Map gold theme record → ENG-125 consequence/response/effectiveness states.
+
+    Each link in the chain is independently evidenced. When evidence is absent,
+    the correct state is preserved (NO_CONSEQUENCE_EVIDENCE, NO_RESPONSE_DISCLOSED, etc.)
+    rather than inferring from temporal proximity or management assertions.
+    """
+    if not theme:
+        return {
+            "consequence_status": "NO_CONSEQUENCE_EVIDENCE",
+            "management_response_status": "NO_RESPONSE_DISCLOSED",
+            "response_execution_status": "EXECUTION_UNKNOWN",
+            "effectiveness_status": "EFFECTIVENESS_UNKNOWN",
+        }
+
+    mitigation_status = str(theme.get("mitigation_status") or "").lower()
+    economic_status = str(theme.get("economic_impact_status") or "").upper()
+
+    # --- Consequence ---
+    if economic_status in ("CONFIRMED", "PROVEN"):
+        consequence_status = "DIRECT_CONSEQUENCE"
+    elif economic_status in ("PARTIALLY_CONFIRMED", "PROBABLE", "PARTIAL"):
+        consequence_status = "STRONGLY_ASSOCIATED_CONSEQUENCE"
+    else:
+        # UNPROVEN or missing — no consequence established
+        consequence_status = "NO_CONSEQUENCE_EVIDENCE"
+
+    # Extract any explicit financial/operating effect text from timeline events
+    consequence_text: Optional[str] = None
+    for event in (theme.get("timeline") or []):
+        effect = str(event.get("financial_or_operating_effect") or "").strip()
+        if effect:
+            consequence_text = effect
+            break
+
+    # --- Management response ---
+    # Gold field management_response is empty for all current Sun Pharma risks.
+    # mitigation_status in gold: not_evidenced / started / completed_outcome_unproven / resolved
+    # We DO check if any timeline event has a non-empty management_response text.
+    explicit_response_text: Optional[str] = None
+    for event in (theme.get("timeline") or []):
+        resp = str(event.get("management_response") or "").strip()
+        if resp:
+            explicit_response_text = resp
+            break
+
+    if explicit_response_text:
+        management_response_status = "RESPONSE_ACKNOWLEDGED"
+        management_response_text: Optional[str] = explicit_response_text
+    elif mitigation_status in ("started",):
+        management_response_status = "RESPONSE_IN_PROGRESS"
+        management_response_text = None
+    elif mitigation_status in ("completed_outcome_unproven",):
+        management_response_status = "RESPONSE_EXECUTED"
+        management_response_text = None
+    elif mitigation_status in ("resolved",):
+        management_response_status = "RESPONSE_EXECUTED"
+        management_response_text = None
+    else:
+        # not_evidenced or missing
+        management_response_status = "NO_RESPONSE_DISCLOSED"
+        management_response_text = None
+
+    # --- Execution ---
+    if management_response_status == "RESPONSE_EXECUTED":
+        response_execution_status = "EXECUTION_COMPLETED"
+    elif management_response_status == "RESPONSE_IN_PROGRESS":
+        response_execution_status = "EXECUTION_IN_PROGRESS"
+    elif management_response_status == "NO_RESPONSE_DISCLOSED":
+        response_execution_status = "EXECUTION_UNKNOWN"
+    else:
+        response_execution_status = "EXECUTION_UNKNOWN"
+
+    # --- Effectiveness ---
+    # Do NOT infer effectiveness from: temporal improvement, management acknowledgment alone,
+    # or mere execution of a response. Require evidence_of_effect.
+    has_effect_visible = any(
+        str(e.get("event_type") or "") == "mitigation_effect_visible"
+        for e in (theme.get("timeline") or [])
+    )
+    direction = str(theme.get("direction") or "").lower()
+    current_state = str(theme.get("current_state") or "").upper()
+
+    if has_effect_visible:
+        effectiveness_status = "PARTIALLY_EFFECTIVE"
+        effectiveness_reason = "Observable mitigation effect recorded in timeline"
+    elif management_response_status in ("NO_RESPONSE_DISCLOSED", "RESPONSE_UNKNOWN"):
+        effectiveness_status = "EFFECTIVENESS_UNKNOWN"
+        effectiveness_reason = "No management response identified; effectiveness cannot be assessed"
+    elif current_state in ("IMPROVING", "RESOLVED") and management_response_status == "RESPONSE_EXECUTED":
+        # Risk improved AND response was executed — but we MUST NOT infer causality
+        effectiveness_status = "ASSOCIATED_WITH_IMPROVEMENT_NOT_ATTRIBUTABLE"
+        effectiveness_reason = "Risk trajectory improved after response but causal attribution is not established"
+    else:
+        effectiveness_status = "EFFECTIVENESS_UNKNOWN"
+        effectiveness_reason = "Insufficient evidence to assess response effectiveness"
+
+    result: Dict[str, str] = {
+        "consequence_status": consequence_status,
+        "management_response_status": management_response_status,
+        "response_execution_status": response_execution_status,
+        "effectiveness_status": effectiveness_status,
+    }
+    if consequence_text:
+        result["consequence_text"] = consequence_text
+    if management_response_text:
+        result["management_response_text"] = management_response_text
+    if effectiveness_reason:
+        result["effectiveness_reason"] = effectiveness_reason
+    return result
+
+
 def _build_risk_definitions(
     risks: List[Dict[str, Any]],
+    gold_attribution: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> List[RiskDefinition]:
     """Build canonical RiskDefinition objects."""
     definitions = []
@@ -435,6 +584,16 @@ def _build_risk_definitions(
                 )
             )
 
+        # ENG-125: look up accountability chain from gold timeline
+        _gold_theme: Optional[Dict[str, Any]] = None
+        if gold_attribution and evo_canonical_id:
+            # Try canonical id directly, then slug variant
+            _gold_theme = (
+                gold_attribution.get(evo_canonical_id)
+                or gold_attribution.get(str(evo_canonical_id).replace("risk_", "", 1).replace("_", " ").title())
+            )
+        _attribution = _map_gold_to_accountability(_gold_theme)
+
         definition = RiskDefinition(
             risk_id=risk.get("risk_id", f"risk_{len(definitions)}"),
             risk_name=risk_name,
@@ -480,6 +639,14 @@ def _build_risk_definitions(
             evo_trajectory=evo_trajectory,
             evo_severity_by_year=risk.get("evo_severity_by_year") or {},
             evo_latest_severity=risk.get("evo_latest_severity"),
+            # ENG-125 accountability chain
+            consequence_status=_attribution.get("consequence_status", "NO_CONSEQUENCE_EVIDENCE"),
+            consequence_text=_attribution.get("consequence_text"),
+            management_response_status=_attribution.get("management_response_status", "NO_RESPONSE_DISCLOSED"),
+            management_response_text=_attribution.get("management_response_text"),
+            response_execution_status=_attribution.get("response_execution_status", "EXECUTION_UNKNOWN"),
+            effectiveness_status=_attribution.get("effectiveness_status", "EFFECTIVENESS_UNKNOWN"),
+            effectiveness_reason=_attribution.get("effectiveness_reason"),
         )
         
         definitions.append(definition)
@@ -654,8 +821,11 @@ def build_risk_evolution(
     # Enrich
     enriched_risks = _enrich_risks(deduplicated_risks, company_root)
     
+    # Load gold attribution for ENG-125 consequence/response chain
+    gold_attribution = _load_gold_risk_attribution(company_root)
+
     # Build definitions
-    definitions = _build_risk_definitions(enriched_risks)
+    definitions = _build_risk_definitions(enriched_risks, gold_attribution=gold_attribution)
     
     # Build timelines and assessments
     timelines, assessments = _build_risk_timelines(definitions)

@@ -48,6 +48,43 @@ FINANCIAL_LINK_STATUSES = frozenset(
     {FINANCIAL_LINK_CONFIRMED, FINANCIAL_LINK_NOT_YET_VISIBLE, FINANCIAL_LINK_UNPROVEN}
 )
 
+EXECUTION_STATES = frozenset(
+    {
+        "ANNOUNCED",
+        "ACTION_STARTED",
+        "PARTIAL_EXECUTION",
+        "ACTION_COMPLETED",
+        "OPERATIONAL",
+        "FAILED_OR_ABANDONED",
+        "UNKNOWN",
+    }
+)
+
+OUTCOME_STATES = frozenset(
+    {
+        "OUTCOME_OBSERVED",
+        "PARTIAL_OUTCOME",
+        "OUTCOME_NOT_YET_OBSERVED",
+        "OUTCOME_NOT_DISCLOSED",
+        "NEGATIVE_OUTCOME",
+        "OUTCOME_UNKNOWN",
+    }
+)
+
+OUTCOME_ATTRIBUTION_STRENGTHS = frozenset(
+    {
+        "DIRECTLY_ATTRIBUTABLE",
+        "STRONGLY_SUPPORTED",
+        "ASSOCIATED_NOT_ATTRIBUTABLE",
+        "NO_OUTCOME_EVIDENCE",
+        "NEGATIVE_OUTCOME",
+    }
+)
+
+CREDIBILITY_EVIDENCE_STATES = frozenset(
+    {"PROVEN", "PARTIALLY_PROVEN", "UNPROVEN", "CONTRADICTED", "INSUFFICIENT_EVIDENCE"}
+)
+
 # ---------------------------------------------------------------------------
 # Metric keyword map
 # Canonical metric_id → tuple of lowercased keywords that mention it in text.
@@ -290,6 +327,250 @@ def build_synthesis_chain(
     }
 
 
+def build_execution_outcome_summary(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Build the portfolio execution/outcome view from canonical MP chains.
+
+    This is an aggregation of Management Progression truth, not another lifecycle
+    classifier.  It never links different initiatives and never upgrades a chain
+    from temporal sequence alone.
+    """
+    records = [_execution_outcome_record(item) for item in items if isinstance(item, dict)]
+    records = [record for record in records if record]
+
+    execution_counts = {state: 0 for state in sorted(EXECUTION_STATES)}
+    outcome_counts = {state: 0 for state in sorted(OUTCOME_STATES)}
+    attribution_counts = {state: 0 for state in sorted(OUTCOME_ATTRIBUTION_STRENGTHS)}
+    for record in records:
+        execution_counts[record["execution_state"]] += 1
+        outcome_counts[record["outcome_state"]] += 1
+        attribution_counts[record["attribution_strength"]] += 1
+
+    eligible = [record for record in records if record["management_execution_eligible"]]
+    acted_records = [record for record in eligible if record["execution_state"] not in {"ANNOUNCED", "UNKNOWN"}]
+    completed_records = [record for record in acted_records if record["execution_state"] in {"ACTION_COMPLETED", "OPERATIONAL"}]
+    outcome_records = [record for record in completed_records if record["outcome_state"] in {"OUTCOME_OBSERVED", "NEGATIVE_OUTCOME"}]
+    attributable_records = [record for record in outcome_records if record["attribution_strength"] in {"DIRECTLY_ATTRIBUTABLE", "STRONGLY_SUPPORTED", "NEGATIVE_OUTCOME"}]
+    acted = len(acted_records)
+    completed = len(completed_records)
+    observed = len(outcome_records)
+    economically_attributed = len(attributable_records)
+    completed_without_outcome = sum(
+        1
+        for record in eligible
+        if record["execution_state"] in {"ACTION_COMPLETED", "OPERATIONAL"}
+        and record["outcome_state"]
+        in {"OUTCOME_NOT_YET_OBSERVED", "OUTCOME_NOT_DISCLOSED", "OUTCOME_UNKNOWN"}
+    )
+
+    credibility = _portfolio_credibility(eligible)
+    return {
+        "contract_version": "management_execution_outcomes.v1",
+        "records_considered": len(records),
+        "execution_counts": execution_counts,
+        "outcome_counts": outcome_counts,
+        "attribution_counts": attribution_counts,
+        "coverage": {
+            "action_observed": acted,
+            "management_execution_eligible": len(eligible),
+            "external_actor_events_excluded": len(records) - len(eligible),
+            "execution_completed_or_operational": completed,
+            "operating_outcome_observed": observed,
+            "economic_consequence_attributable": economically_attributed,
+            "completed_execution_outcome_unproven": completed_without_outcome,
+        },
+        "credibility": credibility,
+        "records": records,
+        "limitations": [
+            "Execution completion is not operating success or economic value creation.",
+            "Post-action financial movement is association only unless source evidence establishes attribution.",
+            "Strategic intent and aspiration remain outside the verifiable-commitment accountability denominator.",
+        ],
+    }
+
+
+def _execution_outcome_record(item: Dict[str, Any]) -> Dict[str, Any]:
+    chain = item.get("synthesis_chain") if isinstance(item.get("synthesis_chain"), dict) else {}
+    claim = chain.get("claim") if isinstance(chain.get("claim"), dict) else {}
+    action = chain.get("action") if isinstance(chain.get("action"), dict) else {}
+    outcome = chain.get("outcome") if isinstance(chain.get("outcome"), dict) else {}
+    financial = (
+        chain.get("financial_consequence")
+        if isinstance(chain.get("financial_consequence"), dict)
+        else {}
+    )
+    status = str(chain.get("chain_status") or "")
+    current = str(item.get("current_status") or "")
+    execution_state = _canonical_execution_state(status, current, action)
+    outcome_state = _canonical_outcome_state(status, outcome, execution_state)
+    attribution = _canonical_attribution_strength(status, outcome_state, financial)
+    evidence_ids = []
+    for node in (claim, action, outcome):
+        for evidence_id in node.get("evidence_ids") or []:
+            if evidence_id and evidence_id not in evidence_ids:
+                evidence_ids.append(str(evidence_id))
+    metrics = financial.get("metrics_observed") or []
+    per_share = [
+        metric
+        for metric in metrics
+        if str(metric.get("metric_id") or "").lower() in {"eps", "eps_basic", "eps_diluted", "book_value_per_share"}
+    ]
+    unresolved_gap = _execution_unresolved_gap(execution_state, outcome_state, attribution)
+    action_actor = action.get("action_actor") or action.get("actor") or "unknown"
+    return {
+        "initiative_id": str(item.get("item_id") or ""),
+        "identity_label": str(item.get("theme") or ""),
+        "stream_types": list(item.get("stream_types") or []),
+        "originating_statement": claim.get("text") or None,
+        "statement_period": claim.get("period") or None,
+        "action_observed": action.get("text") or None,
+        "action_period": action.get("period") or None,
+        "action_actor": action_actor,
+        "management_execution_eligible": not action or action_actor in {"management", "company"},
+        "execution_state": execution_state,
+        "execution_evidence_ids": list(action.get("evidence_ids") or []),
+        "operating_outcome": outcome.get("text") or None,
+        "outcome_period": outcome.get("period") or None,
+        "outcome_state": outcome_state,
+        "outcome_evidence_ids": list(outcome.get("evidence_ids") or []),
+        "financial_consequence": {
+            "link_status": financial.get("link_status") or FINANCIAL_LINK_NOT_YET_VISIBLE,
+            "metrics_observed": metrics,
+            "basis": financial.get("basis") or "",
+        },
+        "attribution_strength": attribution,
+        "per_share_consequence": {
+            "status": "ATTRIBUTABLE" if attribution == "DIRECTLY_ATTRIBUTABLE" and per_share else "UNPROVEN",
+            "metrics": per_share,
+        },
+        "credibility_evidence": _record_credibility(execution_state, outcome_state, attribution),
+        "unresolved_gap": unresolved_gap,
+        "investor_interpretation": (chain.get("investor_implication") or {}).get("conclusion") or "",
+        "evidence_ids": evidence_ids,
+    }
+
+
+def _canonical_execution_state(status: str, current: str, action: Dict[str, Any]) -> str:
+    if current in {"failed", "abandoned", "reversed"}:
+        return "FAILED_OR_ABANDONED"
+    if status == CHAIN_STATUS_PARTIAL_EXECUTION:
+        return "PARTIAL_EXECUTION"
+    if status == CHAIN_STATUS_ACTION_STARTED:
+        return "ACTION_STARTED"
+    if action.get("completed"):
+        text = str(action.get("text") or "").lower()
+        return "OPERATIONAL" if "operational" in text else "ACTION_COMPLETED"
+    if action:
+        return "ACTION_STARTED"
+    if status == CHAIN_STATUS_CLAIM_ONLY:
+        return "ANNOUNCED"
+    return "UNKNOWN"
+
+
+def _canonical_outcome_state(status: str, outcome: Dict[str, Any], execution_state: str) -> str:
+    if status == CHAIN_STATUS_OUTCOME_NEGATIVE or execution_state == "FAILED_OR_ABANDONED":
+        return "NEGATIVE_OUTCOME"
+    if status in {CHAIN_STATUS_OUTCOME_POSITIVE, CHAIN_STATUS_FINANCIAL_IMPACT_CONFIRMED}:
+        return "OUTCOME_OBSERVED"
+    if status == CHAIN_STATUS_FINANCIAL_LINK_UNPROVEN and outcome.get("direction") in {"positive", "negative", "mixed"}:
+        return "OUTCOME_OBSERVED" if outcome.get("direction") != "mixed" else "PARTIAL_OUTCOME"
+    if status in {CHAIN_STATUS_OUTCOME_MIXED, CHAIN_STATUS_EARLY_OPERATING_SIGNAL}:
+        return "PARTIAL_OUTCOME"
+    if outcome:
+        return "OUTCOME_UNKNOWN"
+    if execution_state in {"ACTION_STARTED", "PARTIAL_EXECUTION"}:
+        return "OUTCOME_NOT_YET_OBSERVED"
+    if execution_state in {"ACTION_COMPLETED", "OPERATIONAL"}:
+        return "OUTCOME_NOT_DISCLOSED"
+    return "OUTCOME_UNKNOWN"
+
+
+def _canonical_attribution_strength(
+    status: str, outcome_state: str, financial: Dict[str, Any]
+) -> str:
+    link_status = financial.get("link_status")
+    if outcome_state == "NEGATIVE_OUTCOME":
+        return "NEGATIVE_OUTCOME"
+    if status == CHAIN_STATUS_FINANCIAL_IMPACT_CONFIRMED and link_status == FINANCIAL_LINK_CONFIRMED:
+        return "DIRECTLY_ATTRIBUTABLE"
+    if outcome_state == "OUTCOME_OBSERVED" and link_status == FINANCIAL_LINK_CONFIRMED:
+        return "STRONGLY_SUPPORTED"
+    if outcome_state in {"OUTCOME_OBSERVED", "PARTIAL_OUTCOME"} or link_status == FINANCIAL_LINK_UNPROVEN:
+        return "ASSOCIATED_NOT_ATTRIBUTABLE"
+    return "NO_OUTCOME_EVIDENCE"
+
+
+def _record_credibility(execution_state: str, outcome_state: str, attribution: str) -> Dict[str, str]:
+    follow_through = (
+        "CONTRADICTED" if execution_state == "FAILED_OR_ABANDONED"
+        else "PROVEN" if execution_state in {"ACTION_COMPLETED", "OPERATIONAL"}
+        else "PARTIALLY_PROVEN" if execution_state in {"ACTION_STARTED", "PARTIAL_EXECUTION"}
+        else "UNPROVEN"
+    )
+    outcome_realization = (
+        "CONTRADICTED" if outcome_state == "NEGATIVE_OUTCOME"
+        else "PROVEN" if outcome_state == "OUTCOME_OBSERVED"
+        else "PARTIALLY_PROVEN" if outcome_state == "PARTIAL_OUTCOME"
+        else "UNPROVEN"
+    )
+    economic_proof = (
+        "PROVEN" if attribution == "DIRECTLY_ATTRIBUTABLE"
+        else "PARTIALLY_PROVEN" if attribution == "STRONGLY_SUPPORTED"
+        else "CONTRADICTED" if attribution == "NEGATIVE_OUTCOME"
+        else "UNPROVEN"
+    )
+    return {
+        "follow_through": follow_through,
+        "execution_completion": "PROVEN" if execution_state in {"ACTION_COMPLETED", "OPERATIONAL"} else "UNPROVEN",
+        "outcome_realization": outcome_realization,
+        "economic_proof": economic_proof,
+        "disclosure_quality": "PROVEN" if outcome_state in {"OUTCOME_OBSERVED", "NEGATIVE_OUTCOME"} else "INSUFFICIENT_EVIDENCE",
+    }
+
+
+def _execution_unresolved_gap(execution_state: str, outcome_state: str, attribution: str) -> str:
+    if execution_state == "ANNOUNCED":
+        return "No observable management/company action is linked to the statement."
+    if execution_state in {"ACTION_STARTED", "PARTIAL_EXECUTION"}:
+        return "Execution has not reached a defensible completed or operational state."
+    if outcome_state in {"OUTCOME_NOT_DISCLOSED", "OUTCOME_NOT_YET_OBSERVED", "OUTCOME_UNKNOWN"}:
+        return "Execution is visible, but a post-execution operating outcome is not established."
+    if attribution == "ASSOCIATED_NOT_ATTRIBUTABLE":
+        return "An outcome is visible, but its economic consequence is not attributable to the initiative."
+    if attribution == "NO_OUTCOME_EVIDENCE":
+        return "No attributable economic consequence is established."
+    return ""
+
+
+def _portfolio_credibility(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    acted = [r for r in records if r["execution_state"] not in {"ANNOUNCED", "UNKNOWN"}]
+    completed = [r for r in acted if r["execution_state"] in {"ACTION_COMPLETED", "OPERATIONAL"}]
+    outcomes = [r for r in completed if r["outcome_state"] in {"OUTCOME_OBSERVED", "NEGATIVE_OUTCOME"}]
+    attributable = [r for r in outcomes if r["attribution_strength"] in {"DIRECTLY_ATTRIBUTABLE", "STRONGLY_SUPPORTED", "NEGATIVE_OUTCOME"}]
+    if not records:
+        status = "INSUFFICIENT_EVIDENCE"
+    elif not acted:
+        status = "UNPROVEN"
+    elif any(r["execution_state"] == "FAILED_OR_ABANDONED" for r in records):
+        status = "PARTIALLY_PROVEN"
+    elif attributable and len(attributable) == len(completed):
+        status = "PROVEN"
+    else:
+        status = "PARTIALLY_PROVEN"
+    return {
+        "status": status,
+        "follow_through": "PROVEN" if completed else "PARTIALLY_PROVEN" if acted else "UNPROVEN",
+        "execution_completion": "PROVEN" if completed else "UNPROVEN",
+        "outcome_realization": "PROVEN" if outcomes else "UNPROVEN",
+        "economic_proof": "PROVEN" if attributable else "UNPROVEN",
+        "disclosure_quality": "PARTIALLY_PROVEN" if acted else "INSUFFICIENT_EVIDENCE",
+        "summary": (
+            f"Action is visible for {len(acted)} of {len(records)} tracked initiative(s); "
+            f"{len(completed)} reached completed or operational execution, {len(outcomes)} have an observed outcome, "
+            f"and {len(attributable)} have an attributable economic consequence."
+        ),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Stage extractors
 # ---------------------------------------------------------------------------
@@ -319,7 +600,8 @@ def _extract_action(events: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
             break
         if role in {"action", "milestone"} and action_ev is None:
             action_ev = ev
-            completed = ev.get("verification_status") == "verified" or _has_completion_evidence(text)
+            # Verification establishes occurrence, not completion of the action.
+            completed = _has_completion_evidence(text)
     if action_ev is None:
         return None
     return {
@@ -364,6 +646,7 @@ def _extract_outcome(events: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
             "actor": _actor_class(ev),
             "source_event_id": ev.get("event_id") or "",
             "evidence_ids": _ev_ids(ev),
+            "causal_evidence": ev.get("causal_evidence") or [],
         }
 
     # Secondary pass: action/milestone events whose operational_outcome field contains
@@ -387,6 +670,7 @@ def _extract_outcome(events: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
             "actor": _actor_class(ev),
             "source_event_id": ev.get("event_id") or "",
             "evidence_ids": _ev_ids(ev),
+            "causal_evidence": ev.get("causal_evidence") or [],
         }
 
     return None
@@ -462,15 +746,39 @@ def _determine_link_status(
     action_year: int,
     metric_series: Dict[str, List[Dict[str, Any]]],
 ) -> str:
-    # confirmed: only when outcome text explicitly states specific metric values —
-    # a numeric quantity AND a metric keyword, indicating management documented the link.
+    # A number next to a metric is observation, not attribution. Confirmation
+    # requires a source-bound bridge naming this exact action and outcome. The
+    # synthesizer consumes such evidence; it never manufactures it from prose.
     if outcome is not None and metrics_observed:
-        out_text = (outcome.get("text") or "").lower()
-        has_number = bool(re.search(r"\b\d[\d,]*\s*(?:crore|million|billion|%|percent|bps)\b", out_text))
-        if has_number:
-            for m in metrics_observed:
-                metric_kws = _METRIC_KEYWORDS.get(m["metric_id"], ())
-                if any(kw in out_text for kw in metric_kws):
+        observed = {m.get("metric_id") for m in metrics_observed}
+        references = set(outcome.get("evidence_ids") or [])
+        proofs = outcome.get("causal_evidence") or []
+        if isinstance(proofs, list):
+            for proof in proofs:
+                if not isinstance(proof, dict) or proof.get("contradicted") is not False:
+                    continue
+                if proof.get("kind") not in {"explicit_company_attribution", "disclosed_contribution", "deterministic_transaction_consequence"}:
+                    continue
+                if not action.get("source_event_id") or proof.get("action_event_id") != action["source_event_id"]:
+                    continue
+                if not outcome.get("source_event_id") or proof.get("outcome_event_id") != outcome["source_event_id"]:
+                    continue
+                ids = proof.get("evidence_ids")
+                if not isinstance(ids, list) or not ids or not set(ids).issubset(references):
+                    continue
+                if not str(proof.get("source_excerpt") or "").strip():
+                    continue
+                metric = proof.get("metric_id")
+                if metric not in observed or proof.get("period") != outcome.get("period"):
+                    continue
+                if not proof.get("basis") or proof.get("basis") == "unknown" or not proof.get("unit"):
+                    continue
+                points = metric_series.get(metric, [])
+                if any(
+                    pt.get("year") == proof["period"] and pt.get("basis") == proof["basis"]
+                    and pt.get("unit") == proof["unit"] and pt.get("value") is not None
+                    for pt in points
+                ):
                     return FINANCIAL_LINK_CONFIRMED
 
     # not_yet_visible: action year is at or beyond the last year with financial data

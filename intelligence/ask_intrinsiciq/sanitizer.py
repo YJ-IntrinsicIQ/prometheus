@@ -57,9 +57,17 @@ FORBIDDEN_PUBLIC_TERMS = {
     "allocation skill requires",
     "primary assessments",
     "conclusive capital-weighted ranking is not permitted",
+    "management_execution_outcomes",
+    "management_progression",
+    "from management_progression",
 }
 
 PUBLIC_REWRITES = {
+    "organic_capex": "organic capital investment",
+    "share_buyback": "share buyback",
+    "esop_dilution": "equity-plan dilution",
+    "ENG-125": "the management-response standard",
+    "eng-125": "the management-response standard",
     "company memory": "source set",
     "company-memory": "source set",
     "available evidence summary": "evidence summary",
@@ -130,6 +138,14 @@ PUBLIC_REWRITES = {
     "primary assessments": "available assessments",
     "conclusive capital-weighted ranking is not permitted": "a capital-weighted conclusion is not yet possible",
     "allocation skill requires attributable causal evidence": "attributing skill requires causal evidence",
+    "describe known amounts explicitly.": "",
+    "allocation(s)": "allocations",
+    "strongly_supported": "with strong execution evidence",
+    "negative_outcome": "with negative outcome signals",
+    "management_execution_outcomes": "execution history",
+    "management_progression": "management tracking",
+    "from management_progression": "",
+    "supplied evidence": "available evidence",
 }
 
 PUBLIC_EMPTY_FILLERS = {
@@ -149,6 +165,9 @@ def sanitize_public_text(value: str) -> str:
         if term in lowered:
             text = _replace_case_insensitive(text, term, replacement)
             lowered = text.lower()
+    text = re.sub(r"\bthe\s+the\b", "the", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+) of (\d+) ([a-z][a-z -]*)\brisk have\b", r"\1 of \2 \3risk has", text, flags=re.IGNORECASE)
+    text = re.sub(r"\brisk have\b", "risk has", text, flags=re.IGNORECASE)
     text = " ".join(text.split()).strip()
     if not text:
         return ""

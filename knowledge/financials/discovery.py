@@ -63,6 +63,12 @@ SPECIFIC_NOTE_PATTERNS: Dict[str, Tuple[str, ...]] = {
         "diluted earnings per share",
         "basic and diluted eps",
     ),
+    "segment_reporting_note": (
+        "segment reporting",
+        "operating segments",
+        "revenue from external customers by geographical",
+        "geographical information",
+    ),
     "dividend_note": (
         "dividend per share",
         "interim dividend",
@@ -286,13 +292,18 @@ def _category_candidates(text: str) -> List[Tuple[str, List[str], int]]:
         len([signal for signal in cash_flow_continuation_signals if signal.startswith("continuation:")]) >= 2
         and "numeric_density" in cash_flow_continuation_signals
     )
+    # ponytail: heading guard prevents shared P&L items (profit before tax,
+    # depreciation) from triggering CF continuation on a P&L page.
+    pl_heading_present = any(
+        p in lowered[:200] for p in PRIMARY_PATTERNS["primary_profit_and_loss_statement"]
+    )
     if (
         (
             cash_flow_structure_present
             and ("particulars" in lowered or "note" in lowered)
             and "period_columns" in common_signals
         )
-        or cash_flow_continuation_present
+        or (cash_flow_continuation_present and not pl_heading_present)
     ):
         if not any(pattern in lowered for pattern in AUDITOR_PATTERNS + ACCOUNTING_POLICY_PATTERNS):
             candidates.append(
@@ -1083,6 +1094,31 @@ def discover_financial_sections(*, company: str, year: str, chunk_path: Path) ->
                 signals=item_signals,
             )
         )
+        # A cleaned chunk may legitimately contain two adjacent numbered notes.
+        # Preserve the segment-note identity independently rather than allowing
+        # the higher-scoring first note (commonly EPS) to own every later row.
+        segment_hits = _contains_any(text, SPECIFIC_NOTE_PATTERNS["segment_reporting_note"])
+        segment_table_present = (
+            "revenue by geography" in text.lower()
+            and "year ended" in text.lower()
+            and len(re.findall(r"\b\d[\d,]*(?:\.\d+)?\b", text)) >= 8
+        )
+        if segment_hits and segment_table_present and category != "segment_reporting_note" and dedupe_key not in seen["segment_reporting_note"]:
+            seen["segment_reporting_note"].add(dedupe_key)
+            result.sections["segment_reporting_note"].append(
+                DiscoveredSectionItem(
+                    section_type="segment_reporting_note",
+                    source_artifact=chunk_path.name,
+                    page=page if isinstance(page, int) else None,
+                    chunk_id=chunk_id,
+                    text_excerpt=_truncate(text),
+                    confidence="high" if "segment reporting" in text.lower() else "medium",
+                    reasoning=_reasoning("segment_reporting_note", [f"heading:{hit}" for hit in segment_hits]),
+                    basis=basis,
+                    basis_confidence=basis_confidence,
+                    signals=[f"heading:{hit}" for hit in segment_hits] + basis_reasons,
+                )
+            )
 
     _add_primary_statement_continuations(
         result=result,

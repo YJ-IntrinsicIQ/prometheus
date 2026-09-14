@@ -1080,6 +1080,35 @@ def test_large_financial_truth_inputs_are_compacted_but_not_dropped(tmp_path, mo
     assert diagnostics["financial_truth_tokens"] <= panel_runner.DEFAULT_FINANCIAL_TRUTH_PACK_BUDGET_TOKENS
 
 
+def test_blocked_financial_warnings_are_not_exposed_to_analyst_prompt():
+    compact = panel_runner.compact_financial_truth_for_analyst(
+        {
+            "usable_current_metrics": [
+                {
+                    "metric_id": "reserves",
+                    "metric_name": "Reserves",
+                    "fiscal_year": "fy25",
+                    "value": 400.0,
+                    "basis": "consolidated",
+                }
+            ],
+            "financial_warnings_allowed_downstream": ["Trend comparison remains unavailable."],
+            "financial_warnings_blocked_downstream": [
+                {
+                    "original_warning": "reserves: previous-year data missing",
+                    "normalized_warning": "reserves: previous-year data missing",
+                }
+            ],
+        },
+        "lynch",
+        token_budget=900,
+    )
+
+    assert compact["blocked_warnings"] == []
+    assert "reserves: previous-year data missing" not in json.dumps(compact).lower()
+    assert compact["allowed_warnings"] == ["Trend comparison remains unavailable."]
+
+
 def test_prompt_budget_diagnostics_record_dropped_sections_and_emergency_mode(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("INVESTOR_PANEL_MAX_PROMPT_CHARS", "2000")
@@ -1096,7 +1125,8 @@ def test_prompt_budget_diagnostics_record_dropped_sections_and_emergency_mode(tm
 
     assert diagnostics["sections_requested"]
     assert diagnostics["included_sections"]
-    assert diagnostics["excluded_sections"] or diagnostics["sections_dropped_due_budget"]
+    assert diagnostics["required_sections_retained"]
+    assert diagnostics["required_context_conflict"] is False
     assert diagnostics["shrink_passes_applied"] >= 1
     assert "budget_status" in diagnostics
     assert "token_usage_by_budget_class" in diagnostics
@@ -1106,12 +1136,72 @@ def test_prompt_budget_diagnostics_record_dropped_sections_and_emergency_mode(tm
 def test_prompt_budget_defaults_use_new_token_architecture():
     limits = panel_runner._prompt_compaction_limits()
 
-    assert limits["total_prompt_budget_tokens"] == 9000
-    assert limits["hard_max_prompt_tokens"] == 10000
+    assert limits["total_prompt_budget_tokens"] == panel_runner.DEFAULT_TOTAL_PROMPT_BUDGET_TOKENS
+    assert limits["hard_max_prompt_tokens"] == panel_runner.DEFAULT_HARD_MAX_PROMPT_TOKENS
     assert limits["compact_input_pack_budget_tokens"] == 4200
     assert limits["financial_truth_pack_budget_tokens"] == 900
     assert limits["evidence_pack_budget_tokens"] == 500
     assert limits["doctrine_context_budget_tokens"] == 2200
+
+
+def test_doctrine_requested_sections_are_retained_before_eviction(monkeypatch):
+    monkeypatch.setenv("INVESTOR_PANEL_MAX_PROMPT_CHARS", "12000")
+    pcim = {
+        "company": "acme",
+        "business_understanding": {"summary": "A focused operating business."},
+        "management_execution_inputs": {
+            "available": True,
+            "eligible_records": 10,
+            "visible_action": 3,
+            "completed_or_operational": 1,
+            "observed_outcomes": 0,
+            "attributable_economic_consequences": 0,
+            "semantic_contracts": ["ACTION_COMPLETED is not operating success."],
+        },
+        "capital_allocation_inputs": {"summary": "Capital deployments remain outcome-limited."},
+        "risk_inputs": {"summary": "The principal risks are disclosed."},
+    }
+    compacted, _stats, _limits, _truncated, diagnostics = panel_runner._prepare_compact_prompt_pack(
+        pcim,
+        ["business_understanding", "management_execution_inputs", "capital_allocation_inputs", "risk_inputs"],
+        "buffett",
+    )
+
+    assert diagnostics["required_context_conflict"] is False
+    assert set(diagnostics["required_sections_retained"]) == {
+        "business_understanding",
+        "management_execution_inputs",
+        "capital_allocation_inputs",
+        "risk_inputs",
+    }
+    assert compacted["management_execution_inputs"]["eligible_records"] == 10
+
+
+def test_required_context_conflict_is_explicit(monkeypatch):
+    monkeypatch.setenv("INVESTOR_PANEL_COMPACT_INPUT_PACK_BUDGET_TOKENS", "1200")
+    monkeypatch.setattr(panel_runner, "_shrink_limits", lambda _limits: None)
+    monkeypatch.setattr(
+        panel_runner,
+        "_build_compact_pcim_view",
+        lambda *args, **kwargs: ({"oversized": "x" * 100000}, {}, True),
+    )
+    monkeypatch.setattr(
+        panel_runner,
+        "_minimal_required_section_projection",
+        lambda _value: {"oversized": "x" * 100000},
+    )
+    pcim = {
+        "company": "acme",
+        "business_understanding": {"summary": "A focused operating business."},
+        "management_execution_inputs": {"available": True, "eligible_records": 10},
+    }
+    _compacted, _stats, _limits, _truncated, diagnostics = panel_runner._prepare_compact_prompt_pack(
+        pcim,
+        ["business_understanding", "management_execution_inputs"],
+        "buffett",
+    )
+    assert diagnostics["required_context_conflict"] is True
+    assert diagnostics["required_sections_retained"] == []
 
 
 def test_panel_runner_never_accesses_raw_documents(tmp_path, monkeypatch):
@@ -3211,3 +3301,71 @@ def test_input_pack_policy_drops_source_artifact_fields():
     assert "source_artifacts" in _INVESTOR_PANEL_DROP_FIELDS, "source_artifacts must be in drop fields"
     assert "primary_artifact" in _INVESTOR_PANEL_DROP_FIELDS, "primary_artifact must be in drop fields"
     assert "source_artifact" not in _INVESTOR_PANEL_PREFERRED_KEYS, "source_artifact must NOT be in preferred keys"
+
+
+# ENG-129: Economic engine trajectory preservation tests
+
+def test_business_economics_inputs_requested_for_all_five_doctrines():
+    """Every doctrine must request business_economics_inputs — the NOT_REQUESTED failure mode."""
+    from intelligence.investor_panel.doctrine_registry import load_doctrine_registry
+    doctrines = load_doctrine_registry()
+    for d in doctrines:
+        assert "business_economics_inputs" in d["evidence_required_from_pcim"], (
+            f"{d['doctrine_id']}: business_economics_inputs missing from evidence_required_from_pcim; "
+            "economic engine trajectory will never reach this analyst"
+        )
+
+
+def test_business_economics_inputs_high_priority_for_fisher_munger_lynch():
+    """Fisher, Munger, Lynch must have business_economics_inputs in the top-half of their priority list."""
+    from intelligence.investor_panel.runner import DOCTRINE_SECTION_PRIORITIES
+    for doctrine_id in ("fisher", "munger", "lynch"):
+        priority = DOCTRINE_SECTION_PRIORITIES.get(doctrine_id, [])
+        assert "business_economics_inputs" in priority, (
+            f"{doctrine_id}: business_economics_inputs not in DOCTRINE_SECTION_PRIORITIES"
+        )
+        pos = priority.index("business_economics_inputs")
+        assert pos < len(priority) // 2 + 1, (
+            f"{doctrine_id}: business_economics_inputs at priority position {pos}/{len(priority)} — "
+            "too low; will be first evicted under compaction pressure"
+        )
+
+
+def test_compact_business_economics_preserves_trajectory_fields():
+    """_compact_business_economics_section must preserve trajectory, growth_momentum, scale_status."""
+    from intelligence.investor_panel.runner import _compact_business_economics_section
+    raw = {
+        "economic_engines": {
+            "coverage_status": "partial",
+            "canonical_owner": "economic_engines_builder",
+            "engines": [
+                {
+                    "engine_id": "us",
+                    "engine_name": "United States",
+                    "scale_status": "major",
+                    "growth_momentum": "decelerating",
+                    "mix_trajectory": "stable_share",
+                    "trajectory": "decelerating",
+                    "inflection": None,
+                    "relative_performance": None,
+                    "investor_interpretation": {
+                        "summary": "Major engine; decelerating; profitability unknown",
+                        "unknowns": ["profitability"],
+                    },
+                    "history": [
+                        {"reporting_period": "fy23", "revenue_share": 32.0, "growth_rate": 8.0, "profitability_status": "unknown"},
+                        {"reporting_period": "fy26", "revenue_share": 30.0, "growth_rate": -2.0, "profitability_status": "unknown"},
+                    ],
+                }
+            ],
+            "source_limitations": [],
+        },
+        "uncertainty_notes": ["profitability not disclosed"],
+    }
+    result = _compact_business_economics_section(raw)
+    engines = result["economic_engines"]["engines"]
+    assert len(engines) == 1
+    engine = engines[0]
+    assert engine["trajectory"] == "decelerating", "trajectory field must survive compaction"
+    assert engine["growth_momentum"] == "decelerating", "growth_momentum must survive compaction"
+    assert engine["scale_status"] == "major", "scale_status must survive compaction"

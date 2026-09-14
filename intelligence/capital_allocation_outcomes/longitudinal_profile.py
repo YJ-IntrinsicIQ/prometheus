@@ -140,10 +140,7 @@ def _amount_coverage(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     elif ratio >= _COVERAGE_PARTIAL:
         status = "PARTIAL"
         capital_weighted_permitted = False
-        note = (
-            "Known amounts described but conclusive capital-weighted ranking is not permitted. "
-            "Describe known amounts explicitly."
-        )
+        note = "Known amounts described but a capital-weighted conclusion is not yet possible."
     else:
         status = "LOW"
         capital_weighted_permitted = False

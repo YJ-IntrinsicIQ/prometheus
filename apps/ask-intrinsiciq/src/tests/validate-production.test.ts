@@ -70,4 +70,52 @@ describe("production validation", () => {
     expect(answer?.questionId).toBe("what-does-company-do");
     console.log(`  ${testSlug}/what-does-company-do: answerStatus=${answer?.answerStatus}`);
   });
+
+  // ENG-124 / ENG-124A: outcome_attribution_summary full chain — all companies with capital allocation data
+  it("ENG-124A: outcome_attribution_summary flows through type chain for all three companies", async () => {
+    const cases: Array<{ slug: string; minDirect: number; minTotal: number }> = [
+      { slug: "sun-pharma",   minDirect: 4, minTotal: 10 },
+      { slug: "tanla",        minDirect: 5, minTotal: 17 },
+      { slug: "datapatterns", minDirect: 3, minTotal: 10 },
+    ];
+
+    for (const { slug, minDirect, minTotal } of cases) {
+      const card = await getResearchAnswerCard(slug, "how-is-capital-allocated");
+      expect(card, `${slug}: answer card must exist`).not.toBeNull();
+      const oa = card?.interpretation?.outcomeAttributionSummary;
+      const total = (oa?.directly_attributable ?? 0) + (oa?.strongly_supported ?? 0) +
+        (oa?.associated_not_attributable ?? 0) + (oa?.no_outcome_evidence ?? 0) + (oa?.negative_outcome ?? 0);
+      console.log(`${slug}: outcome_attribution_summary=${JSON.stringify(oa)} total=${total}`);
+
+      // Key mapping: all 5 snake_case keys must be present (may be 0)
+      expect(oa, `${slug}: outcomeAttributionSummary must be present`).not.toBeNull();
+      expect(oa).not.toBeUndefined();
+      expect(typeof oa?.directly_attributable).toBe("number");
+      expect(typeof oa?.strongly_supported).toBe("number");
+      expect(typeof oa?.associated_not_attributable).toBe("number");
+      expect(typeof oa?.no_outcome_evidence).toBe("number");
+      expect(typeof oa?.negative_outcome).toBe("number");
+
+      // Canonical count fidelity: backend values must reach frontend unchanged
+      expect(oa?.directly_attributable, `${slug}: directly_attributable must match ENG-122 canonical count`).toBe(minDirect);
+      expect(total, `${slug}: total classified allocations must match ENG-122`).toBe(minTotal);
+    }
+  });
+
+  // ENG-124A: companies with no capital allocation data must NOT synthesize a summary
+  it("ENG-124A: companies without capital allocation data have no outcomeAttributionSummary", async () => {
+    // ujjivan has no capital_allocation_outcomes directory — must be absent, not zero-filled
+    const card = await getResearchAnswerCard("ujjivan", "how-is-capital-allocated");
+    if (card?.interpretation?.outcomeAttributionSummary !== undefined) {
+      // If present, verify it came from real data (total > 0) — not a zero-filled fabrication
+      const oa = card.interpretation.outcomeAttributionSummary;
+      if (oa !== null) {
+        const total = (oa.directly_attributable ?? 0) + (oa.strongly_supported ?? 0) +
+          (oa.associated_not_attributable ?? 0) + (oa.no_outcome_evidence ?? 0) + (oa.negative_outcome ?? 0);
+        expect(total, "ujjivan: if summary present, must have real data (not zero-filled fabrication)").toBeGreaterThan(0);
+      }
+    }
+    // If absent: correct — no capital allocation data, no manufactured summary
+    console.log(`ujjivan: outcomeAttributionSummary=${JSON.stringify(card?.interpretation?.outcomeAttributionSummary ?? null)}`);
+  });
 });

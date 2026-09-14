@@ -910,6 +910,13 @@ def finalize_committee_brief_for_user(
                 "question": question,
                 "reason": _ensure_sentence(reason),
                 "linked_unknown_or_risk": _ensure_sentence(linked).rstrip("."),
+                "critical_unknown_id": str(item.get("critical_unknown_id") or "").strip(),
+                "evidence_needed": [
+                    str(value or "").strip()
+                    for value in (item.get("evidence_needed") or [])
+                    if str(value or "").strip()
+                ] if isinstance(item.get("evidence_needed"), list) else [],
+                "priority": str(item.get("priority") or "medium").strip().lower(),
             }
         )
     cleaned["investigation_questions"] = deduped_questions
@@ -1281,6 +1288,8 @@ def build_canonical_committee_brief_view_v2(
                 "previous_state": previous_state or "Earlier evidence was not explicit.",
                 "current_state": current_state,
                 "why_it_matters": why_it_matters or "This is decision-relevant.",
+                # ponytail: conviction_effect preserved from synthesis for polarity-safe positive selection
+                "conviction_effect": str(item.get("conviction_effect") or "").strip().lower(),
             }
         )
     if not what_changed:
@@ -1308,6 +1317,7 @@ def build_canonical_committee_brief_view_v2(
                     "previous_state": "Earlier evidence was not explicit.",
                     "current_state": summary,
                     "why_it_matters": _ensure_sentence(item.get("why_it_matters")) or "This changes investor conviction.",
+                    "conviction_effect": "strengthened",  # thesis_strengtheners are positive by contract
                 }
             )
 
@@ -1527,14 +1537,22 @@ def build_canonical_committee_brief_view_v2(
     }
 
     committee_phrase = committee_view if len(committee_view.split()) > 1 else "a mixed business with still-developing evidence"
+    # Polarity contract: only use what_changed items explicitly marked conviction_effect=="strengthened".
+    # Missing/empty/weakened conviction_effect items are NOT used in the positive slot (safe fallback: omit).
+    # thesis_strengtheners → what_strengthened → positive by structural contract; prefer them for the positive slot.
+    # ponytail: structured conviction_effect field governs polarity — no keyword inference; unknown≠positive
+    _positive_changed = next(
+        (i for i in what_changed if i.get("conviction_effect") == "strengthened"),
+        None,
+    )
     positive_reason = _first_text(
-        _safe_why(what_changed[0].get("why_it_matters", "") if what_changed else ""),
         _safe_why(what_strengthened[0].get("why_it_matters", "") if what_strengthened else ""),
+        _safe_why(_positive_changed.get("why_it_matters", "") if _positive_changed else ""),
         "the latest evidence still shows visible delivery and capacity progress",
     )
     positive_core = _first_text(
-        _safe_positive_state(what_changed[0].get("current_state", "") if what_changed else ""),
         (what_strengthened[0].get("conclusion") if what_strengthened else ""),
+        _safe_positive_state(_positive_changed.get("current_state", "") if _positive_changed else ""),
         (payload.get("strongest_shared_convictions") or [{}])[0].get("conclusion") if payload.get("strongest_shared_convictions") else "",
         "visible delivery and capacity progress",
     )

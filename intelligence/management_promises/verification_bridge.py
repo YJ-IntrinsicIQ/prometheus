@@ -151,6 +151,7 @@ def _event_id(company: str, period: str, entity: str, action: str) -> str:
 def _build_events_from_management_summary(
     company_slug: str,
     companies_root: Path,
+    known_entities: Optional[List[Tuple[str, str, str]]] = None,
 ) -> List[ObservableEvent]:
     """
     Extract observable events from per-year management_summary.json files.
@@ -158,6 +159,8 @@ def _build_events_from_management_summary(
     major_promises documents FUTURE commitments and is excluded.
     routing_validation.warnings are low-confidence; included with confidence=low.
     """
+    if known_entities is None:
+        known_entities = []
     events: List[ObservableEvent] = []
     years = [f"fy{y}" for y in range(19, 30)]
 
@@ -170,13 +173,13 @@ def _build_events_from_management_summary(
         # key_initiatives: completed/established actions
         for item in data.get("key_initiatives", []):
             text = str(item) if not isinstance(item, dict) else str(item.get("value", item))
-            evs = _parse_initiative_text(text, company_slug, yr, path, "key_initiatives")
+            evs = _parse_initiative_text(text, company_slug, yr, path, "key_initiatives", known_entities=known_entities)
             events.extend(evs)
 
         # company_results: confirmed results
         for item in data.get("company_results", []):
             text = str(item.get("value", "")) if isinstance(item, dict) else str(item)
-            evs = _parse_initiative_text(text, company_slug, yr, path, "company_results")
+            evs = _parse_initiative_text(text, company_slug, yr, path, "company_results", known_entities=known_entities)
             events.extend(evs)
 
         # routing_validation warnings (low confidence — these are flagged as uncertain)
@@ -186,33 +189,43 @@ def _build_events_from_management_summary(
                 evs = _parse_initiative_text(
                     warn, company_slug, yr, path, "routing_validation.warnings",
                     confidence="low",
+                    known_entities=known_entities,
                 )
                 events.extend(evs)
 
     return events
 
 
-# Known canonical named entities (product names, facilities, markets, deals)
-# Only specific enough entities are tracked — generic terms excluded.
-_KNOWN_ENTITIES: List[Tuple[str, str, str]] = [
-    # (canonical_lowercase, event_type, action_keyword_hint)
-    ("ilumya", PRODUCT_LAUNCH, "launched"),
-    ("ilumetri", PRODUCT_LAUNCH, "launched"),
-    ("nidlegy", REGULATORY_APPROVAL, "filed"),
-    ("deuruxolitinib", REGULATORY_APPROVAL, "approved"),
-    ("leqselvi", PRODUCT_LAUNCH, "launched"),
-    ("unloxcyt", PRODUCT_LAUNCH, "launched"),
-    ("organon", ACQUISITION_COMPLETED, "acquisition"),
-    ("toansa", FACILITY_OPERATIONAL, "prohibited"),        # negative: regulatory restriction
-    ("halol", FACILITY_OPERATIONAL, "inspection"),
-    ("maduranthakam", FACILITY_OPERATIONAL, "operational"),
-    ("mkm", FACILITY_OPERATIONAL, "operational"),
-    ("nafamostat", PRODUCT_LAUNCH, "evaluating"),
-    ("aqch", PRODUCT_LAUNCH, "evaluating"),
-]
+# Company-specific canonical entities are loaded at runtime from per-company config.
+# The production code contains NO hardcoded company names, product names, or facility names.
+# See: companies/<company_slug>/company_memory/verification_entities.json
+# Format: [{"entity": "...", "event_type": "...", "action_hint": "..."}, ...]
 
-_ENTITY_NAMES = {e[0] for e in _KNOWN_ENTITIES}
-_ENTITY_TO_TYPE = {e[0]: e[1] for e in _KNOWN_ENTITIES}
+def _load_company_entities(
+    company_slug: str,
+    companies_root: Path,
+) -> List[Tuple[str, str, str]]:
+    """Load canonical entities from company-specific config.
+
+    Returns list of (canonical_lowercase, event_type, action_keyword_hint).
+    Returns empty list if no config exists — produces zero entity-match links
+    until a company-specific entity registry is provided.
+    """
+    config_path = companies_root / company_slug / "company_memory" / "verification_entities.json"
+    if not config_path.exists():
+        return []
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        entities = []
+        for entry in data.get("entities", []):
+            name = str(entry.get("entity") or "").strip().lower()
+            etype = str(entry.get("event_type") or "").strip()
+            hint = str(entry.get("action_hint") or "").strip()
+            if name and etype:
+                entities.append((name, etype, hint))
+        return entities
+    except Exception:
+        return []
 
 
 def _parse_initiative_text(
@@ -222,15 +235,19 @@ def _parse_initiative_text(
     path: Path,
     source_key: str,
     confidence: str = "medium",
+    known_entities: Optional[List[Tuple[str, str, str]]] = None,
 ) -> List[ObservableEvent]:
     """
     Parse a text fragment to extract observable events for known entities.
     Returns events for every known entity found in the text.
+    Entity list is per-company and loaded externally (not hardcoded).
     """
+    if known_entities is None:
+        known_entities = []
     text_lower = text.lower()
     found: List[ObservableEvent] = []
 
-    for entity, etype, action_hint in _KNOWN_ENTITIES:
+    for entity, etype, action_hint in known_entities:
         if entity not in text_lower:
             continue
 
@@ -312,8 +329,11 @@ def _extract_action_period(text: str, entity: str, default_period: str) -> str:
 def _build_events_from_projects(
     company_slug: str,
     companies_root: Path,
+    known_entities: Optional[List[Tuple[str, str, str]]] = None,
 ) -> List[ObservableEvent]:
     """Extract observable events from projects_registry."""
+    if known_entities is None:
+        known_entities = []
     path = (
         companies_root / company_slug / "company_memory"
         / "projects" / "projects_registry.json"
@@ -335,7 +355,7 @@ def _build_events_from_projects(
 
         latest = ev_periods[-1]
 
-        for entity, etype, _ in _KNOWN_ENTITIES:
+        for entity, etype, _ in known_entities:
             if entity not in name:
                 continue
 
@@ -368,20 +388,28 @@ def _fy_ge(a: str, b: str) -> bool:
     return _FY_ORDER.get(a, 0) >= _FY_ORDER.get(b, 0)
 
 
-def _extract_named_entities(commitment_text: str) -> List[str]:
+def _extract_named_entities(commitment_text: str, entity_names: Optional[set] = None) -> List[str]:
     """
     Extract canonical entity names from a commitment text via exact string matching.
     Returns lowercase entity names found.
     """
+    if entity_names is None:
+        entity_names = set()
     text_lower = commitment_text.lower()
-    return [e for e in _ENTITY_NAMES if e in text_lower]
+    return [e for e in entity_names if e in text_lower]
 
 
 def _classify_promise(
     promise: Dict,
     commitment: Dict,
     events_by_entity: Dict[str, List[ObservableEvent]],
+    entity_names: Optional[set] = None,
+    entity_to_type: Optional[Dict[str, str]] = None,
 ) -> VerificationResult:
+    if entity_names is None:
+        entity_names = set()
+    if entity_to_type is None:
+        entity_to_type = {}
     promise_id = promise.get("promise_id", "")
     fp = promise.get("commitment_fingerprint", "")
     mc_id = promise.get("management_commitment_id", "")
@@ -389,7 +417,7 @@ def _classify_promise(
     category = commitment.get("category", "")
     announcement_period = commitment.get("announcement_period", "")
 
-    named_entities = _extract_named_entities(stmt)
+    named_entities = _extract_named_entities(stmt, entity_names)
 
     if not named_entities:
         return VerificationResult(
@@ -403,7 +431,7 @@ def _classify_promise(
                   "Cannot establish deterministic link. Generic commitment.",
         )
 
-    compatible_types = _CATEGORY_COMPAT.get(category, list(_ENTITY_TO_TYPE.values()))
+    compatible_types = _CATEGORY_COMPAT.get(category, list(entity_to_type.values()))
     linked_events: List[ObservableEvent] = []
 
     for entity in named_entities:
@@ -496,9 +524,12 @@ def build_verification_events(
             "management_commitment_id": commitment.get("id") or commitment.get("commitment_id") or "",
         })
 
+    # Load company-specific canonical entities (no hardcoded company names in production code)
+    known_entities = _load_company_entities(company_slug, companies_root)
+
     # Build observable event catalog
-    mgmt_events = _build_events_from_management_summary(company_slug, companies_root)
-    proj_events = _build_events_from_projects(company_slug, companies_root)
+    mgmt_events = _build_events_from_management_summary(company_slug, companies_root, known_entities=known_entities)
+    proj_events = _build_events_from_projects(company_slug, companies_root, known_entities=known_entities)
     all_events = mgmt_events + proj_events
 
     # De-duplicate by event_id (same entity+period+action → keep first)
@@ -514,12 +545,20 @@ def build_verification_events(
     for ev in unique_events:
         events_by_entity.setdefault(ev.canonical_entity, []).append(ev)
 
+    # Build entity lookup maps from loaded entities
+    entity_names_set = {e[0] for e in known_entities}
+    entity_to_type_map = {e[0]: e[1] for e in known_entities}
+
     # Classify each promise
     classifications: List[VerificationResult] = []
     for promise in material_promises:
         mc_id = promise.get("management_commitment_id", "")
         commitment = commitments_by_id.get(mc_id, {})
-        result = _classify_promise(promise, commitment, events_by_entity)
+        result = _classify_promise(
+            promise, commitment, events_by_entity,
+            entity_names=entity_names_set,
+            entity_to_type=entity_to_type_map,
+        )
         classifications.append(result)
 
     # Summary counts

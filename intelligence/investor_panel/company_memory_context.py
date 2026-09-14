@@ -470,11 +470,35 @@ def _compact_risk_evolution(candidates: List[Any], *, limit: int = 6) -> Dict[st
     """
     primary_payload = candidates[0][1] if candidates else {}
     all_assessments: List[Dict[str, Any]] = list(primary_payload.get("assessments") or [])
-    # Merge additional assessment sources
+    # Merge additional assessment sources.  Multiple canonical risk artifacts
+    # describe the same risk at different levels: assessments own trajectory
+    # prose while the registry owns accountability.  Combine matching records
+    # instead of dropping later registry fields as duplicates.
     for _, payload in candidates[1:]:
-        for item in payload.get("assessments") or []:
+        supplemental = payload.get("assessments") or payload.get("risks") or payload.get("items") or []
+        for item in supplemental:
             if isinstance(item, dict):
-                all_assessments.append(item)
+                identity = item.get("risk_id") or item.get("evo_canonical_id") or item.get("risk_name")
+                existing = next(
+                    (
+                        candidate
+                        for candidate in all_assessments
+                        if identity
+                        and identity
+                        in {
+                            candidate.get("risk_id"),
+                            candidate.get("evo_canonical_id"),
+                            candidate.get("risk_name"),
+                        }
+                    ),
+                    None,
+                )
+                if existing is None:
+                    all_assessments.append(item)
+                else:
+                    for key, value in item.items():
+                        if value not in (None, "", [], {}) and existing.get(key) in (None, "", [], {}):
+                            existing[key] = value
 
     groups: Dict[str, List[Dict[str, Any]]] = {"worsening": [], "recurring": [], "improving": [], "other": []}
     seen_ids: set = set()
@@ -496,6 +520,13 @@ def _compact_risk_evolution(candidates: List[Any], *, limit: int = 6) -> Dict[st
             "why_it_changed": _truncate_text(item.get("why_it_changed"), 120),
             "investor_implication": _truncate_text(item.get("investor_implication"), 120),
             "evo_canonical_id": item.get("evo_canonical_id"),
+            # ENG-125: preserve canonical accountability semantics through the
+            # compact Panel boundary.  These are governed Risk Registry facts;
+            # analysts must not reconstruct response/effectiveness from prose.
+            "consequence_status": item.get("consequence_status") or "CONSEQUENCE_UNKNOWN",
+            "management_response_status": item.get("management_response_status") or "NO_RESPONSE_DISCLOSED",
+            "response_execution_status": item.get("response_execution_status") or "EXECUTION_UNKNOWN",
+            "effectiveness_status": item.get("effectiveness_status") or "EFFECTIVENESS_UNKNOWN",
         }
         bucket = trajectory if trajectory in groups else "other"
         groups[bucket].append(entry)
@@ -649,6 +680,31 @@ def _compact_management_progression(payload: Dict[str, Any], *, limit: int = 5) 
                 "evidence_ids": _panel_citable_evidence_ids(chain, limit=5),
             }
         )
+    execution_outcomes = payload.get("management_execution_outcomes")
+    if not isinstance(execution_outcomes, dict):
+        execution_outcomes = {}
+    execution_records = []
+    for record in execution_outcomes.get("records") or []:
+        if not isinstance(record, dict):
+            continue
+        execution_records.append(
+            {
+                "initiative_id": record.get("initiative_id"),
+                "identity_label": _truncate_text(record.get("identity_label"), 120),
+                "stream_types": list(record.get("stream_types") or []),
+                "statement_period": record.get("statement_period"),
+                "action_period": record.get("action_period"),
+                "action_actor": record.get("action_actor"),
+                "execution_state": record.get("execution_state"),
+                "outcome_period": record.get("outcome_period"),
+                "outcome_state": record.get("outcome_state"),
+                "attribution_strength": record.get("attribution_strength"),
+                "unresolved_gap": _truncate_text(record.get("unresolved_gap"), 160),
+                "evidence_ids": list(record.get("evidence_ids") or [])[:4],
+            }
+        )
+        if len(execution_records) >= 8:
+            break
     return {
         "company_slug": payload.get("company_slug") or payload.get("company"),
         "schema_version": payload.get("schema_version"),
@@ -656,12 +712,19 @@ def _compact_management_progression(payload: Dict[str, Any], *, limit: int = 5) 
         "coverage_status": payload.get("coverage_status"),
         "progression_item_count": len(items) if isinstance(items, list) else 0,
         "synthesis_chains": compacted,
+        "execution_outcomes": {
+            "coverage": execution_outcomes.get("coverage") or {},
+            "credibility": execution_outcomes.get("credibility") or {},
+            "records": execution_records,
+        },
         "chain_rules": [
             "CLAIM_ONLY is statement evidence, not delivery or execution evidence.",
             "ACTION_STARTED shows management/company action began; outcome and financial consequence remain unproven unless separately evidenced.",
             "ACTION_COMPLETED shows completion only; completion alone is not a positive operating or financial outcome.",
             "OUTCOME_POSITIVE/OUTCOME_NEGATIVE require separately evidenced operating or financial result.",
             "FINANCIAL_LINK_UNPROVEN means do not claim realized financial impact.",
+            "Activity volume is not evidence of execution quality or management credibility.",
+            "Acquisition completion is not integration success or value creation.",
         ],
     }
 

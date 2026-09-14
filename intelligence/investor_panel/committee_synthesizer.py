@@ -16,6 +16,7 @@ from knowledge.ai.input_packs import (
 )
 
 from .committee_validator import (
+    CANONICAL_DISAGREEMENT_TYPES,
     COMMITTEE_FIELD_CONTRACTS,
     EXPECTED_ANALYSTS,
     _canonical_committee_evidence_id,
@@ -45,21 +46,26 @@ Rules:
 - Management semantics: CLAIM_ONLY means no action evidence; ACTION_COMPLETED is not positive outcome; FINANCIAL_LINK_UNPROVEN is not confirmed financial impact; regulator action is not management action.
 - Do not average away disagreements into generic consensus.
 - No internal metadata, grounding flags, or internal IDs in output.
-- No valuation, target prices, recommendation, or buy/sell/hold language.
 - Return JSON only.
+
+INVESTMENT_LANGUAGE_BOUNDARY — this is ABSOLUTE and applies to every field you write:
+This output is analytical evidence synthesis, not investment advice. You must NEVER write investment recommendations or valuation judgments in any form.
+FORBIDDEN in every field: "buy", "sell", "hold", "accumulate", "exit", "avoid" (as investment actions); "undervalued", "overvalued", "cheap stock", "expensive stock"; "target price", "fair value"; "investors should", "recommend buying/selling/holding"; "compelling investment", "attractive opportunity", "invest now"; expected return statements used as investment direction.
+ALLOWED analytical language: "evidence strengthens the business-quality thesis", "evidence weakens the thesis", "downside risk is material", "business quality is uncertain", "the current evidence does not establish X", "this unknown is critical for conviction", "analysts weigh this evidence differently by doctrine".
+Violating this boundary invalidates the entire output.
 """
 
 COMMITTEE_SCHEMA_PROMPT = """
 keys=executive_committee_summary,synthesis_narrative,doctrine_agreements,doctrine_disagreements,disagreement_explanation,what_would_change_conviction,what_to_watch_next,suggested_unknowns
-executive_committee_summary=string (2-3 sentences; facts only; no invented numbers)
-synthesis_narrative=list[string] (fact-anchored bullets; no invented numbers)
-doctrine_agreements=list[string] (where analysts agree AND why each doctrine leads there separately; format: "Graham and Buffett agree X: Graham because [doctrine reason]; Buffett because [doctrine reason]")
-doctrine_disagreements=list[string] (where doctrines diverge on interpretation; format: "Fisher is constructive on X because [growth lens]; Graham is cautious because [safety lens]")
-disagreement_explanation=list[string] (plain-language explanation of material disagreements naming which doctrines and why)
-what_would_change_conviction=list[string] (specific MONITORABLE evidence triggers; each must name a measurable proxy or filing-observable event; GOOD: "ROIC improvement over 2-3 filings while capex remains elevated"; BAD: "better execution", "stronger growth", "improved management")
-what_to_watch_next=list[string] (decision-relevant monitoring items specific enough to check in next filing)
+executive_committee_summary=string (2-3 sentences; facts only; no invented numbers; no investment recommendation or valuation judgment)
+synthesis_narrative=list[string] (fact-anchored bullets describing what the evidence shows; no invented numbers; no investment recommendation)
+doctrine_agreements=list[string] (where analysts agree AND why each doctrine leads there separately; format: "Graham and Buffett agree X: Graham because [doctrine reason]; Buffett because [doctrine reason]"; describe evidence, not investment conclusions)
+doctrine_disagreements=list[string] (where doctrines diverge on interpretation; format: "Fisher sees constructive evidence on X [growth lens]; Graham sees risk on X [safety lens]"; describe analytical differences, not investment directions)
+disagreement_explanation=list[string] (plain-language explanation of which doctrines weigh the same evidence differently and why; never frame as buy/sell/hold or valuation conclusion)
+what_would_change_conviction=list[string] (specific MONITORABLE evidence triggers that would strengthen or weaken the analytical thesis; each must name a measurable proxy or filing-observable event; GOOD: "ROIC improvement over 2-3 filings while capex remains elevated"; BAD: "better execution", "stronger growth", "improved management"; never state as investment action)
+what_to_watch_next=list[string] (decision-relevant monitoring items specific enough to check in next filing; analytical only)
 suggested_unknowns=list[string] (only if genuinely missing from the critical_unknowns registry; must be specific and decision-relevant; not generic data-availability notes)
-rules=use only supplied analyst inputs; analyst names allowed (graham/buffett/fisher/munger/lynch); no invented numbers; no valuation; no buy/sell/hold; CLAIM_ONLY means no action evidence; ACTION_COMPLETED is not positive outcome; FINANCIAL_LINK_UNPROVEN is not confirmed impact
+rules=use only supplied analyst inputs; analyst names allowed (graham/buffett/fisher/munger/lynch); no invented numbers; no valuation judgment; no buy/sell/hold; CLAIM_ONLY means no action evidence; ACTION_COMPLETED is not positive outcome; FINANCIAL_LINK_UNPROVEN is not confirmed impact
 """
 
 COMMITTEE_SYNTHESIS_USER_PROMPT = """
@@ -831,6 +837,29 @@ def _dedupe(items: Sequence[str]) -> List[str]:
     return deduped
 
 
+# Stopwords for semantic risk topic extraction — generic words that add no discriminating signal.
+_RISK_TOPIC_STOPWORDS: frozenset = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "been", "being", "but", "by", "can",
+    "classified", "do", "does", "documented", "for", "from", "has", "have", "if",
+    "in", "is", "it", "its", "known", "marked", "may", "no", "not", "of", "on",
+    "or", "out", "present", "reported", "shows", "such", "than", "that", "the",
+    "their", "these", "this", "those", "through", "to", "up", "via", "was", "were",
+    "which", "will", "with", "available", "evidence", "data", "also", "both",
+    "across", "management", "response", "status", "consequence",
+})
+
+
+def _risk_topic_key(text: str) -> str:
+    """Canonical 3-token topic key for semantic grouping of risk statements.
+
+    Groups equivalent risk statements from different analysts (e.g. 'FX risk worsening'
+    stated three ways) into one bucket without relying on exact-text matching.
+    """
+    tokens = re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)*", str(text).lower())
+    content = [t for t in tokens if t not in _RISK_TOPIC_STOPWORDS and len(t) > 1]
+    return "_".join(content[:3]) if content else text.casefold()[:40]
+
+
 def _normalize_optional_string_list(value: Any) -> List[str]:
     if not isinstance(value, list):
         return []
@@ -1194,15 +1223,140 @@ def _infer_unknown_type(text: str) -> str:
     DECISION_UNKNOWN: an investor thesis question that data exists for but hasn't resolved.
     """
     lowered = str(text or "").lower()
-    if any(t in lowered for t in _DATA_GAP_TOKENS):
-        return "DATA_GAP"
     if any(t in lowered for t in _DECISION_UNKNOWN_TOKENS):
         return "DECISION_UNKNOWN"
     # Question-like phrasing typically signals a decision unknown.
     stripped = lowered.strip()
     if "?" in stripped or stripped.startswith(("whether ", "can ", "if ", "does ", "will ", "how ")):
         return "DECISION_UNKNOWN"
+    if any(t in lowered for t in _DATA_GAP_TOKENS):
+        return "DATA_GAP"
     return "DATA_GAP"
+
+
+_UNKNOWN_PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def _analyst_support_for_unknown(
+    unknown: str,
+    registry: Sequence[Dict[str, Any]],
+    *,
+    required_terms: Sequence[str] = (),
+) -> List[Dict[str, Any]]:
+    """Find analyst uncertainty entries supporting a structured decision unknown."""
+    unknown_tokens = set(re.findall(r"[a-z0-9]+", unknown.casefold()))
+    required = {term.casefold() for term in required_terms if term}
+    matches: List[Dict[str, Any]] = []
+    for entry in registry:
+        text = str(entry.get("text") or "").casefold()
+        tokens = set(re.findall(r"[a-z0-9]+", text))
+        if required and not any(term in text for term in required):
+            continue
+        if unknown_tokens & tokens:
+            matches.append(entry)
+    return matches
+
+
+def _engine_decision_unknowns(
+    pcim: Dict[str, Any] | None,
+    registry: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Derive material engine diligence from canonical trajectory, never prose guesses."""
+    economics = (pcim or {}).get("business_economics_inputs") or {}
+    engines = (economics.get("economic_engines") or {}).get("engines") or []
+    derived: List[Dict[str, Any]] = []
+    for engine in engines:
+        if not isinstance(engine, dict):
+            continue
+        name = str(engine.get("engine_name") or engine.get("engine_id") or "").strip()
+        scale = str(engine.get("scale_status") or "").strip().upper()
+        momentum = str(engine.get("growth_momentum") or engine.get("trajectory") or "").strip().upper()
+        interpretation = engine.get("investor_interpretation") or {}
+        profitability_unknown = str(engine.get("profitability_status") or "").upper() in {
+            "NOT_DISCLOSED", "UNKNOWN", "UNAVAILABLE", ""
+        }
+        if not name or scale not in {"MAJOR", "MATERIAL"}:
+            continue
+
+        if momentum == "DECELERATING":
+            unknown = (
+                f"What explains the decelerating growth of the {name} engine, and is it temporary "
+                "normalization or a durable weakening?"
+            )
+            why = (
+                f"{name} is a {scale.lower()} revenue engine; persistence would affect the durability "
+                "of the current growth mix, while the cause remains unresolved."
+            )
+            evidence_needed = [
+                "Product, volume, pricing, competition, and launch-cadence evidence that explains the slowdown.",
+                "Subsequent-period growth and profitability evidence showing whether momentum stabilizes or weakens further.",
+            ]
+            strengthen = f"The {name} engine reaccelerates or stabilizes with evidence that the slowdown was temporary and economics remain sound."
+            weaken = f"The {name} engine continues to decelerate with evidence of competitive, product, or pricing weakness."
+            priority = "critical" if scale == "MAJOR" else "high"
+        elif momentum == "ACCELERATING":
+            unknown = (
+                f"Is the accelerating growth of the {name} engine durable, and does it carry attractive "
+                "profitability and cash economics?"
+            )
+            why = (
+                f"{name} is a {scale.lower()} revenue engine, but faster revenue growth alone does not establish "
+                "durability, margins, returns, or cash conversion."
+            )
+            evidence_needed = [
+                "Volume, pricing, mix, market-share, and launch evidence explaining the acceleration.",
+                "Engine-level profitability, cash conversion, and subsequent-period growth evidence.",
+            ]
+            strengthen = f"The {name} engine sustains growth with disclosed margin, cash-conversion, or return evidence."
+            weaken = f"The {name} acceleration fades or is accompanied by weak margins, cash conversion, or adverse mix."
+            priority = "high"
+        elif momentum == "VOLATILE" and profitability_unknown:
+            unknown = f"Can the volatile {name} engine produce durable and economically attractive growth?"
+            why = (
+                f"{name} is a {scale.lower()} contributor, but volatility and undisclosed economics limit confidence "
+                "in its contribution to business quality."
+            )
+            evidence_needed = [
+                "A longer growth record and management explanation of the volatility.",
+                "Engine-level profitability and cash-conversion evidence.",
+            ]
+            strengthen = f"The {name} engine becomes more consistent while demonstrating sound profitability and cash conversion."
+            weaken = f"Volatility persists or growth requires unattractive economics or capital intensity."
+            priority = "medium"
+        else:
+            continue
+
+        support = _analyst_support_for_unknown(
+            unknown + " profitability economics durability",
+            registry,
+            required_terms=("profit", "economic", "durab", "volatile", "growth engine"),
+        )
+        if not support:
+            continue
+        evidence_ids: List[str] = []
+        for observation in engine.get("history") or []:
+            if isinstance(observation, dict):
+                for evidence_id in observation.get("evidence_ids") or []:
+                    if evidence_id not in evidence_ids:
+                        evidence_ids.append(evidence_id)
+        derived.append({
+            "unknown_id": f"engine_{str(engine.get('engine_id') or name).strip().lower().replace(' ', '_')}_{momentum.lower()}",
+            "unknown": unknown,
+            "unknown_type": "DECISION_UNKNOWN",
+            "raised_by": sorted({str(item.get("analyst") or "").strip() for item in support if item.get("analyst")}),
+            "why_it_matters": why,
+            "source_uncertainty_ids": [str(item.get("uncertainty_id")) for item in support if item.get("uncertainty_id")],
+            "triggering_evidence": evidence_ids[:8],
+            "affected_thesis_dimension": "business_quality",
+            "evidence_needed": evidence_needed,
+            "strengthens_view_if": strengthen,
+            "weakens_view_if": weaken,
+            "unresolved_if": "Revenue trajectory changes without evidence explaining durability or engine-level economics.",
+            "priority": priority,
+            "confidence": "high" if evidence_ids else "medium",
+            "evidence_limit": str(interpretation.get("what_matters") or "Engine economics remain unresolved."),
+        })
+    return derived
 
 
 # Vocabulary that indicates a finding is substantively constructive (not just "data exists").
@@ -1263,10 +1417,37 @@ def _deterministic_basis_used(analyst_artifacts: Sequence[Dict[str, Any]]) -> st
 
 
 def _dominant_tension_from_inputs(financial_warning_manifest: Dict[str, Any], analyst_artifacts: Sequence[Dict[str, Any]]) -> str:
-    ratings = {_canonical_rating_value(payload.get("rating")) for payload in analyst_artifacts}
+    ratings = [_canonical_rating_value(payload.get("rating")) for payload in analyst_artifacts]
+    rating_set = set(ratings)
+
+    # Detect meaningful minority rating — one analyst rates differently from the rest.
+    if len(ratings) >= 3:
+        for minority_rating in ("weak", "strong"):
+            minority_analysts = [
+                str(p.get("doctrine_id") or "").strip()
+                for p in analyst_artifacts
+                if _canonical_rating_value(p.get("rating")) == minority_rating
+            ]
+            majority_rating = "mixed" if minority_rating == "weak" else "mixed"
+            majority_count = ratings.count(majority_rating)
+            if len(minority_analysts) == 1 and majority_count >= 3:
+                analyst_name = minority_analysts[0].title()
+                if minority_rating == "weak":
+                    return (
+                        f"{analyst_name} returns a 'weak' rating while the other analysts rate the company 'mixed'. "
+                        f"The minority concern reflects deeper reservations — likely around governance, incentives, "
+                        f"or structural risk — that the other lenses weigh differently or downweight."
+                    )
+                else:
+                    return (
+                        f"{analyst_name} returns a 'strong' rating while the other analysts rate the company 'mixed'. "
+                        f"The minority conviction reflects a doctrine-specific view that the other lenses "
+                        f"are more cautious about given current evidence gaps."
+                    )
+
     if financial_warning_manifest.get("fcf_missing") or financial_warning_manifest.get("capex_missing"):
         return "Growth and business ambition are harder to judge because cash-generation evidence is incomplete."
-    if "strong" in ratings and "weak" in ratings:
+    if "strong" in rating_set and "weak" in rating_set:
         return "Analysts differ on how much weight to place on growth progress versus downside and execution risk."
     if financial_warning_manifest.get("basis_unknown"):
         return "Financial interpretation remains constrained by incomplete basis clarity."
@@ -1313,13 +1494,29 @@ def _has_substantive_constructive_signal(findings: Sequence[str]) -> Tuple[bool,
 
     A finding is substantive if it contains constructive vocabulary AND is not just
     a data-availability note. Pure data notes ("ROCE is available") are not signals.
+    Findings that contain forbidden recommendation or valuation language are skipped —
+    they must not be embedded verbatim in the committee output.
     """
+    from .forbidden_language import has_forbidden_recommendation_language
     for finding in (findings or [])[:4]:
         text = str(finding or "").strip()
         lowered = text.lower()
         if any(t in lowered for t in _DATA_AVAILABILITY_ONLY):
             continue
-        if any(s in lowered for s in _CONSTRUCTIVE_SIGNALS):
+        if has_forbidden_recommendation_language(text):
+            continue
+        # Mirror the validator's standalone buy/sell/hold check so no forbidden word
+        # can enter the committee output via analyst finding embedding.
+        if re.search(r"\b(?:buy|sell|hold)\b", lowered):
+            continue
+        # Use word-boundary matching for single-word constructive signals to avoid false
+        # positives where negating prefixes produce spurious matches (e.g. "proven" inside
+        # "unproven").  Multi-word tokens are matched normally (they have natural boundaries).
+        def _signal_matches(signal: str, text_lower: str) -> bool:
+            if " " in signal:
+                return signal in text_lower
+            return bool(re.search(r"\b" + re.escape(signal) + r"\b", text_lower))
+        if any(_signal_matches(s, lowered) for s in _CONSTRUCTIVE_SIGNALS):
             return True, text
     return False, ""
 
@@ -1328,11 +1525,19 @@ def _has_substantive_concern(red_flags: Sequence[str]) -> Tuple[bool, str]:
     """Return (True, concern_text) if at least one concern is substantively cautious.
 
     A concern is substantive if it is not purely a data-availability note.
+    Flags that contain forbidden recommendation or valuation language are skipped —
+    they must not be embedded verbatim in the committee output.
     """
+    from .forbidden_language import has_forbidden_recommendation_language
     for flag in (red_flags or [])[:4]:
         text = str(flag or "").strip()
         lowered = text.lower()
         if any(t in lowered for t in _DATA_AVAILABILITY_ONLY):
+            continue
+        if has_forbidden_recommendation_language(text):
+            continue
+        # Mirror the validator's standalone buy/sell/hold check.
+        if re.search(r"\b(?:buy|sell|hold)\b", lowered):
             continue
         if text:
             return True, text
@@ -1528,9 +1733,15 @@ def build_committee_synthesis_skeleton(
             max_items=3,
             max_chars=180,
         ):
-            group = risk_groups.setdefault(item.casefold(), {"risk": item, "analysts": []})
+            # Use semantic topic key so the same risk stated differently by multiple analysts
+            # maps to one canonical entry (e.g. three slightly-different FX-risk sentences → one entry).
+            topic_key = _risk_topic_key(item)
+            if topic_key not in risk_groups:
+                risk_groups[topic_key] = {"risk": item, "analysts": [], "analyst_texts": {}}
+            group = risk_groups[topic_key]
             if analyst not in group["analysts"]:
                 group["analysts"].append(analyst)
+                group["analyst_texts"][analyst] = item
 
     strongest_positive_signals = [
         {
@@ -1551,6 +1762,7 @@ def build_committee_synthesis_skeleton(
             "risk": group["risk"],
             "raised_by": group["analysts"],
             "source_analysts": group["analysts"],
+            "analyst_interpretations": group.get("analyst_texts", {}),
             "summary": f"Raised by {', '.join(group['analysts'])}.",
             "why_it_matters": "This remains a central caution in the saved analyst outputs.",
             "severity": "high" if len(group["analysts"]) >= 2 else "medium",
@@ -1588,10 +1800,30 @@ def build_committee_synthesis_skeleton(
             group["source_paths"].append(source_path)
 
     evidence_gaps: List[Dict[str, Any]] = []
-    for group in sorted(grouped_unknowns.values(), key=lambda item: (-len(item["raised_by"]), item["unknown"]))[:10]:
-        unknown_type = _infer_unknown_type(group["unknown"])
+    for group in sorted(grouped_unknowns.values(), key=lambda item: (-len(item["raised_by"]), item["unknown"]))[:30]:
+        raw_unknown = group["unknown"]
+        lowered_unknown = raw_unknown.casefold()
+        is_governance_response = group["category"] == "governance" and any(
+            token in lowered_unknown for token in ("remedi", "executed remedial", "corrective action", "response_executed")
+        )
+        is_capital_outcome = any(token in lowered_unknown for token in ("acquisition", "capital-allocation", "capital allocation")) and any(
+            token in lowered_unknown for token in ("return", "attribution", "value-creation", "outcome", "unproven")
+        )
+        if is_governance_response:
+            display_unknown = (
+                "Given the worsening or recurring governance-risk evidence, what corrective actions have been executed, "
+                "and what evidence shows they are effective?"
+            )
+        elif is_capital_outcome:
+            display_unknown = (
+                "Have the documented acquisitions and organic capital deployment produced attributable revenue, margin, "
+                "cash-flow, or return improvements?"
+            )
+        else:
+            display_unknown = raw_unknown
+        unknown_type = "DECISION_UNKNOWN" if (is_governance_response or is_capital_outcome) else _infer_unknown_type(raw_unknown)
         item = {
-            "unknown": group["unknown"],
+            "unknown": display_unknown,
             "unknown_type": unknown_type,
             "raised_by": group["raised_by"],
             "why_it_matters": _why_it_matters_for_unknown(group["category"]),
@@ -1599,9 +1831,70 @@ def build_committee_synthesis_skeleton(
             "evidence_limit": "Grounded in analyst uncertainty registry.",
         }
         if unknown_type == "DECISION_UNKNOWN":
+            if is_governance_response:
+                evidence_needed = [
+                    "Board, audit-committee, regulator, or auditor evidence of specific corrective actions and their measured effectiveness."
+                ]
+                strengthen_if = "Documented corrective actions are executed and later evidence shows the governance concern is reduced."
+                weaken_if = "The risk recurs, worsens, or remains without a verifiable management response."
+                priority = "high"
+                thesis_dimension = "governance"
+            elif is_capital_outcome:
+                evidence_needed = [
+                    "Transaction-linked revenue, margin, cash-flow, ROIC, or integration evidence that separates deployment from return."
+                ]
+                strengthen_if = "Major deployments show attributable operating and return improvement after integration."
+                weaken_if = "Capital remains deployed without attributable returns, or later evidence shows dilution or weak economics."
+                priority = "high"
+                thesis_dimension = "capital_allocation"
+            else:
+                evidence_needed = ["Later company evidence that directly resolves the stated uncertainty."]
+                strengthen_if = "Later evidence resolves the uncertainty in a way that supports durable business quality or execution."
+                weaken_if = "Later evidence confirms that the unresolved issue impairs durability, execution, returns, or downside protection."
+                priority = "high" if group["category"] in {"governance", "management"} else "medium"
+                thesis_dimension = group["category"]
+            item.update({
+                "unknown_id": f"analyst_unknown_{len(critical_unknowns) + 1:03d}",
+                "affected_thesis_dimension": thesis_dimension,
+                "evidence_needed": evidence_needed,
+                "strengthens_view_if": strengthen_if,
+                "weakens_view_if": weaken_if,
+                "unresolved_if": "Later disclosure remains incomplete or does not establish the economic outcome.",
+                "priority": priority,
+                "confidence": "medium",
+            })
             critical_unknowns.append(item)
         else:
             evidence_gaps.append(item)
+    critical_unknowns.extend(_engine_decision_unknowns(pcim, registry))
+    deduped_unknowns: List[Dict[str, Any]] = []
+    seen_unknown_keys: set[Tuple[str, str]] = set()
+    for item in sorted(
+        critical_unknowns,
+        key=lambda candidate: (
+            _UNKNOWN_PRIORITY_ORDER.get(str(candidate.get("priority") or "medium").lower(), 2),
+            -len(candidate.get("raised_by") or []),
+            str(candidate.get("unknown") or ""),
+        ),
+    ):
+        text = str(item.get("unknown") or "").casefold()
+        domain = str(item.get("affected_thesis_dimension") or "").casefold()
+        semantic_domain = (
+            "governance_response" if domain == "governance" and any(token in text for token in ("corrective", "remedi", "governance-risk"))
+            else "capital_allocation_outcome" if domain == "capital_allocation"
+            else domain
+        )
+        semantic_key = (
+            semantic_domain,
+            str(item.get("unknown_id") or "engine_economics")
+            if any(token in text for token in ("engine", "profitability", "cash economics"))
+            else text,
+        )
+        if semantic_key in seen_unknown_keys:
+            continue
+        seen_unknown_keys.add(semantic_key)
+        deduped_unknowns.append(item)
+    critical_unknowns = deduped_unknowns[:7]
     # critical_unknowns holds only DECISION_UNKNOWN items; empty is valid.
     # DATA_GAP items stay in evidence_gaps — do not promote them to avoid an empty field.
 
@@ -1692,35 +1985,20 @@ def build_committee_synthesis_skeleton(
         )
 
     areas_of_disagreement: List[Dict[str, Any]] = []
-    if "strong" in ratings and ("weak" in ratings or "mixed" in ratings):
-        positive = sorted(
-            analyst for analyst, meta in coverage_map.items() if meta["rating"] == "strong"
-        )
-        cautious = sorted(
-            analyst for analyst, meta in coverage_map.items() if meta["rating"] in {"weak", "mixed"}
-        )
-        areas_of_disagreement.append(
-            {
-                "theme": "growth versus downside weighting",
-                "disagreement_type": "risk_weighting_difference",
-                "summary": "Analysts do not disagree on the facts so much as on how heavily to weight growth signals against downside and execution risk.",
-                "why_it_matters": "That weighting changes how much uncertainty an investor must tolerate.",
-                "analysts_positive_or_less_concerned": positive,
-                "analysts_cautious_or_negative": cautious,
-                "evidence_ids": [],
-                "evidence_limit": "Built deterministically from analyst rating dispersion.",
-            }
-        )
-    # When all analysts rate identically (commonly all "mixed"), surface the doctrine-level
-    # disagreement — same facts, different operative lenses, different investor implications.
-    if not areas_of_disagreement:
-        areas_of_disagreement.extend(_detect_doctrine_disagreements(included))
+
+    # Numeric rating dispersion is not, by itself, a semantic disagreement. Build
+    # disagreement records only from doctrine positions that establish a genuine
+    # conflict, a different emphasis, or a different weighting of shared risk.
+    areas_of_disagreement.extend(_detect_doctrine_disagreements(included))
 
     investigation_questions = [
         {
             "question": unknown["unknown"],
             "reason": unknown["why_it_matters"],
             "linked_unknown_or_risk": unknown["unknown"],
+            "critical_unknown_id": unknown.get("unknown_id", ""),
+            "evidence_needed": unknown.get("evidence_needed", []),
+            "priority": unknown.get("priority", "medium"),
         }
         for unknown in critical_unknowns[:5]
     ]
@@ -2432,6 +2710,7 @@ class InvestmentCommitteeSynthesizer:
         for stream_name in (
             "management quality",
             "management commitments",
+            "management progression",
             "projects",
             "capacity evolution",
             "risk evolution",
@@ -2860,6 +3139,11 @@ class InvestmentCommitteeSynthesizer:
             affected_analysts = _normalize_optional_string_list(item.get("raised_by"))
             affected_thesis_area = self._related_stream_names(question + " " + str(item.get("why_it_matters") or ""), shared_progression)
             evidence_needed = str(item.get("evidence_needed") or item.get("evidence_limit") or "").strip()
+            raw_evidence_needed = item.get("evidence_needed")
+            if isinstance(raw_evidence_needed, list):
+                evidence_needed = " ".join(
+                    str(value or "").strip() for value in raw_evidence_needed if str(value or "").strip()
+                )
             if not evidence_needed:
                 evidence_needed = "Later evidence that closes the current uncertainty."
             unresolved.append(
@@ -2869,6 +3153,11 @@ class InvestmentCommitteeSynthesizer:
                     "affected_analysts": affected_analysts,
                     "affected_thesis_area": affected_thesis_area[:3],
                     "evidence_needed": evidence_needed,
+                    "priority": str(item.get("priority") or "medium").strip().lower(),
+                    "strengthens_view_if": str(item.get("strengthens_view_if") or "").strip(),
+                    "weakens_view_if": str(item.get("weakens_view_if") or "").strip(),
+                    "unresolved_if": str(item.get("unresolved_if") or "").strip(),
+                    "critical_unknown_id": str(item.get("unknown_id") or "").strip(),
                     "current_confidence": self._confidence_from_support(affected_analysts, _normalize_optional_string_list(item.get("source_uncertainty_ids")) or []),
                 }
             )
@@ -2997,6 +3286,12 @@ class InvestmentCommitteeSynthesizer:
         shared_progression = bundle.get("shared_progression") or {}
         management_quality = shared_progression.get("management_quality") or {}
         capital_allocation_outcomes = shared_progression.get("capital_allocation_outcomes") or {}
+        # Execution counts from management_progression stream (MP is sole lifecycle authority)
+        _mp_stream = shared_progression.get("management_progression") or {}
+        _mp_eo = (_mp_stream.get("execution_outcomes") or {}) if isinstance(_mp_stream, dict) else {}
+        _mp_coverage = _mp_eo.get("coverage") or {}
+        _mp_credibility = _mp_eo.get("credibility") or {}
+        management_execution_credibility_summary = str(_mp_credibility.get("summary") or "")
         financial_truth_stream = shared_progression.get("financial_truth") or {}
         shared_convictions = self._build_shared_conviction_records(payload, shared_progression)
         major_disagreements = self._build_major_disagreement_records(payload, shared_progression)
@@ -3174,12 +3469,28 @@ class InvestmentCommitteeSynthesizer:
             confidence=evidence_confidence["level"],
             economic_mechanism="Business quality matters because execution quality determines whether operating progress persists and compounds.",
         )
+        # Build management assessment incorporating execution evidence gap (MP is sole lifecycle authority)
+        _mq_conclusion = str(management_interpretation.get("conclusion") or management_quality.get("overall_view") or "")
+        _exec_gap_note = (
+            f" Execution evidence gap: {management_execution_credibility_summary}"
+            if management_execution_credibility_summary and management_execution_credibility_summary not in _mq_conclusion
+            else ""
+        )
+        # Execution unknown: 18/22 no-visible-action is an evidence gap, not proven non-execution
+        _eligible = _mp_coverage.get("management_execution_eligible", 0)
+        _visible = _mp_coverage.get("action_observed", 0)
+        _no_visible = _eligible - _visible if _eligible else 0
+        _exec_unknown = (
+            f"Of {_eligible} eligible initiatives, {_no_visible} have no visible action in current evidence — this is an evidence gap, not confirmed non-execution."
+            if _eligible and _no_visible
+            else str((management_interpretation.get("unresolved") or [management_quality.get("investor_implication") or ""])[0] or "Whether management's stated direction consistently matches later evidence.")
+        )
         management_judgment = self._build_judgment_block(
-            assessment=str(management_interpretation.get("conclusion") or management_quality.get("overall_view") or "Management judgment is read directly from the management-quality synthesis and related commitments."),
+            assessment=(_mq_conclusion + _exec_gap_note) or "Management judgment is read directly from the management-quality synthesis and related commitments.",
             direction=str(management_quality.get("overall_direction") or committee_direction or "unclear"),
             strongest_evidence=str((management_interpretation.get("positive_evidence") or [management_quality.get("overall_view") or ""])[0] or (financial_strengths[0] if financial_strengths else "")),
             main_concern=str((management_interpretation.get("negative_evidence") or [management_quality.get("weakest_dimension") or ""])[0] or (payload.get("most_important_risks", [{}])[0].get("risk") if payload.get("most_important_risks") else "Candor and follow-through still need more longitudinal proof.")),
-            unresolved_issue=str((management_interpretation.get("unresolved") or [management_quality.get("investor_implication") or ""])[0] or "Whether management's stated direction consistently matches later evidence."),
+            unresolved_issue=_exec_unknown,
             confidence=evidence_confidence["level"],
             economic_mechanism="Management quality matters because execution discipline, candor, and capital allocation shape how reliably the business can compound.",
         )
@@ -3213,8 +3524,14 @@ class InvestmentCommitteeSynthesizer:
         what_would_change_the_view: List[str] = []
         if unresolved_items:
             for item in unresolved_items[:5]:
+                strengthen = str(item.get("strengthens_view_if") or "").strip()
+                weaken = str(item.get("weakens_view_if") or "").strip()
                 question = str(item.get("question") or "").strip()
-                if question:
+                if strengthen:
+                    what_would_change_the_view.append(f"Strengthens the view if: {strengthen}")
+                if weaken:
+                    what_would_change_the_view.append(f"Weakens the view if: {weaken}")
+                if question and not (strengthen or weaken):
                     what_would_change_the_view.append(
                         f"Later evidence answers: {question.rstrip('?')}."
                     )
@@ -3235,7 +3552,11 @@ class InvestmentCommitteeSynthesizer:
         top_diligence_questions: List[Dict[str, Any]] = []
         sorted_unresolved = sorted(
             unresolved_items,
-            key=lambda x: (0 if x.get("current_confidence") == "low" else 1, str(x.get("question") or "")),
+            key=lambda x: (
+                _UNKNOWN_PRIORITY_ORDER.get(str(x.get("priority") or "medium").lower(), 2),
+                0 if x.get("current_confidence") == "low" else 1,
+                str(x.get("question") or ""),
+            ),
         )
         for idx, item in enumerate(sorted_unresolved[:7]):
             question = str(item.get("question") or "").strip()
@@ -3247,8 +3568,12 @@ class InvestmentCommitteeSynthesizer:
                     "question": question if question.endswith("?") else f"{question}?",
                     "why_it_matters": str(item.get("why_it_matters") or "This question is decision-relevant.").strip(),
                     "affected_analysts": _normalize_optional_string_list(item.get("affected_analysts")),
-                    "priority_reason": "Decision impact and unresolved disagreement.",
+                    "priority": str(item.get("priority") or "medium").lower(),
+                    "priority_reason": "Ranked by thesis consequence, scale, durability, and unresolved economic evidence.",
                     "evidence_needed": str(item.get("evidence_needed") or "").strip(),
+                    "strengthens_view_if": str(item.get("strengthens_view_if") or "").strip(),
+                    "weakens_view_if": str(item.get("weakens_view_if") or "").strip(),
+                    "critical_unknown_id": str(item.get("critical_unknown_id") or "").strip(),
                 }
             )
 
@@ -4116,11 +4441,9 @@ class InvestmentCommitteeSynthesizer:
             if not isinstance(item, dict):
                 continue
             disagreement_type = item.get("disagreement_type")
-            assert disagreement_type in {
-                "true_disagreement",
-                "different_emphasis",
-                "risk_weighting_difference",
-            }, "areas_of_disagreement must contain canonical disagreement_type before final validation"
+            assert disagreement_type in CANONICAL_DISAGREEMENT_TYPES, (
+                "areas_of_disagreement must contain canonical disagreement_type before final validation"
+            )
         validated["years_considered"] = self._years_considered(included)
         validated["evidence_quality_notes"] = self._load_inputs()[3]
         synthesis_limits = list(validated.get("synthesis_limits", []) or [])

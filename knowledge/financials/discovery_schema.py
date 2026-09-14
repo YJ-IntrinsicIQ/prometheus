@@ -15,6 +15,7 @@ FINANCIAL_DISCOVERY_SECTIONS = (
     "management_discussion_financial_summary",
     "share_capital_note",
     "eps_note",
+    "segment_reporting_note",
     "dividend_note",
     "shareholding_note",
     "corporate_action_note",

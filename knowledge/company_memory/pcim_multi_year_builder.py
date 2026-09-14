@@ -839,11 +839,24 @@ class PCIMMultiYearBuilder:
                 }
             )
 
+        execution_outcomes = payload.get("management_execution_outcomes")
+        if not isinstance(execution_outcomes, dict):
+            execution_outcomes = {}
         return {
             "available": True,
             "coverage_status": payload.get("coverage_status"),
             "items_considered": len(items),
             "progression_items": _limit(compact_items, 12),
+            "execution_outcomes": {
+                "contract_version": execution_outcomes.get("contract_version"),
+                "records_considered": execution_outcomes.get("records_considered", 0),
+                "execution_counts": execution_outcomes.get("execution_counts") or {},
+                "outcome_counts": execution_outcomes.get("outcome_counts") or {},
+                "attribution_counts": execution_outcomes.get("attribution_counts") or {},
+                "coverage": execution_outcomes.get("coverage") or {},
+                "credibility": execution_outcomes.get("credibility") or {},
+                "limitations": list(execution_outcomes.get("limitations") or []),
+            },
             "limitations": [],
         }
 

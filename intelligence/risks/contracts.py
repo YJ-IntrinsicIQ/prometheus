@@ -87,6 +87,32 @@ RISK_MITIGATION_STATUSES = (
     "unable_to_verify",
 )
 
+# ENG-125: consequence/response/effectiveness accountability chain
+RISK_CONSEQUENCE_STATUSES = (
+    "DIRECT_CONSEQUENCE",               # source explicitly links risk → observable effect
+    "STRONGLY_ASSOCIATED_CONSEQUENCE",  # explicitly co-discussed, quantitative causality incomplete
+    "ASSOCIATED_NOT_ATTRIBUTABLE",      # related deterioration, causal link not established
+    "NO_CONSEQUENCE_EVIDENCE",          # no reliable consequence found in available evidence
+    "CONSEQUENCE_UNKNOWN",              # evidence insufficient or contradictory
+)
+
+MANAGEMENT_RESPONSE_STATUSES = (
+    "RESPONSE_ACKNOWLEDGED",   # management recognizes the issue explicitly
+    "RESPONSE_PLANNED",        # mitigation announced but not yet started
+    "RESPONSE_IN_PROGRESS",    # implementation began, not yet complete
+    "RESPONSE_EXECUTED",       # concrete mitigation action completed
+    "NO_RESPONSE_DISCLOSED",   # no management action found in available evidence
+    "RESPONSE_UNKNOWN",        # evidence ambiguous
+)
+
+EFFECTIVENESS_STATUSES = (
+    "EFFECTIVE",                                    # evidence directly supports risk/consequence reduction
+    "PARTIALLY_EFFECTIVE",                          # some improvement attributable, risk remains
+    "INEFFECTIVE",                                  # explicit evidence: mitigation failed / risk worsened despite action
+    "ASSOCIATED_WITH_IMPROVEMENT_NOT_ATTRIBUTABLE", # risk improved after response; causality not proven
+    "EFFECTIVENESS_UNKNOWN",                        # insufficient evidence; do not infer from temporal proximity
+)
+
 
 @dataclass
 class RiskMitigation:
@@ -171,6 +197,19 @@ class RiskDefinition:
     
     # Materiality and assessment
     materiality: Optional[RiskMateriality] = None
+
+    # ENG-125: consequence → management response → execution → effectiveness accountability chain
+    # Each link independently evidenced; defaults preserve uncertainty rather than fabricating state.
+    consequence_status: str = "NO_CONSEQUENCE_EVIDENCE"
+    consequence_text: Optional[str] = None
+    consequence_type: Optional[str] = None   # e.g. "revenue_impact", "margin_pressure", "regulatory_action"
+    management_acknowledgment: str = "ACKNOWLEDGMENT_UNKNOWN"
+    management_response_status: str = "NO_RESPONSE_DISCLOSED"
+    management_response_text: Optional[str] = None
+    response_execution_status: str = "EXECUTION_UNKNOWN"
+    effectiveness_status: str = "EFFECTIVENESS_UNKNOWN"
+    effectiveness_reason: Optional[str] = None
+
     
     # Mitigation tracking
     mitigations: List[RiskMitigation] = field(default_factory=list)

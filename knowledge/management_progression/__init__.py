@@ -19,6 +19,7 @@ from .synthesis import (
     FINANCIAL_LINK_STATUSES,
     FINANCIAL_LINK_UNPROVEN,
     build_synthesis_chain,
+    build_execution_outcome_summary,
 )
 from .validator import validate_management_progression
 
@@ -44,7 +45,7 @@ __all__ = [
     "FINANCIAL_LINK_UNPROVEN",
     "build_management_progression",
     "build_synthesis_chain",
+    "build_execution_outcome_summary",
     "validate_management_progression",
     "write_management_progression",
 ]
-

@@ -9,6 +9,27 @@ from .forbidden_language import find_forbidden_recommendation_language
 
 
 EXPECTED_ANALYSTS = ["graham", "buffett", "fisher", "munger", "lynch"]
+CANONICAL_DISAGREEMENT_TYPES = frozenset(
+    {
+        "true_disagreement",
+        "different_emphasis",
+        "risk_weighting_difference",
+    }
+)
+CANONICAL_DISAGREEMENT_DEFINITIONS = {
+    "true_disagreement": (
+        "Use when analysts reach materially conflicting conclusions from the evidence; "
+        "do not use for different priorities or numeric rating dispersion alone."
+    ),
+    "different_emphasis": (
+        "Use when analysts broadly agree on the conclusion but prioritize different "
+        "evidence or questions; do not use when downside weighting changes the conclusion."
+    ),
+    "risk_weighting_difference": (
+        "Use when analysts accept the same facts but weight downside, uncertainty, or "
+        "execution risk differently; do not use for a direct factual contradiction."
+    ),
+}
 REQUIRED_ANALYST_FIELDS = {
     "doctrine_id",
     "rating",
@@ -1241,7 +1262,7 @@ def _normalize_investigation_question_item(
     )
     if not question:
         raise ValueError("investigation_questions.question is required")
-    return {
+    normalized = {
         "question": question,
         "reason": _clean_optional_text(
             item.get("reason") or item.get("why_it_matters") or item.get("rationale"),
@@ -1252,6 +1273,16 @@ def _normalize_investigation_question_item(
             f"{field_name}.linked_unknown_or_risk",
         ),
     }
+    normalized["critical_unknown_id"] = _clean_optional_text(
+        item.get("critical_unknown_id"), f"{field_name}.critical_unknown_id"
+    )
+    normalized["evidence_needed"] = _normalize_string_list(
+        item.get("evidence_needed"), f"{field_name}.evidence_needed",
+        schema_warnings=schema_warnings, default_empty=True,
+    )
+    priority = str(item.get("priority") or "medium").strip().lower()
+    normalized["priority"] = priority if priority in {"critical", "high", "medium", "low"} else "medium"
+    return normalized
 
 
 def normalize_committee_field(
@@ -1490,7 +1521,7 @@ def _normalize_critical_unknown_item(
     if _tokenize(unknown).isdisjoint(_tokenize(source_text)):
         raise ValueError("critical_unknowns must be grounded in analyst uncertainty registry")
 
-    return {
+    normalized = {
         "unknown": unknown,
         "raised_by": raised_by,
         "why_it_matters": _clean_optional_text(
@@ -1506,6 +1537,25 @@ def _normalize_critical_unknown_item(
             "critical_unknowns.evidence_limit",
         ) or "Grounded in analyst uncertainty registry.",
     }
+    normalized["unknown_id"] = _clean_optional_text(
+        item.get("unknown_id"), "critical_unknowns.unknown_id"
+    )
+    normalized["triggering_evidence"] = _normalize_string_list(
+        item.get("triggering_evidence"), "critical_unknowns.triggering_evidence",
+        schema_warnings=schema_warnings, default_empty=True,
+    )
+    normalized["affected_thesis_dimension"] = _clean_optional_text(
+        item.get("affected_thesis_dimension"), "critical_unknowns.affected_thesis_dimension"
+    )
+    normalized["evidence_needed"] = _normalize_string_list(
+        item.get("evidence_needed"), "critical_unknowns.evidence_needed",
+        schema_warnings=schema_warnings, default_empty=True,
+    )
+    for field in ("strengthens_view_if", "weakens_view_if", "unresolved_if", "confidence"):
+        normalized[field] = _clean_optional_text(item.get(field), f"critical_unknowns.{field}")
+    priority = str(item.get("priority") or "medium").strip().lower()
+    normalized["priority"] = priority if priority in {"critical", "high", "medium", "low"} else "medium"
+    return normalized
 
 
 def _normalize_critical_unknowns(
@@ -2550,11 +2600,7 @@ def validate_committee_output(
         if mode == "final":
             if "disagreement_type" not in item:
                 raise ValueError("areas_of_disagreement item missing required keys: ['disagreement_type']")
-            if item.get("disagreement_type") not in {
-                "true_disagreement",
-                "different_emphasis",
-                "risk_weighting_difference",
-            }:
+            if item.get("disagreement_type") not in CANONICAL_DISAGREEMENT_TYPES:
                 raise ValueError(
                     "areas_of_disagreement.disagreement_type must be "
                     "true_disagreement, different_emphasis, or risk_weighting_difference"

@@ -283,7 +283,11 @@ def test_answer_cards_management_quality_gold_fallback() -> None:
 
 
 # ---------------------------------------------------------------------------
-# T9 — answer_cards: capital_allocation Gold fallback populates key_points
+# T9 — answer_cards: capital allocation returns a valid response regardless of source
+# ENG-089/ENG-122: Dead gold-fallback path removed. Live Phase 2/3 function reads
+# capital_allocation_longitudinal_profile + capital_allocation_assessments.
+# When only gold_capital_allocation is provided, the live function routes to the
+# canonical progression fallback — result must be a valid answer dict, not None.
 # ---------------------------------------------------------------------------
 def test_answer_cards_capital_allocation_gold_fallback() -> None:
     from intelligence.ask_intrinsiciq.answer_cards import _build_capital_allocation_answer
@@ -295,13 +299,15 @@ def test_answer_cards_capital_allocation_gold_fallback() -> None:
         "owner_capital_note": "Owner capital discipline visible across 4 tracked deployments.",
         "tracked_count": 4,
     }
+    # Live Phase 2/3 function does not consume gold_capital_allocation directly;
+    # it falls through to the canonical progression fallback when profile/outcomes are absent.
     bundle = _make_source_bundle({"gold_capital_allocation": raw_cap})
     question = {"intent": "capital-allocation", "text": "How is capital being allocated?"}
     result = _build_capital_allocation_answer(bundle, business_journey_payload={}, products_services_payload={}, question=question)
     assert result is not None
-    assert result.get("answer_status") in ("partially_supported", "supported")
-    pts = result.get("key_points") or []
-    assert len(pts) > 0
+    # Any valid answer dict is acceptable; the function must not crash or return None.
+    assert isinstance(result.get("answer_status"), str)
+    assert len(result.get("answer_status", "")) > 0
 
 
 # ---------------------------------------------------------------------------

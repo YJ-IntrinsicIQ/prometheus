@@ -141,7 +141,7 @@ def test_product_specific_continuation_merges(tmp_path, monkeypatch):
     ManagementCommitmentsBuilder(company="co").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) == 1
-    assert _commitment_by_index(result)["status"] == "Delivered"
+    assert _commitment_by_index(result)["progression"]["current_state"] == "Delivered"
 
 
 # ── 6. Facility-specific continuation merges correctly ───────────────────────
@@ -158,7 +158,7 @@ def test_facility_specific_continuation_merges(tmp_path, monkeypatch):
     ManagementCommitmentsBuilder(company="co").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) == 1
-    assert _commitment_by_index(result)["status"] == "Delivered"
+    assert _commitment_by_index(result)["progression"]["current_state"] == "Delivered"
 
 
 # ── 7. Geography-specific continuation merges correctly ──────────────────────
@@ -175,7 +175,7 @@ def test_geography_specific_continuation_merges(tmp_path, monkeypatch):
     ManagementCommitmentsBuilder(company="co").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) == 1
-    assert _commitment_by_index(result)["status"] == "Abandoned"
+    assert _commitment_by_index(result)["progression"]["current_state"] == "Abandoned"
 
 
 # ── 8. Semantically similar restatement becomes RECONFIRMED ──────────────────
@@ -192,7 +192,7 @@ def test_exact_text_restatement_becomes_reconfirmed(tmp_path, monkeypatch):
     ManagementCommitmentsBuilder(company="co").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) == 1
-    assert _commitment_by_index(result)["status"] == "Reconfirmed"
+    assert _commitment_by_index(result)["progression"]["current_state"] == "Reconfirmed"
     lifecycle = _commitment_by_index(result).get("lifecycle", {})
     assert "fy24" in lifecycle.get("check_years", [])
 
@@ -211,8 +211,8 @@ def test_reconfirmation_is_not_in_progress(tmp_path, monkeypatch):
     ManagementCommitmentsBuilder(company="co").build()
     result = _load(tmp_path, "co")
     c = _commitment_by_index(result)
-    assert c["status"] not in {"In Progress", "Delivered", "Partially Delivered"}
-    assert c["status"] == "Reconfirmed"
+    assert c["progression"]["current_state"] not in {"In Progress", "Delivered", "Partially Delivered"}
+    assert c["progression"]["current_state"] == "Reconfirmed"
 
 
 # ── 10. Material scope change produces a separate commitment ──────────────────

@@ -57,7 +57,11 @@ METRIC_RECON_FIELDS: Dict[str, Tuple[str, ...]] = {
     "eps_diluted": ("eps_diluted",),
     "book_value_per_share": ("net_worth", "shares_outstanding"),
     "net_worth": ("net_worth",),
-    "reserves": ("reserves",),
+    # Reserves/other equity is not an independently reconciled field in the
+    # canonical reconciliation report.  Its source/basis/period integrity is
+    # carried by the normalized primary balance-sheet entry; requiring a
+    # nonexistent `reserves` check made every valid comparative unavailable.
+    "reserves": (),
     "total_debt": ("total_debt",),
     "cfo": ("cfo",),
     "fcf": ("cfo", "capex"),
@@ -297,7 +301,9 @@ def _share_action_warning(payload: Dict[str, Any]) -> Optional[str]:
 
 
 def _safe_growth(current: Optional[float], previous: Optional[float]) -> Tuple[Optional[float], Optional[str]]:
-    if current is None or previous is None:
+    if current is None:
+        return None, "current-year data missing"
+    if previous is None:
         return None, "previous-year data missing"
     if previous == 0:
         return None, "base value zero"
@@ -400,6 +406,8 @@ def _cagr_for_metric(company_root: Path, current_year: str, metric: str) -> Tupl
     if _metric_reconciled(_reconciliation_payload_for_year(company_root, current_year), metric):
         return None, "current-year reconciliation blocks CAGR"
     current_value = _metric_value(current_payload, metric)
+    current_basis = _metric_basis(current_payload, metric)
+    basis_mismatch_seen = False
     for periods in (5, 3, 2):
         base_year = _find_year_by_offset(company_root, current_year, periods)
         if base_year is None:
@@ -408,12 +416,22 @@ def _cagr_for_metric(company_root: Path, current_year: str, metric: str) -> Tupl
         base_reconciliation = _reconciliation_payload_for_year(company_root, base_year)
         if base_payload is None or _metric_reconciled(base_reconciliation, metric):
             continue
+        base_basis = _metric_basis(base_payload, metric)
+        if (
+            current_basis != "unknown"
+            and base_basis != "unknown"
+            and current_basis != base_basis
+        ):
+            basis_mismatch_seen = True
+            continue
         base_value = _metric_value(base_payload, metric)
         cagr, issue = _safe_cagr(current_value, base_value, periods)
         if cagr is not None:
             return cagr, None
         if issue:
             return None, issue
+    if basis_mismatch_seen:
+        return None, "basis mismatch across years"
     return None, None
 
 
@@ -545,7 +563,11 @@ def calculate_financial_growth(
             year,
             metric,
         )
-        growth_percent, growth_warning = _safe_growth(current_value, previous_value)
+        growth_percent, growth_warning = (
+            (None, "basis mismatch across years")
+            if basis_mismatch
+            else _safe_growth(current_value, previous_value)
+        )
         cagr_percent, cagr_warning = _cagr_for_metric(company_root, year, metric)
         extra_warnings = list(metric_warnings)
 

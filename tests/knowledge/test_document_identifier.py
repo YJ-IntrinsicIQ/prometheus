@@ -1704,7 +1704,7 @@ def test_p43_tanla_quarterly_identified():
     rp = d["reporting_period"]
     cl = d["classification"]
 
-    assert ci["resolved_company_key"] == "tanla", "company_key must be tanla"
+    assert ci["resolved_company_key"] == "tanla_platforms", "company_key must be tanla_platforms"
     assert ci["confidence"] in ("MEDIUM", "HIGH"), (
         f"company confidence must be MEDIUM or HIGH, got {ci['confidence']}"
     )

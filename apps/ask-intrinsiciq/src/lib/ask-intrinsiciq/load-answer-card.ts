@@ -120,6 +120,13 @@ type RawAnswerCardsPayload = {
         basis?: string[];
         limitations?: string[];
       } | null;
+      outcome_attribution_summary?: {
+        directly_attributable?: number;
+        strongly_supported?: number;
+        associated_not_attributable?: number;
+        no_outcome_evidence?: number;
+        negative_outcome?: number;
+      } | null;
     } | null;
     evidence_summary: {
       status: ResearchAnswerCard["evidenceSummary"][number]["evidenceStatus"];
@@ -273,6 +280,7 @@ function mapInterpretation(
       basis: cleanPublicList(raw.confidence?.basis ?? [], { limit: 2 }),
       limitations: cleanPublicList(raw.confidence?.limitations ?? [], { limit: 2 }),
     },
+    outcomeAttributionSummary: raw.outcome_attribution_summary ?? null,
   };
 }
 

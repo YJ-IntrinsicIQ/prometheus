@@ -35,6 +35,7 @@ SOURCE_REGISTRY = {
     "capacity_assessments": "company_memory/capacity/capacity_assessments.json",
     "risk_evolution": "company_memory/multi_year/risk_evolution.json",
     "risk_assessments": "company_memory/risks/risk_assessments.json",
+    "risk_registry": "company_memory/risks/risk_registry.json",
     "risk_timelines": "company_memory/risks/risk_timelines.json",
     "commentary_themes": "company_memory/management_commentary/commentary_themes.json",
     "commentary_assessments": "company_memory/management_commentary/commentary_assessments.json",

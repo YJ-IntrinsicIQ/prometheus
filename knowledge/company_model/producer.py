@@ -63,10 +63,12 @@ class CompanyModelProducer:
         evolution = self._build_business_model_evolution()
         longitudinal_current_state = self._build_longitudinal_current_state()
         uncertainties = self._build_uncertainties(customers, revenue_engines, offerings)
+        economic_engines = ((self.pcim.get("business_economics_inputs") or {}).get("economic_engines") or {})
 
         coverage_status = "supported" if offerings and customers and revenue_engines else "partial"
         what_sells = [item["name"] for item in offerings[:5]]
         who_pays = [item["payer_type"] for item in customers[:5]]
+        management_execution_summary = self._build_management_execution_summary()
         payload = {
             "schema_version": SCHEMA_VERSION,
             "company_slug": self.company_slug,
@@ -91,9 +93,14 @@ class CompanyModelProducer:
             "customers": customers,
             "revenue_engines": revenue_engines,
             "economic_drivers": economic_drivers,
+            # Canonical disclosed engine economics are owned by CIM/PCIM.  The
+            # Company Model projects them; it does not independently reconstruct
+            # segment identity, arithmetic, or profitability.
+            "economic_engines": economic_engines,
             "dependencies": dependencies,
             "business_model_evolution": evolution,
             "longitudinal_current_state": longitudinal_current_state,
+            "management_execution_summary": management_execution_summary,
             "uncertainties": uncertainties,
             "source_manifest": self._source_manifest(coverage_status),
         }
@@ -124,9 +131,11 @@ class CompanyModelProducer:
             "customers": [],
             "revenue_engines": [],
             "economic_drivers": [],
+            "economic_engines": {},
             "dependencies": [],
             "business_model_evolution": [],
             "longitudinal_current_state": [],
+            "management_execution_summary": {"status": "unavailable", "reason": "insufficient business model evidence"},
             "uncertainties": [
                 {
                     "uncertainty_id": "missing_business_model_evidence",
@@ -498,6 +507,59 @@ class CompanyModelProducer:
                 break
         return entries
 
+    def _build_management_execution_summary(self) -> Dict[str, Any]:
+        """Project the management execution outcome summary from Management Progression.
+
+        Authority: Management Progression owns initiative identity, lifecycle state,
+        outcome observation, and attribution.  This method reads the pre-built
+        management_execution_outcomes block and projects a compact summary — it does
+        not re-derive lifecycle or re-identify initiatives independently.
+
+        The summary exposes: execution counts by state, outcome counts, attribution
+        counts, credibility status, and the limitations / semantic contracts that
+        downstream consumers must honour.
+        """
+        if not isinstance(self.management_progression, dict):
+            return {"status": "unavailable", "reason": "management_progression not loaded"}
+        meo = self.management_progression.get("management_execution_outcomes")
+        if not isinstance(meo, dict):
+            return {"status": "unavailable", "reason": "management_execution_outcomes not present in management_progression"}
+        coverage = meo.get("coverage") or {}
+        credibility = meo.get("credibility") or {}
+        return {
+            "status": "available",
+            "authority": "management_progression/management_progression.json",
+            "records_considered": meo.get("records_considered", 0),
+            "execution_counts": meo.get("execution_counts") or {},
+            "outcome_counts": meo.get("outcome_counts") or {},
+            "attribution_counts": meo.get("attribution_counts") or {},
+            "coverage": {
+                "action_observed": coverage.get("action_observed", 0),
+                "management_execution_eligible": coverage.get("management_execution_eligible", 0),
+                "external_actor_events_excluded": coverage.get("external_actor_events_excluded", 0),
+                "execution_completed_or_operational": coverage.get("execution_completed_or_operational", 0),
+                "operating_outcome_observed": coverage.get("operating_outcome_observed", 0),
+                "economic_consequence_attributable": coverage.get("economic_consequence_attributable", 0),
+                "completed_execution_outcome_unproven": coverage.get("completed_execution_outcome_unproven", 0),
+            },
+            "credibility": {
+                "status": credibility.get("status"),
+                "follow_through": credibility.get("follow_through"),
+                "execution_completion": credibility.get("execution_completion"),
+                "outcome_realization": credibility.get("outcome_realization"),
+                "economic_proof": credibility.get("economic_proof"),
+                "disclosure_quality": credibility.get("disclosure_quality"),
+                "summary": credibility.get("summary"),
+            },
+            "limitations": list(meo.get("limitations") or []),
+            "semantic_contracts": [
+                "ACTION_COMPLETED is not operating success or value creation.",
+                "OUTCOME_OBSERVED is not attributable economic consequence unless attribution_strength is DIRECTLY_ATTRIBUTABLE or STRONGLY_SUPPORTED.",
+                "Strategic intent and aspiration are outside the verifiable-commitment denominator.",
+                "Regulator-driven events are excluded from management-credit calculations.",
+            ],
+        }
+
     def _build_longitudinal_current_state(self) -> List[Dict[str, Any]]:
         """Compact current-state signals from multi-source longitudinal threads.
 
@@ -514,6 +576,12 @@ class CompanyModelProducer:
         An UNRESOLVED or UNPROVEN thread is preserved as unknown — never promoted to confirmed.
         """
         items = (self.management_progression.get("progression_items") or []) if isinstance(self.management_progression, dict) else []
+        execution_summary = self.management_progression.get("management_execution_outcomes") or {}
+        execution_by_id = {
+            str(record.get("initiative_id") or ""): record
+            for record in execution_summary.get("records") or []
+            if isinstance(record, dict) and record.get("initiative_id")
+        }
         states: List[Dict[str, Any]] = []
         for item in items:
             if not isinstance(item, dict):
@@ -549,11 +617,15 @@ class CompanyModelProducer:
                 evidence_id=str(item.get("item_id") or ""),
                 field_path="progression_items[]",
             )
+            execution_record = execution_by_id.get(str(item.get("item_id") or ""), {})
             states.append({
                 "state_id": f"lcs-{_slug(str(item.get('item_id') or item.get('theme') or ''))}",
                 "theme": str(item.get("theme") or ""),
                 "current_status": current_status,
                 "management_credibility_signal": credibility,
+                "execution_state": execution_record.get("execution_state") or (item.get("synthesis_chain") or {}).get("chain_status"),
+                "outcome_state": execution_record.get("outcome_state"),
+                "attribution_strength": execution_record.get("attribution_strength"),
                 "linked_company_model_ids": list(item.get("linked_company_model_ids") or []),
                 "source_period": latest_period,
                 "confidence": conf,

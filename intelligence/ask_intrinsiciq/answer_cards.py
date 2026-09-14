@@ -2358,7 +2358,7 @@ def _build_execution_outcome_answer(source_bundle: Dict[str, Any], *, business_j
             "Execution completion is not operating success and operating success is not economic value creation. "
             "These tiers — action, completion, outcome, and confirmed attribution — must be tracked separately."
         ),
-        "confidence": {"level": "medium", "basis": ["management execution outcomes from management progression analysis"]},
+        "confidence": {"level": "medium", "basis": ["execution history and completion records"]},
     }
     return _draft(
         answer_status=answer_status,
@@ -2371,7 +2371,7 @@ def _build_execution_outcome_answer(source_bundle: Dict[str, Any], *, business_j
             "The four tiers — action visible, completed, outcome observed, and confirmed economic attribution — are tracked independently and do not imply each other."
         ),
         evidence_status="direct" if eligible > 0 else "unavailable",
-        evidence_summary="management_execution_outcomes from management_progression.",
+        evidence_summary="Execution history and initiative completion records.",
         evidence_points=[chain_text],
         uncertainty=" ".join(unresolved[:2]) if unresolved else "Execution outcome coverage is current.",
         products_refs=[],
@@ -2506,7 +2506,7 @@ def _build_value_creation_answer(source_bundle: Dict[str, Any], *, business_jour
             f"{len(no_evidence)} with no disclosed outcome, from {total} tracked capital allocations."
         ),
         evidence_points=[
-            f"{_alloc_name(a)} ({a.get('allocation_category','?')}): "
+            f"{_alloc_name(a)}: "
             + (
                 "outcome confirmed by the transaction itself"
                 if a.get("outcome_attribution") == "DIRECTLY_ATTRIBUTABLE"
@@ -3034,9 +3034,9 @@ def _build_canonical_make_money_answer(source_bundle: Dict[str, Any], *, busines
     canonical_engines = _get_record(model, "economic_engines")
     disclosed_engines = _get_record_list(canonical_engines, "engines")
     engine_economics_note = ""
+    momentum_parts: List[str] = []
     if disclosed_engines:
         latest_parts = []
-        momentum_parts = []
         for engine in disclosed_engines[:5]:
             history = _get_record_list(engine, "history")
             if not history:
@@ -3856,7 +3856,7 @@ def _build_break_thesis_answer(source_bundle: Dict[str, Any], *, business_journe
         if not key_points:
             return _build_generic_not_supported_answer(source_bundle, business_journey_payload=business_journey_payload, products_services_payload=products_services_payload, question=question)
 
-        # ENG-125: summarise management response coverage across worsening + recurring risks
+        # Summarise management response coverage across worsening + recurring risks.
         active_risks = groups["worsening"] + groups["recurring"]
         no_response_count = sum(
             1 for e in active_risks
@@ -3893,7 +3893,7 @@ def _build_break_thesis_answer(source_bundle: Dict[str, Any], *, business_journe
                 "they are receding but not resolved. Risks without confirmed trajectory have unknown financial consequence "
                 "and are not listed as thesis-breakers. "
                 + (response_coverage + " " if response_coverage else "")
-                + "Management response attribution follows ENG-125: only independently evidenced actions are credited; "
+                + "Management response attribution credits only independently evidenced actions; "
                 "temporal improvement near a stated action does not constitute proof of effectiveness."
             ),
             evidence_status="direct",
@@ -4302,7 +4302,7 @@ def _build_capital_allocation_answer(
         outcome_pts.append("Execution verified (operating outcome not yet visible): " + "; ".join(exec_verified[:2]) + ".")
     if unverified:
         outcome_pts.append(
-            f"{len(unverified)} allocation(s) with unverified outcomes: " + ", ".join(unverified[:3]) + "."
+            f"{len(unverified)} allocations with unverified outcomes: " + ", ".join(unverified[:3]) + "."
         )
     if per_share_attr:
         outcome_pts.append("Per-share consequence attributable: " + "; ".join(per_share_attr[:2]) + ".")
@@ -4375,7 +4375,7 @@ def _build_capital_allocation_answer(
         uncertainty_parts.append(uq[0])
     if n_unverified:
         uncertainty_parts.append(
-            f"{n_unverified} allocation(s) have no attributable financial outcome yet."
+            f"{n_unverified} allocations have no attributable financial outcome yet."
         )
     uncertainty = " ".join(uncertainty_parts) if uncertainty_parts else (
         "Capital deployment is documented; return attribution requires further evidence."
@@ -4894,7 +4894,7 @@ def _build_regulatory_risks_answer(source_bundle: Dict[str, Any], *, business_jo
         worsening_count = sum(1 for e in regulatory if e.get("trajectory") == "worsening")
         recurring_count = sum(1 for e in regulatory if e.get("trajectory") == "recurring")
         unknown_count = sum(1 for e in regulatory if not e.get("trajectory"))
-        # ENG-125: count regulatory risks with no management response
+        # Count regulatory risks with no management response.
         reg_no_response = sum(
             1 for e in regulatory
             if (e.get("management_response_status") or "NO_RESPONSE_DISCLOSED") == "NO_RESPONSE_DISCLOSED"
@@ -4917,7 +4917,7 @@ def _build_regulatory_risks_answer(source_bundle: Dict[str, Any], *, business_jo
             "Regulatory outcomes can change quickly after a consent decree, enforcement action, or response letter."
         )
         if not key_pts:
-            return _build_unavailable_answer(question, "No active regulatory or governance risks are currently tracked.", "Risk assessments are present but no regulatory themes are identified.", "")
+            return _build_unavailable_answer(question, "Regulatory-risk evidence is unavailable, so active risks cannot be established.", "Risk evidence is unavailable for a reliable regulatory-risk conclusion.", "")
         _reg_names = [e.get("risk_name") or "" for e in regulatory[:2] if e.get("risk_name")]
         if _reg_names and worsening_count > 0 and reg_no_response > 0:
             _reg_why = (
@@ -4969,7 +4969,7 @@ def _build_regulatory_risks_answer(source_bundle: Dict[str, Any], *, business_jo
         )
     ][:5]
     if not regulatory_active:
-        return _build_unavailable_answer(question, "No active regulatory or governance risks are currently tracked.", "The risk evolution timeline is present but shows no WORSENING or RECURRING regulatory themes.", "")
+        return _build_unavailable_answer(question, "Regulatory-risk evidence is unavailable, so active risks cannot be established.", "The available risk timeline does not support a reliable regulatory-risk conclusion.", "")
 
     def _safe_risk_text(raw: str) -> str:
         cleaned = re.sub(r"[.…]+$", "", raw.strip())
@@ -5439,12 +5439,6 @@ def finalize_answer_against_reconciled_truth(
                 "limitations": _clean_list([str(uncertainty_note.get("message") or "")])[:2],
             },
         )
-
-    # ENG-122: carry outcome_attribution_summary from progression into interpretation
-    _progression = answer_card.get("progression") if isinstance(answer_card.get("progression"), dict) else {}
-    oa_summary = (_progression or {}).get("outcome_attribution_summary")
-    if oa_summary and isinstance(oa_summary, dict):
-        interpretation["outcome_attribution_summary"] = oa_summary
 
     finalized = dict(answer_card)
     finalized["simple_answer"] = sanitize_public_text(_normalize_public_prose(simple_answer))

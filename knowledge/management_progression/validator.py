@@ -14,6 +14,12 @@ from .contract import (
     THESIS_IMPACTS,
     VERIFICATION_STATUSES,
 )
+from .synthesis import (
+    CREDIBILITY_EVIDENCE_STATES,
+    EXECUTION_STATES,
+    OUTCOME_ATTRIBUTION_STRENGTHS,
+    OUTCOME_STATES,
+)
 
 
 GENERIC_BAD = (
@@ -60,6 +66,7 @@ def validate_management_progression(payload: Dict[str, Any]) -> Dict[str, Any]:
                 errors.append(f"duplicate event detected: {event.get('event_id') or marker}")
             seen_events.add(marker)
             _validate_event(event, item_index, errors, warnings)
+    _validate_execution_outcomes(payload.get("management_execution_outcomes"), items, errors)
     status = "fail" if errors else "warning" if warnings else "pass"
     return {
         "schema_version": "management_progression_validation.v1",
@@ -68,6 +75,49 @@ def validate_management_progression(payload: Dict[str, Any]) -> Dict[str, Any]:
         "errors": errors,
         "warnings": warnings,
     }
+
+
+def _validate_execution_outcomes(
+    summary: Any, items: List[Dict[str, Any]], errors: List[str]
+) -> None:
+    # Backward compatibility for stored v1 fixtures; the current producer always
+    # emits this extension. Once all v1 artifacts are migrated it can become required.
+    if summary is None:
+        return
+    if not isinstance(summary, dict):
+        errors.append("management_execution_outcomes must be an object")
+        return
+    records = summary.get("records")
+    if not isinstance(records, list):
+        errors.append("management_execution_outcomes.records must be a list")
+        return
+    if len(records) != len(items):
+        errors.append("management_execution_outcomes must contain one record per progression item")
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            errors.append(f"management_execution_outcomes.records[{index}] must be an object")
+            continue
+        if record.get("execution_state") not in EXECUTION_STATES:
+            errors.append(f"management_execution_outcomes.records[{index}].execution_state is invalid")
+        if record.get("outcome_state") not in OUTCOME_STATES:
+            errors.append(f"management_execution_outcomes.records[{index}].outcome_state is invalid")
+        if record.get("attribution_strength") not in OUTCOME_ATTRIBUTION_STRENGTHS:
+            errors.append(f"management_execution_outcomes.records[{index}].attribution_strength is invalid")
+        credibility = record.get("credibility_evidence") or {}
+        if not isinstance(credibility, dict) or any(
+            value not in CREDIBILITY_EVIDENCE_STATES for value in credibility.values()
+        ):
+            errors.append(f"management_execution_outcomes.records[{index}].credibility_evidence is invalid")
+        # Completion without separately evidenced outcome cannot be promoted.
+        if (
+            record.get("execution_state") in {"ACTION_COMPLETED", "OPERATIONAL"}
+            and not record.get("operating_outcome")
+            and record.get("outcome_state") == "OUTCOME_OBSERVED"
+        ):
+            errors.append(f"management_execution_outcomes.records[{index}] fabricates an observed outcome")
+        financial = record.get("financial_consequence") or {}
+        if record.get("attribution_strength") == "DIRECTLY_ATTRIBUTABLE" and financial.get("link_status") != "confirmed":
+            errors.append(f"management_execution_outcomes.records[{index}] lacks confirmed financial attribution")
 
 
 def _validate_synthesis_chain(
@@ -152,4 +202,3 @@ def _event_marker(event: Dict[str, Any]) -> str:
             " ".join(str(event.get("statement_text") or event.get("action_taken") or event.get("operational_outcome") or "").lower().split())[:180],
         ]
     )
-

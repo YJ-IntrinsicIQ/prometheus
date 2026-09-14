@@ -367,6 +367,98 @@ def test_basis_mismatch_warning(tmp_path):
     assert "basis mismatch across years" in report.growth_metrics["revenue"].warnings
 
 
+def test_reserves_growth_uses_valid_current_and_previous_primary_values(tmp_path):
+    _write_year(tmp_path, "fy24", _normalized_payload("fy24", reserves=320.0), _ratio_payload("fy24"))
+    current_dir = _write_year(tmp_path, "fy25", _normalized_payload("fy25", reserves=400.0), _ratio_payload("fy25"))
+
+    report = calculate_financial_growth(
+        company="acme",
+        year="fy25",
+        normalized_path=current_dir / "normalized_fundamentals.json",
+        reconciliation_path=current_dir / "financial_reconciliation_report.json",
+        ratios_path=current_dir / "financial_ratios.json",
+    )
+
+    reserves = report.growth_metrics["reserves"]
+    assert reserves.current_value == 400.0
+    assert reserves.previous_value == 320.0
+    assert reserves.growth_percent == 25.0
+    assert "missing reconciliation check for reserves" not in reserves.warnings
+
+
+def test_reserves_current_without_previous_keeps_value_and_marks_trend_unknown(tmp_path):
+    current_dir = _write_year(tmp_path, "fy25", _normalized_payload("fy25", reserves=400.0), _ratio_payload("fy25"))
+
+    report = calculate_financial_growth(
+        company="acme",
+        year="fy25",
+        normalized_path=current_dir / "normalized_fundamentals.json",
+        reconciliation_path=current_dir / "financial_reconciliation_report.json",
+        ratios_path=current_dir / "financial_ratios.json",
+    )
+
+    reserves = report.growth_metrics["reserves"]
+    assert reserves.current_value == 400.0
+    assert reserves.previous_value is None
+    assert reserves.growth_percent is None
+    assert "previous-year data missing" in reserves.warnings
+
+
+def test_reserves_absent_in_both_periods_remains_unavailable_without_fabrication(tmp_path):
+    previous = _normalized_payload("fy24")
+    current = _normalized_payload("fy25")
+    previous["balance_sheet"]["reserves"] = _entry(
+        "reserves", value_crore=None, value_original="", basis="consolidated"
+    )
+    current["balance_sheet"]["reserves"] = _entry(
+        "reserves", value_crore=None, value_original="", basis="consolidated"
+    )
+    _write_year(tmp_path, "fy24", previous, _ratio_payload("fy24"))
+    current_dir = _write_year(tmp_path, "fy25", current, _ratio_payload("fy25"))
+
+    report = calculate_financial_growth(
+        company="acme",
+        year="fy25",
+        normalized_path=current_dir / "normalized_fundamentals.json",
+        reconciliation_path=current_dir / "financial_reconciliation_report.json",
+        ratios_path=current_dir / "financial_ratios.json",
+    )
+
+    reserves = report.growth_metrics["reserves"]
+    assert reserves.current_value is None
+    assert reserves.previous_value is None
+    assert reserves.growth_percent is None
+    assert "current-year data missing" in reserves.warnings
+
+
+def test_reserves_wrong_basis_comparative_is_not_used(tmp_path):
+    _write_year(
+        tmp_path,
+        "fy24",
+        _normalized_payload("fy24", basis="standalone", reserves=320.0),
+        _ratio_payload("fy24"),
+    )
+    current_dir = _write_year(
+        tmp_path,
+        "fy25",
+        _normalized_payload("fy25", basis="consolidated", reserves=400.0),
+        _ratio_payload("fy25"),
+    )
+
+    report = calculate_financial_growth(
+        company="acme",
+        year="fy25",
+        normalized_path=current_dir / "normalized_fundamentals.json",
+        reconciliation_path=current_dir / "financial_reconciliation_report.json",
+        ratios_path=current_dir / "financial_ratios.json",
+    )
+
+    reserves = report.growth_metrics["reserves"]
+    assert reserves.growth_percent is None
+    assert reserves.cagr_percent is None
+    assert "basis mismatch across years" in reserves.warnings
+
+
 def test_growth_report_carries_basis_context(tmp_path):
     _write_year(tmp_path, "fy24", _normalized_payload("fy24"), _ratio_payload("fy24"))
     current_payload = _normalized_payload("fy25")

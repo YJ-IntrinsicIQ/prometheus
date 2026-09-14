@@ -21,6 +21,7 @@ FINANCIAL_EXTRACTION_TABLES = (
     "shareholding_pattern",
     "investment_schedule",
     "lease_note",
+    "segment_reporting",
     "management_discussion_financial_summary",
 )
 

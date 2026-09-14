@@ -70,3 +70,16 @@ ALLOCATION_FUNDING_SOURCES = (
     "unknown",
 )
 
+# ENG-122: Five-tier outcome attribution taxonomy.
+# These classify EVIDENCE QUALITY for economic value attribution — not causal inference.
+# HEURISTIC_CAUSAL_ATTRIBUTION_PATHS = 0: no token-overlap or temporal-sequence inference.
+OUTCOME_ATTRIBUTION_LEVELS = (
+    "DIRECTLY_ATTRIBUTABLE",       # Source explicitly states this allocation produced a specific economic outcome,
+                                   # OR the transaction itself IS the economic event (distributions, debt repayment).
+    "STRONGLY_SUPPORTED",          # Multiple convergent evidence items confirm execution + explicit outcome signal.
+    "ASSOCIATED_NOT_ATTRIBUTABLE", # Deployment and execution confirmed; outcome association visible but causal
+                                   # link to this specific allocation is not explicit in evidence.
+    "NO_OUTCOME_EVIDENCE",         # Deployment observed; no downstream execution or outcome evidence available.
+    "NEGATIVE_OUTCOME",            # Explicit evidence of delay, abandonment, or value destruction.
+)
+

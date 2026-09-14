@@ -71,7 +71,7 @@ MIN_COMPACT_INPUT_PACK_BUDGET_TOKENS = 1200
 MIN_FINANCIAL_TRUTH_PACK_BUDGET_TOKENS = 250
 MIN_EVIDENCE_PACK_BUDGET_TOKENS = 120
 MIN_DOCTRINE_CONTEXT_BUDGET_TOKENS = 600
-DEFAULT_TOTAL_PROMPT_BUDGET_TOKENS = 12000
+DEFAULT_TOTAL_PROMPT_BUDGET_TOKENS = 13000
 DEFAULT_HARD_MAX_PROMPT_TOKENS = 13000
 DEFAULT_COMPACT_INPUT_PACK_BUDGET_TOKENS = 4200
 DEFAULT_FINANCIAL_TRUTH_PACK_BUDGET_TOKENS = 900
@@ -107,6 +107,7 @@ DOCTRINE_SECTION_PRIORITIES = {
         "per_share_inputs",
         "governance_and_incentive_inputs",
         "risk_inputs",
+        "business_economics_inputs",
     ],
     "buffett": [
         "financial_truth_inputs",
@@ -116,21 +117,29 @@ DOCTRINE_SECTION_PRIORITIES = {
         "return_on_capital_inputs",
         "capital_allocation_inputs",
         "management_quality_inputs",
+        "management_execution_inputs",
+        "economic_attribution_inputs",
         "financial_quality_inputs",
     ],
     "fisher": [
         "financial_truth_inputs",
         "growth_quality_inputs",
+        "business_economics_inputs",
         "growth_execution_inputs",
         "profitability_inputs",
         "working_capital_inputs",
         "management_quality_inputs",
+        "management_execution_inputs",
+        "economic_attribution_inputs",
         "moat_inputs",
     ],
     "munger": [
         "financial_truth_inputs",
         "governance_and_incentive_inputs",
         "risk_inputs",
+        "business_economics_inputs",
+        "management_execution_inputs",
+        "economic_attribution_inputs",
         "capital_allocation_inputs",
         "working_capital_inputs",
         "ownership_inputs",
@@ -138,7 +147,10 @@ DOCTRINE_SECTION_PRIORITIES = {
     "lynch": [
         "financial_truth_inputs",
         "business_understanding",
+        "business_economics_inputs",
         "simplicity_and_story_inputs",
+        "management_execution_inputs",
+        "economic_attribution_inputs",
         "story_vs_numbers_inputs",
         "profitability_inputs",
         "per_share_inputs",
@@ -2225,13 +2237,6 @@ def compact_financial_truth_for_analyst(
     per_share_status = "available" if any(token in metric_blob for token in ("eps", "book value", "share")) else "unknown"
     debt_reliability_status = "available" if any(token in metric_blob for token in ("debt", "cash", "net worth")) else "unknown"
 
-    blocked_warning_summaries = []
-    for item in financial_truth_inputs.get("financial_warnings_blocked_downstream", []) or []:
-        if isinstance(item, dict):
-            blocked_warning_summaries.append(item.get("normalized_warning") or item.get("original_warning") or "")
-        else:
-            blocked_warning_summaries.append(str(item))
-
     return {
         "analyst": analyst,
         "top_usable_metrics": usable,
@@ -2243,11 +2248,11 @@ def compact_financial_truth_for_analyst(
             max_items=warning_limit,
             item_limit=160,
         ),
-        "blocked_warnings": _extract_summary_fragments(
-            blocked_warning_summaries,
-            max_items=warning_limit,
-            item_limit=160,
-        ),
+        # Blocked warnings remain in the deterministic truth pack used by the
+        # post-LLM validator, but must never be shown to the model as usable
+        # context. Exposing them invited stochastic repetition of facts the
+        # canonical layer had already rejected as stale or contradictory.
+        "blocked_warnings": [],
         "investor_questions": _extract_summary_fragments(
             financial_truth_inputs.get("investor_financial_questions") or financial_truth_inputs.get("investor_relevant_questions") or [],
             max_items=question_limit,
@@ -2512,6 +2517,49 @@ def _compact_section_replacement(
     return replacement
 
 
+def _compact_business_economics_section(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    canonical = value.get("economic_engines") or {}
+    engines = []
+    for engine in (canonical.get("engines") or [])[:6]:
+        history = engine.get("history") or []
+        points = []
+        for point in ([history[0], history[-1]] if len(history) > 1 else history):
+            points.append({
+                "period": point.get("reporting_period"),
+                "revenue_crore": point.get("revenue_crore"),
+                "revenue_share": point.get("revenue_share"),
+                "growth_rate": point.get("growth_rate"),
+                "profitability_status": point.get("profitability_status"),
+                "cash_conversion_linkage": point.get("cash_conversion_linkage"),
+                "evidence_ids": (point.get("evidence_ids") or [])[:2],
+            })
+        interp = engine.get("investor_interpretation") or {}
+        engines.append({
+            "engine_id": engine.get("engine_id"),
+            "engine_name": engine.get("engine_name"),
+            "scale_status": engine.get("scale_status"),
+            "growth_momentum": engine.get("growth_momentum"),
+            "mix_trajectory": engine.get("mix_trajectory"),
+            "relative_performance": engine.get("relative_performance"),
+            "inflection": engine.get("inflection"),
+            "trajectory": engine.get("trajectory"),
+            "interpretation_summary": interp.get("summary"),
+            "history": points,
+            "unknowns": (interp.get("unknowns") or [])[:3],
+        })
+    return {
+        "economic_engines": {
+            "coverage_status": canonical.get("coverage_status"),
+            "canonical_owner": canonical.get("canonical_owner"),
+            "engines": engines,
+            "source_limitations": (canonical.get("source_limitations") or [])[:3],
+        },
+        "uncertainty_notes": (value.get("uncertainty_notes") or [])[:2],
+    }
+
+
 def _compact_multi_year_section(value: Any, analyst: str) -> Any:
     if not isinstance(value, dict):
         return {
@@ -2698,6 +2746,8 @@ def _section_specific_compaction(section_name: str, section_value: Any, analyst:
         return _compact_financial_quality_section(section_value, analyst)
     if section_name == "capital_allocation_inputs":
         return _compact_capital_allocation_section(section_value)
+    if section_name == "business_economics_inputs":
+        return _compact_business_economics_section(section_value)
     if section_name == "financial_truth_inputs":
         return compact_financial_truth_for_analyst(
             section_value,
@@ -3050,6 +3100,16 @@ def _shrink_limits(limits: Dict[str, int]) -> Optional[Dict[str, int]]:
         3,
         next_limits["max_dict_keys_per_item"] - 1,
     )
+    # Company-memory context is part of the prompt envelope, not a canonical
+    # evidence section.  When the fixed 13K ceiling is still exceeded after
+    # section compaction, progressively reduce this auxiliary context so the
+    # doctrine-required PCIM sections (including management execution inputs)
+    # remain available.  Keep a bounded floor rather than dropping context
+    # wholesale or raising the provider budget.
+    next_limits["doctrine_context_budget_tokens"] = max(
+        400,
+        int(next_limits["doctrine_context_budget_tokens"] * 0.8),
+    )
     if next_limits == limits:
         return None
     return next_limits
@@ -3118,6 +3178,46 @@ def _compact_evidence_subset(
     while _estimate_prompt_tokens(json.dumps(compact, ensure_ascii=False)) > token_budget and len(compact["evidence_ids"]) > 3:
         compact["evidence_ids"] = compact["evidence_ids"][:-1]
     return compact
+
+
+def _minimal_required_section_projection(value: Any) -> Any:
+    """Retain a small semantic skeleton for a doctrine-requested section.
+
+    This is deliberately schema-agnostic: scalar contract fields survive,
+    while nested evidence is reduced to a few compact fragments. It is the
+    final retention step before an explicit required-context conflict.
+    """
+    if isinstance(value, dict):
+        result: Dict[str, Any] = {}
+        structural_list_keys = {
+            "years_covered",
+            "periods",
+            "available_years",
+            "semantic_contracts",
+            "source_limitations",
+            "limitations",
+            "warnings",
+            "uncertainty_notes",
+        }
+        for key, nested in list(value.items())[:20]:
+            if nested in (None, "", [], {}):
+                continue
+            if isinstance(nested, (str, int, float, bool)):
+                result[key] = _truncate_text(str(nested), 180) if isinstance(nested, str) else nested
+            elif key in {"execution_counts", "outcome_counts", "attribution_counts", "coverage"} and isinstance(nested, dict):
+                result[key] = {
+                    child_key: child_value
+                    for child_key, child_value in nested.items()
+                    if isinstance(child_value, (str, int, float, bool))
+                }
+            elif key in structural_list_keys:
+                result[key] = _extract_summary_fragments(nested, max_items=2, item_limit=140)
+        if not result:
+            result["summary_fragments"] = _extract_summary_fragments(value, max_items=2, item_limit=140)
+        return result
+    if isinstance(value, list):
+        return [_minimal_required_section_projection(item) for item in value[:2]]
+    return _truncate_text(str(value), 180)
 
 
 def _build_emergency_prompt_payload(
@@ -3206,15 +3306,21 @@ def _prepare_compact_prompt_pack(
 ) -> Tuple[Dict[str, Any], Dict[str, Dict[str, Any]], Dict[str, int], bool, Dict[str, Any]]:
     limits = _prompt_compaction_limits()
     ordered_sections = _doctrine_priority_order(analyst, sections)
-    include_count = len(ordered_sections)
+    # `sections` is already the doctrine registry's declared evidence contract.
+    # Treat those sections as required context: compact their contents before
+    # considering eviction.  The old path dropped lower-ranked requested
+    # sections first, which could silently remove the very evidence the
+    # doctrine was configured to evaluate.
+    required_sections = list(dict.fromkeys(ordered_sections))
+    include_count = len(required_sections)
     excluded_sections: List[str] = []
     shrink_passes = 0
     emergency_mode_used = False
     sections_dropped_due_budget: List[str] = []
 
     while True:
-        include_sections = ordered_sections[:include_count]
-        excluded_sections = ordered_sections[include_count:]
+        include_sections = required_sections[:include_count]
+        excluded_sections = [section for section in ordered_sections if section not in include_sections]
         compacted_pcim, stats, truncated = _build_compact_pcim_view(
             pcim,
             sections,
@@ -3232,21 +3338,44 @@ def _prepare_compact_prompt_pack(
             diagnostics = {
                 "included_sections": include_sections,
                 "excluded_sections": excluded_sections,
+                "required_sections": required_sections,
+                "required_sections_retained": [
+                    section for section in required_sections if section in include_sections
+                ],
+                "required_context_conflict": False,
+                "minimal_required_compaction": False,
                 "shrink_passes_applied": shrink_passes,
                 "emergency_mode_used": emergency_mode_used,
                 "sections_dropped_due_budget": sections_dropped_due_budget,
                 "compact_input_pack_tokens": compact_tokens,
             }
             return compacted_pcim, stats, limits, truncated, diagnostics
-        if include_count > 3:
-            dropped = ordered_sections[include_count - 1]
-            include_count -= 1
-            if dropped not in sections_dropped_due_budget:
-                sections_dropped_due_budget.append(dropped)
-            shrink_passes += 1
-            continue
         next_limits = _shrink_limits(limits)
         if next_limits is None:
+            # Before declaring a conflict, retain every doctrine-requested
+            # section in a schema-agnostic semantic skeleton. This keeps
+            # required evidence observable even when detailed nested context
+            # cannot fit the compact-input allocation.
+            minimal_pcim = {
+                section: _minimal_required_section_projection(pcim.get(section))
+                for section in required_sections
+                if section in pcim
+            }
+            minimal_tokens = _estimate_prompt_tokens(json.dumps(minimal_pcim, ensure_ascii=False))
+            if minimal_tokens <= limits["compact_input_pack_budget_tokens"]:
+                diagnostics = {
+                    "included_sections": list(minimal_pcim),
+                    "excluded_sections": [],
+                    "required_sections": required_sections,
+                    "required_sections_retained": [section for section in required_sections if section in minimal_pcim],
+                    "required_context_conflict": False,
+                    "minimal_required_compaction": True,
+                    "shrink_passes_applied": shrink_passes,
+                    "emergency_mode_used": True,
+                    "sections_dropped_due_budget": [],
+                    "compact_input_pack_tokens": minimal_tokens,
+                }
+                return minimal_pcim, {}, limits, True, diagnostics
             emergency_payload = _build_emergency_prompt_payload(
                 company=str(pcim.get("company") or ""),
                 doctrine={"doctrine_id": analyst},
@@ -3256,6 +3385,10 @@ def _prepare_compact_prompt_pack(
             diagnostics = {
                 "included_sections": ["emergency_skeleton"],
                 "excluded_sections": excluded_sections,
+                "required_sections": required_sections,
+                "required_sections_retained": [],
+                "required_context_conflict": True,
+                "minimal_required_compaction": False,
                 "shrink_passes_applied": shrink_passes,
                 "emergency_mode_used": True,
                 "sections_dropped_due_budget": sections_dropped_due_budget,
@@ -3298,6 +3431,12 @@ def _build_compact_prompt(
         sections,
         doctrine["doctrine_id"],
     )
+    if pack_diagnostics.get("required_context_conflict"):
+        required = pack_diagnostics.get("required_sections") or sections
+        raise RuntimeError(
+            "REQUIRED_EVIDENCE_BUDGET_CONFLICT: doctrine-required PCIM sections "
+            f"cannot fit within the fixed panel budget: {required}"
+        )
     if "financial_truth_inputs" in compact_pcim:
         compact_pcim["financial_truth_inputs"] = compact_financial_truth_for_analyst(
             compact_pcim["financial_truth_inputs"],
@@ -3475,6 +3614,10 @@ def _build_compact_prompt(
         },
         "included_sections": list(pack_diagnostics.get("included_sections", [])),
         "excluded_sections": list(pack_diagnostics.get("excluded_sections", [])),
+        "required_sections": list(pack_diagnostics.get("required_sections", [])),
+        "required_sections_retained": list(pack_diagnostics.get("required_sections_retained", [])),
+        "required_context_conflict": bool(pack_diagnostics.get("required_context_conflict", False)),
+        "minimal_required_compaction": bool(pack_diagnostics.get("minimal_required_compaction", False)),
         "shrink_passes_applied": int(pack_diagnostics.get("shrink_passes_applied", 0)),
         "emergency_mode_used": bool(pack_diagnostics.get("emergency_mode_used", False)),
         "sections_dropped_due_budget": list(pack_diagnostics.get("sections_dropped_due_budget", [])),
@@ -3668,6 +3811,8 @@ def _shared_evidence_routing_rules() -> List[str]:
         "- An improving trajectory means pressure is reducing — do NOT treat it as resolved or as confirmation of a competitive moat.",
         "- A recurring trajectory means the risk has persisted across multiple periods — do NOT call it worsening.",
         "- If financial consequence is marked unknown or absent, state the consequence as unknown — do not synthesize a loss figure.",
+        "- NO_RESPONSE_DISCLOSED means no concrete response found; RESPONSE_ACKNOWLEDGED/PLANNED does not prove execution — only RESPONSE_EXECUTED with evidence supports a completed-response claim.",
+        "- EFFECTIVENESS_UNKNOWN never supports mitigation effectiveness language; ASSOCIATED_WITH_IMPROVEMENT_NOT_ATTRIBUTABLE means causality to management action is unproven.",
         "- Interpret each risk through your doctrine's primary question, not by restating the risk list.",
     ]
 
@@ -3675,14 +3820,63 @@ def _shared_evidence_routing_rules() -> List[str]:
 def _management_synthesis_chain_rules() -> List[str]:
     return [
         "Management synthesis-chain rules:",
-        "- Use company_memory_context.management progression.synthesis_chains as the source of truth for claim/action/outcome/financial-link state.",
-        "- CLAIM_ONLY is statement evidence only; it is not execution, delivery, capital-allocation success, or realized operating outcome evidence.",
-        "- ACTION_STARTED means action began; do not claim completion, outcome, or financial impact unless later chain fields prove it.",
-        "- ACTION_COMPLETED means completion occurred; completion alone is not evidence of value creation or a positive operating outcome.",
-        "- OUTCOME_POSITIVE and OUTCOME_NEGATIVE require separately evidenced operating or financial results.",
-        "- If actor is regulator, customer, partner, market, other, or unknown, do not describe the action as management-initiated unless separate management-action evidence is present.",
-        "- If financial_link_status is not confirmed, say the economic consequence remains unproven.",
+        "- Treat management progression synthesis_chains and execution_outcomes as lifecycle truth.",
+        "- CLAIM_ONLY is talk; ACTION_STARTED is activity; neither proves completion or outcome.",
+        "- ACTION_COMPLETED proves completion only, not operating success or value creation.",
+        "- Positive/negative outcomes require separate result evidence; financial impact requires a confirmed link.",
+        "- Do not credit regulator/customer/partner/market/unknown actions to management.",
+        "- Activity volume is not execution quality; acquisition completion is not integration or return proof.",
     ]
+
+
+_ASSESSMENT_SCHEMA: Dict[str, Dict[str, str]] = {
+    "graham": {
+        "financial_strength_assessment": "Balance-sheet, cash-flow, and leverage evidence through the downside-protection lens. State what protects against permanent capital loss.",
+        "integrity_assessment": "Accounting quality, working-capital transparency, reconciliation gaps, and reporting-ambiguity signals. State missing items and why they matter.",
+        "downside_protection_assessment": "Judgment on permanent-capital-loss protection using balance-sheet, cash-conversion, and risk-trajectory evidence. If business_economics_inputs is present: assess engine concentration risk and whether undisclosed engine profitability limits the downside scenario.",
+        "key_red_flags": "The 1-3 most important Graham-style red flags specific to downside and financial integrity.",
+    },
+    "buffett": {
+        "business_quality_assessment": "Is the business model durable enough to compound owner capital? Reference business model evidence, not just metrics. If business_economics_inputs is present: flag decelerating major engines as durability risks; note undisclosed engine profitability as an owner-economics gap.",
+        "moat_assessment": "What evidence supports durable competitive advantage? If thin, say what would be needed. Do not treat revenue growth alone as moat evidence.",
+        "capital_allocation_assessment": "Evaluate capital allocation track record: distributions, acquisitions, capex. Reference attribution status. State what the record shows about management as stewards. If business_economics_inputs shows divergent engine trajectories: address capital deployment toward accelerating engines and whether engine profitability is disclosed.",
+        "management_rationality_assessment": "Does management behave rationally as stewards? Reference commitment-vs-delivery, governance trajectory, and risk-response accountability.",
+    },
+    "fisher": {
+        "management_quality_assessment": "Judgment on management depth and execution quality for long-term growth. Use commitment-tracking, project execution, and organizational signals.",
+        "growth_runway_assessment": "How long and wide is the growth runway? Reference product categories, geographies, specialty pipeline, and R&D signals. Assess runway credibility. If business_economics_inputs is present: name which engines accelerate vs decelerate; assess whether decelerating major engines cap total growth; note undisclosed engine profitability.",
+        "innovation_and_product_strength": (
+            "Lead with your inference from evidence: 'The evidence on innovation execution shows...' "
+            "Never open with an imperative verb ('Prioritise', 'Build', 'Develop') — those are management goals, not analyst judgment. "
+            "If most innovation commitments are CLAIM_ONLY, say so and state the Fisher-style implication."
+        ),
+        "execution_evidence": "What execution evidence exists? Reference specific projects. Distinguish CLAIM_ONLY from executed commitments. If mostly CLAIM_ONLY, explain the Fisher-style growth-confidence implication.",
+    },
+    "munger": {
+        "incentive_alignment_assessment": "Are management incentives, related-party flows, and ownership structure aligned with shareholders? Reference related-party transactions and governance signals.",
+        "governance_sanity_assessment": "What does governance trajectory evidence show? Reference worsening governance risk, response effectiveness, and what remains unknown.",
+        "avoidable_risk_assessment": "Which risks appear self-inflicted or symptomatic of poor judgment? Reference recurring trajectory data specifically. If business_economics_inputs is present: flag divergent engine trajectories as concentration fragility and assess whether management acknowledges the shift.",
+        "complexity_and_stupidity_checks": "Signs of unnecessary complexity, reporting opacity, or institutional foolishness. Reference basis clarity, capex-split opacity, and consolidation complexity.",
+    },
+    "lynch": {
+        "business_simplicity_assessment": "Can a practical investor understand this business in one sentence? Classify the type (slow grower, stalwart, fast grower, cyclical, turnaround, asset play). If business_economics_inputs is present: use divergent engine momentum (decelerating vs accelerating major engines) to sharpen the category.",
+        "story_vs_evidence_assessment": (
+            "Start with: 'The management story is: [10-15 word paraphrase in your own words].' "
+            "Then: 'The evidence shows...' — compare story against evidence. "
+            "Never reproduce management text verbatim; never open with an imperative. Note gaps and confirmations."
+        ),
+        "growth_category_assessment": "What growth category fits this company? Reference revenue-growth pattern, product/market expansion, and operating momentum. If business_economics_inputs is present: translate engine trajectory into checkpoints (reaccelerating vs slowing, volatile engine drag).",
+        "hype_and_mismatch_checks": (
+            "In your own words: where does the narrative outpace operating reality? "
+            "Never reproduce management commitment text verbatim — summarize the gap, then give evidence. "
+            "List checkpoints that would confirm or deny the story."
+        ),
+    },
+}
+
+
+def _assessment_schema_for_doctrine(doctrine_id: str) -> Dict[str, str]:
+    return _ASSESSMENT_SCHEMA.get(doctrine_id, {"assessment": "Provide doctrine-specific judgment based on supplied evidence."})
 
 
 def _doctrine_differentiation_block(doctrine_id: str) -> Dict[str, Any]:
@@ -3696,8 +3890,6 @@ def _doctrine_differentiation_block(doctrine_id: str) -> Dict[str, Any]:
         },
         "must_prioritize": list(guidance.get("must_prioritize") or [])[:3],
     }
-    if guidance.get("risk_interpretation"):
-        block["risk_interpretation"] = guidance["risk_interpretation"]
     return block
 
 
@@ -3709,7 +3901,7 @@ def _doctrine_differentiation_rules(doctrine_id: str) -> List[str]:
         "Doctrine differentiation:",
         "- Make the doctrine-specific causal question visible.",
         "- Shared facts are allowed, but interpret them through this doctrine's mechanism.",
-        "- Do not force disagreement; agree only when this lens supports it.",
+        "- Do not force disagreement; agree only when this doctrine independently supports it.",
         "- Downweight generic facts unless they answer this doctrine's primary question.",
         "- Translate internal labels into investor-usable implications.",
         f"- Primary doctrine question: {guidance.get('primary_doctrine_question')}",
@@ -3788,7 +3980,7 @@ def _build_llm_prompt(
     compact_pack_text = json.dumps(compact_pack, ensure_ascii=False, separators=(",", ":"))
     compact_shape_text = json.dumps(
         {
-            "assessment": "object with doctrine-required strings",
+            "assessment": _assessment_schema_for_doctrine(doctrine["doctrine_id"]),
             "rating": "strong|mixed|weak|insufficient_evidence",
             "key_findings": [{"finding": "string", "evidence_ids": ["string"]}],
             "red_flags": [{"flag": "string", "severity": "low|medium|high", "evidence_ids": ["string"]}],
@@ -3832,6 +4024,7 @@ def _build_llm_prompt(
         "No buy, sell, hold, target price, fair value, undervalued, or overvalued language.",
         "Never mention internal system names such as PCIM, CIM, artifact, JSON, evidence IDs, source artifacts, input sections, schema, validation, prompt, or LLM wording.",
         "Write as an investment analyst speaking to a human reader, not as a pipeline describing its internals.",
+        "When evidence is present, make a qualified judgment — do not write 'insufficient evidence'. State what additional evidence would strengthen the assessment.",
     ]
     doctrine_block = {
         "doctrine_id": doctrine["doctrine_id"],
@@ -7231,6 +7424,8 @@ def _validate_repaired_llm_panel_output(
     warning_messages.extend(imprecise_financial_warning_messages)
     if any(item.startswith("financial warning auto-carried from PCIM:") for item in schema_warnings):
         warning_messages.append("Deterministic PCIM financial warnings were auto-carried into analyst output.")
+        if grounding["evidence_grounding_status"] == "pass":
+            grounding["evidence_grounding_status"] = "warning"
     if context_metric_flags["has_shares_outstanding"] and any(
         "share count missing" in item.lower()
         for item in _texts_for_financial_matching(

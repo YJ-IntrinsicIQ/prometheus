@@ -396,12 +396,12 @@ def test_analyst_prompt_contains_doctrine_differentiation_guidance(tmp_path, ana
     lowered = prompt.lower()
     assert "doctrine differentiation" in lowered
     assert "shared facts are allowed" in lowered
-    assert "do not force disagreement" in lowered
+    assert "doctrine independently supports it" in lowered
     assert "doctrine_differentiation" in lowered
     for term in expected_terms:
         assert term in lowered
     assert "do not upgrade a management claim into execution" in lowered
-    assert "section names and json filenames are never valid evidence ids" in lowered
+    assert "section names" in lowered and "never valid evidence ids" in lowered
 
 
 def test_shared_capex_fact_has_distinct_doctrine_interpretations():

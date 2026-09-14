@@ -198,7 +198,7 @@ _TYPE_SIGNALS: List[tuple] = [
     ("REGULATORY_REMEDIATION", ["fda", "usfda", "mhra", "regulatory action", "regulatory compliance", "remediation", "warning letter", "form 483", "consent decree", "drug import ban"]),
     ("CAPACITY", ["capacity", "manufacturing capacity", "facility", "plant", "hangar", "clean room", "throughput", "expansion", "production capacity"]),
     ("DIGITAL_OR_TECH", ["digital", "platform", "data platform", "ai", "machine learning", "blockchain", "technology", "digitisation", "digitization", "tech", "system", "software", "loan origination", "product per customer", "ppc"]),
-    ("PRODUCT_LAUNCH", ["product launch", "pipeline", "specialty", "biosimilar", "biologic", "generics", "r&d", "research", "new product", "launch", "wisely", "indica", "ilumya", "cosentyx"]),
+    ("PRODUCT_LAUNCH", ["product launch", "pipeline", "specialty", "biosimilar", "biologic", "generics", "r&d", "research", "new product", "launch"]),
     ("GROWTH_TARGET", ["grow faster", "market share", "revenue growth", "international", "expand", "export", "overseas", "global", "geographic"]),
     ("CAPITAL_ALLOCATION", ["acquisition", "merger", "capex", "invest", "capital allocation", "dividend", "buyback", "debt repayment", "no debt", "balance sheet"]),
     ("MARGIN_OR_COST", ["margin", "profitability", "ebitda", "cost reduction", "efficiency", "fixed cost", "interest cost", "rationalising"]),

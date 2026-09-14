@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from knowledge.company_memory import CompanyMemoryAggregateBuilder, parse_financial_year
 from knowledge.company_year_eligibility import year_eligibility_status
 from knowledge.business_identity import build_business_identity_manifest
+from knowledge.economic_engines import build_economic_engines
 from knowledge.company_memory.pcim_multi_year_builder import (
     PCIMMultiYearBuilder,
     canonicalize_fiscal_year_label,
@@ -389,6 +390,7 @@ class CIMContractBuilder:
             "financial_growth.json": str(financial_dir / "financial_growth.json"),
             "corporate_actions.json": str(financial_dir / "corporate_actions.json"),
             "shareholding_pattern.json": str(financial_dir / "shareholding_pattern.json"),
+            "raw_financial_tables.json": str(financial_dir / "raw_financial_tables.json"),
         }
 
     def _load_year_payloads(self, years: List[str]) -> Dict[str, Dict[str, Any]]:
@@ -409,6 +411,7 @@ class CIMContractBuilder:
                 "financial_quality_summary": _load_json(financial_dir / "financial_quality_summary.json"),
                 "corporate_actions": _load_json(financial_dir / "corporate_actions.json"),
                 "shareholding_pattern": _load_json(financial_dir / "shareholding_pattern.json"),
+                "raw_financial_tables": _load_json(financial_dir / "raw_financial_tables.json"),
             }
         return payloads
 
@@ -1701,6 +1704,11 @@ class CIMContractBuilder:
         ]
         latest_year = self._latest_year(available_years)
         latest_payload = yearly_payloads.get(latest_year or "", {})
+        economic_engines = build_economic_engines(
+            company=self.company,
+            years=available_years,
+            yearly_payloads=yearly_payloads,
+        )
 
         cim_v1 = {
             "contract_version": CONTRACT_VERSION,
@@ -1719,6 +1727,7 @@ class CIMContractBuilder:
                 for snapshot in yearly_snapshots
             ],
             "business_model": business_model,
+            "economic_engines": economic_engines,
             "management_focus": [
                 {
                     "year": snapshot["year"],
@@ -1883,6 +1892,9 @@ class CIMContractBuilder:
             for mention in item.get("mentions", []):
                 register(mention, f"entity_{item.get('entity_name')}")
 
+        for item in (cim_v1.get("economic_engines") or {}).get("observations", []):
+            register(item, f"economic_engine_{item.get('engine_id')}_{item.get('reporting_period')}")
+
         cim_v1["evidence_index"] = [
             evidence_map[key]
             for key in sorted(evidence_map.keys())
@@ -2025,6 +2037,7 @@ class CIMContractBuilder:
             + _flatten_buckets(concentration_and_recurrence)
         )
         return {
+            "economic_engines": cim_v1.get("economic_engines", {}),
             "business_model_by_year": business_model,
             "customer_and_scale_signals_by_year": customer_and_scale,
             "pricing_and_margin_signals_by_year": pricing_and_margin,
@@ -2095,6 +2108,164 @@ class CIMContractBuilder:
             "hype_or_unverified_claims_by_year": hype_or_unverified,
             "evidence_confidence_notes": confidence_notes,
             "uncertainty_notes": self._missing_items_for_section("story_vs_numbers_inputs", present),
+        }
+
+    @staticmethod
+    def _build_economic_attribution_inputs(company_slug: str) -> Dict[str, Any]:
+        """Project economic attribution intelligence into a top-level PCIM section.
+
+        Reads from the canonical economic_attribution_intelligence.json artifact
+        (built by intelligence/economic_attribution/builder.py).
+        Authority: economic_attribution_builder (ENG-135).
+
+        Semantic contract:
+          CHRONOLOGY IS NOT CAUSALITY.
+          DIRECTLY_ATTRIBUTABLE only for deterministic transaction consequences.
+          ASSOCIATED_NOT_ATTRIBUTABLE for confirmed deployment with unestablished causality.
+        """
+        ea_path = Path("companies") / company_slug / "company_memory" / "economic_attribution" / "economic_attribution_intelligence.json"
+        if not ea_path.exists():
+            return {"available": False, "reason": "economic_attribution_intelligence.json not found — run economic_attribution stage first"}
+        try:
+            ea = json.loads(ea_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"available": False, "reason": "failed to load economic_attribution_intelligence.json"}
+
+        summary = ea.get("attribution_summary", {})
+        cases = ea.get("cases", [])
+        critical_unknowns = ea.get("attribution_critical_unknowns", [])
+
+        # Compact representation: summary + ≤8 representative cases (direct + associated + no-evidence sample)
+        direct_cases = [c for c in cases if c.get("attribution_strength") == "DIRECTLY_ATTRIBUTABLE"][:3]
+        assoc_cases = [c for c in cases if c.get("attribution_strength") == "ASSOCIATED_NOT_ATTRIBUTABLE"][:3]
+        no_ev_cases = [c for c in cases if c.get("attribution_strength") == "NO_OUTCOME_EVIDENCE" and c.get("source_system") == "capital_allocation_outcomes"][:2]
+
+        representative_cases = []
+        for c, tier in [(c, "directly_attributable") for c in direct_cases] + \
+                        [(c, "associated_not_attributable") for c in assoc_cases] + \
+                        [(c, "no_outcome_evidence") for c in no_ev_cases]:
+            representative_cases.append({
+                "tier": tier,
+                "action_id": c.get("source_action_id"),
+                "action_type": c.get("action_type"),
+                "action_description": (c.get("action_description") or "")[:80],
+                "attribution_strength": c.get("attribution_strength"),
+                "operating_outcome": (c.get("operating_outcome") or "")[:120],
+                "investor_interpretation": (c.get("investor_interpretation") or "")[:150],
+                "unresolved_gap": c.get("unresolved_gap"),
+                "economic_materiality": c.get("economic_materiality"),
+            })
+
+        return {
+            "available": True,
+            "authority": "intelligence/economic_attribution/builder.py",
+            "schema_version": ea.get("schema_version"),
+            "total_cases": summary.get("total_cases", 0),
+            "directly_attributable": summary.get("directly_attributable", 0),
+            "strongly_supported": summary.get("strongly_supported", 0),
+            "associated_not_attributable": summary.get("associated_not_attributable", 0),
+            "no_outcome_evidence": summary.get("no_outcome_evidence", 0),
+            "negative_outcome": summary.get("negative_outcome", 0),
+            "attribution_unknown": summary.get("attribution_unknown", 0),
+            "financial_bridge_verdict": ea.get("financial_bridge", {}).get("bridge_verdict", "UNKNOWN"),
+            "representative_cases": representative_cases,
+            "critical_unknowns": [
+                {
+                    "question": u.get("question", "")[:150],
+                    "priority": u.get("priority"),
+                    "evidence_needed": u.get("evidence_needed", "")[:120],
+                    "strengthens_attribution_if": u.get("strengthens_attribution_if", "")[:100],
+                    "weakens_attribution_if": u.get("weakens_attribution_if", "")[:100],
+                }
+                for u in critical_unknowns[:5]
+            ],
+            "semantic_contracts": [
+                "CHRONOLOGY_IS_NOT_CAUSALITY: action followed by financial improvement ≠ causal proof.",
+                "DIRECTLY_ATTRIBUTABLE only for deterministic transaction consequences (dividends, buybacks, debt repayment).",
+                "ASSOCIATED_NOT_ATTRIBUTABLE: deployment confirmed; causality unestablished.",
+                "NO_OUTCOME_EVIDENCE: execution exists; relevant outcome evidence absent (not FAILED).",
+            ],
+            "limitations": ea.get("limitations", []),
+        }
+
+    @staticmethod
+    def _build_management_execution_inputs(multi_year_inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """Project management execution counts from Management Progression into a top-level PCIM section.
+
+        Authority: Management Progression owns initiative identity and lifecycle.
+        This method ONLY projects already-computed counts — no lifecycle logic here.
+
+        Semantic contract: NO_VISIBLE_ACTION_IN_EVIDENCE ≠ NON_EXECUTION_PROVEN.
+        The no_visible_action count reflects an evidence gap, not proven non-execution.
+        """
+        mp = (multi_year_inputs.get("management_progression") or {})
+        eo = (mp.get("execution_outcomes") or {})
+        if not eo:
+            return {"available": False, "reason": "management_execution_outcomes not available in management_progression"}
+
+        coverage = eo.get("coverage") or {}
+        credibility = eo.get("credibility") or {}
+
+        eligible = coverage.get("management_execution_eligible", 0)
+        visible_action = coverage.get("action_observed", 0)
+        completed = coverage.get("execution_completed_or_operational", 0)
+        observed_outcomes = coverage.get("operating_outcome_observed", 0)
+        attributable = coverage.get("economic_consequence_attributable", 0)
+        excluded = coverage.get("external_actor_events_excluded", 0)
+        no_visible_action = eligible - visible_action
+        outcome_unproven = completed - observed_outcomes
+
+        # Representative cases: pick ≤4 from compacted progression_items
+        # One per tier: action-visible, completed, unresolved, excluded (regulator)
+        items = mp.get("progression_items") or []
+        action_visible_case = next(
+            (it for it in items if str(it.get("current_status") or "").lower() in {"in_progress", "action_started"}), None
+        )
+        completed_case = next(
+            (it for it in items if str(it.get("current_status") or "").lower() in {"completed", "action_completed", "operational", "delivered"}), None
+        )
+        unresolved_case = next(
+            (it for it in items if str(it.get("current_status") or "").lower() in {"announced", "claimed"}), None
+        )
+        representative_cases = []
+        for case, tier in [
+            (action_visible_case, "action_visible"),
+            (completed_case, "completed"),
+            (unresolved_case, "no_visible_action"),
+        ]:
+            if case:
+                representative_cases.append({
+                    "tier": tier,
+                    "theme": (case.get("theme") or "")[:120],
+                    "current_status": case.get("current_status"),
+                    "credibility_signal": case.get("management_credibility_signal"),
+                    "chain_status": case.get("chain_status"),
+                })
+            if len(representative_cases) >= 4:
+                break
+
+        return {
+            "available": True,
+            "authority": "management_progression/management_progression.json",
+            "eligible_records": eligible,
+            "visible_action": visible_action,
+            "completed_or_operational": completed,
+            "observed_outcomes": observed_outcomes,
+            "attributable_economic_consequences": attributable,
+            "regulator_or_non_management_exclusions": excluded,
+            "no_visible_action": no_visible_action,
+            "outcome_unproven": outcome_unproven,
+            "credibility_status": credibility.get("status"),
+            "credibility_summary": credibility.get("summary"),
+            "source_limitations": list(eo.get("limitations") or []),
+            "semantic_contracts": [
+                "NO_VISIBLE_ACTION_IN_EVIDENCE is an evidence gap, not proven non-execution.",
+                "ACTION_COMPLETED is not operating success or economic value creation.",
+                "OUTCOME_OBSERVED is not attributable economic consequence without attribution evidence.",
+                "Regulator-driven events are excluded from management-credit calculations.",
+                "Strategic intent and aspiration are outside the verifiable-commitment denominator.",
+            ],
+            "representative_cases": representative_cases,
         }
 
     def _build_pcim_v1(self, cim_v1: Dict[str, Any]) -> Dict[str, Any]:
@@ -2352,6 +2523,8 @@ class CIMContractBuilder:
             "financial_panel_ready": financial_sections.get("financial_panel_ready", False),
             "financial_source_manifest": financial_sections.get("financial_source_manifest", {}),
             "multi_year_inputs": multi_year_inputs,
+            "management_execution_inputs": self._build_management_execution_inputs(multi_year_inputs),
+            "economic_attribution_inputs": self._build_economic_attribution_inputs(self.company),
             "pcim_source_manifest": pcim_source_manifest,
             "evidence_map": {
                 "business_understanding": self._pcim_section_evidence(latest_business_model, latest_dna, latest_focus),
@@ -2468,6 +2641,8 @@ class CIMContractBuilder:
                 ],
                 "multi_year_financial_inputs": [],
                 "multi_year_inputs": list((multi_year_inputs.get("evidence_map") or {}).keys()),
+                "management_execution_inputs": [],
+                "economic_attribution_inputs": [],
             },
             "uncertainty_missing_data": cim_v1.get("uncertainty_missing_data", {}),
             "source_cim": "cim_v1.json",

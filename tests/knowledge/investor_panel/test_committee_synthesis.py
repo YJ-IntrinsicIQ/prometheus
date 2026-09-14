@@ -7,6 +7,7 @@ import pytest
 from knowledge.ai.input_packs import estimate_tokens
 from intelligence.investor_panel.committee_synthesizer import (
     InvestmentCommitteeSynthesizer,
+    _infer_unknown_type,
     build_committee_synthesis_skeleton,
 )
 from intelligence.investor_panel.committee_brief_renderer import (
@@ -98,6 +99,33 @@ def _analysis_payload(
             "bottom_line": "The current evidence supports a cautious, incomplete view.",
         },
         "generated_at": "2026-07-12T00:00:00Z",
+    }
+
+
+def _engine_pcim(*engines):
+    return {
+        "business_economics_inputs": {
+            "economic_engines": {"contract_version": "1.0", "engines": list(engines)}
+        }
+    }
+
+
+def _engine(name, momentum, *, scale="MAJOR", profitability="NOT_DISCLOSED"):
+    key = name.lower().replace(" ", "_")
+    return {
+        "engine_id": key,
+        "engine_name": name,
+        "engine_type": "geography",
+        "scale_status": scale,
+        "growth_momentum": momentum,
+        "profitability_status": profitability,
+        "history": [
+            {"reporting_period": "fy24", "evidence_ids": [f"ev_{key}_fy24"]},
+            {"reporting_period": "fy25", "evidence_ids": [f"ev_{key}_fy25"]},
+        ],
+        "investor_interpretation": {
+            "what_matters": "Revenue is observable; profitability and cash economics are not disclosed."
+        },
     }
 
 
@@ -487,6 +515,138 @@ def test_build_committee_synthesis_skeleton_is_deterministic():
         assert "evidence_limit" in item
         assert "grounding_status" not in item
         assert "source_path" not in item
+
+
+def test_major_engine_trajectory_creates_prioritized_decision_diligence():
+    analysts = [
+        _analysis_payload(
+            "buffett",
+            uncertainties=[
+                "Segment and geographic profitability is not disclosed, so growth-engine economics and durability remain unknown."
+            ],
+        ),
+        _analysis_payload(
+            "fisher",
+            uncertainties=[
+                "Geographic engine profitability and repeatability remain unknown despite visible growth."
+            ],
+        ),
+    ]
+    synthesizer = InvestmentCommitteeSynthesizer(company="polymatech")
+    registry = synthesizer._build_uncertainty_registry(analysts)
+    skeleton = build_committee_synthesis_skeleton(
+        "polymatech",
+        analysts,
+        _engine_pcim(
+            _engine("Core Market", "DECELERATING"),
+            _engine("Home Market", "ACCELERATING"),
+        ),
+        uncertainty_registry=registry,
+    )
+
+    unknowns = skeleton["critical_unknowns"]
+    assert any("decelerating growth" in item["unknown"] for item in unknowns)
+    assert any("accelerating growth" in item["unknown"] for item in unknowns)
+    assert unknowns[0]["priority"] == "critical"
+    assert all(item["evidence_needed"] for item in unknowns if item.get("unknown_id", "").startswith("engine_"))
+    assert all(item["strengthens_view_if"] and item["weakens_view_if"] for item in unknowns)
+    linked_ids = {item["critical_unknown_id"] for item in skeleton["investigation_questions"]}
+    assert {item["unknown_id"] for item in unknowns[:5]} <= linked_ids
+
+
+def test_unanimous_engine_uncertainty_does_not_require_disagreement():
+    analysts = [
+        _analysis_payload(
+            doctrine,
+            uncertainties=["Engine profitability and cash economics remain unknown."],
+        )
+        for doctrine in ("buffett", "fisher", "lynch")
+    ]
+    synthesizer = InvestmentCommitteeSynthesizer(company="polymatech")
+    skeleton = build_committee_synthesis_skeleton(
+        "polymatech",
+        analysts,
+        _engine_pcim(_engine("Export Market", "VOLATILE", scale="MATERIAL")),
+        uncertainty_registry=synthesizer._build_uncertainty_registry(analysts),
+    )
+
+    engine_unknown = next(item for item in skeleton["critical_unknowns"] if item["unknown_id"].startswith("engine_"))
+    assert engine_unknown["priority"] == "medium"
+    assert engine_unknown["raised_by"] == ["buffett", "fisher", "lynch"]
+    assert skeleton["areas_of_disagreement"] == []
+
+
+def test_non_material_or_resolved_engine_does_not_create_diligence_noise():
+    analysts = [_analysis_payload("buffett", uncertainties=["Engine profitability remains unknown."])]
+    synthesizer = InvestmentCommitteeSynthesizer(company="polymatech")
+    skeleton = build_committee_synthesis_skeleton(
+        "polymatech",
+        analysts,
+        _engine_pcim(
+            _engine("Small Market", "ACCELERATING", scale="MINOR"),
+            _engine("Mature Market", "STABLE", profitability="DISCLOSED"),
+        ),
+        uncertainty_registry=synthesizer._build_uncertainty_registry(analysts),
+    )
+    assert not any(item.get("unknown_id", "").startswith("engine_") for item in skeleton["critical_unknowns"])
+
+
+def test_decision_unknown_precedence_preserves_unproven_outcome_despite_missing_data_language():
+    assert _infer_unknown_type(
+        "Financial attribution is absent, so whether acquisitions generate acceptable returns remains unproven."
+    ) == "DECISION_UNKNOWN"
+
+
+def test_numeric_rating_divergence_does_not_create_a_disagreement_class():
+    analyst_artifacts = [
+        _analysis_payload("graham"),
+        _analysis_payload("buffett"),
+        _analysis_payload("fisher"),
+        _analysis_payload("munger"),
+        _analysis_payload("lynch"),
+    ]
+    for payload in analyst_artifacts:
+        payload["rating"] = "mixed"
+    analyst_artifacts[3]["rating"] = "strong"
+
+    skeleton = build_committee_synthesis_skeleton(
+        "polymatech",
+        analyst_artifacts,
+        {},
+    )
+
+    assert all(
+        item.get("disagreement_type") != "rating_divergence"
+        for item in skeleton["areas_of_disagreement"]
+    )
+    assert all(
+        item.get("disagreement_type")
+        in {"true_disagreement", "different_emphasis", "risk_weighting_difference"}
+        for item in skeleton["areas_of_disagreement"]
+    )
+
+
+def test_final_validator_rejects_legacy_rating_divergence():
+    payload = _committee_payload_dict()
+    payload["areas_of_disagreement"][0]["disagreement_type"] = "rating_divergence"
+
+    with pytest.raises(ValueError, match="areas_of_disagreement.disagreement_type"):
+        validate_committee_output(
+            payload,
+            company="polymatech",
+            included_analysts=["graham", "buffett", "fisher"],
+            missing_analysts=["lynch"],
+            excluded_analysts=["munger"],
+            allowed_evidence_ids=["ev_graham_1", "ev_buffett_1", "ev_fisher_1"],
+            analyst_uncertainties={},
+            included_analyst_payloads=[
+                _analysis_payload("graham"),
+                _analysis_payload("buffett"),
+                _analysis_payload("fisher"),
+            ],
+            mode="final",
+            allow_unresolved_ids=True,
+        )
 
 
 @pytest.mark.parametrize(

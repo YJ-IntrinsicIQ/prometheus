@@ -150,7 +150,7 @@ def test_generic_non_promotable_ambiguous_capacity_variant_is_quarantined(tmp_pa
         set_context(None)
 
 
-def test_capacity_cleaner_derives_status_from_source_text_when_missing(tmp_path, monkeypatch):
+def test_capacity_cleaner_does_not_borrow_status_from_adjacent_initiative(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = CompanyContext(company="ujjivan", year="fy24")
     context.create_directories()
@@ -168,7 +168,8 @@ def test_capacity_cleaner_derives_status_from_source_text_when_missing(tmp_path,
         cleaned = create_cleaner().run()
 
         assert len(cleaned) == 1
-        assert cleaned[0]["status"] == "operational"
+        assert cleaned[0]["status"] == "unable_to_verify"
+        assert cleaned[0]["execution_evidence_validation"]["reason"] == "unresolved_source_subject"
         assert cleaned[0]["source_year"] == "fy24"
     finally:
         set_context(None)

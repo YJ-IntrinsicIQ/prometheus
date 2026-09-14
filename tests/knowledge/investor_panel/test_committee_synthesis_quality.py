@@ -203,22 +203,36 @@ def test_doctrine_disagreement_absent_when_all_same_caution_level():
         "No disagreement when growth analysts don't have substantive constructive signals"
 
 
-def test_rating_disparity_disagreement_still_works():
-    """Rating-disparity disagreement must still be generated when ratings differ."""
+def test_rating_disparity_alone_does_not_generate_disagreement():
+    """ENG-132: Numeric rating disparity alone is not a semantic disagreement.
+
+    Without a growth analyst (Fisher/Lynch) present, no doctrine disagreement
+    can be built — Buffett/Graham alone share the quality/safety axis with no
+    growth-lens opposition. Rating difference is NOT sufficient.
+    """
     strong = _analyst("buffett", rating="strong")
     weak = _analyst("graham", rating="weak")
     result = build_committee_synthesis_skeleton("test_co", [strong, weak], None)
     disagree = result["areas_of_disagreement"]
-    assert len(disagree) >= 1, "Rating-disparity disagreement must be present"
+    assert len(disagree) == 0, (
+        "Rating-disparity alone (no Fisher/Lynch growth analyst) must not generate "
+        "a disagreement record — numeric dispersion is not a semantic disagreement"
+    )
 
 
-def test_rating_disparity_disagreement_still_works():
-    """Rating-disparity disagreement must still be generated when ratings differ."""
-    strong = _analyst("buffett", rating="strong")
-    weak = _analyst("graham", rating="weak")
-    result = build_committee_synthesis_skeleton("test_co", [strong, weak], None)
-    disagree = result["areas_of_disagreement"]
-    assert len(disagree) >= 1, "Rating-disparity disagreement must be present"
+def test_doctrine_disagreement_requires_growth_and_safety_analysts():
+    """ENG-132: Doctrine disagreement requires Fisher/Lynch (growth) + Graham/Munger (safety).
+
+    When a growth analyst (Fisher) has a constructive signal AND a safety analyst (Graham)
+    has a concern, _detect_doctrine_disagreements must produce at least one record.
+    """
+    growth = _analyst("fisher", key_findings=["strong margin momentum is visible in recent filings"])
+    safety = _analyst("graham", red_flags=["execution risk remains unverified and downside is material"])
+    result = _detect_doctrine_disagreements([growth, safety])
+    assert len(result) >= 1, (
+        "Doctrine disagreement must be generated when Fisher has a constructive signal "
+        "and Graham has a substantive concern"
+    )
 
 
 # ---------------------------------------------------------------------------

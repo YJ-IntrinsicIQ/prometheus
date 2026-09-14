@@ -186,7 +186,7 @@ def build_interpretation_contract(
     if impact not in THESIS_IMPACT_VALUES:
         impact = "unresolved"
     return {
-        "conclusion": _clean_text(conclusion, 260),
+        "conclusion": _clean_text(conclusion, 2000),
         "what_changed": _clean_list(list(what_changed), limit=3),
         "why_it_matters": _clean_text(why_it_matters, 260),
         "economic_mechanism": _clean_text(economic_mechanism, 260),

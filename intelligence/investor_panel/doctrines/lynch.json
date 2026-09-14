@@ -24,6 +24,8 @@
   "evidence_required_from_pcim": [
     "business_understanding",
     "management_quality_inputs",
+    "management_execution_inputs",
+    "economic_attribution_inputs",
     "financial_growth_inputs",
     "profitability_inputs",
     "balance_sheet_strength_inputs",
@@ -35,6 +37,7 @@
     "multi_year_financial_inputs",
     "growth_execution_inputs",
     "simplicity_and_story_inputs",
+    "business_economics_inputs",
     "multi_year_inputs",
     "story_vs_numbers_inputs",
     "evidence_map",

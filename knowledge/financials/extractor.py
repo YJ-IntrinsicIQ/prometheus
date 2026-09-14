@@ -778,6 +778,8 @@ def _route_candidate(source_section_type: str, text: str) -> Optional[Tuple[str,
         return ("cash_flow", "cash_flow", True)
     if source_section_type == "statement_of_changes_in_equity":
         return ("statement_of_changes_in_equity", "statement_of_changes_in_equity", False)
+    if source_section_type == "segment_reporting_note":
+        return ("segment_reporting", "segment_reporting", False)
     if source_section_type == "management_discussion_financial_summary":
         lowered = text.lower()
         if "profit and loss" in lowered:
@@ -820,6 +822,34 @@ def _route_candidate(source_section_type: str, text: str) -> Optional[Tuple[str,
     }:
         return ("profit_and_loss", "profit_and_loss", False)
     return None
+
+
+_SEGMENT_REPORTING_HEADING = re.compile(
+    r"(?i)(?:\bnote\s*\d+[a-z]?\s*[-.:]?\s*)?\bsegment reporting\b"
+)
+_NEXT_NUMBERED_NOTE = re.compile(r"(?im)^\s*note\s+\d+[a-z]?\s*[-.:]?")
+
+
+def _segment_reporting_slice(text: str) -> str:
+    """Return an embedded segment note without inheriting an adjacent note's identity.
+
+    Annual-report chunks can contain several consecutive notes.  Routing the whole
+    chunk by its first heading corrupts row semantics (for example segment revenue
+    becoming EPS).  This boundary helper is deliberately heading based: it does not
+    infer an economic dimension or promote any row by label alone.
+    """
+    match = _SEGMENT_REPORTING_HEADING.search(text or "")
+    if not match:
+        return ""
+    start = match.start()
+    tail = text[start:]
+    following = _NEXT_NUMBERED_NOTE.search(tail, max(1, match.end() - start))
+    segment = tail[: following.start()] if following else tail
+    # The canonical table currently owns reported segment revenue.  Asset
+    # geography is a different metric and must not be collapsed into revenue
+    # merely because labels repeat (India, USA, etc.).
+    asset_boundary = re.search(r"(?i)\bnon[- ]current assets by geography\b", segment)
+    return segment[: asset_boundary.start()] if asset_boundary else segment
 
 
 def _detect_value_type(*, table_type: str, line_item_raw: str, raw_value: str, unit_hint: str) -> str:
@@ -1700,6 +1730,14 @@ def extract_financial_tables(
                 if not text:
                     result.rejections.append(_rejection_record(item=item, reason="empty chunk text"))
                     continue
+
+                embedded_segment = _segment_reporting_slice(text)
+                if section_name == "segment_reporting_note":
+                    text = embedded_segment or text
+                elif embedded_segment:
+                    # Do not let an adjacent segment note inherit the first
+                    # note's table semantics (notably EPS/per-share units).
+                    text = text[: text.find(embedded_segment)].strip()
 
                 route = _route_candidate(section_name, text)
                 if route is None:

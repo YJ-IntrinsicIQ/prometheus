@@ -242,8 +242,11 @@ def test_financial_improvement_but_causal_link_unproven():
 
 def test_explicit_financial_consequence_confirmed():
     """
-    Outcome text explicitly states a specific metric and a numeric value;
-    that metric moved in financial_trends → FINANCIAL_IMPACT_CONFIRMED.
+    Outcome text mentions a metric and numeric value; metric moved after action period.
+    Without structured causal_evidence proofs, this is FINANCIAL_LINK_UNPROVEN — not confirmed.
+    Numeric text pattern matching is NOT sufficient for causal confirmation (ENG-135A contract).
+    FINANCIAL_IMPACT_CONFIRMED requires causal_evidence with explicit_company_attribution,
+    disclosed_contribution, or deterministic_transaction_consequence proof kind.
     """
     item = _item(
         theme="Capex investment in manufacturing capacity",
@@ -257,17 +260,17 @@ def test_explicit_financial_consequence_confirmed():
                 verification_status="verified"),
         ],
     )
-    # capex metric moved after fy22 (action/completion period is fy23 in the action event)
-    # The outcome text mentions "capex" and "480 crore" → confirmed
+    # capex metric moved after fy22. No structured causal_evidence proofs → UNPROVEN.
+    # Metrics observed without explicit attribution = association, not causation.
     metric_series = {
         "capex": _series(("fy21", 200), ("fy22", 300), ("fy23", 500), ("fy24", 520)),
     }
     chain = build_synthesis_chain(item, metric_series)
 
-    assert chain["financial_consequence"]["link_status"] == FINANCIAL_LINK_CONFIRMED
-    assert chain["chain_status"] == CHAIN_STATUS_FINANCIAL_IMPACT_CONFIRMED
-    assert chain["investor_implication"]["confidence"] == "high"
-    assert "evidence" in chain["investor_implication"]["conclusion"].lower()
+    assert chain["financial_consequence"]["link_status"] == FINANCIAL_LINK_UNPROVEN
+    assert chain["chain_status"] == CHAIN_STATUS_FINANCIAL_LINK_UNPROVEN
+    assert chain["investor_implication"]["confidence"] == "medium"
+    assert "causal link" in chain["investor_implication"]["conclusion"].lower()
 
 
 # ---------------------------------------------------------------------------

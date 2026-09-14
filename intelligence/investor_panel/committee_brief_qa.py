@@ -652,6 +652,40 @@ class CommitteeBriefQAGate:
         status = "pass" if not missing else "fail"
         return {"status": status, "missing_items": missing}
 
+    def _v2_polarity_integrity_check(self, brief_view: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject worsening/weakened evidence placed in the positive (strongest positive) slot."""
+        violations: List[str] = []
+        bottom_line = str(brief_view.get("bottom_line") or "").lower()
+        # Check what_changed items: any with conviction_effect == "weakened" must NOT appear in the positive slot
+        for item in brief_view.get("what_changed", []) or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("conviction_effect") != "weakened":
+                continue
+            current_state = str(item.get("current_state") or "").strip()
+            if current_state and current_state.lower() in bottom_line:
+                violations.append(f"weakened_in_positive_slot:{current_state[:80]}")
+        # Check what_strengthened items: must come from thesis_strengtheners (positive by contract)
+        for item in brief_view.get("what_strengthened", []) or []:
+            if not isinstance(item, dict):
+                continue
+            # what_strengthened items carry no conviction_effect — they are positive by contract, no check needed
+        # Check what_weakened items: none of them should appear labeled as positive in bottom_line
+        for item in brief_view.get("what_weakened", []) or []:
+            if not isinstance(item, dict):
+                continue
+            conclusion = str(item.get("conclusion") or "").strip()
+            if not conclusion:
+                continue
+            # A weakened conclusion appearing in the "strongest positive is" clause is a polarity inversion
+            if conclusion.lower() in bottom_line:
+                before_pos = bottom_line.find(conclusion.lower())
+                context = bottom_line[max(0, before_pos - 50):before_pos + len(conclusion) + 20]
+                if "strongest positive" in context:
+                    violations.append(f"weakened_conclusion_in_positive_slot:{conclusion[:80]}")
+        status = "fail" if violations else "pass"
+        return {"status": status, "violations": violations}
+
     def _v2_duplication_control_check(self, brief_view: Dict[str, Any], brief: str) -> Dict[str, Any]:
         seen: Dict[str, int] = {}
         duplicate_items: List[str] = []
@@ -685,6 +719,7 @@ class CommitteeBriefQAGate:
             "evidence_traceability": self._v2_evidence_traceability_check(brief_view, brief),
             "recommendation_safety": self._v2_public_language_check(brief),
             "duplication_control": self._v2_duplication_control_check(brief_view, brief),
+            "polarity_integrity": self._v2_polarity_integrity_check(brief_view),
         }
 
     def build(self, *, include_evidence_ids: bool = False) -> Dict[str, Path]:

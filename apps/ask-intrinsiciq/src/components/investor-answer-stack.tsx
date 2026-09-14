@@ -1,5 +1,5 @@
 import type { ResearchAnswerCard } from "@/src/types";
-import type { InvestorInterpretation, ThesisImpact } from "@/src/types/investor-interpretation";
+import type { InvestorInterpretation, OutcomeAttributionSummary, ThesisImpact } from "@/src/types/investor-interpretation";
 import type { ProgressionInsight } from "@/src/types/progression";
 import { cleanPublicList, cleanPublicText } from "@/src/lib/ask-intrinsiciq/presentation";
 
@@ -150,6 +150,10 @@ export function InvestorAnswerStack({ answer }: InvestorAnswerStackProps) {
           />
         ) : null}
       </div>
+
+      {interpretation.outcomeAttributionSummary ? (
+        <OutcomeAttributionBlock summary={interpretation.outcomeAttributionSummary} />
+      ) : null}
     </section>
   );
 }
@@ -199,6 +203,38 @@ function InsightListCard({ title, items, tone = "default" }: InsightListCardProp
         </ul>
       ) : null}
     </article>
+  );
+}
+
+const OA_LABELS: Array<{ key: keyof OutcomeAttributionSummary; label: string }> = [
+  { key: "directly_attributable", label: "Directly attributable" },
+  { key: "strongly_supported", label: "Strongly supported" },
+  { key: "associated_not_attributable", label: "Associated, not attributable" },
+  { key: "no_outcome_evidence", label: "No outcome evidence" },
+  { key: "negative_outcome", label: "Negative outcome" },
+];
+
+function OutcomeAttributionBlock({ summary }: { summary: OutcomeAttributionSummary }) {
+  const entries = OA_LABELS.filter(({ key }) => (summary[key] ?? 0) > 0);
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="mt-5 rounded-[20px] border border-[rgba(100,116,139,0.14)] bg-[rgba(148,163,184,0.06)] px-4 py-4">
+      <p className="text-[0.72rem] uppercase tracking-[0.1em] text-muted">
+        Capital outcome attribution
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {entries.map(({ key, label }) => (
+          <span
+            key={key}
+            className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(74,109,94,0.16)] bg-[rgba(255,255,255,0.85)] px-3 py-1 text-[0.78rem] text-foreground"
+          >
+            <span className="font-semibold tabular-nums text-accent">{summary[key]}</span>
+            {label}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
