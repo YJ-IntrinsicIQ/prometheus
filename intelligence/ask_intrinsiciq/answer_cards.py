@@ -54,10 +54,12 @@ QUESTION_CATALOG: List[Dict[str, Any]] = [
             {"id": "what-was-delivered-last-3-years", "title": "What was delivered in the last 3 years?", "short_label": "Delivered", "recommended": False},
             {"id": "what-was-missed", "title": "What was missed?", "short_label": "Missed", "recommended": False},
             {"id": "did-past-claims-come-true", "title": "Did past claims come true?", "short_label": "Follow-through", "recommended": False},
+            {"id": "did-execution-lead-to-outcomes", "title": "Did execution lead to outcomes?", "short_label": "Execution → Outcomes", "recommended": False},
             {"id": "what-projects-are-underway", "title": "What projects are underway?", "short_label": "Projects", "recommended": False},
             {"id": "how-is-capacity-changing", "title": "How is capacity changing?", "short_label": "Capacity", "recommended": False},
             {"id": "what-is-management-commentary-saying", "title": "What is management commentary saying?", "short_label": "Commentary", "recommended": False},
             {"id": "how-is-capital-allocated", "title": "How is capital allocated?", "short_label": "Capital allocation", "recommended": False},
+            {"id": "which-investments-created-value", "title": "Which investments have actually created value?", "short_label": "Value created", "recommended": False},
             {"id": "what-is-the-return-on-capex", "title": "What is the return on capex?", "short_label": "Capex return", "recommended": False},
             {"id": "what-incentives-matter", "title": "What signals management quality?", "short_label": "Management quality", "recommended": False},
         ],
@@ -117,8 +119,10 @@ NEXT_QUESTION_MAP = {
     "which-promises-are-overdue": ["what-was-missed", "what-needs-management-clarification", "what-can-break-the-thesis"],
     "what-was-delivered-last-3-years": ["what-was-missed", "did-past-claims-come-true", "how-is-capital-allocated"],
     "what-was-missed": ["which-promises-are-overdue", "what-can-break-the-thesis", "what-needs-management-clarification"],
-    "did-past-claims-come-true": ["what-has-management-promised", "how-is-capacity-changing", "what-needs-management-clarification"],
-    "what-projects-are-underway": ["how-is-capacity-changing", "what-is-management-commentary-saying", "how-is-capital-allocated"],
+    "did-past-claims-come-true": ["did-execution-lead-to-outcomes", "what-has-management-promised", "what-needs-management-clarification"],
+    "did-execution-lead-to-outcomes": ["did-past-claims-come-true", "which-investments-created-value", "what-remains-unresolved"],
+    "which-investments-created-value": ["how-is-capital-allocated", "did-execution-lead-to-outcomes", "what-remains-unresolved"],
+    "what-projects-are-underway": ["did-execution-lead-to-outcomes", "how-is-capacity-changing", "how-is-capital-allocated"],
     "how-is-capacity-changing": ["what-projects-are-underway", "what-has-management-promised", "what-can-break-the-thesis"],
     "what-is-management-commentary-saying": ["what-has-management-promised", "what-incentives-matter", "what-remains-unresolved"],
     "how-is-capital-allocated": ["what-is-the-return-on-capex", "what-incentives-matter", "what-would-buffett-focus-on"],
@@ -212,12 +216,14 @@ QUESTION_DEPENDENCY_MAP: Dict[str, List[str]] = {
     "what-was-delivered-last-3-years": ["gold_promise_tracker"],
     "what-was-missed": ["gold_promise_tracker"],
     "did-past-claims-come-true": ["gold_promise_tracker", "gold_credibility", "management_commitments", "management_progression"],
+    "did-execution-lead-to-outcomes": ["management_progression"],
+    "which-investments-created-value": ["capital_allocation_outcomes", "management_progression", "gold_risk_evolution"],
     "what-projects-are-underway": ["projects_registry", "project_timelines", "project_assessments"],
     "how-is-capacity-changing": ["management_progression", "capacity_registry", "capacity_timelines"],
     "what-is-management-commentary-saying": ["management_progression", "commentary_themes"],
     "how-is-capital-allocated": ["capital_allocation_longitudinal_profile", "capital_allocation_assessments", "capital_allocation_outcomes", "management_progression", "gold_capital_allocation"],
     "what-is-the-return-on-capex": ["gold_capital_allocation", "capital_allocation_roi_ledger"],
-    "what-regulatory-risks-remain-active": ["risk_assessments", "gold_risk_evolution"],
+    "what-regulatory-risks-remain-active": ["risk_assessments", "gold_risk_evolution", "risk_registry"],
     "what-is-committee-direction": ["committee_synthesis"],
     "where-does-the-committee-agree": ["committee_synthesis"],
     "where-does-the-committee-disagree": ["committee_synthesis"],
@@ -228,7 +234,7 @@ QUESTION_DEPENDENCY_MAP: Dict[str, List[str]] = {
     "where-would-fisher-be-curious": ["fisher_analysis"],
     "what-would-munger-avoid": ["munger_analysis"],
     "how-would-lynch-explain-it": ["lynch_analysis"],
-    "what-can-break-the-thesis": ["risk_assessments", "buffett_analysis", "committee_synthesis", "risk_evolution"],
+    "what-can-break-the-thesis": ["risk_assessments", "risk_registry", "buffett_analysis", "committee_synthesis", "risk_evolution"],
     "which-disclosure-is-missing": ["financial_truth_pack", "committee_synthesis"],
     "what-evidence-would-change-the-view": ["committee_synthesis", "financial_truth_pack"],
     "what-needs-management-clarification": ["committee_synthesis"],
@@ -322,6 +328,7 @@ def build_answer_cards(
         if question_id in {
             "what-has-management-promised",
             "did-past-claims-come-true",
+            "did-execution-lead-to-outcomes",
             "what-projects-are-underway",
             "how-is-capacity-changing",
             "what-is-management-commentary-saying",
@@ -404,6 +411,8 @@ QUESTION_TYPE_BY_ID = {
     "what-was-delivered-last-3-years": "progression",
     "what-was-missed": "progression",
     "did-past-claims-come-true": "progression",
+    "did-execution-lead-to-outcomes": "progression",
+    "which-investments-created-value": "capital_allocation",
     "what-projects-are-underway": "progression",
     "how-is-capacity-changing": "progression",
     "what-is-management-commentary-saying": "progression",
@@ -463,6 +472,9 @@ def build_answer_for_question(
         "business_journey_mode": draft["business_journey_mode"],
         "financial_visual_refs": [],
         "progression": draft.get("progression"),
+        # Investor-lens builders own explicit evidence-bucket semantics. Other
+        # question families retain their established finalization path.
+        "interpretation": draft.get("interpretation") if get_question_type_for_question(question_id) == "investor_lens" else None,
         "evidence_summary": draft["evidence_summary"],
         "uncertainty_note": draft["uncertainty_note"],
         "next_questions": _build_next_questions(question_id),
@@ -1019,7 +1031,7 @@ def _build_per_share_answer(source_bundle: Dict[str, Any], *, business_journey_p
         simple_answer = (
             f"The current evidence shows owner earnings per share at {format_per_share(_get_number(latest, 'owner_earnings_per_share'))} "
             f"and basic EPS at {format_per_share(_get_number(latest, 'eps_basic'))}. "
-            f"Only {n_years} year(s) of data are available, which limits trend conclusions."
+            f"Only {n_years} year(s) of data are available; this does not yet support a clean multi-year improvement claim."
         )
 
     return _draft(
@@ -1218,13 +1230,13 @@ def _commitment_lifecycle_status_label(commitment: Dict[str, Any], lifecycle_ind
     key = _commitment_lifecycle_status_key(commitment, lifecycle_index)
     return {
         "delivered": "Delivered",
-        "partially_delivered": "Partially Delivered",
-        "in_progress": "In Progress",
+        "partially_delivered": "Partially delivered",
+        "in_progress": "In progress",
         "delayed": "Delayed",
         "missed": "Missed",
-        "unable_to_verify": "Unable To Verify",
-        "unknown": "Unable To Verify",
-    }.get(key, "Unable To Verify")
+        "unable_to_verify": "Not yet verified",
+        "unknown": "Not yet verified",
+    }.get(key, "Not yet verified")
 
 
 def _commitment_authority_note(commitment: Dict[str, Any], lifecycle_index: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
@@ -1672,7 +1684,7 @@ def _gold_promise_key_points(gold: Dict[str, Any]) -> List[str]:
         if isinstance(record, dict):
             ptype = str(record.get("promise_type") or "OTHER")
             type_counts[ptype] = type_counts.get(ptype, 0) + 1
-    type_pts = [f"{count} {ptype.replace('_', ' ').lower()} commitment(s)" for ptype, count in type_counts.items()]
+    type_pts = [f"{count} {ptype.replace('_', ' ').lower()} {'commitment' if count == 1 else 'commitments'}" for ptype, count in type_counts.items()]
     pts.extend(type_pts[:2])
     return _clean_list(pts)[:4]
 
@@ -1729,13 +1741,13 @@ def _gold_promise_status_label(record: Dict[str, Any]) -> str:
     status = _normalize_sentence(_get_string(record, "current_status"))
     return {
         "achieved": "Delivered",
-        "partially_achieved": "Partially Delivered",
+        "partially_achieved": "Partially delivered",
         "delayed": "Delayed",
         "missed": "Missed",
         "abandoned": "Abandoned",
-        "unverified": "Unable To Verify",
-        "in_progress": "In Progress",
-    }.get(status, "Unable To Verify")
+        "unverified": "Not yet verified",
+        "in_progress": "In progress",
+    }.get(status, "Not yet verified")
 
 
 def _gold_promise_record_points(gold: Dict[str, Any], *, max_items: int = 4, claim_outcome: bool = False) -> List[str]:
@@ -1856,27 +1868,53 @@ def _build_management_promises_answer(source_bundle: Dict[str, Any], *, business
         else:
             qa_simple = gp_text or f"{tracked} management commitments tracked."
         if accountability:
+            commitment_word = "commitment" if tracked == 1 else "commitments"
+            resolved_note = f"{delivery_count} {'has' if delivery_count == 1 else 'have'} delivery evidence" if delivery_count else "none yet with delivery evidence"
+            pending_note = f"{unverified} {'remains' if unverified == 1 else 'remain'} unresolved" if unverified else ""
+            status_parts = [p for p in [resolved_note, pending_note] if p]
+            intent_note = ""
+            if strategic_count or aspiration_count:
+                intent_parts = []
+                if strategic_count:
+                    intent_parts.append(f"{strategic_count} strategic {'intent' if strategic_count == 1 else 'intents'}")
+                if aspiration_count:
+                    intent_parts.append(f"{aspiration_count} {'aspiration' if aspiration_count == 1 else 'aspirations'}")
+                intent_note = f" Separately, {_join_human_list(intent_parts)} are tracked as stated direction, not as checkable commitments."
             qa_simple = (
-                f"Of {tracked} material objectively verifiable commitment(s), "
-                f"{delivery_count} have delivery evidence and {unverified} remain unresolved. "
-                f"Separately, {strategic_count} strategic intent statement(s)"
-                + (f" and {aspiration_count} aspiration(s)" if aspiration_count else "")
-                + " are tracked outside the accountability denominator."
+                f"Management has made {tracked} material, checkable {commitment_word}: "
+                + "; ".join(status_parts) + "."
+                + intent_note
             )
-        # Fix uncertainty note: only reference management_commitments as missing when it actually is absent
+        # Fix uncertainty note: only reference commitment evidence as missing when it actually is absent
         uncertainty = (
-            "Full commitment-level detail and individual claim evidence requires the management_commitments source."
+            "Full commitment-level detail and individual claim evidence requires the complete commitment evidence set."
             if not mc_available and unverified > 0
             else ""
         )
+        # Build company-specific why_it_matters from the actual commitment data
+        if tracked:
+            if unverified == 0:
+                _promise_why = (
+                    f"All {tracked} tracked {'commitment' if tracked == 1 else 'commitments'} have delivery evidence — "
+                    f"this is an unusually clean track record and worth testing against whether these commitments were specific enough to be a real test."
+                )
+            else:
+                _delivery_ratio = int(delivery_count / tracked * 100) if tracked else 0
+                _promise_why = (
+                    f"Of {tracked} checkable {'commitment' if tracked == 1 else 'commitments'}, "
+                    f"{delivery_count} {'was' if delivery_count == 1 else 'were'} delivered ({_delivery_ratio}%) — "
+                    f"this ratio tests how reliably management's stated direction translates to execution at this company."
+                )
+        else:
+            _promise_why = "Commitment tracking matters because it gives investors a checkable record of what management said it would do."
         return _draft(
             answer_status=answer_st,
             simple_answer=qa_simple,
-            why_it_matters="Commitment tracking matters because it gives investors a checkable record of what management said it would do.",
+            why_it_matters=_promise_why,
             key_points=key_pts,
-            detailed_explanation="Derived from the Gold Promise Tracker, which synthesizes management commitments longitudinally across reporting periods.",
+            detailed_explanation="Derived from management commitment tracking history, which synthesizes commitments longitudinally across reporting periods.",
             evidence_status="partial" if not achieved and not partially else "direct",
-            evidence_summary="Gold Promise Tracker with tracked promises and delivery status breakdown.",
+            evidence_summary="Management commitment tracking with delivery status breakdown.",
             evidence_points=key_pts[:2],
             uncertainty=uncertainty,
             products_refs=[],
@@ -1976,12 +2014,26 @@ def _build_past_claims_answer(source_bundle: Dict[str, Any], *, business_journey
             unresolved = int(accountability.get("unresolved_verifiable_commitments", 0))
             strategic = int(accountability.get("strategic_intents", 0))
             aspirations = int(accountability.get("aspirations", 0))
+            commitment_word = "commitment" if denominator == 1 else "commitments"
+            outcome_parts = []
+            if verified:
+                outcome_parts.append(f"{verified} {'is' if verified == 1 else 'are'} verified")
+            if partial:
+                outcome_parts.append(f"{partial} partially verified")
+            if unresolved:
+                outcome_parts.append(f"{unresolved} {'remains' if unresolved == 1 else 'remain'} unresolved")
+            outcome_str = "; ".join(outcome_parts) if outcome_parts else "none yet verified"
+            intent_note = ""
+            if strategic or aspirations:
+                intent_parts = []
+                if strategic:
+                    intent_parts.append(f"{strategic} {'intent' if strategic == 1 else 'intents'}")
+                if aspirations:
+                    intent_parts.append(f"{aspirations} {'aspiration' if aspirations == 1 else 'aspirations'}")
+                intent_note = f" Separately, {_join_human_list(intent_parts)} are tracked as stated direction and are not held against the delivery record."
             qb_simple = (
-                f"Of {denominator} material objectively verifiable commitment(s), {verified} are verified, "
-                f"{partial} partially verified, {insufficient} lack sufficient evidence, and {unresolved} remain unresolved. "
-                f"Separately, {strategic} strategic intent statement(s)"
-                + (f" and {aspirations} aspiration(s)" if aspirations else "")
-                + " are not counted as failed promises."
+                f"Of {denominator} checkable {commitment_word}: {outcome_str}."
+                + intent_note
             )
         else:
             qb_simple = cs or gw or gp_text or ""
@@ -1998,16 +2050,16 @@ def _build_past_claims_answer(source_bundle: Dict[str, Any], *, business_journey
         pts = _clean_list(pts)[:4]
         if qb_simple or pts:
             # Invariant: Gold has tracked promises → status CANNOT be not_supported
-            # Fix ENG-083: only reference management_commitments as absent when it actually is
+            # Fix ENG-083: only reference commitment evidence as absent when it actually is
             if mc_available:
                 explanation = (
-                    "Derived from the Gold Promise Tracker (delivery state) and Gold Credibility Synthesis (track-record context). "
-                    "Specific claim examples are drawn from management_commitments where evidence supports the claim."
+                    "Derived from management commitment tracking history and management credibility analysis. "
+                    "Specific claim examples are drawn from available commitment evidence where the record supports the claim."
                 )
             else:
                 explanation = (
-                    "Derived from the Gold Promise Tracker (delivery state) and Gold Credibility Synthesis (track-record context). "
-                    "Full claim-level comparison requires the management_commitments source."
+                    "Derived from management commitment tracking history and management credibility analysis. "
+                    "Full claim-level comparison requires the complete commitment evidence set."
                 )
             return _draft(
                 answer_status="partially_supported",
@@ -2016,7 +2068,7 @@ def _build_past_claims_answer(source_bundle: Dict[str, Any], *, business_journey
                 key_points=pts or [gp_text or ""],
                 detailed_explanation=explanation,
                 evidence_status="partial",
-                evidence_summary="Gold Promise Tracker and Gold Credibility Synthesis.",
+                evidence_summary="Management commitment tracking and credibility analysis.",
                 evidence_points=_clean_list(pts[:2]),
                 uncertainty="Full claim-level verification requires progression evidence.",
                 products_refs=[],
@@ -2161,6 +2213,329 @@ def _project_is_active(assessment: Dict[str, Any], recency_cutoff: int) -> bool:
     return False
 
 
+def _build_execution_outcome_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
+    """Expose the execution_state → outcome_state → attribution_strength chain.
+
+    Authority: management_progression/management_execution_outcomes.
+    This card asks: for initiatives where action was taken, what operating outcome
+    was observed, and can it be attributed as an economic consequence?
+    It does NOT show promise verification (see did-past-claims-come-true).
+    It does NOT show project timelines (see what-projects-are-underway).
+    It shows the four-tier chain: action visible / completed / outcome observed / attributable.
+    """
+    progression_payload = _source_payload(source_bundle, "management_progression")
+    meo = progression_payload.get("management_execution_outcomes") if isinstance(progression_payload, dict) else None
+    if not isinstance(meo, dict):
+        return _draft(
+            answer_status="not_supported",
+            simple_answer="Management execution outcome data is not available.",
+            why_it_matters="Distinguishing completed execution from observed outcome separates activity from results.",
+            key_points=["Management progression source is unavailable for this company."],
+            detailed_explanation="Management execution outcome data is not yet loaded for this company.",
+            evidence_status="unavailable",
+            evidence_summary="management_progression not loaded.",
+            evidence_points=[],
+            uncertainty="No execution outcome data available.",
+            products_refs=[],
+            business_journey_ref=None,
+            progression={},
+            interpretation={"conclusion": "Execution outcome data unavailable.", "thesis_impact": "neutral"},
+        )
+    coverage = meo.get("coverage") or {}
+    credibility = meo.get("credibility") or {}
+    eligible = int(coverage.get("management_execution_eligible") or 0)
+    action_visible = int(coverage.get("action_observed") or 0)
+    completed = int(coverage.get("execution_completed_or_operational") or 0)
+    outcome_observed = int(coverage.get("operating_outcome_observed") or 0)
+    attributable = int(coverage.get("economic_consequence_attributable") or 0)
+    excluded = int(coverage.get("external_actor_events_excluded") or 0)
+    completed_unproven = int(coverage.get("completed_execution_outcome_unproven") or 0)
+    cred_summary = str(credibility.get("summary") or "")
+    # Build four-tier chain sentence for key_points (factual, fine as supporting detail)
+    chain_text = (
+        f"Of {eligible} tracked initiatives ({excluded} regulator-driven excluded): "
+        f"action is visible for {action_visible}, "
+        f"{completed} reached completed or operational execution, "
+        f"{outcome_observed} have an observed operating outcome, "
+        f"and {attributable} have a confirmed economic consequence."
+    )
+    # Build investor-leading conclusion
+    if attributable > 0:
+        conclusion_text = (
+            f"Of {eligible} tracked management initiatives, {attributable} "
+            f"{'has' if attributable == 1 else 'have'} a confirmed economic consequence — "
+            f"the rest are at varying stages of execution or outcome verification."
+        )
+    elif outcome_observed > 0:
+        conclusion_text = (
+            f"Of {eligible} tracked management initiatives, {outcome_observed} "
+            f"{'shows' if outcome_observed == 1 else 'show'} an observed operating outcome, "
+            f"but none yet have a confirmed economic attribution. "
+            f"Execution is visible; the value-creation link is still unestablished."
+        )
+    elif completed > 0:
+        conclusion_text = (
+            f"Of {eligible} tracked management initiatives, {completed} "
+            f"{'has' if completed == 1 else 'have'} reached full execution. "
+            f"None have a confirmed operating outcome yet — completion does not imply business results."
+        )
+    else:
+        conclusion_text = (
+            f"Of {eligible} tracked management initiatives, action is visible for {action_visible} "
+            f"but none have reached a confirmed outcome. "
+            f"The current evidence shows activity, not results."
+        )
+    key_points = [chain_text]
+    if completed_unproven:
+        key_points.append(
+            f"{completed_unproven} {'initiative' if completed_unproven == 1 else 'initiatives'} reached execution completion but the operating outcome remains unproven — "
+            "completion is not operating success."
+        )
+    # Sample records with execution state / outcome state / attribution
+    record_points = []
+    for record in (meo.get("records") or []):
+        if not isinstance(record, dict):
+            continue
+        label = str(record.get("identity_label") or "").strip()
+        if not label:
+            continue
+        ex = _lcs_human_label(str(record.get("execution_state") or "UNKNOWN"))
+        oc = _lcs_human_label(str(record.get("outcome_state") or "OUTCOME_UNKNOWN"))
+        attr = _lcs_human_label(str(record.get("attribution_strength") or "NO_OUTCOME_EVIDENCE"))
+        # Only show records with execution beyond ANNOUNCED
+        if str(record.get("execution_state") or "").upper() in ("ANNOUNCED", "UNKNOWN", ""):
+            continue
+        words = label.split()[:12]
+        short_label = " ".join(words) + ("..." if len(label.split()) > 12 else "")
+        # Translate machine states to investor-readable descriptions
+        _execution_map = {
+            "announced": "announced",
+            "action Started": "underway",
+            "action started": "underway",
+            "action Completed": "completed",
+            "action completed": "completed",
+            "operational": "operational",
+        }
+        _outcome_map = {
+            "outcome Unknown": "outcome not yet observed",
+            "outcome unknown": "outcome not yet observed",
+            "no Outcome Evidence": "no outcome reported",
+            "no outcome evidence": "no outcome reported",
+            "outcome Observed": "outcome observed",
+            "outcome observed": "outcome observed",
+        }
+        ex_display = _execution_map.get(ex.lower(), ex.lower())
+        oc_display = _outcome_map.get(oc.lower(), oc.lower())
+        record_points.append(f"{short_label}: execution {ex_display}; {oc_display}.")
+        if len(record_points) >= 4:
+            break
+    if record_points:
+        key_points.extend(record_points)
+    limitations = list(meo.get("limitations") or [])
+    unresolved = []
+    if outcome_observed == 0:
+        unresolved.append("No operating outcome has been observed for any initiative in the current evidence.")
+    if attributable == 0:
+        unresolved.append("No economic consequence is attributable to any management initiative in the current evidence.")
+    if completed_unproven:
+        unresolved.append(
+            "Completed execution (action done) does not imply positive operating result or value creation. "
+            "These remain unproven until separately evidenced."
+        )
+    unresolved.extend(limitations[:2])
+    answer_status = "supported" if eligible > 0 else "not_supported"
+    interpretation = {
+        "conclusion": conclusion_text,
+        "thesis_impact": "neutral",
+        "positive_evidence": [p for p in record_points if "completed" in p.lower() or "operational" in p.lower()],
+        "negative_evidence": [],
+        "unresolved": unresolved[:4],
+        "what_to_watch": [
+            "Evidence that a completed initiative produces an observed operating outcome.",
+            "Financial data that links initiative completion to revenue, margin, or cash improvement.",
+        ],
+        "why_it_matters": (
+            "Execution completion is not operating success and operating success is not economic value creation. "
+            "These tiers — action, completion, outcome, and confirmed attribution — must be tracked separately."
+        ),
+        "confidence": {"level": "medium", "basis": ["management execution outcomes from management progression analysis"]},
+    }
+    return _draft(
+        answer_status=answer_status,
+        simple_answer=conclusion_text,
+        why_it_matters=interpretation["why_it_matters"],
+        key_points=key_points[:4],
+        detailed_explanation=(
+            "Derived from the management execution outcomes analysis. "
+            "Regulator-driven events are excluded from the management-credit count. "
+            "The four tiers — action visible, completed, outcome observed, and confirmed economic attribution — are tracked independently and do not imply each other."
+        ),
+        evidence_status="direct" if eligible > 0 else "unavailable",
+        evidence_summary="management_execution_outcomes from management_progression.",
+        evidence_points=[chain_text],
+        uncertainty=" ".join(unresolved[:2]) if unresolved else "Execution outcome coverage is current.",
+        products_refs=[],
+        business_journey_ref=None,
+        progression={"execution_outcome_coverage": coverage, "credibility": credibility},
+        interpretation=interpretation,
+    )
+
+
+def _build_value_creation_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
+    """Which investments have actually created value?
+
+    Reads from capital_allocation_outcomes (attribution taxonomy from ENG-122/ENG-135).
+    Shows: Action → Outcome → Economic consequence → Attribution confidence → Alternatives.
+    Distinguishes: proven value creation / associated outcome / unproven / negative / insufficient evidence.
+
+    Semantic contract: chronology is NOT causality. DIRECTLY_ATTRIBUTABLE only for
+    deterministic transaction consequences (dividends, buybacks, debt repayment).
+    """
+    cao_payload = _source_payload(source_bundle, "capital_allocation_outcomes")
+    mp_payload = _source_payload(source_bundle, "management_progression")
+
+    allocations = cao_payload.get("allocations", []) if isinstance(cao_payload, dict) else []
+    meo = mp_payload.get("management_execution_outcomes") if isinstance(mp_payload, dict) else None
+
+    if not allocations and not meo:
+        return _draft(
+            answer_status="not_supported",
+            simple_answer="Economic attribution data is not available.",
+            why_it_matters="Understanding which investments created verifiable value distinguishes capital stewardship from activity.",
+            key_points=["Capital allocation outcome data is not loaded for this company."],
+            detailed_explanation="Capital allocation outcome data is not yet loaded for this company.",
+            evidence_status="unavailable",
+            evidence_summary="Sources not loaded.",
+            evidence_points=[],
+            uncertainty="No attribution data available.",
+            products_refs=[],
+            business_journey_ref=None,
+            progression={},
+            interpretation={"conclusion": "Attribution data unavailable.", "thesis_impact": "neutral"},
+        )
+
+    # Classify by attribution tier
+    direct = [a for a in allocations if a.get("outcome_attribution") == "DIRECTLY_ATTRIBUTABLE"]
+    associated = [a for a in allocations if a.get("outcome_attribution") == "ASSOCIATED_NOT_ATTRIBUTABLE"]
+    no_evidence = [a for a in allocations if a.get("outcome_attribution") in ("NO_OUTCOME_EVIDENCE", None)]
+    negative = [a for a in allocations if a.get("outcome_attribution") == "NEGATIVE_OUTCOME"]
+
+    total = len(allocations)
+    key_points = []
+
+    def _alloc_name(a: Dict[str, Any], limit: int = 60) -> str:
+        raw = (a.get("normalized_name") or a.get("allocation_name") or "?").strip()
+        if len(raw) <= limit:
+            return raw
+        # Truncate at last space to avoid mid-word cuts
+        cut = raw[:limit].rsplit(" ", 1)[0]
+        return cut or raw[:limit]
+
+    # Proven value creation (confirmed by the transaction itself)
+    if direct:
+        names = "; ".join(_alloc_name(a) for a in direct[:3])
+        key_points.append(
+            f"Confirmed outcomes ({len(direct)} of {total} allocations): {names}. "
+            f"These create value through the transaction itself — dividends, debt repayment, buybacks — not through operating cause and effect."
+        )
+
+    # Associated — deployment confirmed but causality not established
+    if associated:
+        names = "; ".join(_alloc_name(a) for a in associated[:3])
+        key_points.append(
+            f"Deployed with subsequent financial change ({len(associated)} of {total}): {names}. "
+            f"Capital was deployed and revenue or profit moved in the same period, but the disclosed evidence does not establish that the deployment caused the improvement."
+        )
+
+    # No outcome evidence — evidence gap, not failure
+    if no_evidence:
+        names = "; ".join(_alloc_name(a, limit=50) for a in no_evidence[:3])
+        key_points.append(
+            f"No disclosed outcome yet ({len(no_evidence)} of {total}): {names}. "
+            f"Capital was deployed but the source documents do not report what economic result followed. This is a disclosure gap, not evidence of failure."
+        )
+
+    # Management execution — none have operating outcomes
+    if meo:
+        coverage = meo.get("coverage") or {}
+        eligible = int(coverage.get("management_execution_eligible") or 0)
+        key_points.append(
+            f"Management initiatives: none of {eligible} eligible initiatives have a confirmed economic outcome. "
+            f"Execution is visible; business results are not yet disclosed."
+        )
+
+    # Negative outcomes
+    if negative:
+        neg_names = "; ".join(a.get("allocation_name", "?")[:40] for a in negative[:2])
+        key_points.append(f"Adverse result confirmed ({len(negative)}): {neg_names}.")
+
+    # Build simple answer
+    if direct:
+        direct_names = ", ".join(_alloc_name(a, limit=50) for a in direct[:2])
+        simple_answer = (
+            f"{len(direct)} of {total} capital allocations have a confirmed, deterministic outcome — {direct_names}. "
+            f"{len(associated)} show revenue changes after deployment but causality is not established from public disclosures. "
+            f"{len(no_evidence)} have no disclosed operating outcome yet."
+        )
+    else:
+        simple_answer = (
+            f"None of the {total} tracked capital allocations has a proven operating value-creation outcome. "
+            f"{len(associated)} are associated with subsequent financial changes, but causality remains unestablished. "
+            f"{len(no_evidence)} have no disclosed outcome. "
+            f"The available disclosures do not attribute revenue or profit improvements to specific initiatives."
+        )
+
+    detailed = (
+        "Three tiers of evidence: (1) Confirmed outcomes — the transaction itself is the economic event (dividends, "
+        "debt repayment, buybacks require no causal inference); (2) Associated — deployment and financial improvement "
+        "occurred in the same period, but alternative explanations (industry growth, pricing, mix shifts) cannot be "
+        "excluded from public disclosures alone; (3) No disclosed outcome — capital was deployed but no economic result "
+        "appears in the source documents. Consolidated revenue cannot be attributed to specific initiatives without "
+        "segment-level disclosure."
+    )
+
+    return _draft(
+        answer_status="supported" if direct or associated else "partial",
+        simple_answer=simple_answer,
+        why_it_matters="Distinguishing proven value creation from activity distinguishes capital stewardship. Most attribution claims require scrutiny of alternative explanations before they can be accepted.",
+        key_points=key_points,
+        detailed_explanation=detailed,
+        evidence_status="partial",
+        evidence_summary=(
+            f"{len(direct)} confirmed (transaction-level), {len(associated)} associated (causality unestablished), "
+            f"{len(no_evidence)} with no disclosed outcome, from {total} tracked capital allocations."
+        ),
+        evidence_points=[
+            f"{_alloc_name(a)} ({a.get('allocation_category','?')}): "
+            + (
+                "outcome confirmed by the transaction itself"
+                if a.get("outcome_attribution") == "DIRECTLY_ATTRIBUTABLE"
+                else "associated with subsequent financial change; causality not established"
+                if a.get("outcome_attribution") == "ASSOCIATED_NOT_ATTRIBUTABLE"
+                else "no disclosed economic outcome yet"
+            )
+            for a in allocations[:8]
+        ],
+        uncertainty=(
+            "Acquisitions and organic capex contributions are not disclosed at initiative level. "
+            "Revenue growth attributed to specific initiatives cannot be verified from consolidated statements alone."
+        ),
+        products_refs=[],
+        business_journey_ref=None,
+        progression={},
+        interpretation={
+            "conclusion": simple_answer,
+            "thesis_impact": "cautionary" if len(direct) == 0 else "neutral",
+            "attribution_summary": {
+                "directly_attributable": len(direct),
+                "associated_not_attributable": len(associated),
+                "no_outcome_evidence": len(no_evidence),
+                "negative_outcome": len(negative),
+            },
+        },
+    )
+
+
 def _build_projects_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
     registry = _source_payload(source_bundle, "projects_registry")
     assessments_payload = _source_payload(source_bundle, "project_assessments")
@@ -2237,20 +2612,37 @@ def _build_projects_answer(source_bundle: Dict[str, Any], *, business_journey_pa
         # Use the count + project names if we have meaningful names
         if names:
             n = len(active_projects)
+            project_word = "project" if n == 1 else "projects"
             label = names[0]
-            if len(names) > 1:
-                label = f"{names[0]} and {len(active_projects) - 1} other initiative(s)"
-            return f"{n} project(s) with recent execution evidence, led by: {label}."
+            others = n - 1
+            if others > 0:
+                other_word = "other" if others == 1 else "others"
+                label = f"{names[0]} and {others} {other_word}"
+            return f"{n} {project_word} with recent execution evidence, led by: {label}."
         # Fall back to featured objective if it's substantial
         obj = _get_string(featured[0], "objective") or ""
         if len(obj) > 40 and not obj.lower().endswith("operational."):
             return obj
-        return f"{len(active_projects)} project(s) have recent execution evidence and are considered currently underway."
+        n = len(active_projects)
+        return f"{n} {'project' if n == 1 else 'projects'} have recent execution evidence and are considered currently underway."
 
+    _proj_names_why = [
+        _first_string(_get_string(p, "normalized_name"), _get_string(p, "project_name"))
+        for p in featured[:2]
+        if _first_string(_get_string(p, "normalized_name"), _get_string(p, "project_name"))
+    ]
+    if _proj_names_why:
+        _proj_why = (
+            f"{_join_human_list(_proj_names_why)} {'is' if len(_proj_names_why) == 1 else 'are'} the leading active "
+            f"{'initiative' if len(_proj_names_why) == 1 else 'initiatives'} — these show where management is "
+            f"converting stated commitment into real execution right now."
+        )
+    else:
+        _proj_why = "This matters because projects reveal whether management is building real capability, not just discussing growth in the abstract."
     return _draft(
         answer_status="partially_supported",
         simple_answer=_projects_simple_answer(),
-        why_it_matters="This matters because projects reveal whether management is building real capability, not just discussing growth in the abstract.",
+        why_it_matters=_proj_why,
         key_points=[
             _first_string(
                 _get_string(item, "normalized_name"),
@@ -2265,7 +2657,7 @@ def _build_projects_answer(source_bundle: Dict[str, Any], *, business_journey_pa
             "initiatives have been excluded to prevent stale data from being presented as current activity."
         ),
         evidence_status="partial",
-        evidence_summary=f"Supported by {len(active_projects)} active project(s) from the registry with recent evidence.",
+        evidence_summary=f"Supported by {len(active_projects)} active {'project' if len(active_projects) == 1 else 'projects'} from the registry with recent evidence.",
         evidence_points=[
             _get_string(featured[0].get("_assessment", {}), "execution_summary"),
             _get_string(featured[0].get("_assessment", {}), "observed_business_effect"),
@@ -2446,7 +2838,7 @@ def _build_management_quality_answer(source_bundle: Dict[str, Any], *, business_
                 key_points=key_pts or [conclusion],
                 detailed_explanation="Derived from the Gold Management Credibility Synthesis, which tracks guidance accuracy and delivery patterns across reporting periods.",
                 evidence_status="partial",
-                evidence_summary="Derived from Gold Credibility Synthesis.",
+                evidence_summary="Derived from management credibility analysis.",
                 evidence_points=[cred_summary] if cred_summary else [conclusion],
                 uncertainty="Full management-quality dimensions require the management_quality_summary source.",
                 products_refs=[],
@@ -2496,182 +2888,6 @@ def _build_management_quality_answer(source_bundle: Dict[str, Any], *, business_
     )
 
 
-def _build_capital_allocation_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
-    outcomes = _source_payload(source_bundle, "capital_allocation_outcomes")
-    allocations = _get_record_list(outcomes, "allocations")
-    if allocations:
-        allocation = allocations[-1]
-        progression = _capital_allocation_progression(source_bundle)
-        deployment = first_available_text(
-            _get_string(allocation, "allocation_name"),
-            _get_string(allocation, "normalized_name"),
-            _get_string(allocation, "allocation_category"),
-            "Capital deployment",
-        )
-        outcome = first_available_text(
-            _get_string(allocation, "balance_sheet_outcome"),
-            _get_string(allocation, "investor_implication"),
-            _get_string(allocation, "balance_sheet_outcome"),
-            "The return trail is still only partly visible.",
-        ).rstrip(" .")
-        per_share = first_available_text(
-            _get_string(allocation, "per_share_outcome"),
-            "Per-share effects remain indirect and are not yet cleanly attributable.",
-        ).rstrip(" .")
-        unresolved = _clean_list(
-            _get_string_list(allocation, "unresolved_questions") + [per_share]
-        )[:3]
-        interpretation = build_interpretation_contract(
-            conclusion=f"Capital was deployed into {deployment.lower()}, but the return trail is still only partly visible.",
-            what_changed=_clean_list([deployment, _get_string(allocation, "stated_rationale"), outcome])[:3],
-            why_it_matters="Investors need to separate deployment from return: spending money is not the same thing as creating per-share value.",
-            economic_mechanism="Capital allocation matters only when the deployed cash improves capacity, margins, or shareholder economics enough to beat the opportunity cost.",
-            thesis_impact="neutral",
-            positive_evidence=_clean_list([
-                f"Deployment: {deployment}.",
-                f"Observed outcome: {outcome}.",
-                _get_string(allocation, "investor_implication"),
-            ])[:3],
-            negative_evidence=unresolved,
-            unresolved=unresolved,
-            what_to_watch=_clean_list([
-                "Utilization of the new capacity",
-                "Incremental margins or cash-flow evidence",
-                "Per-share earnings or cash outcome from the deployment",
-            ])[:3],
-            confidence={"level": "medium", "basis": ["Supported by the capital-allocation outcome ledger and its progression summary."], "limitations": ["Owner earnings are estimated, but maintenance and growth capex are not separated."]},
-        )
-        return _draft(
-            answer_status="supported" if _get_string(allocation, "outcome_status") else "partially_supported",
-            simple_answer=interpretation["conclusion"],
-            why_it_matters=interpretation["why_it_matters"],
-            key_points=[
-                f"Deployment: {deployment}.",
-                f"Outcome: {outcome}.",
-                f"Per-share effect: {per_share}.",
-                f"Unresolved: {_first_string(_get_string_list(allocation, 'unresolved_questions'))}.",
-            ],
-            detailed_explanation="The useful capital-allocation question is not only where money went, but what changed afterward: did the business get stronger, did returns become visible, and did per-share economics improve in a way investors can trust?",
-            evidence_status="partial",
-            evidence_summary="Supported by the capital-allocation outcome ledger and its progression summary.",
-            evidence_points=[
-                _get_string(allocation, "operating_outcome"),
-                _get_string(allocation, "financial_outcome"),
-                _get_string(allocation, "per_share_outcome"),
-            ],
-            uncertainty="Some allocations still do not yet have a clean return trail.",
-            products_refs=[],
-            business_journey_ref=None,
-            progression=progression,
-            interpretation=interpretation,
-        )
-    ledger = _source_payload(source_bundle, "capital_allocation_roi_ledger")
-    entries = _get_record_list(ledger, "entries")
-    if not entries:
-        gold_cap = _source_payload(source_bundle, "gold_capital_allocation")
-        if gold_cap:
-            # Raw artifact uses material_allocations; owner note lives in owner_capital_summary
-            major = (gold_cap.get("material_allocations") or gold_cap.get("major_allocations") or [])[:3]
-            owner_s = gold_cap.get("owner_capital_summary") or {}
-            owner_note = str(owner_s.get("narrative") or owner_s.get("interpretation") or gold_cap.get("owner_capital_note") or "").strip()
-            _RETURN_NAT = {
-                "PROVEN_POSITIVE": "return confirmed", "MIXED": "returns mixed",
-                "UNPROVEN": "return not yet visible", "DESTRUCTIVE": "return negative",
-                "NOT_APPLICABLE": "capital returned to shareholders",
-            }
-            alloc_pts = []
-            for alloc in major:
-                if not isinstance(alloc, dict):
-                    continue
-                name = alloc.get("theme") or alloc.get("allocation_name") or alloc.get("name") or ""
-                ret_raw = str(alloc.get("return_status") or "")
-                ret = _RETURN_NAT.get(ret_raw, ret_raw.lower().replace("_", " "))
-                if name:
-                    alloc_pts.append(f"{name}: {ret}".strip(": ") if ret else name)
-            gcap_s = gold_cap.get("summary") or {}
-            tracked = gcap_s.get("tracked_allocations") or len(major)
-            conclusion = owner_note or (f"Capital tracked across {tracked} allocations." if major else "Gold capital allocation data available.")
-            return _draft(
-                answer_status="partially_supported",
-                simple_answer=conclusion,
-                why_it_matters="Investors need to separate deployment from return: spending money is not the same thing as creating per-share value.",
-                key_points=alloc_pts or [conclusion],
-                detailed_explanation="Derived from the Gold Capital Allocation Outcome Tracker, which longitudinally tracks return status across major capital deployments.",
-                evidence_status="partial",
-                evidence_summary="Derived from Gold Capital Allocation Outcome Tracker.",
-                evidence_points=alloc_pts[:3] or [conclusion],
-                uncertainty="Full capital-allocation detail requires the capital_allocation_outcomes source.",
-                products_refs=[],
-                business_journey_ref=None,
-                progression={},
-                interpretation={"conclusion": conclusion, "thesis_impact": "neutral"},
-            )
-        return _build_generic_not_supported_answer(source_bundle, business_journey_payload=business_journey_payload, products_services_payload=products_services_payload, question=question)
-    first_entry = entries[-1]
-    progression = _capital_allocation_progression(source_bundle)
-    deployment = first_available_text(
-        _get_string(first_entry, "capital_use"),
-        _get_string(first_entry, "purpose"),
-        _get_string(first_entry, "investor_interpretation"),
-        "Capital deployment",
-    )
-    outcome = first_available_text(
-        _get_string(first_entry, "balance_sheet_outcome"),
-        _get_string(first_entry, "investor_interpretation"),
-        "The return trail is still only partly visible.",
-    ).rstrip(" .")
-    per_share = first_available_text(
-        _get_string(first_entry, "per_share_outcome"),
-        "Per-share effects remain indirect and are not yet cleanly attributable.",
-    ).rstrip(" .")
-    unresolved = _clean_list(
-        _get_string_list(first_entry, "unresolved_questions") + [per_share]
-    )[:3]
-    interpretation = build_interpretation_contract(
-        conclusion=f"Capital was deployed into {deployment.lower()}, but the return trail is still only partly visible.",
-        what_changed=_clean_list([deployment, _get_string(first_entry, "capital_use"), outcome])[:3],
-        why_it_matters="Investors need to separate deployment from return: spending money is not the same thing as creating per-share value.",
-        economic_mechanism="Capital allocation matters only when the deployed cash improves capacity, margins, or shareholder economics enough to beat the opportunity cost.",
-        thesis_impact="neutral",
-        positive_evidence=_clean_list([
-            f"Deployment: {deployment}.",
-            f"Observed outcome: {outcome}.",
-            _get_string(first_entry, "investor_interpretation"),
-        ])[:3],
-        negative_evidence=unresolved,
-        unresolved=unresolved,
-        what_to_watch=_clean_list([
-            "Utilization of the new capacity",
-            "Incremental margins or cash-flow evidence",
-            "Per-share earnings or cash outcome from the deployment",
-        ])[:3],
-        confidence={"level": "medium", "basis": ["Supported by the capital-allocation ROI ledger and current financial truth evidence."], "limitations": ["Maintenance versus growth capex is not cleanly separated."]},
-    )
-    return _draft(
-        answer_status="partially_supported",
-        simple_answer=interpretation["conclusion"],
-        why_it_matters=interpretation["why_it_matters"],
-        key_points=[
-            f"Deployment: {deployment}.",
-            f"Outcome: {outcome}.",
-            f"Per-share effect: {per_share}.",
-            f"Unresolved: {_first_string(_get_string_list(first_entry, 'unresolved_questions'))}.",
-        ],
-        detailed_explanation="The current evidence is stronger on where capital seems to be going than on the eventual return on that capital. That supports a useful directional answer on allocation priorities, while still keeping the ROI question open.",
-        evidence_status="partial",
-        evidence_summary="Partially supported because capital uses are visible, but later return-on-capital evidence is still incomplete.",
-        evidence_points=[
-            _get_string(first_entry, "investor_interpretation"),
-            _first_string(_get_string_list(_get_record(_source_payload(source_bundle, "committee_synthesis"), "financial_committee_view"), "investor_questions_from_financials")),
-        ],
-        uncertainty="The use of capital is clearer than the eventual return on that capital.",
-        products_refs=[],
-        business_journey_ref=None,
-        progression=progression,
-        interpretation=interpretation,
-    )
-
-
 def _build_canonical_business_summary_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
     company_slug = str(source_bundle.get("company_slug") or "")
     model = canonical_company_model(source_bundle, company_slug) if company_slug else {}
@@ -2693,10 +2909,23 @@ def _build_canonical_business_summary_answer(source_bundle: Dict[str, Any], *, b
             limitation="Regenerate the business evidence set before asking business-understanding questions.",
         )
     product_names = _first_product_names(products_services_payload, limit=3)
+    _bm_type_raw = _get_string(current, "business_model_type") or _get_string(current, "how_revenue_happens") or ""
+    if _bm_type_raw and len(_bm_type_raw) < 60:
+        _biz_why = (
+            f"The business model ({_bm_type_raw.lower()}) determines whether revenues depend on branded pricing, "
+            f"regulatory approval cycles, or volume throughput — the structure shapes how durable cash generation really is."
+        )
+    else:
+        _biz_why = "This matters because the first investor question is what the business actually sells, who uses it, and how that activity can become cash."
     return _draft(
-        answer_status="supported" if str(model.get("coverage_status") or "") == "supported" else "partially_supported",
+        answer_status=(
+            "supported"
+            if str(model.get("coverage_status") or "") == "supported"
+            and str(products_services_payload.get("coverage_status") or "") != "unavailable"
+            else "partially_supported"
+        ),
         simple_answer=_complete_sentence(business_summary),
-        why_it_matters="This matters because the first investor question is what the business actually sells, who uses it, and how that activity can become cash.",
+        why_it_matters=_biz_why,
         key_points=[
             f"Offerings: {_join_human_list(product_names)}." if product_names else "",
             str(products_services_payload.get("customer_summary") or ""),
@@ -2802,33 +3031,75 @@ def _build_canonical_make_money_answer(source_bundle: Dict[str, Any], *, busines
         if name:
             engine_names.append(name)
     segment_note = ""
+    canonical_engines = _get_record(model, "economic_engines")
+    disclosed_engines = _get_record_list(canonical_engines, "engines")
+    engine_economics_note = ""
+    if disclosed_engines:
+        latest_parts = []
+        momentum_parts = []
+        for engine in disclosed_engines[:5]:
+            history = _get_record_list(engine, "history")
+            if not history:
+                continue
+            latest = history[-1]
+            name = _get_string(engine, "engine_name")
+            share = latest.get("revenue_share")
+            if name and isinstance(share, (int, float)):
+                latest_parts.append(f"{name} {share * 100:.1f}%")
+            growth_momentum = _get_string(engine, "growth_momentum")
+            if name and growth_momentum and growth_momentum != "INSUFFICIENT_HISTORY":
+                momentum_parts.append(f"{name}: {growth_momentum.lower().replace('_', ' ')}")
+        if latest_parts:
+            mix_note = "Latest disclosed revenue mix: " + ", ".join(latest_parts) + "."
+            momentum_note = ("Growth momentum — " + "; ".join(momentum_parts) + ".") if momentum_parts else ""
+            engine_economics_note = " ".join(p for p in [mix_note, momentum_note, "Engine profitability, cash flow and capital intensity are not disclosed."] if p)
     segments = _get_record_list(model, "segments") or _get_record_list(current, "segments") or []
     if segments:
         seg_names = [_get_string(s, "segment_name") or _get_string(s, "name") for s in segments[:3]]
         seg_names = [s for s in seg_names if s]
         if seg_names:
             segment_note = f"Revenue comes from {_join_human_list(seg_names)}."
-    billing_basis = _billing_basis_phrase(current) or ""
+    billing_basis = _billing_basis_phrase(_get_string(current, "billing_basis") or _get_string(current, "billing_type") or _get_string(current, "billing_model")) or ""
     revenue_basis = _complete_sentence(revenue_summary)
     revenue_flow = _build_revenue_flow(source_bundle, products_services_payload)
     billing_basis_note = str(revenue_flow.get("billing_basis_note") or "").strip()
     revenue_recognition_note = str(revenue_flow.get("revenue_recognition_note") or "").strip()
     cash_timing_note = str(revenue_flow.get("cash_timing_note") or "").strip()
 
-    # Simple answer leads with revenue mechanism, not business description
-    simple_parts = [revenue_basis]
-    if segment_note:
-        simple_parts.append(segment_note)
-    elif engine_names:
-        simple_parts.append(f"Key revenue engines: {_join_human_list(engine_names)}.")
-    simple = _complete_sentence(" ".join(p for p in simple_parts if p))
+    # Simple answer = revenue mechanism only (not the full geographic breakdown which goes in key_points/detailed)
+    simple = _complete_sentence(revenue_basis) or _complete_sentence(" ".join(p for p in [revenue_basis, segment_note] if p))
+    # Build company-specific why_it_matters from the momentum data already computed
+    if momentum_parts and len(momentum_parts) >= 2:
+        _accel = [p.split(": ")[0] for p in momentum_parts if "accelerating" in p]
+        _decel = [p.split(": ")[0] for p in momentum_parts if "decelerating" in p]
+        if _accel and _decel:
+            _mm_why = (
+                f"Revenue momentum is split: {_join_human_list(_accel)} {'is' if len(_accel) == 1 else 'are'} accelerating "
+                f"while {_join_human_list(_decel)} {'is' if len(_decel) == 1 else 'are'} decelerating — "
+                f"which engine dominates determines whether current growth rates are sustainable."
+            )
+        elif _decel:
+            _mm_why = (
+                f"{_join_human_list(_decel)} revenue is decelerating — if this engine carries significant weight, "
+                f"total revenue trajectory is at risk."
+            )
+        elif _accel:
+            _mm_why = (
+                f"{_join_human_list(_accel)} {'is' if len(_accel) == 1 else 'are'} driving the current revenue momentum — "
+                f"durability depends on whether this trajectory is structural or cyclical."
+            )
+        else:
+            _mm_why = "Understanding the revenue mix reveals which engines are carrying the business — and which may be slowing."
+    else:
+        _mm_why = "This matters because investors need the economic engine, not just the product label."
     return _draft(
         answer_status="supported" if str(model.get("coverage_status") or "") == "supported" else "partially_supported",
         simple_answer=simple,
-        why_it_matters="This matters because investors need the economic engine, not just the product label.",
+        why_it_matters=_mm_why,
         key_points=_clean_list([
             revenue_basis,
             segment_note,
+            engine_economics_note,
             billing_basis_note or billing_basis,
             revenue_recognition_note,
             cash_timing_note,
@@ -2838,6 +3109,7 @@ def _build_canonical_make_money_answer(source_bundle: Dict[str, Any], *, busines
             for part in [
                 revenue_basis,
                 segment_note,
+                engine_economics_note,
                 billing_basis,
             ]
             if part
@@ -2877,9 +3149,9 @@ def _build_canonical_progression_answer(source_bundle: Dict[str, Any], *, busine
                         simple_answer=note,
                         why_it_matters="Claims matter only if later evidence shows follow-through.",
                         key_points=[gp or note],
-                        detailed_explanation="Derived from Gold Credibility and Promise Tracker. Raw progression evidence is unavailable for this run.",
+                        detailed_explanation="Derived from management credibility analysis and commitment tracking. Progression detail is unavailable for this run.",
                         evidence_status="partial",
-                        evidence_summary="Derived from Gold Credibility Synthesis and Gold Promise Tracker.",
+                        evidence_summary="Derived from management credibility analysis and commitment tracking.",
                         evidence_points=[note],
                         uncertainty="Full claim-level verification requires progression evidence.",
                         products_refs=[],
@@ -2895,11 +3167,11 @@ def _build_canonical_progression_answer(source_bundle: Dict[str, Any], *, busine
                     simple_answer=gp,
                     why_it_matters="Investors need to separate explicit commitments from later delivery.",
                     key_points=[gp],
-                    detailed_explanation="Derived from Gold Promise Tracker. Raw commitment ledger is unavailable for this run.",
+                    detailed_explanation="Derived from management commitment tracking. Detailed commitment ledger is unavailable for this run.",
                     evidence_status="partial",
-                    evidence_summary="Derived from Gold Promise Tracker.",
+                    evidence_summary="Derived from management commitment tracking.",
                     evidence_points=[gp],
-                    uncertainty="Full commitment detail requires the management_commitments source.",
+                    uncertainty="Full commitment detail requires the complete commitment evidence set.",
                     products_refs=[],
                     business_journey_ref=None,
                     progression={},
@@ -2955,11 +3227,44 @@ def _build_canonical_progression_answer(source_bundle: Dict[str, Any], *, busine
     implication = _get_record(item, "investor_implication")
     status = "partially_supported" if coverage == "partial" or _uses_legacy_streams(items) else "supported"
     key_points = _progression_key_points(items[:4], question_id)
+    coverage_conclusion = ""
+    execution_summary = progression_payload.get("management_execution_outcomes")
+    if not isinstance(execution_summary, dict):
+        execution_summary = {}
+    if question_id == "did-past-claims-come-true" and execution_summary:
+        coverage_map = execution_summary.get("coverage") or {}
+        records_considered = int(execution_summary.get("records_considered") or 0)
+        action_count = int(coverage_map.get("action_observed") or 0)
+        completion_count = int(coverage_map.get("execution_completed_or_operational") or 0)
+        outcome_count = int(coverage_map.get("operating_outcome_observed") or 0)
+        attributable_count = int(coverage_map.get("economic_consequence_attributable") or 0)
+        summary["execution_outcome_coverage"] = dict(coverage_map)
+        summary["records_considered"] = records_considered
+        coverage_conclusion = (
+            f"Across {records_considered} tracked management initiative(s), action is visible for {action_count}; "
+            f"{completion_count} reached completed or operational execution, {outcome_count} have an observed outcome, "
+            f"and {attributable_count} have an attributable economic consequence"
+        )
+        execution_points = []
+        for record in execution_summary.get("records") or []:
+            if not isinstance(record, dict):
+                continue
+            label = _clean_display_phrase(str(record.get("identity_label") or ""), limit_words=14)
+            if not label:
+                continue
+            execution_state = _lcs_human_label(str(record.get("execution_state") or "UNKNOWN"))
+            outcome_state = _lcs_human_label(str(record.get("outcome_state") or "OUTCOME_UNKNOWN"))
+            attribution = _lcs_human_label(str(record.get("attribution_strength") or "NO_OUTCOME_EVIDENCE"))
+            execution_points.append(f"{label}: {execution_state}; {outcome_state}; {attribution}.")
+            if len(execution_points) >= 4:
+                break
+        if execution_points:
+            key_points = _clean_list(execution_points)
     if question_id == "did-past-claims-come-true":
         key_points = _augment_with_lcs_signals(key_points, company_model)
     unresolved = _clean_list(summary.get("unresolved_items") or [])
     latest_evidence = _clean_list(summary.get("latest_evidence") or [])
-    conclusion = _progression_conclusion(question_id, summary)
+    conclusion = coverage_conclusion or _progression_conclusion(question_id, summary)
     confidence = _progression_confidence(question_id, summary, implication, coverage)
     interpretation = build_interpretation_contract(
         conclusion=_complete_sentence(conclusion),
@@ -3296,10 +3601,40 @@ def _build_lens_answer(source_bundle: Dict[str, Any], *, business_journey_payloa
     if not direct:
         return _build_generic_not_supported_answer(source_bundle, business_journey_payload=business_journey_payload, products_services_payload=products_services_payload, question=question)
     stripped_direct = _strip_backend_phrasing(direct) or direct
+    positive_evidence, negative_evidence, unresolved_evidence = _route_lens_evidence(
+        findings=findings,
+        red_flags=red_flags,
+        uncertainties=uncertainties,
+    )
+    # Use the first red_flag to make the why_it_matters company-specific when available (Munger only)
+    if red_flags and lens_key == "munger_analysis":
+        _first_flag = red_flags[0].rstrip(".").lower()
+        _lens_why = (
+            f"This lens matters here because {_first_flag} — "
+            f"this is the kind of structural risk Munger's framework is built to catch before it compounds."
+        )
+    else:
+        _lens_why = why
+    interpretation = build_interpretation_contract(
+        conclusion=stripped_direct,
+        what_changed=_clean_list(findings + red_flags + uncertainties)[:3],
+        why_it_matters=_lens_why,
+        economic_mechanism=_lens_why,
+        thesis_impact="neutral",
+        positive_evidence=positive_evidence,
+        negative_evidence=negative_evidence,
+        unresolved=unresolved_evidence,
+        what_to_watch=_clean_list(uncertainties + red_flags)[:3],
+        confidence={
+            "level": "medium",
+            "basis": ["Derived from the saved investor-lens analysis."],
+            "limitations": unresolved_evidence[:2],
+        },
+    )
     return _draft(
         answer_status="supported",
         simple_answer=stripped_direct,
-        why_it_matters=why,
+        why_it_matters=_lens_why,
         key_points=_clean_list([findings[0] if findings else "", findings[1] if len(findings) > 1 else "", red_flags[0] if red_flags else "", uncertainties[0] if uncertainties else ""])[:4],
         detailed_explanation=" ".join(_clean_list([stripped_direct] + findings[:2] + red_flags[:1] + uncertainties[:1])),
         evidence_status="derived",
@@ -3308,6 +3643,7 @@ def _build_lens_answer(source_bundle: Dict[str, Any], *, business_journey_payloa
         uncertainty=(uncertainties[0] if uncertainties else "This lens remains limited by the available evidence set."),
         products_refs=[],
         business_journey_ref=None,
+        interpretation=interpretation,
     )
 
 
@@ -3481,7 +3817,7 @@ def _build_break_thesis_answer(source_bundle: Dict[str, Any], *, business_journe
         uncertainty_parts = []
         if untracked_count:
             uncertainty_parts.append(
-                f"{untracked_count} tracked risk(s) have no confirmed trajectory — financial consequence unknown."
+                f"{untracked_count} tracked {'risk' if untracked_count == 1 else 'risks'} have no confirmed trajectory — financial consequence unknown."
             )
         if improving_notes:
             uncertainty_parts.append(
@@ -3491,16 +3827,27 @@ def _build_break_thesis_answer(source_bundle: Dict[str, Any], *, business_journe
 
         worsening_names = [e.get("risk_name") or e.get("evo_canonical_id") or "" for e in groups["worsening"]]
         recurring_names = [e.get("risk_name") or e.get("evo_canonical_id") or "" for e in groups["recurring"]]
-        conclusion_parts = []
-        if worsening_names:
-            conclusion_parts.append("Worsening: " + "; ".join(_clean_list(worsening_names)[:3]))
-        if recurring_names:
-            conclusion_parts.append("Persistent: " + "; ".join(_clean_list(recurring_names)[:3]))
-        simple_answer = (
-            "The thesis faces most pressure from: " + " | ".join(conclusion_parts) + "."
-            if conclusion_parts
-            else "Risk trajectory data is available but no risks are confirmed worsening or recurring."
-        )
+        if worsening_names and recurring_names:
+            simple_answer = (
+                f"The principal active risks are {_join_human_list(_clean_list(worsening_names)[:3])}, "
+                f"each confirmed as worsening across multiple periods. "
+                f"{_join_human_list(_clean_list(recurring_names)[:3])} "
+                f"{'has' if len(recurring_names) == 1 else 'have'} persisted without resolution."
+            )
+        elif worsening_names:
+            simple_answer = (
+                f"{_join_human_list(_clean_list(worsening_names)[:3])} "
+                f"{'is' if len(worsening_names) == 1 else 'are'} confirmed as worsening — "
+                f"the most direct pressure on the thesis."
+            )
+        elif recurring_names:
+            simple_answer = (
+                f"{_join_human_list(_clean_list(recurring_names)[:3])} "
+                f"{'has' if len(recurring_names) == 1 else 'have'} persisted across periods without resolution, "
+                f"representing the main ongoing risk to the thesis."
+            )
+        else:
+            simple_answer = "Risk trajectory data is available but no risks are confirmed worsening or recurring."
 
         key_points = _clean_list(key_points)[:5]
         if not key_points:
@@ -3508,6 +3855,31 @@ def _build_break_thesis_answer(source_bundle: Dict[str, Any], *, business_journe
 
         if not key_points:
             return _build_generic_not_supported_answer(source_bundle, business_journey_payload=business_journey_payload, products_services_payload=products_services_payload, question=question)
+
+        # ENG-125: summarise management response coverage across worsening + recurring risks
+        active_risks = groups["worsening"] + groups["recurring"]
+        no_response_count = sum(
+            1 for e in active_risks
+            if (e.get("management_response_status") or "NO_RESPONSE_DISCLOSED") == "NO_RESPONSE_DISCLOSED"
+        )
+        if no_response_count == len(active_risks) and active_risks:
+            _ar = len(active_risks)
+            response_coverage = (
+                f"No concrete management response is identified in available evidence for any of the "
+                f"{_ar} worsening or recurring {'risk' if _ar == 1 else 'risks'}. Risk trajectory data is established; "
+                "management action and effectiveness are not."
+            )
+        elif no_response_count > 0:
+            _ar = len(active_risks)
+            response_coverage = (
+                f"{no_response_count} of {_ar} worsening or recurring {'risk' if _ar == 1 else 'risks'} have no identified "
+                "management response in available evidence."
+            )
+        else:
+            response_coverage = ""
+        if response_coverage:
+            uncertainty_parts = [response_coverage] + (uncertainty_parts if "uncertainty_parts" in dir() else [])
+            uncertainty = " ".join([response_coverage, uncertainty]) if uncertainty else response_coverage
 
         progression = _risk_progression(source_bundle)
         return _draft(
@@ -3519,10 +3891,13 @@ def _build_break_thesis_answer(source_bundle: Dict[str, Any], *, business_journe
                 "Trajectory-confirmed risks are grouped by direction. Worsening risks are actively deteriorating; "
                 "recurring risks have persisted across multiple periods. Improving risks are noted separately — "
                 "they are receding but not resolved. Risks without confirmed trajectory have unknown financial consequence "
-                "and are not listed as thesis-breakers."
+                "and are not listed as thesis-breakers. "
+                + (response_coverage + " " if response_coverage else "")
+                + "Management response attribution follows ENG-125: only independently evidenced actions are credited; "
+                "temporal improvement near a stated action does not constitute proof of effectiveness."
             ),
             evidence_status="direct",
-            evidence_summary="Sourced from canonical risk assessments with trajectory routing from risk evolution data.",
+            evidence_summary="Sourced from risk assessments with trajectory data.",
             evidence_points=key_points[:3],
             uncertainty=uncertainty,
             products_refs=[],
@@ -3610,7 +3985,7 @@ def _build_change_view_answer(source_bundle: Dict[str, Any], *, business_journey
         return _build_generic_not_supported_answer(source_bundle, business_journey_payload=business_journey_payload, products_services_payload=products_services_payload, question=question)
     return _draft(
         answer_status="partially_supported",
-        simple_answer="The view would change most if the company provided cleaner evidence on capex split, working-capital drivers, share-count comparability, and reporting basis.",
+        simple_answer=f"The view would change most if evidence resolves this highest-priority question: {questions[0]}",
         why_it_matters="This matters because better evidence should change conviction only when it resolves a genuinely important unknown.",
         key_points=questions,
         detailed_explanation="The current evidence is already enough to identify the pressure points. What would change the view is not more narrative, but clearer evidence on the specific issues that currently prevent a stronger conclusion.",
@@ -3657,7 +4032,7 @@ def _build_unresolved_answer(source_bundle: Dict[str, Any], *, business_journey_
         return _build_generic_not_supported_answer(source_bundle, business_journey_payload=business_journey_payload, products_services_payload=products_services_payload, question=question)
     return _draft(
         answer_status="supported",
-        simple_answer="What remains unresolved is mostly about owner-economics precision, customer concentration, share-count comparability, and why working capital is so demanding.",
+        simple_answer=f"The highest-priority unresolved question is: {unresolved[0]}",
         why_it_matters="This matters because early conviction is most dangerous when the unresolved questions are hidden rather than named directly.",
         key_points=unresolved,
         detailed_explanation="The current evidence does not fail because it says nothing. It fails because a few high-value questions remain open. Those open questions cluster around owner-economics precision, the real drivers of cash conversion, and how confidently current shareholder-level economics can be compared over time.",
@@ -3791,13 +4166,13 @@ def _build_capital_allocation_answer(
 
     pattern_parts = []
     if inorganic_n:
-        pattern_parts.append(f"{inorganic_n} inorganic (acquisitions/investments)")
+        pattern_parts.append(f"{inorganic_n} inorganic {'event' if inorganic_n == 1 else 'events'} (acquisitions/investments)")
     if organic_n:
-        pattern_parts.append(f"{organic_n} organic reinvestment events")
+        pattern_parts.append(f"{organic_n} organic reinvestment {'event' if organic_n == 1 else 'events'}")
     if dist_n:
-        pattern_parts.append(f"{dist_n} shareholder distribution events")
+        pattern_parts.append(f"{dist_n} shareholder distribution {'event' if dist_n == 1 else 'events'}")
     if bs_n:
-        pattern_parts.append(f"{bs_n} balance-sheet actions")
+        pattern_parts.append(f"{bs_n} balance-sheet {'action' if bs_n == 1 else 'actions'}")
     pattern_summary = (
         f"Over {period_range}, management deployed capital across " + ", ".join(pattern_parts) + "."
         if pattern_parts and period_range
@@ -3816,14 +4191,15 @@ def _build_capital_allocation_answer(
             share = entry.get("share_of_known_deployment")
             amount = entry.get("known_amount_crore")
             cnt = entry.get("event_count", 0)
+            _evt = "event" if cnt == 1 else "events"
             if share is not None and amount:
                 mix_pts.append(
-                    f"{cat.title()}: ₹{format_number(amount)} Cr ({int(share * 100)}% of tracked capital, {cnt} event(s))"
+                    f"{cat.title()}: ₹{format_number(amount)} Cr ({int(share * 100)}% of tracked capital, {cnt} {_evt})"
                 )
             elif amount:
-                mix_pts.append(f"{cat.title()}: ₹{format_number(amount)} Cr ({cnt} event(s))")
+                mix_pts.append(f"{cat.title()}: ₹{format_number(amount)} Cr ({cnt} {_evt})")
             elif cnt:
-                mix_pts.append(f"{cat.title()}: {cnt} event(s)")
+                mix_pts.append(f"{cat.title()}: {cnt} {_evt}")
     capital_note = (
         "Based on known deployment amounts, capital-weighted breakdown is available."
         if capital_weighted_ok
@@ -3868,13 +4244,19 @@ def _build_capital_allocation_answer(
             parts.append(f"/ {exe}")
         major_pts.append(" ".join(p for p in parts if p))
 
-    # ── Section 4: What actually worked (Phase 2 canonical states) ──────────
+    # ── Section 4: What actually worked (Phase 2 canonical states + ENG-122 attribution) ──────
     outcome_pts: List[str] = []
     exec_verified = []
     operating_visible = []
     fin_attributable = []
     per_share_attr = []
     unverified = []
+    # ENG-122: five-tier outcome attribution counts
+    oa_directly: List[str] = []
+    oa_strongly: List[str] = []
+    oa_associated: List[str] = []
+    oa_no_evidence: List[str] = []
+    oa_negative: List[str] = []
 
     for a in assessments_list:
         if not isinstance(a, dict):
@@ -3886,18 +4268,31 @@ def _build_capital_allocation_answer(
         exe_s = a.get("execution_state", "UNABLE_TO_VERIFY")
         pss = a.get("per_share_consequence_state", "UNABLE_TO_ATTRIBUTE")
         dep_s = a.get("deployment_state", "UNABLE_TO_VERIFY")
+        oa = a.get("outcome_attribution", "NO_OUTCOME_EVIDENCE")
 
         if fos not in ("UNABLE_TO_ATTRIBUTE", None):
-            fin_attributable.append(f"{cat} ({aid}): {_FOS_LABEL.get(fos, fos)}")
+            fin_attributable.append(f"{cat}: {_FOS_LABEL.get(fos, fos)}")
         elif oos not in ("UNABLE_TO_VERIFY", "NO_VERIFIED_OUTCOME", None):
-            operating_visible.append(f"{cat} ({aid}): operating progress visible")
+            operating_visible.append(f"{cat}: operating progress visible")
         elif exe_s not in ("UNABLE_TO_VERIFY", "NOT_STARTED", None):
-            exec_verified.append(f"{cat} ({aid}): {_EXE_STATE_LABEL.get(exe_s, exe_s)}")
+            exec_verified.append(f"{cat}: {_EXE_STATE_LABEL.get(exe_s, exe_s)}")
         else:
-            unverified.append(f"{cat} ({aid})")
+            unverified.append(cat)
 
         if pss not in ("UNABLE_TO_ATTRIBUTE", None):
-            per_share_attr.append(f"{cat} ({aid}): per-share consequence attributable")
+            per_share_attr.append(f"{cat}: per-share consequence attributable")
+
+        # Accumulate ENG-122 attribution buckets
+        if oa == "DIRECTLY_ATTRIBUTABLE":
+            oa_directly.append(cat)
+        elif oa == "STRONGLY_SUPPORTED":
+            oa_strongly.append(cat)
+        elif oa == "ASSOCIATED_NOT_ATTRIBUTABLE":
+            oa_associated.append(cat)
+        elif oa == "NEGATIVE_OUTCOME":
+            oa_negative.append(cat)
+        else:
+            oa_no_evidence.append(cat)
 
     if fin_attributable:
         outcome_pts.append("Financial return attributable: " + "; ".join(fin_attributable[:3]) + ".")
@@ -3911,6 +4306,22 @@ def _build_capital_allocation_answer(
         )
     if per_share_attr:
         outcome_pts.append("Per-share consequence attributable: " + "; ".join(per_share_attr[:2]) + ".")
+
+    # ENG-122: outcome attribution summary (three-question framework)
+    oa_summary_parts = []
+    if oa_directly:
+        oa_summary_parts.append(f"{len(oa_directly)} directly attributable (transaction is the outcome)")
+    if oa_strongly:
+        oa_summary_parts.append(f"{len(oa_strongly)} strongly supported by execution evidence")
+    if oa_associated:
+        oa_summary_parts.append(f"{len(oa_associated)} operational but outcome unattributed to this deployment")
+    if oa_no_evidence:
+        oa_summary_parts.append(f"{len(oa_no_evidence)} with no downstream outcome evidence yet")
+    if oa_negative:
+        oa_summary_parts.append(f"{len(oa_negative)} with negative outcome signals")
+    oa_summary = ("; ".join(oa_summary_parts) + ".") if oa_summary_parts else ""
+    if oa_summary:
+        outcome_pts.append("Outcome attribution: " + oa_summary)
 
     # ── Section 5: Stewardship conclusion (Phase 3) ──────────────────────────
     avs = (profile.get("allocation_activity_vs_skill") or {}) if profile else {}
@@ -3953,9 +4364,9 @@ def _build_capital_allocation_answer(
     detailed = (
         f"{pattern_summary} {capital_note} "
         f"Of {n_total} tracked events, {n_fin} have attributable financial outcomes and "
-        f"{n_unverified} remain unverified. Allocation activity is documented; "
-        f"allocation skill requires attributable causal evidence which current records "
-        f"{'do not yet fully support' if n_fin < n_total * 0.5 else 'partially support'}."
+        f"{n_unverified} remain unverified. "
+        f"{'Whether this capital deployment creates per-share value cannot yet be determined' if n_fin < n_total * 0.5 else 'Partial evidence of value creation is present'} "
+        f"from current disclosures."
     )
 
     evidence_pts = _clean_list(major_pts[:2] + outcome_pts[:2])
@@ -3970,25 +4381,56 @@ def _build_capital_allocation_answer(
         "Capital deployment is documented; return attribution requires further evidence."
     )
 
+    if oa_directly and n_total:
+        _cap_pct = int(len(oa_directly) / n_total * 100)
+        if n_unverified > len(oa_directly):
+            _cap_why = (
+                f"Only {len(oa_directly)} of {n_total} tracked allocations ({_cap_pct}%) have confirmed outcomes — "
+                f"the majority of deployed capital has no verified financial return yet. "
+                f"Whether this changes defines the capital allocation track record."
+            )
+        else:
+            _cap_why = (
+                f"{len(oa_directly)} of {n_total} tracked allocations have a confirmed return; "
+                f"the rest remain without attribution — the overall track record is mixed."
+            )
+    elif n_total:
+        _cap_why = (
+            f"None of the {n_total} tracked capital allocations have a confirmed financial return yet — "
+            f"deployment is visible but return quality is still unproven."
+        )
+    else:
+        _cap_why = (
+            "Capital allocation is the ultimate test of management stewardship: "
+            "deployment is easy to observe, but whether it creates per-share value is what matters."
+        )
     return _draft(
         answer_status=answer_status,
         simple_answer=simple,
-        why_it_matters=(
-            "Capital allocation is the ultimate test of management stewardship: "
-            "deployment is easy to observe, but whether it creates per-share value is what matters."
-        ),
+        why_it_matters=_cap_why,
         key_points=key_points,
         detailed_explanation=detailed,
         evidence_status="partial" if n_unverified > 0 else "direct",
         evidence_summary=(
-            "Derived from canonical Phase 2 causal-attribution ledger and Phase 3 longitudinal profile. "
+            "Derived from capital allocation records and longitudinal deployment profile. "
             "Financial outcomes attributed only where direct causal linkage exists."
         ),
         evidence_points=evidence_pts,
         uncertainty=uncertainty,
         products_refs=[],
         business_journey_ref=None,
-        progression={},
+        # ENG-122: outcome_attribution_summary in progression so finalize can inject it
+        # into the generic interpretation contract (build_answer_for_question strips
+        # non-investor-lens interpretation before finalize rebuilds it).
+        progression={
+            "outcome_attribution_summary": {
+                "directly_attributable": len(oa_directly),
+                "strongly_supported": len(oa_strongly),
+                "associated_not_attributable": len(oa_associated),
+                "no_outcome_evidence": len(oa_no_evidence),
+                "negative_outcome": len(oa_negative),
+            },
+        },
         interpretation={
             "conclusion": f"Management is an active capital allocator; {skill_label}.",
             "skill_assessment": skill_raw,
@@ -4042,7 +4484,7 @@ def _build_return_on_capex_answer(source_bundle: Dict[str, Any], *, business_jou
     if not key_pts:
         return _build_unavailable_answer(
             question,
-            "Capex return data is present but does not yet contain enough outcome fields.",
+            "Capex return data is present but outcome fields are not yet available in sufficient detail.",
             "The return on capex can only be assessed once outcome data spans multiple years.",
             "Outcome evidence is currently limited.",
         )
@@ -4082,11 +4524,11 @@ def _build_promise_types_answer(source_bundle: Dict[str, Any], *, business_journ
     for ptype, count in sorted(tb.items(), key=lambda x: -x[1]):
         if isinstance(count, int) and count > 0:
             readable = ptype.replace("_", " ").title()
-            type_pts.append(f"{readable}: {count} commitment(s).")
+            type_pts.append(f"{readable}: {count} {'commitment' if count == 1 else 'commitments'}.")
     dominant = max(tb.items(), key=lambda x: x[1] if isinstance(x[1], int) else 0, default=("", 0))
     dom_name = dominant[0].replace("_", " ").title()
     dom_count = dominant[1]
-    simple = f"Of {tracked} tracked commitments, {dom_name} is the largest category with {dom_count} commitment(s). Regulatory Remediation and Product Launch together dominate the promise ledger."
+    simple = f"Of {tracked} tracked commitments, {dom_name} is the largest category with {dom_count} {'commitment' if dom_count == 1 else 'commitments'}. Regulatory Remediation and Product Launch together dominate the promise ledger."
     return _draft(
         answer_status="supported",
         simple_answer=simple,
@@ -4124,7 +4566,7 @@ def _build_overdue_promises_answer(source_bundle: Dict[str, Any], *, business_jo
             evidence_status="direct",
             evidence_summary="Gold Promise Tracker — status breakdown.",
             evidence_points=[],
-            uncertainty="UNVERIFIED status means no later evidence is available — it does not confirm delivery.",
+            uncertainty="Not yet verified means no later evidence is available — it does not confirm delivery.",
             products_refs=[],
             business_journey_ref=None,
             progression={},
@@ -4138,10 +4580,11 @@ def _build_overdue_promises_answer(source_bundle: Dict[str, Any], *, business_jo
         if theme:
             key_pts.append(f"{theme}: {inv_clean}" if inv_clean else f"{theme} — marked as missed.")
     if missed and not key_pts:
-        key_pts.append(f"{missed} commitment(s) are classified as missed.")
+        key_pts.append(f"{missed} {'commitment' if missed == 1 else 'commitments'} {'is' if missed == 1 else 'are'} classified as missed.")
     if delayed:
-        key_pts.append(f"{delayed} commitment(s) are classified as delayed.")
-    simple = f"{missed + delayed} commitment(s) are overdue (missed or delayed). " + (key_pts[0] if key_pts else "")
+        key_pts.append(f"{delayed} {'commitment' if delayed == 1 else 'commitments'} {'is' if delayed == 1 else 'are'} classified as delayed.")
+    total_overdue = missed + delayed
+    simple = f"{total_overdue} {'commitment' if total_overdue == 1 else 'commitments'} {'is' if total_overdue == 1 else 'are'} overdue (missed or delayed). " + (key_pts[0] if key_pts else "")
     return _draft(
         answer_status="supported",
         simple_answer=simple.strip(),
@@ -4151,7 +4594,7 @@ def _build_overdue_promises_answer(source_bundle: Dict[str, Any], *, business_jo
         evidence_status="direct",
         evidence_summary="Gold Promise Tracker — resolved promises with missed/delayed status.",
         evidence_points=key_pts[:2],
-        uncertainty="Some commitments may be UNVERIFIED rather than MISSED — absence of later evidence is not the same as a confirmed failure.",
+        uncertainty="Some commitments may be not yet verified rather than missed — absence of later evidence is not the same as a confirmed failure.",
         products_refs=[],
         business_journey_ref=None,
         progression={},
@@ -4172,14 +4615,14 @@ def _build_delivered_promises_answer(source_bundle: Dict[str, Any], *, business_
     if not delivered and achieved == 0 and partially == 0:
         return _draft(
             answer_status="partially_supported",
-            simple_answer=f"No commitments are currently recorded as verified. {int(accountability.get('unresolved_verifiable_commitments', 0))} material verifiable commitment(s) remain unresolved.",
+            simple_answer=f"No commitments are currently recorded as verified. {int(accountability.get('unresolved_verifiable_commitments', 0))} material verifiable {'commitment' if int(accountability.get('unresolved_verifiable_commitments', 0)) == 1 else 'commitments'} remain unresolved.",
             why_it_matters="Delivery track record is the only reliable test of whether management's stated intent translates into execution.",
             key_points=[f"0 commitments verified; 0 partially verified; {int(accountability.get('unresolved_verifiable_commitments', 0))} unresolved."],
             detailed_explanation="Unverified does not mean failed — it means no later evidence is available to confirm delivery.",
             evidence_status="partial",
             evidence_summary="Gold Promise Tracker — summary status breakdown.",
             evidence_points=[],
-            uncertainty="UNVERIFIED status is not a confirmed failure; later evidence may confirm delivery.",
+            uncertainty="Not yet verified is not a confirmed failure; later evidence may confirm delivery.",
             products_refs=[],
             business_journey_ref=None,
             progression={},
@@ -4195,10 +4638,11 @@ def _build_delivered_promises_answer(source_bundle: Dict[str, Any], *, business_
         if theme:
             key_pts.append(f"{label}: {theme}. {inv_clean}".strip())
     if achieved:
-        key_pts.append(f"{achieved} commitment(s) fully achieved.")
+        key_pts.append(f"{achieved} {'commitment' if achieved == 1 else 'commitments'} fully achieved.")
     if partially:
-        key_pts.append(f"{partially} commitment(s) partially delivered.")
-    simple = f"{achieved + partially} commitment(s) have visible delivery evidence. " + (key_pts[0] if key_pts else "")
+        key_pts.append(f"{partially} {'commitment' if partially == 1 else 'commitments'} partially delivered.")
+    total_delivered = achieved + partially
+    simple = f"{total_delivered} {'commitment' if total_delivered == 1 else 'commitments'} {'has' if total_delivered == 1 else 'have'} visible delivery evidence. " + (key_pts[0] if key_pts else "")
     return _draft(
         answer_status="supported",
         simple_answer=simple.strip(),
@@ -4231,11 +4675,11 @@ def _build_missed_promises_answer(source_bundle: Dict[str, Any], *, business_jou
             simple_answer="The tracker records no commitments as explicitly missed.",
             why_it_matters="Explicit misses reveal where execution fell short of what was promised.",
             key_points=["No explicit misses recorded."],
-            detailed_explanation="Some commitments are UNVERIFIED — absence of later evidence does not confirm they were missed.",
+            detailed_explanation="Some commitments are not yet verified — absence of later evidence does not confirm they were missed.",
             evidence_status="direct",
             evidence_summary="Gold Promise Tracker.",
             evidence_points=[],
-            uncertainty="UNVERIFIED commitments may yet be confirmed as delivered or missed in future evidence.",
+            uncertainty="Commitments not yet verified may yet be confirmed as delivered or missed in future evidence.",
             products_refs=[],
             business_journey_ref=None,
             progression={},
@@ -4276,7 +4720,7 @@ def _build_committee_direction_answer(source_bundle: Dict[str, Any], *, business
     strength = str(committee.get("consensus_strength") or "").strip()
     rationale = str(committee.get("committee_rationale") or "").strip()
     if not direction:
-        return _build_unavailable_answer(question, "Committee direction field is empty.", "The committee_synthesis artifact exists but direction is not set.", "")
+        return _build_unavailable_answer(question, "Committee direction is not yet available.", "The committee has an overall view but direction has not been set.", "")
     strength_label = {"high": "strong consensus", "medium": "moderate consensus", "low": "divided views"}.get(strength.lower(), strength)
     simple = f"The committee's overall direction is {direction} with {strength_label}."
     if rationale:
@@ -4285,6 +4729,12 @@ def _build_committee_direction_answer(source_bundle: Dict[str, Any], *, business
         f"Direction: {direction}.",
         f"Consensus strength: {strength_label}.",
     ]
+    diligence = _question_texts(_get_record_list(committee, "top_diligence_questions"))[:3]
+    if not diligence:
+        diligence = _question_texts(_get_record_list(committee, "investigation_questions"))[:3]
+    key_pts.extend(diligence)
+    if diligence:
+        simple += f" The highest-priority unresolved issue is: {diligence[0]}"
     fcv = _get_record(committee, "financial_committee_view") or {}
     fcv_conclusion = _get_string(fcv, "conclusion") or _get_string(fcv, "summary")
     if fcv_conclusion:
@@ -4297,7 +4747,7 @@ def _build_committee_direction_answer(source_bundle: Dict[str, Any], *, business
         detailed_explanation="The direction reflects a synthesis of Graham, Buffett, Fisher, Munger, and Lynch analysis. A weakening direction means the weight of evidence points toward caution rather than confidence.",
         evidence_status="direct",
         evidence_summary="Derived from the committee_synthesis artifact.",
-        evidence_points=key_pts[:2],
+        evidence_points=key_pts[:3],
         uncertainty="Direction reflects the current evidence set. New filings or evidence could shift the conclusion.",
         products_refs=[],
         business_journey_ref=None,
@@ -4311,7 +4761,12 @@ def _build_committee_agree_answer(source_bundle: Dict[str, Any], *, business_jou
         return _build_unavailable_answer(question, "Committee synthesis is not available.", "Agreement analysis requires the synthesis artifact.", "")
     agreements = _get_string_list(committee, "doctrine_agreements")
     if not agreements:
-        return _build_unavailable_answer(question, "No doctrine agreements found in the committee synthesis.", "Agreement detail requires doctrine_agreements fields.", "")
+        return _build_unavailable_answer(
+            question,
+            "The available committee synthesis does not document any cross-analyst agreements.",
+            "Agreement analysis requires explicit cross-analyst agreement evidence; its absence should remain unavailable rather than inferred.",
+            "No explicit agreement evidence is available in the current committee synthesis.",
+        )
     def _sentence_truncate(text: str, max_chars: int = 200) -> str:
         raw = re.sub(r"[…]+$", "", text).strip()
         if len(raw) <= max_chars and raw.endswith((".", "!", "?")):
@@ -4334,13 +4789,13 @@ def _build_committee_agree_answer(source_bundle: Dict[str, Any], *, business_jou
     return _draft(
         answer_status="supported",
         simple_answer=simple.strip(),
-        why_it_matters="Where all analysts agree, the signal is stronger — it represents a shared conclusion from different frameworks applied to the same evidence.",
+        why_it_matters="Agreement shows that different investor frameworks reached the same interpretation, but consensus is not independent proof that the interpretation is correct.",
         key_points=[a for a in clean_agreements if a],
-        detailed_explanation="Doctrine agreements mean that despite different investment frameworks, multiple analysts reached the same conclusion. That cross-framework agreement raises the reliability of the finding.",
+        detailed_explanation="Cross-analyst agreement identifies a shared interpretation of the same evidence. Its reliability still depends on the quality and completeness of that underlying evidence.",
         evidence_status="direct",
         evidence_summary="Derived from the committee_synthesis doctrine_agreements field.",
         evidence_points=clean_agreements[:2],
-        uncertainty="Agreements are based on the current evidence set. A new disclosure could shift a shared view.",
+        uncertainty="Agreement is not proof: shared conclusions may change if the common evidence is incomplete, contradicted, or superseded by a new disclosure.",
         products_refs=[],
         business_journey_ref=None,
         interpretation={"conclusion": simple.strip(), "thesis_impact": "neutral"},
@@ -4354,7 +4809,7 @@ def _build_committee_disagree_answer(source_bundle: Dict[str, Any], *, business_
     disagreements = _get_string_list(committee, "doctrine_disagreements")
     major = _get_record_list(committee, "major_disagreements") or []
     if not disagreements and not major:
-        return _build_unavailable_answer(question, "No doctrine disagreements found.", "Disagreement detail requires doctrine_disagreements or major_disagreements fields.", "")
+        return _build_unavailable_answer(question, "Doctrine disagreement detail is not yet available.", "Disagreement detail requires doctrine_disagreements or major_disagreements fields.", "")
     def _sentence_truncate(text: str, max_chars: int = 200) -> str:
         raw = re.sub(r"[…]+$", "", text).strip()
         if len(raw) <= max_chars and raw.endswith((".", "!", "?")):
@@ -4439,31 +4894,60 @@ def _build_regulatory_risks_answer(source_bundle: Dict[str, Any], *, business_jo
         worsening_count = sum(1 for e in regulatory if e.get("trajectory") == "worsening")
         recurring_count = sum(1 for e in regulatory if e.get("trajectory") == "recurring")
         unknown_count = sum(1 for e in regulatory if not e.get("trajectory"))
+        # ENG-125: count regulatory risks with no management response
+        reg_no_response = sum(
+            1 for e in regulatory
+            if (e.get("management_response_status") or "NO_RESPONSE_DISCLOSED") == "NO_RESPONSE_DISCLOSED"
+        )
+        _nreg = len(regulatory)
+        _reg_word = "risk" if _nreg == 1 else "risks"
         simple = (
-            f"{len(regulatory)} regulatory or governance risk(s) tracked; "
+            f"{_nreg} regulatory or governance {_reg_word} tracked; "
             f"{worsening_count} worsening, {recurring_count} recurring."
         )
         uncertainty_parts = []
         if unknown_count:
             uncertainty_parts.append(f"{unknown_count} have no confirmed trajectory — direction and financial consequence unknown.")
+        if reg_no_response:
+            uncertainty_parts.append(
+                f"{reg_no_response} of {_nreg} regulatory {'risk' if reg_no_response == 1 else 'risks'} have no identified management response in available evidence."
+            )
         uncertainty = (
             " ".join(uncertainty_parts) or
             "Regulatory outcomes can change quickly after a consent decree, enforcement action, or response letter."
         )
         if not key_pts:
-            return _build_unavailable_answer(question, "No active regulatory or governance risks are currently tracked.", "Canonical risk assessments are present but no regulatory themes are identified.", "")
+            return _build_unavailable_answer(question, "No active regulatory or governance risks are currently tracked.", "Risk assessments are present but no regulatory themes are identified.", "")
+        _reg_names = [e.get("risk_name") or "" for e in regulatory[:2] if e.get("risk_name")]
+        if _reg_names and worsening_count > 0 and reg_no_response > 0:
+            _reg_why = (
+                f"{_join_human_list(_reg_names)} {'is' if len(_reg_names) == 1 else 'are'} worsening with no disclosed management response — "
+                f"forced remediation or market access restrictions remain a live risk to the thesis."
+            )
+        elif _reg_names and worsening_count > 0:
+            _reg_why = (
+                f"{_join_human_list(_reg_names)} {'is' if len(_reg_names) == 1 else 'are'} confirmed worsening — "
+                f"the investment case depends on whether this trajectory reverses."
+            )
+        elif _reg_names:
+            _reg_why = (
+                f"{_join_human_list(_reg_names)} {'is' if len(_reg_names) == 1 else 'are'} active — "
+                f"regulatory risks at this company can restrict market access or create remediation costs."
+            )
+        else:
+            _reg_why = "Active regulatory risks can create forced remediation costs, market access restrictions, or reputational damage that impairs the investment case."
         return _draft(
             answer_status="supported",
             simple_answer=simple.strip(),
-            why_it_matters="Active regulatory risks can create forced remediation costs, market access restrictions, or reputational damage that impairs the investment case.",
+            why_it_matters=_reg_why,
             key_points=key_pts,
             detailed_explanation=(
-                f"{len(regulatory)} regulatory-class risk(s) tracked in canonical assessments. "
+                f"{_nreg} regulatory-class {_reg_word} tracked. "
                 "Worsening risks are actively deteriorating; recurring risks have persisted across periods. "
                 "Risks without confirmed trajectory have unknown financial consequence."
             ),
             evidence_status="direct",
-            evidence_summary="Sourced from canonical risk assessments with trajectory routing from risk evolution data.",
+            evidence_summary="Sourced from risk assessments with trajectory data.",
             evidence_points=key_pts[:2],
             uncertainty=uncertainty,
             products_refs=[],
@@ -4474,7 +4958,7 @@ def _build_regulatory_risks_answer(source_bundle: Dict[str, Any], *, business_jo
     # Fallback: use gold_risk_evolution when canonical assessments unavailable
     risk_evo = _source_payload(source_bundle, "gold_risk_evolution")
     if not risk_evo:
-        return _build_unavailable_answer(question, "Risk evolution timeline is not available.", "Regulatory risk analysis requires the gold_risk_evolution artifact.", "")
+        return _build_unavailable_answer(question, "Risk evolution timeline is not available.", "Regulatory risk analysis data is not yet available for this company.", "")
     worsening = risk_evo.get("worsening_or_recurring") or []
     all_themes = risk_evo.get("risk_themes") or []
     regulatory_active = [
@@ -4538,6 +5022,8 @@ ANSWER_BUILDERS = {
     "what-was-delivered-last-3-years": _build_delivered_promises_answer,
     "what-was-missed": _build_missed_promises_answer,
     "did-past-claims-come-true": _build_past_claims_answer,
+    "did-execution-lead-to-outcomes": _build_execution_outcome_answer,
+    "which-investments-created-value": _build_value_creation_answer,
     "what-projects-are-underway": _build_projects_answer,
     "how-is-capacity-changing": _build_canonical_progression_answer,
     "what-is-management-commentary-saying": _build_canonical_progression_answer,
@@ -4807,24 +5293,40 @@ def _canonical_risk_groups(source_bundle: Dict[str, Any]) -> Dict[str, List[Dict
     """Group canonical risk assessments by trajectory for investor-facing synthesis.
 
     Returns {worsening, improving, recurring, other} — each a list of dicts with
-    risk_name, current_status, trajectory, why_it_changed, evo_canonical_id.
+    risk_name, current_status, trajectory, why_it_changed, evo_canonical_id, and
+    ENG-125 consequence/response/effectiveness fields (joined from risk_registry).
     Empty if risk_assessments source is unavailable.
     """
     ra = _source_payload(source_bundle, "risk_assessments")
     assessments = _get_record_list(ra, "assessments")
+
+    # ENG-125: build evo_canonical_id → registry record index for accountability chain join
+    rr = _source_payload(source_bundle, "risk_registry")
+    _registry_by_id: Dict[str, Dict[str, Any]] = {}
+    for reg in _get_record_list(rr, "risks"):
+        eid = _get_string(reg, "evo_canonical_id")
+        if eid:
+            _registry_by_id[eid] = reg
+
     groups: Dict[str, List[Dict[str, Any]]] = {
         "worsening": [], "improving": [], "recurring": [], "other": []
     }
     for a in assessments:
         trajectory = a.get("trajectory") or ""
+        evo_id = _get_string(a, "evo_canonical_id")
+        reg = _registry_by_id.get(evo_id or "") or {}
         entry = {
             "risk_name": _get_string(a, "risk_name") or _get_string(a, "risk_id"),
             "current_status": _get_string(a, "current_status"),
             "trajectory": trajectory,
             "why_it_changed": _get_string(a, "why_it_changed"),
             "what_changed": _get_string(a, "what_changed"),
-            "evo_canonical_id": _get_string(a, "evo_canonical_id"),
+            "evo_canonical_id": evo_id,
             "investor_implication": _get_string(a, "investor_implication"),
+            # ENG-125 accountability chain (from registry; defaults when registry absent)
+            "consequence_status": _get_string(reg, "consequence_status") or "NO_CONSEQUENCE_EVIDENCE",
+            "management_response_status": _get_string(reg, "management_response_status") or "NO_RESPONSE_DISCLOSED",
+            "effectiveness_status": _get_string(reg, "effectiveness_status") or "EFFECTIVENESS_UNKNOWN",
         }
         if trajectory == "worsening":
             groups["worsening"].append(entry)
@@ -4841,10 +5343,25 @@ def _risk_group_point(entry: Dict[str, Any], label: str) -> str:
     """Format a single risk entry as an investor-facing key point."""
     name = _clean_display_phrase(entry.get("risk_name") or "", limit_words=8)
     why = _clean_display_phrase(entry.get("why_it_changed") or entry.get("what_changed") or "", limit_words=20)
+    response_status = entry.get("management_response_status") or "NO_RESPONSE_DISCLOSED"
+    if response_status == "NO_RESPONSE_DISCLOSED":
+        response_note = " No management response identified in available evidence."
+    elif response_status in ("RESPONSE_ACKNOWLEDGED", "RESPONSE_PLANNED"):
+        response_note = " Management acknowledged; no concrete action evidenced."
+    elif response_status == "RESPONSE_IN_PROGRESS":
+        response_note = " Mitigation in progress; effectiveness unknown."
+    elif response_status == "RESPONSE_EXECUTED":
+        response_note = " Response executed; effectiveness not yet verified."
+    else:
+        response_note = ""
     if name and why:
-        return f"{name} ({label}): {why}"
+        # Ensure why ends with a period before appending response_note
+        why_str = why.rstrip()
+        if why_str and not why_str.endswith((".", "?", "!")):
+            why_str += "."
+        return f"{name} ({label}): {why_str}{response_note}"
     if name:
-        return f"{name} ({label})"
+        return f"{name} ({label}).{response_note}"
     return ""
 
 
@@ -4922,6 +5439,12 @@ def finalize_answer_against_reconciled_truth(
                 "limitations": _clean_list([str(uncertainty_note.get("message") or "")])[:2],
             },
         )
+
+    # ENG-122: carry outcome_attribution_summary from progression into interpretation
+    _progression = answer_card.get("progression") if isinstance(answer_card.get("progression"), dict) else {}
+    oa_summary = (_progression or {}).get("outcome_attribution_summary")
+    if oa_summary and isinstance(oa_summary, dict):
+        interpretation["outcome_attribution_summary"] = oa_summary
 
     finalized = dict(answer_card)
     finalized["simple_answer"] = sanitize_public_text(_normalize_public_prose(simple_answer))
@@ -5419,8 +5942,11 @@ def _looks_negative_like(text: str) -> bool:
         return False
     negative_markers = (
         "mixed",
+        "weak",
         "weakened",
         "weaker",
+        "worsening",
+        "recurring risk",
         "weak cash conversion",
         "cash strain risk",
         "operational cash strain risk",
@@ -5437,6 +5963,39 @@ def _looks_negative_like(text: str) -> bool:
         "indirect",
     )
     return any(pattern in normalized for pattern in negative_markers)
+
+
+def _route_lens_evidence(
+    *,
+    findings: List[str],
+    red_flags: List[str],
+    uncertainties: List[str],
+) -> Tuple[List[str], List[str], List[str]]:
+    """Route analyst evidence by source semantics rather than list position."""
+    positive: List[str] = []
+    negative: List[str] = []
+    unresolved: List[str] = []
+
+    for item in findings:
+        if _looks_unresolved_like(item):
+            unresolved.append(item)
+        elif _looks_negative_like(item):
+            negative.append(item)
+        elif _looks_positive_like(item):
+            positive.append(item)
+
+    for item in red_flags:
+        if _looks_unresolved_like(item):
+            unresolved.append(item)
+        else:
+            negative.append(item)
+
+    unresolved.extend(uncertainties)
+    return (
+        _dedupe_similar_lines(_clean_list(positive))[:3],
+        _dedupe_similar_lines(_clean_list(negative))[:3],
+        _dedupe_similar_lines(_clean_list(unresolved))[:3],
+    )
 
 
 def _dedupe_similar_lines(values: List[str]) -> List[str]:

@@ -685,7 +685,7 @@ def _billing_basis_phrase(value: Any) -> str:
     if text in {"milestone", "delivery", "delivery_or_acceptance", "acceptance"}:
         return "delivery or acceptance terms"
     if text in {"sale", "sales"}:
-        return "product sale terms"
+        return "Revenue recognized on product sale."
     if text in {"royalty", "royalties"}:
         return "royalty-based terms"
     if text in {"license", "licence", "licensing"}:
