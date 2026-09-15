@@ -1,5 +1,23 @@
 # Session Log
 
+## 2026-09-15 — POST_ENG135_REALITY_AUDIT: Strict Investor-Grade Reassessment
+
+- **Mission**: POST_ENG135_REALITY_AUDIT — investor-grade reassessment from zero after ENG-135A, ENG-135, and ENG-138 closure. Anchor suppressed (did NOT anchor on historical 72).
+- **Branch**: development | HEAD: `32da70c` (ENG-138 last-mile sanitization)
+- **Scope**: 36 Sun Pharma questions audited; 10 source-level spot checks; 9 unknown-quality samples; 4 active contradictions documented; 7 investor-value gaps; cross-company sanity (Tanla, DataPatterns, Ujjivan).
+- **Category scores**: Business_Understanding=7, Management_Progression=4, Promise_Tracking=6, Capital_Allocation=5, Financial_Truth=7, Risk_Intelligence=6, Investor_Panel=7, Cross_Year=7, Evidence_Integrity=6, Decision_Usefulness=6.
+- **Total**: 61/100 | **Band B** | OLD=72 → NEW=61 → DELTA=-11.
+- **Band A blockers**: Evidence_Integrity=6 (threshold ≥8); Decision_Usefulness=6 (threshold ≥8); Management_Progression=4 (hollow evidence chain).
+- **Verdict**: `PROMISING_BUT_NOT_INVESTOR_GRADE`.
+- **Verdict rationale**: Correct business structure, financial trend direction, promise ontology, investor lenses across 7 years. But four active accuracy failures prevent investor grade: (1) CFO FY26 discrepancy (15,118.88 likely PBT not OCF → owner earnings overstated ~22%); (2) management-commentary BROKEN (not_supported); (3) capital allocation amounts misassigned (capex figures shown as acquisition prices); (4) management execution evidence chain hollow (all 25 progression items have exec_states=[], source_items=[]).
+- **Delta interpretation**: -11 vs historical 72 is real signal. Historical 72 was optimistic on Evidence_Integrity. ENG-135/135A/138 fixed UI/sanitization bugs but did not address data-layer structural issues that now score at full weight.
+- **Spot check summary**: 5 VALID / 2 DEFECT / 3 PARTIAL of 10 checks.
+- **Unknown quality summary**: 6 ACCEPTABLE / 2 MISLEADING / 1 BROKEN of 9 sampled.
+- **Fixed questions**: 5/5 PASS (are-per-share-economics-improving: PASS_WITH_CAVEAT on CFO base).
+- **Top 4 next ENG tickets**: ENG-139 (CFO discrepancy), ENG-140 (management progression evidence chain), ENG-141 (Toansa temporal leakage), ENG-142 (capital allocation amounts).
+- **Artifact persisted**: `governance/POST_ENG135_REALITY_AUDIT.json`.
+- **Gate**: `POST_ENG135_REALITY_AUDIT_CLOSED`.
+
 ## 2026-09-14 — ENG-137A: Rendered Investor Answer Re-Acceptance Gate (READ-ONLY AUDIT)
 
 - **Mode**: Strict read-only. No code changes. UI audited by navigating all 15 question pages in the live dev server.
