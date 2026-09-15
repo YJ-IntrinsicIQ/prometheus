@@ -554,3 +554,25 @@ Production code must not contain hardcoded company names, entity names, product 
 
 ### PCIM and Ask routing
 `economic_attribution_inputs` is a canonical PCIM section. Buffett/Fisher/Munger/Lynch receive it. Graham is excluded (downside-protection focus, not value-creation attribution). The 36th Ask question `which-investments-created-value` surfaces DIRECTLY_ATTRIBUTABLE/ASSOCIATED tiers with full transparency on NO_OUTCOME_EVIDENCE.
+
+---
+
+## ENG-138 — Answer Presentation Contract (Last-Mile Sanitization)
+
+### Public field surface
+The only fields that reach the investor UI are: `conclusion`, `what_changed`, `why_it_matters`, `economic_mechanism`, `thesis_impact`, `positive_evidence`, `negative_evidence`, `unresolved`, `what_to_watch`, `confidence.level`, `confidence.basis`, `confidence.limitations`, `detailed_explanation`, `uncertainty_note`, `evidence_points`, `evidence_summary`, `progression.*` (headline, currentState, whatChanged, whyItChanged, convictionImpact, latestEvidence, unresolvedItems, turningPoints). `outcome_attribution_summary` lives in `progression` dict only — it is NOT exposed via `InvestorInterpretation`.
+
+### confidence.basis contract
+`confidence.basis` must contain only human-readable investor prose. Internal status codes (`'direct'`, `'partial'`, enum identifiers) must never appear in this field. The fallback basis builder in `finalize_answer_against_reconciled_truth()` uses `evidence_summary.summary` only — `evidence_summary.status` is permanently excluded.
+
+### Sanitizer authority
+`sanitize_public_text()` / `sanitize_public_payload()` in `sanitizer.py` are the public surface gatekeepers. `FORBIDDEN_PUBLIC_TERMS` blocks any field containing those terms entirely. `PUBLIC_REWRITES` applies case-insensitive text substitution. Any new internal identifier introduced upstream must be added to both dicts before the term can appear in any public-facing field.
+
+### cleanPublicList / cleanPublicText
+These frontend functions (`presentation.ts`) filter known noise patterns but do NOT catch single-word tokens unless those tokens appear in `PUBLIC_NOISE_PATTERNS`. The authoritative sanitization layer is the Python backend (`sanitizer.py`); frontend cleaning is defense-in-depth, not the primary gate.
+
+### outcome_attribution_summary isolation
+`outcome_attribution_summary` is stored in `answer.progression` (backend dict), not in `answer.interpretation`. `mapInterpretation()` in `load-answer-card.ts` maps `raw.outcome_attribution_summary` to `outcomeAttributionSummary` — this field is `null` for all question types except `capital_allocation` (where it is set in `progression`, not `interpretation`). Raw enum keys (`directly_attributable`, `strongly_supported`, etc.) in this type are intentional — the `OutcomeAttributionBlock` renders them as chip labels after sanitization.
+
+### detailed_explanation contract
+`detailed_explanation` is investor-facing prose. It must not reference internal module names, pipeline stage names, or internal artifact identifiers. When a builder description cites a data source, it must use investor-legible terms (e.g. "execution history and initiative completion records" not "management execution outcomes from management_progression").

@@ -1,0 +1,188 @@
+{
+  "schema_version": "eng138d.ui.acceptance.v1",
+  "ticket": "ENG-138",
+  "audited_at": "2026-09-15T00:00:00Z",
+  "branch": "development",
+  "head": "b467caf",
+  "criteria": {
+    "min_inspected": 12,
+    "min_sun_pharma": 6,
+    "min_per_other_company": 2,
+    "keep_reading_target_pct": 90,
+    "max_product_defects": 0
+  },
+  "results": {
+    "total_inspected": 14,
+    "keep_reading_count": 14,
+    "keep_reading_pct": 100,
+    "product_defects": 0,
+    "coverage": {
+      "sun_pharma": 7,
+      "tanla": 2,
+      "datapatterns": 2,
+      "ujjivan": 3
+    }
+  },
+  "answers": [
+    {
+      "company": "sun_pharma",
+      "question_id": "what-has-management-promised",
+      "confidence_badge": "Partially supported",
+      "confidence_level": "Medium",
+      "basis_text": "Management commitment tracking with delivery status breakdown.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS"
+    },
+    {
+      "company": "sun_pharma",
+      "question_id": "did-past-claims-come-true",
+      "confidence_badge": "Partially supported",
+      "confidence_level": "Low",
+      "basis_text": "Management commitment tracking and credibility analysis.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS"
+    },
+    {
+      "company": "sun_pharma",
+      "question_id": "what-projects-are-underway",
+      "confidence_badge": "Partially supported",
+      "confidence_level": "Medium",
+      "basis_text": "Supported by 9 active projects from the registry with recent evidence.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS"
+    },
+    {
+      "company": "sun_pharma",
+      "question_id": "which-investments-created-value",
+      "confidence_badge": "Evidence supported",
+      "confidence_level": "High",
+      "basis_text": "4 confirmed (transaction-level), 0 associated (causality unestablished), 6 with no disclosed outcome yet.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS",
+      "notes": "Basis previously contained raw enum code 'direct'; fixed by removing evidence_summary.status from fallback confidence.basis builder."
+    },
+    {
+      "company": "sun_pharma",
+      "question_id": "did-execution-lead-to-outcomes",
+      "confidence_badge": "Evidence supported",
+      "confidence_level": "High",
+      "basis_text": "Execution history and completion records.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS",
+      "notes": "Defect found and fixed during inspection: detailed_explanation contained internal module name 'management execution outcomes analysis'; changed to 'execution history and initiative completion tracking'."
+    },
+    {
+      "company": "sun_pharma",
+      "question_id": "what-would-buffett-focus-on",
+      "confidence_badge": "Evidence supported",
+      "confidence_level": "High",
+      "basis_text": "Supported by the Buffett-style investor lens and cross-checked against committee-level financial inputs.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS",
+      "notes": "esop_dilution correctly rendered as 'equity-plan dilution'. Investor lens and financial context render cleanly."
+    },
+    {
+      "company": "sun_pharma",
+      "question_id": "how-is-capital-allocated",
+      "confidence_badge": "Partially supported",
+      "confidence_level": "Medium",
+      "basis_text": "Derived from capital allocation records and longitudinal deployment profile. Financial outcomes remain partially unconfirmed.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS"
+    },
+    {
+      "company": "tanla",
+      "question_id": "what-has-management-promised",
+      "confidence_badge": "Partially supported",
+      "confidence_level": "Low",
+      "basis_text": "Management commitment tracking with delivery status breakdown.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS",
+      "notes": "Low-evidence case (0 delivered commitments of 2). Renders cleanly with no internal codes. Serves as EVIDENCE_UNAVAILABLE representative."
+    },
+    {
+      "company": "tanla",
+      "question_id": "what-would-buffett-focus-on",
+      "confidence_badge": "Evidence supported",
+      "confidence_level": "High",
+      "basis_text": "Supported by the Buffett-style investor lens and cross-checked against committee-level financial inputs.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS"
+    },
+    {
+      "company": "datapatterns",
+      "question_id": "what-has-management-promised",
+      "confidence_badge": "Partially supported",
+      "confidence_level": "Low",
+      "basis_text": "Management commitment tracking with delivery status breakdown.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS",
+      "notes": "Zero-commitment case (0 material checkable commitments). Evidence-sparse path renders cleanly."
+    },
+    {
+      "company": "datapatterns",
+      "question_id": "what-would-buffett-focus-on",
+      "confidence_badge": "Evidence supported",
+      "confidence_level": "High",
+      "basis_text": "Supported by the Buffett-style investor lens and cross-checked against committee-level financial inputs.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS"
+    },
+    {
+      "company": "ujjivan",
+      "question_id": "what-has-management-promised",
+      "confidence_badge": "Partially supported",
+      "confidence_level": "Medium",
+      "basis_text": "Supported by the new commitment ledger and its linked follow-through evidence.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS"
+    },
+    {
+      "company": "ujjivan",
+      "question_id": "what-projects-are-underway",
+      "confidence_badge": "Partially supported",
+      "confidence_level": "Medium",
+      "basis_text": "Supported by 13 active projects from the registry with recent evidence.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS"
+    },
+    {
+      "company": "ujjivan",
+      "question_id": "what-would-buffett-focus-on",
+      "confidence_badge": "Evidence supported",
+      "confidence_level": "High",
+      "basis_text": "Supported by the Buffett-style investor lens and cross-checked against committee-level financial inputs.",
+      "keep_reading": true,
+      "defects": [],
+      "verdict": "PASS",
+      "notes": "esop_dilution correctly rendered as 'equity-plan dilution'. Business model description renders cleanly."
+    }
+  ],
+  "summary": {
+    "IMPL_LEAKS": 0,
+    "ENUM_LEAKS": 0,
+    "TICKET_LEAKS": 0,
+    "PROMPT_POLICY_LEAKS": 0,
+    "SYSTEM_META_DEFECTS": 0,
+    "MALFORMED_TEXT_DEFECTS": 0,
+    "GRAMMAR_DEFECTS": 0,
+    "DUPLICATION_DEFECTS": 0,
+    "PRODUCT_FAILURES": 0
+  },
+  "keep_reading_result": "PASS",
+  "json_api_ui_reconciliation": "PASS",
+  "overall": "PASS"
+}

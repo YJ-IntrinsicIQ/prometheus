@@ -9168,3 +9168,62 @@ Formal closure: ENG_135A_ACTION_IDENTITY_AND_EXECUTION_EVIDENCE_INTEGRITY_PRODUC
 **ENG-135 status**: PRODUCTION_CLOSED
 
 **Next mission**: ENG-138 — Answer Contract Last-Mile Sanitization
+
+---
+
+## ENG-138 — Answer Contract Last-Mile Sanitization
+
+**Date**: 2026-09-15
+
+**Branch**: development | **Head at close**: b467caf (+ uncommitted ENG-138 changes)
+
+**Status**: PRODUCTION_CLOSED
+
+**Gate**: `ENG_138_ANSWER_CONTRACT_LAST_MILE_SANITIZATION_PRODUCTION_CLOSED`
+
+### Mission
+Fix presentation defects where correct intelligence reached the investor UI as internal AI/system artifacts (enum codes, module names, internal term identifiers) rather than clean investor prose. Scope: presentation layer only — no attribution semantics, no ENG-135/ENG-135A reopening.
+
+### Root causes fixed
+
+1. **`confidence.basis` raw enum codes** (`'direct'`/`'partial'`): In `finalize_answer_against_reconciled_truth()` fallback block (`answer_cards.py:5438`), `evidence_summary.status` was included in the basis list. Single-word internal status codes passed through `cleanPublicList()` unchanged (it filters noise patterns but not single tokens). Fix: removed `evidence_summary.status` from the list entirely.
+
+2. **`did-execution-lead-to-outcomes` internal module name**: `detailed_explanation` contained "Derived from the management execution outcomes analysis." — references internal module name. Fix: changed to "Derived from execution history and initiative completion tracking."
+
+3. **Prior session fixes** (already at head b467caf):
+   - `outcome_attribution_summary` no longer copied from `progression` into `interpretation` (removed lines 5443-5447)
+   - `({a.get('allocation_category','?')})` removed from evidence_points format
+   - `allocation(s)` → `allocations` (sanitizer rewrite + direct fix)
+   - `confidence.basis` for `did-execution-lead-to-outcomes`: "management execution outcomes from management progression analysis" → "execution history and completion records"
+   - `evidence_summary` string: "management_execution_outcomes from management_progression." → "Execution history and initiative completion records."
+   - FORBIDDEN_PUBLIC_TERMS and PUBLIC_REWRITES updated in sanitizer.py
+   - `longitudinal_profile.py` PARTIAL coverage note cleaned
+
+### Acceptance proof
+
+**Frozen acceptance set**: `governance/ENG138D_ACCEPTANCE_SET.json` — 20 questions, 4 companies
+
+**Last-mile audit**: `governance/ENG138_LAST_MILE_AUDIT.json` — 20/20 PASS, all defect counters = 0
+
+**UI acceptance**: `governance/ENG138_UI_ACCEPTANCE.json` — 14 rendered answers inspected
+- Sun Pharma: 7 answers (≥6 required) ✓
+- Tanla: 2 answers ✓
+- DataPatterns: 2 answers ✓
+- Ujjivan: 3 answers ✓
+- Keep-reading: 14/14 = 100% (target ≥90%) ✓
+- Product defects found in rendered UI: 0 (after fixing the 2 defects found during inspection)
+- Evidence-sparse case (low-commitment/EVIDENCE_UNAVAILABLE path): confirmed clean ✓
+
+**Regression**: 113/115 PASS (2 pre-existing PyTorch/accelerate.py environment failures, NEW_REGRESSIONS=0)
+
+**TypeScript**: `tsc --noEmit` — PASS (exit code 0, no errors)
+
+### Files modified
+- `intelligence/ask_intrinsiciq/answer_cards.py` — fallback confidence.basis fix, detailed_explanation text fix
+- `intelligence/ask_intrinsiciq/sanitizer.py` — FORBIDDEN_PUBLIC_TERMS + PUBLIC_REWRITES additions
+- `intelligence/capital_allocation_outcomes/longitudinal_profile.py` — PARTIAL coverage note
+- `governance/ENG138D_ACCEPTANCE_SET.json` — 20-question frozen acceptance set
+- `governance/ENG138_LAST_MILE_AUDIT.json` — structured defect audit (all PASS)
+- `governance/ENG138_UI_ACCEPTANCE.json` — rendered UI inspection record (all PASS)
+
+**Next mission**: POST_ENG135_REALITY_AUDIT

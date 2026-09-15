@@ -2366,7 +2366,7 @@ def _build_execution_outcome_answer(source_bundle: Dict[str, Any], *, business_j
         why_it_matters=interpretation["why_it_matters"],
         key_points=key_points[:4],
         detailed_explanation=(
-            "Derived from the management execution outcomes analysis. "
+            "Derived from execution history and initiative completion tracking. "
             "Regulator-driven events are excluded from the management-credit count. "
             "The four tiers — action visible, completed, outcome observed, and confirmed economic attribution — are tracked independently and do not imply each other."
         ),
@@ -5435,7 +5435,7 @@ def finalize_answer_against_reconciled_truth(
             what_to_watch=_clean_list([str(item.get("description") or item.get("label") or "") for item in ((progression or {}).get("turning_points") or []) if isinstance(item, dict)])[:3],
             confidence={
                 "level": "high" if str(answer_card.get("answer_status") or "").lower() == "supported" else "medium" if str(answer_card.get("answer_status") or "").lower() == "partially_supported" else "low",
-                "basis": _clean_list([str(evidence_summary.get("status") or ""), str(evidence_summary.get("summary") or "")])[:2],
+                "basis": _clean_list([str(evidence_summary.get("summary") or "")])[:2],
                 "limitations": _clean_list([str(uncertainty_note.get("message") or "")])[:2],
             },
         )
