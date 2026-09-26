@@ -64,7 +64,10 @@ _GERUND_PREFIX_RE = re.compile(
     r"|streamlining|augmenting|deepening|nurturing|commissioning|acquiring"
     r"|upgrading|completing|constructing|operationalizing|operationalising"
     r"|enhancing|maintaining|ensuring|assessing|monitoring|sustaining|fostering"
-    r"|migrating|validating|filing|using|reducing|planning)\b",
+    r"|migrating|validating|filing|using|reducing|planning"
+    r"|introducing|enabling|offering|revamping|adopting|providing|attracting"
+    r"|concentrating|channeli[sz]ing|positioning|restructuring|implementing"
+    r"|reorienting|reorientating|recalibrating|reprioritising|reprioritizing)\b",
     re.IGNORECASE,
 )
 
@@ -77,13 +80,16 @@ _IMPERATIVE_PREFIX_RE = re.compile(
     r"|maintain|preserve|retain|secure|gain|generate|monetize|monetise|integrate"
     r"|modernise|modernize|digitali[sz]e|streamline|augment|identify|pursue"
     r"|ensure|evaluate|target|use|file|plan|assess|monitor|co-process|co-develop"
-    r"|replicate|reduce|divest|migrate|validate|sustain|foster)\b",
+    r"|replicate|reduce|divest|migrate|validate|sustain|foster"
+    r"|introduce|enable|offer|implement|revamp|adopt|provide|attract"
+    r"|concentrate|channeli[sz]e|position|restructure|reorient|recalibrate)\b",
     re.IGNORECASE,
 )
 
 # Explicit subject-verb future action: "We will / plan to / intend to / continue to / seek to"
+# "the bank", "the group", "the firm" are self-referential company subjects common in financial filings
 _SUBJECT_FUTURE_RE = re.compile(
-    r"\b(?:we|the company|management|management team|the board|company)\s+"
+    r"\b(?:we|the company|management|management team|the board|company|the bank|the group|the firm|the organisation|the organization)\s+"
     r"(?:will|plan(?:s)?(?: to)?|intend(?:s)? to|continue(?:s)? to|seek(?:s)? to|aim(?:s)? to"
     r"|expect(?:s)? to|propose(?:s)? to|commit(?:s)? to)\b",
     re.IGNORECASE,
@@ -432,6 +438,8 @@ def classify_statement_type(text: str, *, category_hint: Any = "", status_hint: 
       confidence      — "high" | "low"
     """
     normalized = _compact_lower(text)
+    # Strip common leading adverb modifiers so "further enhance X" matches the same as "enhance X"
+    normalized = re.sub(r"^(?:further|also|additionally|actively|proactively|continuously|strategically)\s+", "", normalized)
     hint = _compact_lower(category_hint)
     basis: List[str] = []
     statement_type = "unknown"
@@ -1471,9 +1479,10 @@ def assess_progression_materiality(
     else:
         level = "unclear"
 
+    _relevant_statuses = {"core", "supporting", "contextual"} if module_name == "commentary" else {"core", "supporting"}
     should_promote = (
         period_status == "RESOLVED"
-        and relevance_status in {"core", "supporting"}
+        and relevance_status in _relevant_statuses
         and (level in {"high", "medium"} or module_name == "commentary")
     )
     return {

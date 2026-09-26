@@ -3,17 +3,471 @@
   "package_id": "EP-UJJIVAN-Q-MGMT-PROMISE-001",
   "question_id": "what-has-management-promised",
   "company_slug": "ujjivan",
-  "generated_at": "2026-09-26T06:23:56.637045Z",
+  "generated_at": "2026-09-26T10:10:39.151381Z",
   "package_purpose": "Read-only structured evidence for AI-assisted reasoning on 'What has management promised?' for ujjivan. Mission 9 generalization test. No new inference.",
   "canonical_source_fingerprints": {
-    "gold_promise_tracker": "9049c0479c7dedd3",
-    "management_commitments": "357f92131f2cd85e",
+    "gold_promise_tracker": "2c7de564a40ddfa8",
+    "management_commitments": "4f254b1395718aa6",
     "management_progression": "dc7a3e5d443167cd",
     "company_model": "8dee849419644d98"
   },
   "sections": {
-    "verifiable_commitments": [],
-    "strategic_intents": [],
+    "verifiable_commitments": [
+      {
+        "item_id": "PT-0001-f2acb7d01ecd",
+        "evidence_type": "VERIFIABLE_COMMITMENT",
+        "semantic_role": "COMMITMENT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "management_commitment_id": "MC-0001",
+        "announcement_period": "fy21",
+        "target_period": null,
+        "original_statement": "Execute a digital framework to acquire more NRI relationships through non-face-to-face offerings to eliminate geographical restrictions and enable low-cost acquisitions.",
+        "category": "Acquisition",
+        "promise_type": "DIGITAL_OR_TECH",
+        "specificity": "future_action",
+        "accountability_ontology": "VERIFIABLE_COMMITMENT",
+        "execution_status": "CLAIM_ONLY",
+        "outcome_status": "UNVERIFIED",
+        "current_status": "UNVERIFIED",
+        "later_evidence": [],
+        "linked_company_model_ids": [],
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "accountability_promises"
+        },
+        "limitations": [
+          "UNVERIFIED status means no later evidence is available — it does not imply the promise was missed.",
+          "execution_status=CLAIM_ONLY: only the original management statement is available."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management made this specific commitment in fy21",
+            "The commitment has not been independently verified as of the package generation date"
+          ],
+          "must_not_assert": [
+            "This commitment was fulfilled (no verification evidence present)",
+            "This commitment was not fulfilled (absence of evidence ≠ evidence of absence)"
+          ]
+        }
+      },
+      {
+        "item_id": "PT-0009-1621906ff873",
+        "evidence_type": "VERIFIABLE_COMMITMENT",
+        "semantic_role": "COMMITMENT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "management_commitment_id": "MC-0012",
+        "announcement_period": "fy21",
+        "target_period": null,
+        "original_statement": "Launch segment-specific mobile application based on Voice, Video and Vernacular to boost mobile banking usage",
+        "category": "Product",
+        "promise_type": "PRODUCT_LAUNCH",
+        "specificity": "future_action",
+        "accountability_ontology": "VERIFIABLE_COMMITMENT",
+        "execution_status": "CLAIM_ONLY",
+        "outcome_status": "UNVERIFIED",
+        "current_status": "UNVERIFIED",
+        "later_evidence": [],
+        "linked_company_model_ids": [],
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "accountability_promises"
+        },
+        "limitations": [
+          "UNVERIFIED status means no later evidence is available — it does not imply the promise was missed.",
+          "execution_status=CLAIM_ONLY: only the original management statement is available."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management made this specific commitment in fy21",
+            "The commitment has not been independently verified as of the package generation date"
+          ],
+          "must_not_assert": [
+            "This commitment was fulfilled (no verification evidence present)",
+            "This commitment was not fulfilled (absence of evidence ≠ evidence of absence)"
+          ]
+        }
+      },
+      {
+        "item_id": "PT-0014-89db396733ac",
+        "evidence_type": "VERIFIABLE_COMMITMENT",
+        "semantic_role": "COMMITMENT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "management_commitment_id": "MC-0017",
+        "announcement_period": "fy21",
+        "target_period": null,
+        "original_statement": "Management plans to strengthen fintech alliances and integrate best-in-class services via its API banking platform to enable fast integration and instant credit decision loan disbursals; it also plans to launch pre-approved personal loans, balance transfer and overdraft facilities.",
+        "category": "Product",
+        "promise_type": "DIGITAL_OR_TECH",
+        "specificity": "planned_action",
+        "accountability_ontology": "VERIFIABLE_COMMITMENT",
+        "execution_status": "CLAIM_ONLY",
+        "outcome_status": "UNVERIFIED",
+        "current_status": "UNVERIFIED",
+        "later_evidence": [],
+        "linked_company_model_ids": [],
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "accountability_promises"
+        },
+        "limitations": [
+          "UNVERIFIED status means no later evidence is available — it does not imply the promise was missed.",
+          "execution_status=CLAIM_ONLY: only the original management statement is available."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management made this specific commitment in fy21",
+            "The commitment has not been independently verified as of the package generation date"
+          ],
+          "must_not_assert": [
+            "This commitment was fulfilled (no verification evidence present)",
+            "This commitment was not fulfilled (absence of evidence ≠ evidence of absence)"
+          ]
+        }
+      },
+      {
+        "item_id": "PT-0021-a98e45e8be1c",
+        "evidence_type": "VERIFIABLE_COMMITMENT",
+        "semantic_role": "COMMITMENT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "management_commitment_id": "MC-0024",
+        "announcement_period": "fy22",
+        "target_period": null,
+        "original_statement": "Launch insurance through our tele-sales channel.",
+        "category": "Product",
+        "promise_type": "PRODUCT_LAUNCH",
+        "specificity": "future_action",
+        "accountability_ontology": "VERIFIABLE_COMMITMENT",
+        "execution_status": "CLAIM_ONLY",
+        "outcome_status": "UNVERIFIED",
+        "current_status": "UNVERIFIED",
+        "later_evidence": [],
+        "linked_company_model_ids": [],
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "accountability_promises"
+        },
+        "limitations": [
+          "UNVERIFIED status means no later evidence is available — it does not imply the promise was missed.",
+          "execution_status=CLAIM_ONLY: only the original management statement is available."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management made this specific commitment in fy22",
+            "The commitment has not been independently verified as of the package generation date"
+          ],
+          "must_not_assert": [
+            "This commitment was fulfilled (no verification evidence present)",
+            "This commitment was not fulfilled (absence of evidence ≠ evidence of absence)"
+          ]
+        }
+      },
+      {
+        "item_id": "PT-0022-b4d2c7f15722",
+        "evidence_type": "VERIFIABLE_COMMITMENT",
+        "semantic_role": "COMMITMENT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "management_commitment_id": "MC-0025",
+        "announcement_period": "fy22",
+        "target_period": "FY 2022-23",
+        "original_statement": "Launch more relevant products within the MSE segment to enhance customer experience and increase loyalty.",
+        "category": "Product",
+        "promise_type": "PRODUCT_LAUNCH",
+        "specificity": "future_action",
+        "accountability_ontology": "VERIFIABLE_COMMITMENT",
+        "execution_status": "CLAIM_ONLY",
+        "outcome_status": "UNVERIFIED",
+        "current_status": "UNVERIFIED",
+        "later_evidence": [],
+        "linked_company_model_ids": [],
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "accountability_promises"
+        },
+        "limitations": [
+          "UNVERIFIED status means no later evidence is available — it does not imply the promise was missed.",
+          "execution_status=CLAIM_ONLY: only the original management statement is available."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management made this specific commitment in fy22",
+            "The commitment has not been independently verified as of the package generation date"
+          ],
+          "must_not_assert": [
+            "This commitment was fulfilled (no verification evidence present)",
+            "This commitment was not fulfilled (absence of evidence ≠ evidence of absence)"
+          ]
+        }
+      },
+      {
+        "item_id": "PT-0025-eb6d1241cc1e",
+        "evidence_type": "VERIFIABLE_COMMITMENT",
+        "semantic_role": "COMMITMENT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "management_commitment_id": "MC-0028",
+        "announcement_period": "fy24",
+        "target_period": null,
+        "original_statement": "Launch insurance distribution through the telesales channel and via a digital InsurTech platform enabled through branches",
+        "category": "Product",
+        "promise_type": "DIGITAL_OR_TECH",
+        "specificity": "future_action",
+        "accountability_ontology": "VERIFIABLE_COMMITMENT",
+        "execution_status": "CLAIM_ONLY",
+        "outcome_status": "UNVERIFIED",
+        "current_status": "UNVERIFIED",
+        "later_evidence": [],
+        "linked_company_model_ids": [],
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "accountability_promises"
+        },
+        "limitations": [
+          "UNVERIFIED status means no later evidence is available — it does not imply the promise was missed.",
+          "execution_status=CLAIM_ONLY: only the original management statement is available."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management made this specific commitment in fy24",
+            "The commitment has not been independently verified as of the package generation date"
+          ],
+          "must_not_assert": [
+            "This commitment was fulfilled (no verification evidence present)",
+            "This commitment was not fulfilled (absence of evidence ≠ evidence of absence)"
+          ]
+        }
+      },
+      {
+        "item_id": "PT-0038-66ec9ade836f",
+        "evidence_type": "VERIFIABLE_COMMITMENT",
+        "semantic_role": "COMMITMENT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "management_commitment_id": "MC-0043",
+        "announcement_period": "fy25",
+        "target_period": null,
+        "original_statement": "Expand physical servicing footprint (16 RACs already, with plans to establish 9 more by FY 2025-26) while expanding product offerings into micro-mortgages and housing solutions for self-employed and daily wage earners.",
+        "category": "Product",
+        "promise_type": "DIGITAL_OR_TECH",
+        "specificity": "planned_action",
+        "accountability_ontology": "VERIFIABLE_COMMITMENT",
+        "execution_status": "CLAIM_ONLY",
+        "outcome_status": "UNVERIFIED",
+        "current_status": "UNVERIFIED",
+        "later_evidence": [],
+        "linked_company_model_ids": [],
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "accountability_promises"
+        },
+        "limitations": [
+          "UNVERIFIED status means no later evidence is available — it does not imply the promise was missed.",
+          "execution_status=CLAIM_ONLY: only the original management statement is available."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management made this specific commitment in fy25",
+            "The commitment has not been independently verified as of the package generation date"
+          ],
+          "must_not_assert": [
+            "This commitment was fulfilled (no verification evidence present)",
+            "This commitment was not fulfilled (absence of evidence ≠ evidence of absence)"
+          ]
+        }
+      }
+    ],
+    "strategic_intents": [
+      {
+        "item_id": "PT-0002-8a383dbf503d",
+        "evidence_type": "STRATEGIC_INTENT",
+        "semantic_role": "DIRECTIONAL_COMMITMENT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "management_commitment_id": "MC-0002",
+        "announcement_period": "fy21",
+        "original_statement": "Provide payment gateway facility to government and TASC customers.",
+        "materiality": "medium",
+        "promise_type": "CAPACITY",
+        "execution_status": "CLAIM_ONLY",
+        "outcome_status": "UNVERIFIED",
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "material_promises"
+        },
+        "limitations": [
+          "accountability_ontology=STRATEGIC_INTENT: not a verifiable commitment.",
+          "Strategic intents excluded from accountability_metrics denominator per canonical convention."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management expressed this strategic direction"
+          ],
+          "must_not_assert": [
+            "This constitutes a measurable promise with a specific deliverable",
+            "Absence of later updates implies this direction was abandoned"
+          ]
+        }
+      },
+      {
+        "item_id": "PT-0016-f1c819d56795",
+        "evidence_type": "STRATEGIC_INTENT",
+        "semantic_role": "DIRECTIONAL_COMMITMENT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "management_commitment_id": "MC-0019",
+        "announcement_period": "fy21",
+        "original_statement": "Positioning itself as an emerging bank engaging the fintech/start-up ecosystem, the bank states it is among select universal banks providing API Banking, has implemented 6 API initiatives (digital lending and loan repayments) and has partnerships with 24 fintechs.",
+        "materiality": "medium",
+        "promise_type": "DIGITAL_OR_TECH",
+        "execution_status": "CLAIM_ONLY",
+        "outcome_status": "UNVERIFIED",
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "material_promises"
+        },
+        "limitations": [
+          "accountability_ontology=STRATEGIC_INTENT: not a verifiable commitment.",
+          "Strategic intents excluded from accountability_metrics denominator per canonical convention."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management expressed this strategic direction"
+          ],
+          "must_not_assert": [
+            "This constitutes a measurable promise with a specific deliverable",
+            "Absence of later updates implies this direction was abandoned"
+          ]
+        }
+      },
+      {
+        "item_id": "PT-0027-11a135b6fa24",
+        "evidence_type": "STRATEGIC_INTENT",
+        "semantic_role": "DIRECTIONAL_COMMITMENT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "management_commitment_id": "MC-0031",
+        "announcement_period": "fy25",
+        "original_statement": "Continue facilitating government initiatives such as Pradhan Mantri Awas Yojana (PMAY) and the Interest Subsidy Scheme (ISS) to make housing finance more accessible for first-time buyers and support homeownership for under-served communities.",
+        "materiality": "medium",
+        "promise_type": "CAPITAL_ALLOCATION",
+        "execution_status": "CLAIM_ONLY",
+        "outcome_status": "UNVERIFIED",
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "material_promises"
+        },
+        "limitations": [
+          "accountability_ontology=STRATEGIC_INTENT: not a verifiable commitment.",
+          "Strategic intents excluded from accountability_metrics denominator per canonical convention."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management expressed this strategic direction"
+          ],
+          "must_not_assert": [
+            "This constitutes a measurable promise with a specific deliverable",
+            "Absence of later updates implies this direction was abandoned"
+          ]
+        }
+      },
+      {
+        "item_id": "PT-0030-2f534656a4ef",
+        "evidence_type": "STRATEGIC_INTENT",
+        "semantic_role": "DIRECTIONAL_COMMITMENT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "management_commitment_id": "MC-0034",
+        "announcement_period": "fy25",
+        "original_statement": "Principal focus on building a robust foundation of retail deposits (CASA and retail FDs), improving diversity of consumer segments, fostering greater interaction, and enhancing account utilisation through digital adoption and specialised customer assistance.",
+        "materiality": "medium",
+        "promise_type": "DIGITAL_OR_TECH",
+        "execution_status": "CLAIM_ONLY",
+        "outcome_status": "UNVERIFIED",
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "material_promises"
+        },
+        "limitations": [
+          "accountability_ontology=STRATEGIC_INTENT: not a verifiable commitment.",
+          "Strategic intents excluded from accountability_metrics denominator per canonical convention."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management expressed this strategic direction"
+          ],
+          "must_not_assert": [
+            "This constitutes a measurable promise with a specific deliverable",
+            "Absence of later updates implies this direction was abandoned"
+          ]
+        }
+      },
+      {
+        "item_id": "PT-0031-2868390b2223",
+        "evidence_type": "STRATEGIC_INTENT",
+        "semantic_role": "DIRECTIONAL_COMMITMENT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "management_commitment_id": "MC-0035",
+        "announcement_period": "fy25",
+        "original_statement": "Focus on financial inclusion, sustainable infrastructure, strong governance, people development and digital expansion as integrated pillars guiding the organisation’s activities.",
+        "materiality": "medium",
+        "promise_type": "CAPACITY",
+        "execution_status": "CLAIM_ONLY",
+        "outcome_status": "UNVERIFIED",
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "material_promises"
+        },
+        "limitations": [
+          "accountability_ontology=STRATEGIC_INTENT: not a verifiable commitment.",
+          "Strategic intents excluded from accountability_metrics denominator per canonical convention."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management expressed this strategic direction"
+          ],
+          "must_not_assert": [
+            "This constitutes a measurable promise with a specific deliverable",
+            "Absence of later updates implies this direction was abandoned"
+          ]
+        }
+      },
+      {
+        "item_id": "PT-0035-cb0b924e007f",
+        "evidence_type": "STRATEGIC_INTENT",
+        "semantic_role": "DIRECTIONAL_COMMITMENT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "management_commitment_id": "MC-0040",
+        "announcement_period": "fy25",
+        "original_statement": "Plan to deepen focus on secured lending, widen geographic footprint in under-penetrated rural and semi-urban regions via targeted branch rollouts and BC partnerships, introduce customised loan products for micro and small enterprises, and continue promoting financial inclusion to build a future-ready MicroBanking portfolio.",
+        "materiality": "medium",
+        "promise_type": "GROWTH_TARGET",
+        "execution_status": "CLAIM_ONLY",
+        "outcome_status": "UNVERIFIED",
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "material_promises"
+        },
+        "limitations": [
+          "accountability_ontology=STRATEGIC_INTENT: not a verifiable commitment.",
+          "Strategic intents excluded from accountability_metrics denominator per canonical convention."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management expressed this strategic direction"
+          ],
+          "must_not_assert": [
+            "This constitutes a measurable promise with a specific deliverable",
+            "Absence of later updates implies this direction was abandoned"
+          ]
+        }
+      }
+    ],
     "observable_execution_evidence": [
       {
         "item_id": "OE-001",
@@ -315,29 +769,36 @@
         "semantic_role": "ACCOUNTABILITY_COVERAGE",
         "source_authority": "CANONICAL",
         "company_slug": "ujjivan",
-        "description": "0 material promises tracked; all have outcome_status=UNVERIFIED. status_breakdown={\"achieved\": 0, \"partially_achieved\": 0, \"delayed\": 0, \"missed\": 0, \"abandoned\": 0, \"unverified\": 0}.",
+        "description": "45 material promises tracked; all have outcome_status=UNVERIFIED. status_breakdown={\"achieved\": 0, \"partially_achieved\": 0, \"delayed\": 0, \"missed\": 0, \"abandoned\": 0, \"unverified\": 45}.",
         "raw_summary": {
           "company_slug": "ujjivan",
-          "tracked_promises": 0,
-          "trivial_excluded": 1,
+          "tracked_promises": 45,
+          "trivial_excluded": 6,
           "status_breakdown": {
             "achieved": 0,
             "partially_achieved": 0,
             "delayed": 0,
             "missed": 0,
             "abandoned": 0,
-            "unverified": 0
+            "unverified": 45
           },
-          "promise_type_breakdown": {},
-          "credibility_patterns_count": 0,
+          "promise_type_breakdown": {
+            "CAPITAL_ALLOCATION": 3,
+            "GROWTH_TARGET": 3,
+            "CAPACITY": 5,
+            "DIGITAL_OR_TECH": 15,
+            "PRODUCT_LAUNCH": 18,
+            "OTHER": 1
+          },
+          "credibility_patterns_count": 1,
           "silence_is_not_failure_note": "UNVERIFIED status means no later evidence is available — it does not imply the promise was missed.",
           "accountability_metrics": {
-            "material_verifiable_commitments": 0,
+            "material_verifiable_commitments": 7,
             "verified_commitments": 0,
             "partially_verified_commitments": 0,
             "contradicted_commitments": 0,
-            "unresolved_verifiable_commitments": 0,
-            "strategic_intents": 0,
+            "unresolved_verifiable_commitments": 7,
+            "strategic_intents": 38,
             "aspirations": 0,
             "policies_or_principles": 0
           }
@@ -352,23 +813,17 @@
         ]
       }
     ],
-    "source_limitations": [
-      {
-        "limitation_id": "SL-001",
-        "type": "SOURCE_EVIDENCE_MISSING",
-        "description": "gold_promise_tracker for ujjivan has no material promises. No verifiable commitments can be assessed."
-      }
-    ]
+    "source_limitations": []
   },
   "package_constraints": {
     "silence_is_not_failure": "UNVERIFIED status means no later evidence is available — it does not imply the promise was missed.",
     "accountability_metrics": {
-      "material_verifiable_commitments": 0,
+      "material_verifiable_commitments": 7,
       "verified_commitments": 0,
       "partially_verified_commitments": 0,
       "contradicted_commitments": 0,
-      "unresolved_verifiable_commitments": 0,
-      "strategic_intents": 0,
+      "unresolved_verifiable_commitments": 7,
+      "strategic_intents": 38,
       "aspirations": 0,
       "policies_or_principles": 0
     },
@@ -386,11 +841,7 @@
       "Do not merge accountability_promises and strategic_intents into one fulfillment percentage",
       "All reasoning must stay within the evidence boundaries declared per item",
       "All evidence in this package is for ujjivan only — do not import facts from other companies"
-    ],
-    "home_market_geographies": [
-      "india",
-      "indian"
     ]
   },
-  "package_fingerprint": "38c0565e80c22ea7"
+  "package_fingerprint": "ae0e7e50aefcce7c"
 }

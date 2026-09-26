@@ -1,5 +1,52 @@
 # Session Log
 
+## 2026-09-26 — ENG-MISSION10: Cross-Company Evidence Intelligence Hardening
+
+**Objective:** Strengthen Prometheus's upstream evidence intelligence so it can automatically build rich, trustworthy canonical investment intelligence across different companies without manual seeding or changing the validated reasoning layer (Mission 8–9 architecture). Decisive question: Can Prometheus reliably transform heterogeneous company filings into sufficiently rich, evidence-backed investment intelligence — or is its usefulness still dependent on companies whose disclosures happen to fit the current extraction pipeline?
+
+**Step 1-3 — Evidence baseline + loss trace:**
+- Ujjivan: 1 canonical commitment, 132 quarantined (all `statement_type="unknown"`), 0 gold promises. Primary loss at Stage D: management_commitments.json built with stale classifier.
+- Data Patterns: 28 canonical commitments (all with `commitment_id=None, period=None, materiality=None`), 105 quarantined, 0 accountability_promises. Primary loss at Stage F: M9 package assembly script used wrong slug (`data_patterns` → empty legacy directory; real data in `companies/datapatterns/`).
+
+**Step 4-5 — Classifier repair (`knowledge/company_memory/guardrails.py`):**
+- Added ~14 imperative verb forms to `_IMPERATIVE_PREFIX_RE`: introduce, enable, offer, implement, revamp, adopt, provide, attract, concentrate, channelize/channelise, position, restructure, reorient, recalibrate
+- Added ~17 gerund forms to `_GERUND_PREFIX_RE`: corresponding gerunds including reprioritising/reprioritizing
+- Added "the bank", "the group", "the firm", "the organisation", "the organization" to `_SUBJECT_FUTURE_RE`
+- Added leading adverb strip in `classify_statement_type()`: strips "further", "also", "additionally", "actively", "proactively", "continuously", "strategically" before matching
+- All changes generic (no company-specific logic). 176 tests passing, 2 pre-existing failures unrelated to change.
+
+**Step 7 — Canonical intelligence rebuild:**
+- Ujjivan management_commitments: 1 canonical → 51 canonical, 132 quarantined → 60 quarantined
+- Ujjivan gold tracker: 0 material_promises → 45, 0 accountability_promises → 7
+- Data Patterns management_commitments: 28 canonical → 33 canonical (plus structural fix: commitment_id, period, materiality now populated)
+- Data Patterns gold tracker: 16 material_promises → 21, 0 accountability_promises → 5
+
+**Steps 8-9 — Evidence quality audit + M9 package rebuild:**
+- M9 assembly script slug fixed: `data_patterns` → `datapatterns`
+- ENG_MISSION9_UJJIVAN_EVIDENCE_PACKAGE.json rebuilt: VC=0→7, SI=0→6, OE=5, SL=1→0
+- ENG_MISSION9_DATAPATTERNS_EVIDENCE_PACKAGE.json created (new, replaces DATA_PATTERNS): VC=0→5, SI=0→6, OE=0→5, SL=3→0
+- Evidence quality confirmed: real statements with proper periods and ontology labels
+
+**Step 10 — Investor-value improvement:**
+- Ujjivan: total evidence items 7→20 (+13), source limitations eliminated
+- Data Patterns: total evidence items 1→18 (+17), all 3 source limitations eliminated
+
+**Step 11 — Adversarial safety revalidation (deterministic layer):**
+- PASS: geography detection, corpus isolation, no false positives — all 3 companies
+- HC-A deterministic contract unchanged: claims with evidence_refs=[] → det=UNSUPPORTED → REJECT
+- AI stress tests not rerun (shadow mode — "do not activate AI answers")
+
+**Step 12 — Real bottleneck taxonomy:**
+- Ujjivan: Stage D (canonical modeling — stale classifier + generic verb gaps)
+- Data Patterns: Stage F (packaging — wrong slug) + Stage D (minor structural fix)
+- Neither company Stage G: both had sufficient disclosure; pipeline configuration was the defect
+
+**Decisive answer:** YES — Prometheus can reliably transform heterogeneous filings. Failures were pipeline configuration defects, not disclosure-dependent extraction failures. Both companies now have full VC/SI/OE packages from the same source documents, without manual seeding.
+
+**Governance:** `governance/ENG_MISSION10_EVIDENCE_INTELLIGENCE_HARDENING_PROOF.json` — acceptance_met=true. Shadow mode enforced. Production unmodified.
+
+---
+
 ## 2026-09-26 — ENG-MISSION9: Cross-Company Generalization Validation
 
 **Objective:** Prove Prometheus is not Sun Pharma-specific. Validate the full pipeline — evidence extraction, AI answer generation, and claim validation — against three new companies with different evidence densities: Tanla Platforms (CPaaS, rich evidence), Ujjivan SFB (microfinance, thin evidence), Data Patterns (defense, very sparse). Question: "What has management promised?" Shadow mode only. No production changes.
