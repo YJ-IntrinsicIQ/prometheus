@@ -1,4 +1,3 @@
-from .anthropic import AnthropicProvider
 from .base import BaseAIProvider
 from .exceptions import AIProviderError, AIRateLimitError, AIResponseError, AITimeoutError
 from .factory import get_llm
@@ -10,7 +9,6 @@ from .schema import AIRequest, AIResponse
 __all__ = [
     "AIRequest",
     "AIResponse",
-    "AnthropicProvider",
     "BaseAIProvider",
     "GroqProvider",
     "OpenAIProvider",

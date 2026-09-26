@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from typing import Iterable, Optional
 
-from .anthropic import AnthropicProvider
 from .base import BaseAIProvider
 from .exceptions import AIProviderError
 from .groq import GroqProvider
@@ -23,8 +22,6 @@ def get_llm(
         return GroqProvider(model=model)
     if selected_provider == "openai":
         return OpenAIProvider(model=model)
-    if selected_provider == "anthropic":
-        return AnthropicProvider(model=model)
     if selected_provider == "deepseek":
         return DeepSeekProvider()
     if selected_provider == "mock":

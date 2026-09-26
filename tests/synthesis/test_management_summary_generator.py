@@ -316,3 +316,96 @@ def test_software_platform_promise_ranking_promotes_security_and_reliability_com
         "Operate continuous threat detection, SIEM monitoring, and incident response escalation across live platform environments.",
         "Ensure robust and secure cloud infrastructure configurations through cloud security posture management.",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Stage C precision regression — ENG-MISSION10
+# These 12 cases prove that external-actor and historical-retrospective items
+# are excluded from company_promises regardless of item_type.
+# ---------------------------------------------------------------------------
+
+from synthesis.management_summary_generator import _classify_management_item
+
+_EXTERNAL_CONTEXTS = {"external_context", "external_tailwind", "external_headwind"}
+_COMPANY_PROMISE = "company_promise"
+_COMPANY_RESULT = "company_result"
+
+
+def _classify(text, item_type="promise"):
+    return _classify_management_item({"value": text}, item_type, text)["context_type"]
+
+
+# ---- FALSE POSITIVES: must NOT enter company_promises ----------------------
+
+def test_stage_c_government_target_excluded():
+    """Government-set targets are policy context, not company commitments."""
+    ct = _classify("The Indian Defense Ministry has set a target of achieving 70% self-sufficiency in weaponry by 2027")
+    assert ct in _EXTERNAL_CONTEXTS, f"Expected external, got {ct}"
+
+
+def test_stage_c_ministry_statement_excluded():
+    """Ministry announcements are external context."""
+    ct = _classify("Ministry of Defence directed spending of Rs. 1,500 crore towards procurement of indigenised systems")
+    assert ct in _EXTERNAL_CONTEXTS, f"Expected external, got {ct}"
+
+
+def test_stage_c_industry_growth_excluded():
+    """Industry-growth projections with third-party-plural subject are external."""
+    ct = _classify("Companies will benefit from the government's defense indigenisation policy over the next three years")
+    assert ct in _EXTERNAL_CONTEXTS, f"Expected external, got {ct}"
+
+
+def test_stage_c_country_level_target_excluded():
+    """Country-level targets are national policy, not management commitments."""
+    ct = _classify("The country's focus on indigenisation, increasing defence allocations, and growing participation of private industry")
+    assert ct in _EXTERNAL_CONTEXTS, f"Expected external, got {ct}"
+
+
+def test_stage_c_historical_period_retrospective_excluded():
+    """'The year has been marked by' is a retrospective, not a forward commitment."""
+    ct = _classify("The year also has been marked by strategic progress in the product development initiatives started by your company")
+    assert ct not in {_COMPANY_PROMISE}, f"Retrospective must not be company_promise, got {ct}"
+
+
+def test_stage_c_external_agency_announcement_excluded():
+    """DRDO announcements are external, not company management commitments."""
+    ct = _classify("DRDO announced the indigenisation of 108 systems and sub-systems reflecting a push toward domestic development")
+    assert ct in _EXTERNAL_CONTEXTS, f"Expected external, got {ct}"
+
+
+def test_stage_c_quoted_external_statement_excluded():
+    """Government scheme announcements are external context."""
+    ct = _classify("The Government has announced two dedicated Defense Industrial Corridors in Tamil Nadu and Uttar Pradesh")
+    assert ct in _EXTERNAL_CONTEXTS, f"Expected external, got {ct}"
+
+
+# ---- TRUE POSITIVES: must remain as company_promises -----------------------
+
+def test_stage_c_explicit_company_future_action_kept():
+    """Explicit 'we will' future action must remain a company_promise."""
+    ct = _classify("We will deepen our presence in the area of space and full satellites")
+    assert ct == _COMPANY_PROMISE, f"Expected company_promise, got {ct}"
+
+
+def test_stage_c_measurable_target_kept():
+    """Company-attributed measurable targets must remain eligible."""
+    ct = _classify("Our order book target for FY26 is Rs. 1,500 crore")
+    assert ct == _COMPANY_PROMISE, f"Expected company_promise, got {ct}"
+
+
+def test_stage_c_timeline_commitment_kept():
+    """Company timeline commitments must remain eligible."""
+    ct = _classify("We plan to achieve Rs. 2,000 crore revenue by FY27 through new product launches")
+    assert ct == _COMPANY_PROMISE, f"Expected company_promise, got {ct}"
+
+
+def test_stage_c_strategic_priority_without_external_subject_kept():
+    """Strategic priorities with implicit company subject must remain eligible."""
+    ct = _classify("Focus on building and leveraging technical proficiency to deliver products across diverse platforms")
+    assert ct == _COMPANY_PROMISE, f"Expected company_promise, got {ct}"
+
+
+def test_stage_c_valid_datapatterns_style_commitment_kept():
+    """Valid Data Patterns-style company commitment must remain eligible."""
+    ct = _classify("Build a world-class, innovation-led defence and aerospace company rooted in indigenous capabilities and technological excellence")
+    assert ct == _COMPANY_PROMISE, f"Expected company_promise, got {ct}"

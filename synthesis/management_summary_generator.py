@@ -643,6 +643,52 @@ EXTERNAL_CONTEXT_TERMS = (
     "public spending",
 )
 
+# Matches statements whose grammatical subject is a third-party collective
+# agent ("companies will", "providers will", etc.) rather than the reporting
+# company.  Requires the collective noun to immediately precede "will" so that
+# relative clauses ("players [who are active in X] will...") are not caught.
+# "pharma" is intentionally excluded because it appears in company names
+# (e.g. "Sun Pharma will…").
+_THIRD_PARTY_FUTURE_RE = re.compile(
+    r"\b(companies|firms|organizations|players|institutions|providers"
+    r"|payors?|manufacturers?|developers?|innovators?)\s+will\b"
+)
+# Matches statements whose grammatical subject is an external institutional actor —
+# government bodies, ministries, regulators, or the country/nation — rather than
+# company management.  Applied against value_normalized (lowercased, stripped of
+# punctuation) and anchored at the start so "The Government announced…" fires while
+# "We benefited from government policy" does not.
+# "the country s" is the normalized form of "the country's".
+_EXTERNAL_INSTITUTIONAL_SUBJECT_RE = re.compile(
+    r"^(?:the\s+)?(?:"
+    r"(?:indian\s+)?(?:central\s+|state\s+|union\s+)?government\b"
+    r"|(?:indian\s+)?(?:defence|defense)\s+ministry\b"
+    r"|ministry(?:\s+of\b)?"
+    r"|drdo\b"
+    r"|country\s+s\b"
+    r"|(?:the\s+)?country\s+(?:intends|plans|aims|focuses|focus|targets|will)\b"
+    r"|nation\s+s\b"
+    r"|rbi\b|sebi\b|irdai\b|trai\b|cag\b"
+    r")",
+    re.IGNORECASE,
+)
+# Matches historical period summaries that describe an elapsed year rather than
+# a forward-looking management commitment.  Normalized text is matched so
+# "The year also has been marked by…" fires, as does "The year was marked by…".
+_HISTORICAL_PERIOD_RE = re.compile(
+    r"\bthe year (?:also\s+)?(?:has been|was|saw|witnessed)\b"
+    r"|\bthe year under review\b"
+    r"|\bthe (?:financial|fiscal) year (?:has been|was|saw)\b",
+    re.IGNORECASE,
+)
+# Conservative presence check: if ANY first-person pronoun or company self-reference
+# appears anywhere in the sentence, do not reclassify it as external_context.
+# A subject-verb adjacency check (e.g. "we … will") cannot reliably span clause
+# boundaries after normalization strips punctuation, and causes false positives on
+# "We note that manufacturers will face…" (spans into the subordinate clause).
+# This guard fires ONLY on pure third-party observations with no company self-reference.
+_SELF_REFERENCE_RE = re.compile(r"\b(we|our|the company|management)\b")
+
 EXTERNAL_TAILWIND_TERMS = (
     "benefit from",
     "tailwind",
@@ -1196,6 +1242,12 @@ def _classify_management_item(item, item_type, value):
     has_risk_response = _contains_any(normalized, RISK_RESPONSE_TERMS)
     has_accounting = _contains_any(normalized, ACCOUNTING_DISCLOSURE_TERMS)
     has_governance = _contains_any(normalized, GOVERNANCE_DISCLOSURE_TERMS)
+    # Normalized text for subject-of-statement checks (value only).
+    # source_chunk and metadata fields are excluded because they frequently
+    # contain contextual uses of "management" (e.g. "management of data sets")
+    # and section headers ("Management Discussion and Analysis") that are not
+    # company self-references.
+    value_normalized = _normalize_text(str(value or ""))
 
     if has_accounting:
         return _summary_item(
@@ -1255,6 +1307,56 @@ def _classify_management_item(item, item_type, value):
             should_feed_management_consistency=False,
             should_feed_company_strategy=False,
             should_feed_external_context=True,
+        )
+
+    # A statement whose grammatical subject is a third-party collective agent
+    # ("companies will", "providers will", …) is an industry observation, not a
+    # management commitment, even when it contains the word "will".  Classify it
+    # as external_context before reaching the has_promise branch.
+    if has_promise and _THIRD_PARTY_FUTURE_RE.search(value_normalized) and not _SELF_REFERENCE_RE.search(value_normalized):
+        return _summary_item(
+            item,
+            value=value,
+            item_type=item_type,
+            context_type=CONTEXT_TYPE_EXTERNAL_CONTEXT,
+            agency="external_not_controlled",
+            reasoning="Statement describes a third-party collective actor (e.g. 'companies will'), not a company-specific management commitment.",
+            should_feed_management_consistency=False,
+            should_feed_company_strategy=False,
+            should_feed_external_context=True,
+        )
+
+    # A statement whose subject is an external institutional actor (government,
+    # ministry, regulator, country) is policy or industry context, not a company
+    # commitment — even when the item was placed in the 'promises' source bucket
+    # by the upstream extractor and therefore carries has_promise=True.
+    if _EXTERNAL_INSTITUTIONAL_SUBJECT_RE.search(value_normalized) and not _SELF_REFERENCE_RE.search(value_normalized):
+        return _summary_item(
+            item,
+            value=value,
+            item_type=item_type,
+            context_type=CONTEXT_TYPE_EXTERNAL_CONTEXT,
+            agency="external_not_controlled",
+            reasoning="Statement's subject is an external institution (government, ministry, regulator, or country), not company management.",
+            should_feed_management_consistency=False,
+            should_feed_company_strategy=False,
+            should_feed_external_context=True,
+        )
+
+    # A statement that narrates an elapsed reporting year ("the year has been
+    # marked by…") is a historical retrospective, not a forward-looking commitment,
+    # and should not appear in company_promises regardless of item_type.
+    if _HISTORICAL_PERIOD_RE.search(value_normalized):
+        return _summary_item(
+            item,
+            value=value,
+            item_type=item_type,
+            context_type=CONTEXT_TYPE_COMPANY_RESULT,
+            agency="company_controlled",
+            reasoning="Statement summarises an elapsed reporting period ('the year was/has been marked by…'), not a forward-looking management commitment.",
+            should_feed_management_consistency=False,
+            should_feed_company_strategy=False,
+            should_feed_external_context=False,
         )
 
     if has_promise:
