@@ -1,0 +1,185 @@
+{
+  "mission": "ENG-MISSION-13",
+  "mission_name": "OPERATION PROMETHEUS — Relationship-Level AI Review",
+  "closed_date": "2026-09-26",
+  "final_level": "LEVEL_3",
+  "decisive_question": "Can Prometheus independently validate not only whether the underlying facts are true, but whether the economic relationship connecting those facts is actually justified by the evidence?",
+  "answer": "YES — with known over-rejection limitation on borderline SUPPORTED positive controls. The reviewer detects 100% of semantic causal violations (7/7) and produces 0 false accepts across 11 adversarial cases. It correctly auto-accepts PLAUSIBLE interpretations with explicit qualifiers (ADV-12 ACCEPT) and preserves UNKNOWN relationships as uncertainty.",
+
+  "scope_constraints": {
+    "companies": ["Sun Pharma", "Tanla only"],
+    "mode": "shadow mode — no production composer changes",
+    "no_modifications": [
+      "production composer",
+      "individual claim validation",
+      "canonical facts"
+    ]
+  },
+
+  "architecture": {
+    "module": "m13_relationship_reviewer.py (scratchpad, shadow mode)",
+    "design": "analogous to existing claim AI reviewer but operates at relationship level",
+    "pipeline": "build_review_input → review_relationship_with_ai → apply_acceptance_contract → verdict",
+    "8_validation_dimensions": [
+      "ENDPOINT_VALIDITY: both claims supported by cited evidence",
+      "CHRONOLOGY: cause must temporally precede effect",
+      "LINKAGE: evidence establishes direct connection beyond co-occurrence",
+      "CAUSALITY_OVERSTATEMENT: 7 specific overstatement patterns detected",
+      "RETROSPECTIVE_BIAS: management attribution ≠ independent causal proof",
+      "ALTERNATIVE_EXPLANATIONS: unresolved alternatives cap confidence at PLAUSIBLE",
+      "MEASUREMENT_WINDOW: sufficient elapsed time for effect to be observable",
+      "CONFIDENCE_CALIBRATION: recommended confidence vs proposed confidence"
+    ],
+    "evidence_index": "built from integrated package sections; includes ai_reasoning_guidance.must_not_assert annotations",
+    "prose_extraction": "scans narrative fields for undeclared causal language"
+  },
+
+  "acceptance_contract": {
+    "CONFIRMED": {
+      "accept": "verdict=SUPPORTED AND chronology_valid AND linkage_established AND no causal_issues AND no measurement_window AND no retrospective_bias",
+      "reject_path": "REJECT if UNSUPPORTED/CONTRADICTED verdict or causal_issues present"
+    },
+    "SUPPORTED": {
+      "accept": "verdict in (SUPPORTED, PARTIALLY_SUPPORTED) AND chronology_valid AND not measurement_window AND not retrospective_bias AND no hard_overstatement",
+      "hard_overstatement_keywords": [
+        "correlation presented as causality", "same year", "same fiscal year",
+        "retrospective", "strategy as outcome", "revenue growth as proof",
+        "capex as value creation", "commissioning as revenue", "r&d as margin",
+        "acquisition as accretion"
+      ],
+      "reject_path": "REJECT if UNSUPPORTED/CONTRADICTED verdict"
+    },
+    "PLAUSIBLE": {
+      "accept": "verdict in (SUPPORTED, PARTIALLY_SUPPORTED) AND chronology_valid AND has_interpretation_frame",
+      "note": "measurement_window is NOT a hard block — PLAUSIBLE framing already acknowledges uncertainty",
+      "interpretation_frames": 23,
+      "reject_path": "REJECT if UNSUPPORTED/CONTRADICTED verdict"
+    },
+    "UNKNOWN": {
+      "accept": "accept unless verdict=CONTRADICTED",
+      "note": "genuine uncertainty is preserved as-is"
+    }
+  },
+
+  "step5_semantic_failures": {
+    "description": "7 semantic causal violations that M12 deterministic validator missed",
+    "result": "7/7 detected",
+    "cases": [
+      {"id": "CA-SUN-3", "name": "management_retrospective_not_independent", "accept": "REJECT", "verdict": "UNSUPPORTED"},
+      {"id": "CA-SUN-4", "name": "correlation_not_causation_same_year", "accept": "NEEDS_REVIEW", "verdict": "PARTIALLY_SUPPORTED"},
+      {"id": "CA-SUN-5", "name": "multi_year_growth_doesnt_confirm_strategy", "accept": "REJECT", "verdict": "UNSUPPORTED"},
+      {"id": "CA-TANL-2", "name": "low_capex_doesnt_explain_fcf", "accept": "REJECT", "verdict": "UNSUPPORTED"},
+      {"id": "CA-TANL-3", "name": "leadership_change_effect_too_short_to_measure", "accept": "REJECT", "verdict": "UNSUPPORTED"},
+      {"id": "CA-TANL-4", "name": "debt_policy_not_caused_by_platform_strategy", "accept": "REJECT", "verdict": "UNSUPPORTED"},
+      {"id": "CA-TANL-5", "name": "reverse_causal_direction_risk_explaining_earlier_execution", "accept": "REJECT", "verdict": "UNSUPPORTED"}
+    ],
+    "vs_m12_deterministic": "M12 caught 3/10 (30%); M13 AI reviewer catches 7/7 (100%) of the 7 designed cases"
+  },
+
+  "step6_positive_controls": {
+    "description": "6 valid relationships that should ACCEPT",
+    "result": "3/6 correct (CTRL-C, CTRL-D, CTRL-F ACCEPT; CTRL-A, CTRL-B, CTRL-E false-reject)",
+    "false_rejects": 3,
+    "false_reject_root_causes": {
+      "CTRL-A": "AI flags 'strategy as outcome' + 'correlation as causality' in causal_issues even for name-matched strategy→execution; has_hard_overstatement=True blocks ACCEPT",
+      "CTRL-B": "AI returns chronology_valid=False for same-period CAPITAL_TO_EXECUTION (FY24 capex + FY24 projects); contract requires chronology_valid",
+      "CTRL-E": "CONTEXT_ONLY PLAUSIBLE — FY26 risk contextualizes FY24 execution; AI flags temporal_reverse (FY26 postdates FY24); chronology check blocks ACCEPT even for non-causal relationship type"
+    },
+    "note": "False rejects route to NEEDS_REVIEW (human review) — conservative behavior, no false accepts. Not a LEVEL_3 criterion."
+  },
+
+  "step7_adversarial": {
+    "description": "12 adversarial cases — 11 misleading (must catch) + 1 correct PLAUSIBLE (must accept)",
+    "result": "12/12 correct after fix",
+    "misleading_caught": 11,
+    "false_accepts": 0,
+    "false_rejects": 0,
+    "adv12_fix": "PLAUSIBLE accept path no longer hard-blocks on measurement_window_issue — PLAUSIBLE framing already acknowledges uncertainty about causal mechanism and timing"
+  },
+
+  "step8_prose_extraction": {
+    "sun_pharma": "0 undeclared causal statements",
+    "tanla": "0 undeclared causal statements"
+  },
+
+  "step9_retrospective_bias": {
+    "result": "2/2 caught",
+    "RETRO-1": "Management commentary retrospectively attributes FCF strength → REJECT",
+    "RETRO-2": "Management retrospectively attributes revenue recovery to platform → REJECT"
+  },
+
+  "step10_measurement_window": {
+    "result": "2/2 caught",
+    "MW-1": "MKM facility commissioned FY24 — same-year revenue attribution → REJECT",
+    "MW-2": "Leadership change within same year — insufficient window for effect → REJECT"
+  },
+
+  "step11_m12_revalidation": {
+    "sun_pharma": {
+      "relationships_total": 7,
+      "accept": 4,
+      "needs_review": 3,
+      "reject": 0,
+      "confidence_changes": 2,
+      "note": "3 SUPPORTED/PLAUSIBLE relationships route to NEEDS_REVIEW — reviewer requires more explicit mechanism evidence"
+    },
+    "tanla": {
+      "relationships_total": 5,
+      "accept": 3,
+      "needs_review": 1,
+      "reject": 1,
+      "confidence_changes": 4,
+      "reject_detail": "REL-004 (PLAUSIBLE): source claim contains assertion ('restated historical expectations about international revenue') not supported by evidence — correct rejection, not false rejection"
+    }
+  },
+
+  "step12_level3_criteria": {
+    "criteria_count": 9,
+    "all_pass": true,
+    "final_level": "LEVEL_3",
+    "criteria": {
+      "individual_claims_evidence_supported": {"pass": true, "detail": "M12 claim validation unchanged: 11/19 ACCEPT, 6 NR, 2 rejected, 0 false accepts"},
+      "relationship_integrity_no_silent_accept": {"pass": true, "detail": "Adversarial: 0 false accepts (misleading relationships silently accepted)"},
+      "semantic_causal_audit_7_of_7": {"pass": true, "detail": "Semantic failures detected: 7/7 (vs 3/10 with deterministic-only M12 validator)"},
+      "qualified_plausible_interpretations_accepted": {"pass": true, "detail": "ADV-12 (correct PLAUSIBLE with explicit qualifiers): ACCEPT after measurement_window fix"},
+      "unknown_preserved_as_uncertainty": {"pass": true, "detail": "UNKNOWN relationships in step 11 all ACCEPT; tanla REL-004 PLAUSIBLE correctly rejected (unsupported endpoint — working correctly)"},
+      "temporal_integrity": {"pass": true, "detail": "ADV-8 (backward causality) caught; CA-SUN-3/5 (retrospective/multi-year) caught"},
+      "retrospective_discipline": {"pass": true, "detail": "Retrospective bias cases: 2/2 caught"},
+      "measurement_discipline": {"pass": true, "detail": "Measurement window cases: 2/2 caught"},
+      "extraction_completeness": {"pass": true, "detail": "Material causal prose bypass: False (0 undeclared statements in both companies)"}
+    }
+  },
+
+  "step13_investor_value": {
+    "m12_gap": "3/10 semantic causal violations detected; PLAUSIBLE interpretations routed to NEEDS_REVIEW not ACCEPT",
+    "m13_closes": [
+      "Gap 1: 7/7 semantic violations now detected (AI reviewer catches management retrospective, correlation≠causation, multi-year growth ≠ strategy proof, low capex ≠ FCF explanation, measurement window, debt policy ≠ platform strategy, reverse causal direction)",
+      "Gap 2: PLAUSIBLE interpretations with explicit qualifiers now auto-ACCEPT (ADV-12 confirmed)"
+    ],
+    "investor_value_added": "Relationship reviewer adds semantic causal discipline layer: prevents management narrative from entering integrated answers as validated causal fact without independent evidence review"
+  },
+
+  "known_limitations": {
+    "positive_control_false_rejects": "3/6 valid SUPPORTED/PLAUSIBLE relationships route to NEEDS_REVIEW due to reviewer over-strictness (CTRL-A: indirect strategy→execution; CTRL-B: same-period capex→projects; CTRL-E: CONTEXT_ONLY with temporal reversal). These are conservative false rejects — human review required, no false accepts.",
+    "path_to_reduce_false_rejects": [
+      "CTRL-A: require linkage evidence for direct name matching (not just keyword-based hard_overstatement)",
+      "CTRL-B: relax chronology check for CAPITAL_TO_EXECUTION rel_type when same fiscal year",
+      "CTRL-E: skip chronology check for CONTEXT_ONLY rel_type"
+    ]
+  },
+
+  "files_changed": [
+    "governance/ENG_MISSION13_RELATIONSHIP_AI_REVIEW_PROOF.json (CREATED — this file)",
+    "governance/SESSION_LOG.md (APPENDED — M13 closure entry)",
+    "governance/BACKLOG.md (APPENDED — M13 row)",
+    "scratchpad/m13_relationship_reviewer.py (shadow mode — not committed to repo)",
+    "scratchpad/m13_runner.py (shadow mode — not committed to repo)"
+  ],
+
+  "architecture_level_progression": {
+    "LEVEL_1": "single-domain claim validation",
+    "LEVEL_2": "multi-domain independent (M11, 152 claims, 30/30 adversarial)",
+    "LEVEL_2_5": "integrated narrative with causal confidence taxonomy (M12)",
+    "LEVEL_3": "independent relationship validation with semantic causal audit (M13 — this mission)"
+  }
+}
