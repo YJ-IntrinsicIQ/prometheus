@@ -386,6 +386,10 @@
       "Do not merge accountability_promises and strategic_intents into one fulfillment percentage",
       "All reasoning must stay within the evidence boundaries declared per item",
       "All evidence in this package is for ujjivan only — do not import facts from other companies"
+    ],
+    "home_market_geographies": [
+      "india",
+      "indian"
     ]
   },
   "package_fingerprint": "38c0565e80c22ea7"

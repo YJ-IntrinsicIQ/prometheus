@@ -342,9 +342,18 @@ def validate_narrative_fields(
 
     # Geography scope check: flag any geography not found in the evidence package.
     # Build corpus once and reuse across all fields.
+    # home_market_geographies in package_constraints are always allowed — they are
+    # the company's domestic market and may appear in factually correct answers even
+    # when evidence items don't repeat the country name explicitly.
     evidence_corpus = _build_evidence_text_corpus(package)
+    home_geos: set = {
+        g.lower()
+        for g in (package.get("package_constraints", {}).get("home_market_geographies") or [])
+    }
     for field_label, text in to_check:
         for geo in _extract_geography_tokens(text):
+            if geo in home_geos:
+                continue
             if not re.search(r"\b" + re.escape(geo) + r"\b", evidence_corpus):
                 issues.append({
                     "field": field_label,
