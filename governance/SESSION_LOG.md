@@ -25,6 +25,17 @@
 
 **Blocker for full certification:** OpenAI organization spend limit exhausted. Steps 5-6 (AI composition + post-composition validation) require API access. Architecture layer certified; prose generation pending.
 
+**API status:** OpenAI organization spend limit exhausted (429 organization_spend_limit_exceeded). Anthropic API key invalid. Groq/DeepSeek no credentials. Mission constraint: do not add alternate providers. Steps 5-6 blocked.
+
+**Deterministic results from M15 Final Prose Certification attempt:**
+- C1-C10 adversarial: 22/22 PASS
+- Level 3 regression: `relationship_reviewer.py` unchanged since M14 ff9d5ec → M14 29/29 certified results intact
+- Tanla REL-004 suppression chain: REJECT → SUPPRESSED → system prompt prohibits → replacement prose set ✓
+- Original Tanla answer audit: "does not confirm that those projects caused revenue or margin improvements" — correctly negated, not positive causality
+- Composition plans generated: SP 9A/0Q/1S claims, 5A/1Q/1U/0S rels; Tanla 7A/0Q/2S claims, 2A/0Q/2U/1S rels
+- Sun Pharma: zero suppressed relationships in plan ✓
+- Tanla REL-004 fully traced in system prompt constraint ✓
+
 **Status:** COMPOSITION_ARCHITECTURE_CERTIFIED__AI_PROSE_PENDING
 **Proof:** governance/ENG_MISSION15_RELATIONSHIP_AWARE_COMPOSITION_PROOF.json
 

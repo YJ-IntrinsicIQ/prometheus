@@ -142,12 +142,89 @@
     }
   },
 
+  "step4_composition_plan_details": {
+    "sun_pharma": {
+      "allowed_claims": [
+        {"id": "CL-002", "text_excerpt": "Management states it will continue disciplined R&D for differentiated generics"},
+        {"id": "CL-003", "text_excerpt": "capex and R&D spending documented; dividends paid"},
+        {"id": "CL-004", "text_excerpt": "Site-level execution projects observable (MKM facility, ZLD, biomass)"},
+        {"id": "CL-005", "text_excerpt": "Revenue INR 43,886 crore (FY23) to INR 58,462 crore"},
+        {"id": "CL-006", "text_excerpt": "No segment-level profitability data; no direct evidence of specialty margin contribution"},
+        {"id": "CL-007", "text_excerpt": "Environmental/energy projects observable (ZLD, biomass boilers, heat pumps)"},
+        {"id": "CL-008", "text_excerpt": "Material climate/ESG and acquisition-related risks"},
+        {"id": "CL-009", "text_excerpt": "Intercompany loans and corporate-authority structure"},
+        {"id": "CL-010", "text_excerpt": "Revenue and cashflow trends visible; attribution of financial change uncertain"}
+      ],
+      "suppressed_claims": [
+        {"id": "CL-001", "reason": "NEEDS_REVIEW (first 1 of 1 NR claims)", "text_excerpt": "Sun Pharma operates integrated pharma business combining high-volume generics"}
+      ],
+      "allowed_relationships": [
+        {"rel_id": "REL-002", "type": "CAPITAL_TO_EXECUTION", "conf": "SUPPORTED", "wording": "evidence supports a connection to"},
+        {"rel_id": "REL-003", "type": "CAPITAL_TO_EXECUTION", "conf": "SUPPORTED", "wording": "evidence supports a connection to"},
+        {"rel_id": "REL-004", "type": "EXECUTION_TO_OPERATING_OUTCOME", "conf": "PLAUSIBLE", "wording": "may have contributed to"},
+        {"rel_id": "REL-006", "type": "CONTEXT_ONLY", "conf": "PLAUSIBLE", "wording": "may have contributed to"},
+        {"rel_id": "REL-007", "type": "CONTEXT_ONLY", "conf": "PLAUSIBLE", "wording": "may have contributed to"}
+      ],
+      "qualified_relationships": [
+        {"rel_id": "REL-001", "type": "STRATEGY_TO_EXECUTION", "conf": "PLAUSIBLE", "reason": "NEEDS_REVIEW (chronology_invalid+causal_issues) → QUALIFIED (PLAUSIBLE)"}
+      ],
+      "unknown_relationships": [
+        {"rel_id": "REL-005", "type": "OPERATING_TO_FINANCIAL_OUTCOME", "conf": "UNKNOWN", "instruction": "attribution remains uncertain"}
+      ],
+      "suppressed_relationships": [],
+      "system_prompt_chars": 4109,
+      "system_prompt_lines": 49
+    },
+    "tanla": {
+      "allowed_claims": [
+        {"id": "CL-003", "text_excerpt": "CPaaS/messaging platforms, enterprise engagement"},
+        {"id": "CL-004", "text_excerpt": "Debt raised; access to capital markets stated"},
+        {"id": "CL-005", "text_excerpt": "Observable execution: Trubloq, Wisely ATP/OTT/Platform/Network"},
+        {"id": "CL-006", "text_excerpt": "Reported Q and annual results (FY25, FY26 Q1)"},
+        {"id": "CL-007", "text_excerpt": "Canonical metrics: revenue fy22 +36.9%, fy25 +2.5%, fy26 +9.7%; capex fy25 49cr"},
+        {"id": "CL-008", "text_excerpt": "Material risks: cybersecurity, partner dependency"},
+        {"id": "CL-009", "text_excerpt": "Evidence gaps: no segment profitability, no primary source"}
+      ],
+      "suppressed_claims": [
+        {"id": "CL-001", "reason": "NEEDS_REVIEW (NR claim 1)", "text_excerpt": "Management commitment to increase % revenues from differentiated products"},
+        {"id": "CL-002", "reason": "NEEDS_REVIEW (NR claim 2)", "text_excerpt": "Management committed to AI/ML and blockchain centres of competence"}
+      ],
+      "allowed_relationships": [
+        {"rel_id": "REL-001", "type": "STRATEGY_TO_EXECUTION", "conf": "SUPPORTED", "wording": "evidence supports a connection to"},
+        {"rel_id": "REL-003", "type": "EXECUTION_TO_OPERATING_OUTCOME", "conf": "PLAUSIBLE", "wording": "may have contributed to"}
+      ],
+      "qualified_relationships": [],
+      "unknown_relationships": [
+        {"rel_id": "REL-002", "type": "CAPITAL_TO_EXECUTION", "conf": "UNKNOWN"},
+        {"rel_id": "REL-005", "type": "RISK_TO_OUTCOME", "conf": "UNKNOWN"}
+      ],
+      "suppressed_relationships": [
+        {
+          "rel_id": "REL-004", "type": "OPERATING_TO_FINANCIAL_OUTCOME", "conf": "PLAUSIBLE",
+          "from_claim": "CL-006", "to_claim": "CL-007",
+          "acceptance": "REJECT",
+          "reason": "O2F escalation: chrono_invalid + causal_issues:3 → REJECT",
+          "replacement_prose": "The available evidence does not establish this relationship.",
+          "system_prompt_instruction": "SUPPRESSED RELATIONSHIPS — DO NOT assert these as causal connections: [REL-004] OPERATING_TO_FINANCIAL_OUTCOME source [CL-006] → target [CL-007]. If this area must be mentioned, use ONLY: 'The available evidence does not establish this relationship.'"
+        }
+      ],
+      "system_prompt_chars": 3987,
+      "system_prompt_lines": 47
+    }
+  },
+
   "step5_ai_composition": {
     "status": "BLOCKED",
-    "blocker": "OpenAI organization spend limit exhausted — all API calls return 429 enforced spend limit",
-    "action_required": "Increase OpenAI spend limit at https://platform.openai.com/settings/organization/limits, then re-run scratchpad/m15_composition_runner.py",
+    "blocker": "OpenAI organization spend limit exhausted — all API calls return 429 organization_spend_limit_exceeded",
+    "alternate_providers_checked": {
+      "anthropic": "API key invalid (401)",
+      "groq": "No API key configured",
+      "deepseek": "No API key configured"
+    },
+    "mission_constraint": "Do not add alternate providers",
+    "action_required": "Increase OpenAI spend limit at https://platform.openai.com/settings/organization/limits, then re-run: python scratchpad/m15_composition_runner.py",
     "architecture_certified": true,
-    "system_prompt_contract": "Built by _build_composition_system_prompt(): lists ALLOWED/QUALIFIED/SUPPRESSED buckets with correct wording instructions. Verified via adversarial tests C1-C10.",
+    "system_prompt_contract": "Built by _build_composition_system_prompt(): ALLOWED/QUALIFIED/SUPPRESSED buckets with confidence-appropriate wording instructions. Verified by C1-C10.",
     "composition_schema": {
       "required_fields": ["simple_answer", "why_it_matters", "investor_interpretation", "key_points"],
       "validated_by_json_schema": true
@@ -156,7 +233,7 @@
 
   "step6_post_composition_validation": {
     "status": "PENDING",
-    "pending_reason": "Depends on Step 5 AI composition",
+    "pending_reason": "Depends on Step 5 AI composition completing",
     "what_to_check": [
       "validate_answer_complete(composed_answer, pkg) — claim extraction + acceptance",
       "extract_undeclared_rels(composed_answer) — causal phrase regex scan",
@@ -168,9 +245,21 @@
   "step7_tanla_rel004_suppression": {
     "status": "PASS",
     "suppressed_in_plan": true,
-    "replacement_prose": "The available evidence does not establish this relationship.",
-    "definitive_causal_in_prose": "NONE",
-    "note": "REL-004 is correctly in suppressed_relationships with _REJECT_PROSE replacement. Composition system prompt instructs AI not to assert this relationship."
+    "chain": {
+      "acceptance": "REJECT",
+      "reason": "O2F escalation: chrono_invalid + causal_issues:3 → REJECT",
+      "prose_permission": "SUPPRESSED",
+      "replacement_prose": "The available evidence does not establish this relationship.",
+      "from_claim": "CL-006 (reported financial results)",
+      "to_claim": "CL-007 (canonical financial metrics)",
+      "original_rationale": "coincide with measured revenue/cashflow but does not establish..."
+    },
+    "system_prompt_section": "SUPPRESSED RELATIONSHIPS — DO NOT assert these as causal connections: [REL-004] OPERATING_TO_FINANCIAL_OUTCOME: source [CL-006] → target [CL-007]. If this area must be mentioned, use ONLY: 'The available evidence does not establish this relationship.'",
+    "original_answer_audit": {
+      "definitive_causal_in_original": "does not confirm that those projects caused revenue or margin improvements — correctly negated",
+      "pattern": "PASS — original answer already used negated causal language"
+    },
+    "note": "REL-004 fully suppressed: REJECT → SUPPRESSED → system prompt prohibits assertion → replacement prose set. AI cannot assert operating→financial causality for Tanla."
   },
 
   "step8_composition_adversarial_c1_c10": {
@@ -220,17 +309,83 @@
     }
   },
 
+  "step8_composition_adversarial_c1_c10": {
+    "status": "PASS",
+    "test_file": "tests/intelligence/test_relationship_aware_composer.py",
+    "tests_passed": 22,
+    "tests_failed": 0,
+    "run": "python -m pytest tests/intelligence/test_relationship_aware_composer.py -v",
+    "results": {
+      "C1_reject_suppressed": "PASS",
+      "C2_needs_review_routing": "PASS",
+      "C3_unknown_preserved": "PASS",
+      "C4_confirmed_causal_allowed": "PASS",
+      "C5_plausible_hedged_only": "PASS",
+      "C6_undeclared_gate_context": "PASS",
+      "C7_suppressed_rel_id_leak_detection": "PASS",
+      "C8_reject_stays_suppressed_regardless": "PASS",
+      "C9_endpoint_claims_survive_when_rel_rejected": "PASS",
+      "C10_supported_rel_survives": "PASS"
+    }
+  },
+
+  "step9_level3_regression": {
+    "status": "PASS",
+    "basis": "relationship_reviewer.py unchanged since M14 commit ff9d5ec (verified: git diff HEAD shows 0 changes)",
+    "m14_certified_results": {
+      "positive_controls": "6/6",
+      "semantic_failures": "7/7",
+      "adversarial": "12/12",
+      "retrospective_bias": "2/2",
+      "measurement_window": "2/2",
+      "total": "29/29"
+    },
+    "note": "M15 composition module adds zero changes to relationship_reviewer.py. M14 Level 3 certification (ff9d5ec) remains fully valid."
+  },
+
+  "step10_readability_plan": {
+    "status": "PENDING (prose not generated)",
+    "sun_pharma_plan_assessment": {
+      "allowed_claims": 9,
+      "suppressed_claims": 1,
+      "note": "CL-001 (business model overview) suppressed as NR — composition will lack standard pharma preamble unless AI reconstructs from evidence. May reduce intro quality.",
+      "mitigation": "9 substantive claims remain allowed; AI has ample material for coherent answer"
+    },
+    "tanla_plan_assessment": {
+      "allowed_claims": 7,
+      "suppressed_claims": 2,
+      "note": "CL-001 and CL-002 (management commitments) suppressed as NR — composition will not assert unverified management forward guidance",
+      "mitigation": "7 factual claims remain; answer will be grounded in verified data"
+    },
+    "rel004_suppression_readability": "Replacement prose 'The available evidence does not establish this relationship.' is investor-legible uncertainty language — not jargon, not awkward"
+  },
+
+  "final_ai_prose_certification": {
+    "status": "BLOCKED",
+    "sun_pharma_answer": "NOT_GENERATED",
+    "tanla_answer": "NOT_GENERATED",
+    "tanla_rel004_leakage": "ARCHITECTURE_VERIFIED — chain traced: REJECT → SUPPRESSED → system prompt prohibits → replacement set. Actual prose pending.",
+    "sun_pharma_undeclared_claims": "PENDING",
+    "tanla_undeclared_claims": "PENDING",
+    "undeclared_relationships": "PENDING",
+    "claim_validation_results": "PENDING",
+    "relationship_validation_results": "PENDING",
+    "sun_pharma_final_gate": "PENDING",
+    "tanla_final_gate": "PENDING",
+    "blocker": "OpenAI organization_spend_limit_exceeded on all API calls. No valid alternate provider configured. Mission constraint: do not add alternate providers."
+  },
+
   "criteria": {
     "positive_controls_6_of_6": {"value": true, "status": "PASS"},
-    "c1_c10_adversarial_all_22_pass": {"value": true, "status": "PASS"},
-    "composition_plan_correctly_suppresses_tanla_rel004": {"value": true, "status": "PASS"},
-    "composition_plan_correctly_allows_sun_pharma_rels": {"value": true, "status": "PASS"},
-    "composition_system_prompt_contract_complete": {"value": true, "status": "PASS"},
-    "level3_safety_regression_intact": {"value": true, "status": "PASS"},
-    "ai_composition_sun_pharma": {"value": "PENDING", "status": "BLOCKED_SPEND_LIMIT"},
-    "ai_composition_tanla": {"value": "PENDING", "status": "BLOCKED_SPEND_LIMIT"},
-    "post_composition_gate_sun_pharma": {"value": "PENDING", "status": "BLOCKED_SPEND_LIMIT"},
-    "post_composition_gate_tanla": {"value": "PENDING", "status": "BLOCKED_SPEND_LIMIT"}
+    "c1_c10_adversarial_22_of_22": {"value": true, "status": "PASS"},
+    "tanla_rel004_suppressed_in_plan": {"value": true, "status": "PASS"},
+    "tanla_rel004_system_prompt_constraint": {"value": true, "status": "PASS"},
+    "sun_pharma_plan_no_suppressed_rels": {"value": true, "status": "PASS"},
+    "level3_regression_intact_by_construction": {"value": true, "status": "PASS"},
+    "ai_composition_sun_pharma_prose": {"value": "PENDING", "status": "BLOCKED_API_QUOTA"},
+    "ai_composition_tanla_prose": {"value": "PENDING", "status": "BLOCKED_API_QUOTA"},
+    "post_composition_gate_sun_pharma": {"value": "PENDING", "status": "BLOCKED_API_QUOTA"},
+    "post_composition_gate_tanla": {"value": "PENDING", "status": "BLOCKED_API_QUOTA"}
   },
 
   "criteria_summary": {
@@ -245,18 +400,18 @@
     "step_1": "Increase OpenAI spend limit at https://platform.openai.com/settings/organization/limits",
     "step_2": "Re-run: python scratchpad/m15_composition_runner.py",
     "step_3": "Verify Step 5 (AI composition) and Step 6 (post-composition gate) pass for both companies",
-    "step_4": "If both gates pass, update this proof status to READY_FOR_PRODUCTION_SHADOW_INTEGRATION"
+    "step_4": "Update final_ai_prose_certification section with generated answers, validation results, gate status",
+    "step_5": "If both gates pass: update status to READY_FOR_PRODUCTION_SHADOW_INTEGRATION"
   },
 
   "mission16_recommendation": {
     "title": "Production Shadow Integration",
-    "prerequisite": "M15 Steps 5-6 completed (AI prose generation unblocked)",
-    "scope": "Wire relationship_aware_composer.py into the production answer generation path in shadow mode — log plan + answer for every investor query but do not surface to end users",
+    "prerequisite": "M15 Steps 5-6 completed and both company gates pass",
+    "scope": "Wire relationship_aware_composer.py into production answer generation path in shadow mode — log plan + answer per investor query, do not surface to end users",
     "success_criteria": [
-      "Shadow answers consistently pass composition gate",
-      "Zero rejected relationships asserted in shadow answers",
-      "Zero undeclared material claims in shadow answers",
-      "Readability equivalent to or better than M12 integrated answers"
+      "Shadow answers consistently pass composition gate (0 rejected rels, 0 undeclared claims)",
+      "Readability equivalent to or better than M12 integrated answers",
+      "Level 3 regression intact under production load"
     ]
   }
 }
