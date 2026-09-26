@@ -332,8 +332,14 @@ def validate_narrative_fields(
         "established_outcomes",
         "remaining_uncertainty",
     ):
-        if er.get(field):
-            to_check.append((f"economic_reasoning.{field}", er[field]))
+        val = er.get(field)
+        if val:
+            if isinstance(val, list):
+                val = " ".join(
+                    item.get("text", str(item)) if isinstance(item, dict) else str(item)
+                    for item in val
+                )
+            to_check.append((f"economic_reasoning.{field}", val))
 
     for field_label, text in to_check:
         violations = _check_forbidden_patterns(text, narrative=True)
