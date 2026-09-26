@@ -28,13 +28,16 @@
 - CONFIRMED RISK: `_GEOGRAPHY_RE` includes `india|indian`. For Indian companies, a legitimate mention of India could fire false narrative violation if evidence corpus lacks home-market context. AI answers did not trigger this in practice, but structural risk exists. Spawned task_22dbcc08 for remediation.
 - No Sun Pharma rule silently distorted any of the 3 companies.
 
-**Step 5 — Adversarial/deterministic test (`run_m9_deterministic_test.py`):**
-- HC-C (Germany/Japan injection): DETECTED × 3 companies — deterministic geography check fires.
-- HC-E (ILUMYA/Japan cross-company contamination): DETECTED × 3 companies — geography check fires.
-- HC-B (forbidden patterns): 2/4 phrases caught deterministically; 2 missed phrases are primary AI-extractor responsibility.
-- Corpus isolation: CLEAN × 3 companies — no Sun Pharma evidence bled into any other company's corpus.
-- Controls (baseline, no mutation): CORRECT_CONTROL × 3 companies — zero false positives.
-- Full AI stress test (HC-A, HC-D, all 5 mutations): background task running (18 cases, AI call overhead → hours).
+**Step 5 — Adversarial stress test (full AI + deterministic):**
+- Full AI stress test (`run_m9_stress_test.py`, 18 cases): COMPLETE. Corrected verdict: **PASS_WITH_FALSE_ALARMS**.
+- Corrected (via `m9_postprocess_stress.py`): 15/15 adversarial DETECTED, 2/3 controls CORRECT_CONTROL, 1 FALSE_ALARM.
+- FALSE_ALARM detail: TANLA-CTRL → FAIL_UNDECLARED. Root cause: AI extractor non-determinism — baseline run produced FAIL_NEEDS_REVIEW (0 undeclared rejected); stress test run produced different undeclared extraction → one claim REJECTED. Same class as M8 REVIEW_ERROR variance. No safety gap.
+- HC-A (fabricated ₹10,000 crore): FAIL_UNSUPPORTED × Tanla/Ujjivan; FAIL_INCOMPLETE × Data Patterns.
+- HC-B (false execution): FAIL_UNDECLARED × Tanla; FAIL_NEEDS_REVIEW × Ujjivan; FAIL_INCOMPLETE × Data Patterns.
+- HC-C (Germany/Japan): FAIL_NEEDS_REVIEW × 3 (deterministic geography check).
+- HC-D (fabricated quant): FAIL_NEEDS_REVIEW × Tanla/Ujjivan; FAIL_INCOMPLETE × Data Patterns.
+- HC-E (ILUMYA/Japan): FAIL_NEEDS_REVIEW × 3 (deterministic geography check).
+- Data Patterns sparse-evidence behavior: HC-A/B/D all FAIL_INCOMPLETE — extractor returns INCOMPLETE before reaching fabricated content; validator correctly refuses PASS. DETECTED per classification (status ≠ PASS).
 
 **Failure classification (Step 9):** All baseline FAIL_NEEDS_REVIEW verdicts are CONSERVATIVE_UNCERTAINTY (M8 precedent) — correct control behavior. No FALSE_ALARMS. No MISSED detections on deterministic layer.
 
@@ -43,7 +46,7 @@
 - Ujjivan: AI BETTER — correctly identifies 0 material promises in tracker. Prod asserts a commitment that may be under-supported.
 - Data Patterns: Both correctly acknowledge evidence deficiency. AI enumerates source limitations.
 
-**Governance:** `governance/ENG_MISSION9_CROSS_COMPANY_VALIDATION_PROOF.json` — mission_status=DETERMINISTIC_PROVEN. AI stress test pending. Evidence packages in governance/. Scripts in scratchpad/. Shadow mode only. Production unmodified.
+**Governance:** `governance/ENG_MISSION9_CROSS_COMPANY_VALIDATION_PROOF.json` — mission_status=PASS_WITH_FALSE_ALARMS. Full stress test complete. Evidence packages in governance/. Scripts in scratchpad/. Shadow mode only. Production unmodified.
 
 ---
 
