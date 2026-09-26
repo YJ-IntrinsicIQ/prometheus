@@ -508,12 +508,11 @@ def apply_acceptance_contract(
         # The caller must ensure rationale is available; we check result fields here.
         has_frame = any(w in wording for w in _INTERPRETATION_FRAMES)
 
-        # PLAUSIBLE is explicitly the "cannot confirm" tier: accept if the
-        # relationship has proper interpretation framing and valid chronology,
-        # regardless of whether the AI found supporting evidence (UNSUPPORTED
-        # can occur when evidence_refs are thin but the framing is deliberate).
-        # Hard block: CONTRADICTED (AI found opposing evidence).
-        if (verdict not in ("REVIEW_ERROR", "CONTRADICTED")
+        # PLAUSIBLE accept requires evidence support (SUPPORTED or PARTIALLY_SUPPORTED)
+        # AND valid chronology AND interpretation framing.
+        # UNSUPPORTED → NEEDS_REVIEW even with has_frame: evidence support is mandatory.
+        # CONTRADICTED → REJECT (AI found opposing evidence).
+        if (verdict in ("SUPPORTED", "PARTIALLY_SUPPORTED")
                 and result.chronology_valid
                 and has_frame):
             return ACCEPT, "plausible_qualified_interpretation_accepted"

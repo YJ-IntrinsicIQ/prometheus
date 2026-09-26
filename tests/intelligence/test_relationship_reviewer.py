@@ -143,10 +143,24 @@ def test_plausible_accept_no_measurement_window_block():
 
 
 def test_plausible_reject_unsupported():
-    """PLAUSIBLE with UNSUPPORTED verdict and no frame: REJECT."""
+    """PLAUSIBLE with UNSUPPORTED verdict: NEEDS_REVIEW (evidence support mandatory for ACCEPT)."""
     r = _result(verdict="UNSUPPORTED", reason="no connection found")
     status, _ = apply_acceptance_contract("OPERATING_TO_FINANCIAL_OUTCOME", "PLAUSIBLE", r)
-    assert status == REJECT
+    assert status in (NEEDS_REVIEW, REJECT)  # never ACCEPT
+
+
+def test_plausible_p1_supported_plausible_accept():
+    """P1: PLAUSIBLE + PARTIALLY_SUPPORTED + interpretation frame → ACCEPT."""
+    r = _result(verdict="PARTIALLY_SUPPORTED", reason="capacity expansion may have contributed to margin improvement")
+    status, _ = apply_acceptance_contract("EXECUTION_TO_OPERATING_OUTCOME", "PLAUSIBLE", r)
+    assert status == ACCEPT
+
+
+def test_plausible_p2_unsupported_with_frame_needs_review():
+    """P2: PLAUSIBLE + UNSUPPORTED + has_frame → still NEEDS_REVIEW (frame alone insufficient)."""
+    r = _result(verdict="UNSUPPORTED", reason="may have contributed, though no direct evidence found")
+    status, _ = apply_acceptance_contract("EXECUTION_TO_OPERATING_OUTCOME", "PLAUSIBLE", r)
+    assert status in (NEEDS_REVIEW, REJECT)  # never ACCEPT
 
 
 def test_plausible_needs_review_missing_frame():

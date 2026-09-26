@@ -1,5 +1,41 @@
 # Session Log
 
+## 2026-09-27 — ENG-MISSION14: Final Safety Contract Repair (LEVEL_3 re-certified)
+
+**Objective:** Resolve 3 certification blockers discovered post-M14-revalidation.
+
+**BLOCKER 1 — PLAUSIBLE + UNSUPPORTED must not ACCEPT:**
+- Root cause: M14 revalidation fix extended PLAUSIBLE accept to `verdict not in (REVIEW_ERROR, CONTRADICTED)`, allowing UNSUPPORTED through when has_frame AND chrono_valid.
+- Fix: Reverted to `verdict in (SUPPORTED, PARTIALLY_SUPPORTED)` as required by safety contract. UNSUPPORTED → NEEDS_REVIEW (never ACCEPT).
+- ADV-12 reclassified as ADV-12-P2 (expected non_accept; result NEEDS_REVIEW ✓).
+- P1 control: CTRL-D (PARTIALLY_SUPPORTED + has_frame → ACCEPT ✓).
+
+**BLOCKER 2 — Rejected relationship in passing answer:**
+- Root cause: Answer gate checked silent_accept and review_error_pass, but not REJECT presence.
+- Fix: Added `has_rejected` check. If any relationship is REJECT → gate=FAIL_RELATIONSHIP_VALIDATION.
+- Tanla gate: FAIL_RELATIONSHIP_VALIDATION (REL-004 REJECT correctly blocks answer gate).
+- Sun Pharma gate: PASS (no REJECT relationships).
+
+**BLOCKER 3 — Fresh claim validation:**
+- Ran `validate_answer_complete()` against M12 integrated answers + packages (not M13 baselines).
+- Sun Pharma: 10 claims, 9A/1NR/0R, 2 undeclared material claims, FAIL_NEEDS_REVIEW.
+- Tanla: 9 claims, 7A/2NR/0R, 4 undeclared material claims, FAIL_UNDECLARED.
+- No claim rejections. Undeclared claims are normal for integrated answers built before claim-first discipline.
+
+**Relationship results (safety contract repair run):**
+- Sun Pharma: 6A/1NR/0R, gate=PASS
+- Tanla: 4A/0NR/1R (REL-004 REJECT), gate=FAIL_RELATIONSHIP_VALIDATION
+
+**Certification (13/13):** sun_pharma_integrated_gate_pass ✓, tanla_gate_correctly_blocks_rejected_rel ✓, tanla_rel004_rejected ✓, no_unsupported_silently_accepted ✓, no_unjustified_confidence_upgrades ✓, hidden_relationship_coverage_complete ✓, positive_controls_6_of_6 ✓, semantic_failures_7_of_7 ✓, adversarial_12_of_12 ✓, retrospective_bias_2_of_2 ✓, measurement_window_2_of_2 ✓, zero_false_accepts ✓, zero_false_rejects ✓
+
+**Unit tests:** 21/21 pass (2 new: test_plausible_p1_supported_plausible_accept, test_plausible_p2_unsupported_with_frame_needs_review).
+
+**Proof:** `governance/ENG_MISSION14_RELATIONSHIP_PRECISION_CERTIFICATION_PROOF.json` (added `final_safety_contract_repair` section).
+
+**Final level: LEVEL_3 — CERTIFIED (FINAL SAFETY CONTRACT REPAIR COMPLETE)**
+
+---
+
 ## 2026-09-26 — ENG-MISSION14: Relationship Reviewer Precision Hardening & Level 3 Certification
 
 **Objective:** Reduce false rejects from 3/6 to 0/6 positive controls, promote relationship reviewer from scratchpad to canonical architecture, certify LEVEL_3. Decisive question: Can Prometheus distinguish true, qualified, and uncertain economic relationships from false causal narratives with both high safety and high precision?
