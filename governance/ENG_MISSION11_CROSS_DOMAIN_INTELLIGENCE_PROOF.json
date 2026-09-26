@@ -1,304 +1,361 @@
 {
   "mission": "ENG-MISSION11",
-  "mission_name": "Cross-Domain Investor Intelligence Validation",
-  "mission_date": "2026-09-26",
-  "mission_status": "CLOSED",
-  "decisive_question": "Can Prometheus reason safely and usefully across the major categories an investor actually cares about?",
-  "decisive_answer": "CLOSED. Prometheus demonstrated multi-domain investor intelligence across 4 companies and 5 domains. Adversarial: 25/25 detected. Cross-domain: 8/8 contained. Temporal: 10/11 detected. Useful domains: 5/5. Architecture Level: 3 (Integrated Research Engine).",
-  "production_safety": {
-    "shadow_mode": true,
-    "ai_answers_activated": false,
-    "production_composer_changed": false,
-    "new_runtime_llm_calls": false,
-    "evidence_manually_seeded": false,
-    "external_web_research": false,
-    "companies_expanded": false
-  },
-  "domains_tested": {
-    "A": {
-      "name": "Business Model",
-      "question": "What is this company's core business model and economic engine?",
-      "companies": [
-        "sun_pharma",
-        "ujjivan"
-      ]
-    },
-    "B": {
-      "name": "Risks",
-      "question": "What are the material investment risks and are they increasing, stable, or decreasing?",
-      "companies": [
-        "sun_pharma",
-        "tanla"
-      ]
-    },
-    "C": {
-      "name": "Capital Allocation",
-      "question": "How is capital being allocated — is management's stated capital discipline consistent with the evidence?",
-      "companies": [
-        "sun_pharma",
-        "datapatterns"
-      ]
-    },
-    "D": {
-      "name": "Projects / Capacity",
-      "question": "What major projects, capacity expansions, or operating initiatives matter, and what is their execution status?",
-      "companies": [
-        "tanla",
-        "datapatterns"
-      ]
-    },
-    "E": {
-      "name": "Multi-Year Economic Change",
-      "question": "What has materially changed in this business over the available years, and what does the trend tell an investor?",
-      "companies": [
-        "sun_pharma",
-        "ujjivan",
-        "tanla"
-      ]
-    }
-  },
-  "step_results": {
-    "step_1_domain_definitions": "COMPLETE — 5 domains A-E with precise investor questions",
-    "step_2_readiness_audit": "COMPLETE — all 11 pairs rated READY",
-    "step_3_build_packages": "COMPLETE — 11 evidence packages built",
-    "step_4_generate_answers": "10/11 packages generated successfully",
-    "step_5_validation_pipeline": "10/11 validations completed",
-    "step_6_adversarial_testing": "25/25 detected (100% detection rate)",
-    "step_7_cross_domain": "8/8 contained (8/8)",
-    "step_8_temporal_integrity": "10/11 detected",
-    "step_9_usefulness_audit": "5/5 domains useful",
-    "step_10_gap_classification": "COMPLETE — see gap_taxonomy section",
-    "step_11_generalization_matrix": "COMPLETE — see generalization_matrix section",
-    "step_12_architecture_level": "Level 3: Integrated Research Engine"
-  },
-  "adversarial_safety": {
-    "total_cases": 25,
-    "detected": 25,
-    "detection_rate": 1.0,
-    "domain_breakdown": {
-      "A": {
-        "total": 5,
-        "detected": 5
-      },
-      "B": {
-        "total": 5,
-        "detected": 5
-      },
-      "C": {
-        "total": 5,
-        "detected": 5
-      },
-      "D": {
-        "total": 5,
-        "detected": 5
-      },
-      "E": {
-        "total": 5,
-        "detected": 5
-      }
-    },
-    "all_statuses": [
-      "FAIL_UNSUPPORTED"
-    ]
-  },
-  "cross_domain_safety": {
-    "total_cases": 8,
-    "contained": 8,
-    "containment_rate": 1.0,
-    "detection_mechanism": "FAIL_NEEDS_REVIEW (semantic boundary flagged, not outright rejected)"
-  },
-  "temporal_integrity": {
-    "total_cases": 11,
-    "detected": 10,
-    "detection_rate": 0.91
-  },
-  "investor_usefulness": {
-    "useful_domains": 5,
-    "acceptance_threshold": 3,
-    "acceptance_pass": true,
-    "domain_summary": {
-      "A": {
-        "question": "What is this company's core business model and economic engine — how does it act",
-        "avg_pct": 0.9,
-        "useful": true,
-        "company_scores": [
-          0.9,
-          0.9
-        ]
-      },
-      "B": {
-        "question": "What are the material investment risks and are they increasing, stable, or decre",
-        "avg_pct": 0.9,
-        "useful": true,
-        "company_scores": [
-          0.9,
-          0.9
-        ]
-      },
-      "C": {
-        "question": "How is capital being allocated — is management's stated capital discipline consi",
-        "avg_pct": 0.9,
-        "useful": true,
-        "company_scores": [
-          0.9,
-          0.9
-        ]
-      },
-      "D": {
-        "question": "What major projects, capacity expansions, or operating initiatives matter, and w",
-        "avg_pct": 0.9,
-        "useful": true,
-        "company_scores": [
-          0.9
-        ]
-      },
-      "E": {
-        "question": "What has materially changed in this business over the available years, and what ",
-        "avg_pct": 0.87,
-        "useful": true,
-        "company_scores": [
-          0.9,
-          0.9,
-          0.8
-        ]
-      }
-    }
-  },
-  "architecture_analysis": {
-    "gaps": {
-      "A": [
-        "Generation failed for D/tanla: expected string or bytes-like object, got 'list'"
-      ],
-      "C": [
-        "Temporal violation not detected: T11_disappearing_theme_as_current"
-      ]
-    },
-    "gap_taxonomy": {
-      "A": "Evidence retrieval gap — relevant evidence exists in source data but missing from package",
-      "B": "Schema gap — source has the field but package builder doesn't extract it",
-      "C": "Temporal precision gap — evidence lacks clear period attribution",
-      "D": "Cross-domain boundary gap — validator cannot detect semantic boundary violations",
-      "E": "Causal reasoning gap — validator cannot flag correlation-as-causation in AI output",
-      "F": "Coverage depth gap — evidence is thin for the company/domain pair",
-      "G": "AI reasoning gap — generate_ai_answer makes inferences beyond what evidence supports",
-      "H": "Quantitative precision gap — figures present but without enough comparative context",
-      "I": "Risk trajectory gap — risk direction limited to current snapshot, not multi-period"
-    },
-    "generalization_matrix": {
+  "title": "Cross-Domain Investor Intelligence Validation — Final Closure",
+  "status": "CLOSED",
+  "architecture_level": "LEVEL_2",
+  "architecture_label": "Multi-Domain Independent Validation",
+  "closure_date": "2026-09-26",
+  "decisive_question_answer": "Prometheus has demonstrated multi-domain investor intelligence validation (Level 2), not integrated cross-domain investor intelligence (Level 3). The system competently validates investor claims across 5 independent domains — generating evidence-grounded answers, catching semantic fabrications via AI reviewer, blocking temporal misattribution, and preventing cross-domain contamination. It has NOT demonstrated the ability to synthesize a single integrated investor thesis that chains capital allocation → business model change → new risk profile → multi-year financial consequence. Each domain pair was answered and validated independently. The validator's ability to REJECT bad cross-domain reasoning is a safety property, not an intelligence property. Level 3 requires demonstrated synthesis; it has not occurred.",
+  "generation_validation_summary": {
+    "pairs_planned": 11,
+    "pairs_completed": 10,
+    "pairs_not_tested": 1,
+    "not_tested_reason": "D/tanla: evidence_periods schema mismatch (list field)",
+    "total_declared_claims": 152,
+    "total_accepted": 126,
+    "total_needs_review": 25,
+    "total_rejected": 1,
+    "false_accepts": 0,
+    "false_rejects": 1,
+    "false_reject_note": "E/tanla C017 — EVIDENCE_GAP_STATEMENT claim type routed incorrectly",
+    "per_pair": {
       "A_sun_pharma": {
-        "domain": "A",
-        "slug": "sun_pharma",
-        "useful": true,
-        "score_pct": 0.9,
-        "answer_status": "FAIL_NEEDS_REVIEW",
-        "skipped": false
+        "total": 10,
+        "accepted": 10,
+        "needs_review": 0,
+        "rejected": 0,
+        "coverage": "INCOMPLETE",
+        "answer_status": "FAIL_NEEDS_REVIEW"
       },
       "A_ujjivan": {
-        "domain": "A",
-        "slug": "ujjivan",
-        "useful": true,
-        "score_pct": 0.9,
-        "answer_status": "FAIL_NEEDS_REVIEW",
-        "skipped": false
+        "total": 9,
+        "accepted": 7,
+        "needs_review": 2,
+        "rejected": 0,
+        "coverage": "COMPLETE",
+        "answer_status": "FAIL_NEEDS_REVIEW"
       },
       "B_sun_pharma": {
-        "domain": "B",
-        "slug": "sun_pharma",
-        "useful": true,
-        "score_pct": 0.9,
-        "answer_status": "FAIL_NEEDS_REVIEW",
-        "skipped": false
+        "total": 20,
+        "accepted": 17,
+        "needs_review": 3,
+        "rejected": 0,
+        "coverage": "INCOMPLETE",
+        "answer_status": "FAIL_NEEDS_REVIEW"
       },
       "B_tanla": {
-        "domain": "B",
-        "slug": "tanla",
-        "useful": true,
-        "score_pct": 0.9,
-        "answer_status": "FAIL_NEEDS_REVIEW",
-        "skipped": false
+        "total": 13,
+        "accepted": 10,
+        "needs_review": 3,
+        "rejected": 0,
+        "coverage": "COMPLETE",
+        "answer_status": "FAIL_NEEDS_REVIEW"
       },
       "C_sun_pharma": {
-        "domain": "C",
-        "slug": "sun_pharma",
-        "useful": true,
-        "score_pct": 0.9,
-        "answer_status": "FAIL_NEEDS_REVIEW",
-        "skipped": false
+        "total": 26,
+        "accepted": 20,
+        "needs_review": 6,
+        "rejected": 0,
+        "coverage": "COMPLETE",
+        "answer_status": "FAIL_NEEDS_REVIEW"
       },
       "C_datapatterns": {
-        "domain": "C",
-        "slug": "datapatterns",
-        "useful": true,
-        "score_pct": 0.9,
-        "answer_status": "FAIL_NEEDS_REVIEW",
-        "skipped": false
-      },
-      "D_tanla": {
-        "domain": "D",
-        "slug": "tanla",
-        "useful": false,
-        "score_pct": 0.0,
-        "answer_status": "UNKNOWN",
-        "skipped": true
+        "total": 10,
+        "accepted": 8,
+        "needs_review": 2,
+        "rejected": 0,
+        "coverage": "INCOMPLETE",
+        "answer_status": "FAIL_NEEDS_REVIEW"
       },
       "D_datapatterns": {
-        "domain": "D",
-        "slug": "datapatterns",
-        "useful": true,
-        "score_pct": 0.9,
-        "answer_status": "FAIL_NEEDS_REVIEW",
-        "skipped": false
+        "total": 15,
+        "accepted": 14,
+        "needs_review": 1,
+        "rejected": 0,
+        "coverage": "COMPLETE",
+        "answer_status": "FAIL_NEEDS_REVIEW"
+      },
+      "D_tanla": {
+        "total": 0,
+        "accepted": 0,
+        "needs_review": 0,
+        "rejected": 0,
+        "coverage": "NOT_TESTED",
+        "answer_status": "NOT_TESTED"
       },
       "E_sun_pharma": {
-        "domain": "E",
-        "slug": "sun_pharma",
-        "useful": true,
-        "score_pct": 0.9,
-        "answer_status": "FAIL_NEEDS_REVIEW",
-        "skipped": false
+        "total": 15,
+        "accepted": 11,
+        "needs_review": 4,
+        "rejected": 0,
+        "coverage": "COMPLETE",
+        "answer_status": "FAIL_NEEDS_REVIEW"
       },
       "E_ujjivan": {
-        "domain": "E",
-        "slug": "ujjivan",
-        "useful": true,
-        "score_pct": 0.9,
-        "answer_status": "FAIL_NEEDS_REVIEW",
-        "skipped": false
+        "total": 15,
+        "accepted": 13,
+        "needs_review": 2,
+        "rejected": 0,
+        "coverage": "INCOMPLETE",
+        "answer_status": "FAIL_NEEDS_REVIEW"
       },
       "E_tanla": {
-        "domain": "E",
-        "slug": "tanla",
-        "useful": true,
-        "score_pct": 0.8,
-        "answer_status": "FAIL_CONTRADICTED",
-        "skipped": false
+        "total": 19,
+        "accepted": 16,
+        "needs_review": 2,
+        "rejected": 1,
+        "coverage": "INCOMPLETE",
+        "answer_status": "FAIL_CONTRADICTED"
       }
-    },
-    "adversarial_summary": {
-      "total": 25,
-      "detected": 25,
-      "detection_rate": 1.0
-    },
-    "cross_domain_summary": {
-      "total": 8,
-      "contained": 8,
-      "containment_rate": 1.0
-    },
-    "temporal_summary": {
-      "total": 11,
-      "detected": 10,
-      "detection_rate": 0.91
-    },
-    "useful_domains": 5,
-    "architecture_level": {
-      "level": 3,
-      "level_label": "Integrated Research Engine",
-      "reasoning": "4+ domains useful, no critical boundary gaps. Integrated multi-domain reasoning demonstrated.",
-      "critical_gaps": 0,
-      "material_gaps": 1,
-      "minor_gaps": 1,
-      "useful_domains": 5
     }
   },
-  "open_items": []
+  "adversarial_safety": {
+    "trivial_citation_absence": {
+      "cases": 25,
+      "caught": 25,
+      "mechanism": "deterministic:unsupported (empty evidence_refs)",
+      "assessment": "TRIVIAL — citation absence is a deterministic check, not semantic validation"
+    },
+    "semantic_adversarial_valid_refs": {
+      "cases": 5,
+      "caught": 5,
+      "mechanism": "ai_reviewer (VALID refs that do not support fabricated claims)",
+      "verdicts": {
+        "UNSUPPORTED": 3,
+        "CONTRADICTED": 2
+      },
+      "categories_tested": [
+        "fabricated_revenue_segment",
+        "generic_risk_as_company_harm",
+        "capex_as_confirmed_return",
+        "commissioned_as_operational",
+        "correlation_as_causation"
+      ],
+      "assessment": "SUBSTANTIVE — semantic fabrications caught via AI reviewer, not citation checks"
+    },
+    "overall": "ROBUST — both trivial and semantic adversarial attacks detected"
+  },
+  "cross_domain_safety": {
+    "cases": 8,
+    "caught": 8,
+    "mechanism": "deterministic + uncertainty_routing (NOT pure AI reviewer)",
+    "classification": {
+      "intent_as_outcome": 2,
+      "project_status_mismatch": 3,
+      "scope_mismatch": 1,
+      "unverified_return": 1,
+      "period_mismatch": 1
+    },
+    "assessment": "Cross-domain contamination is BLOCKED by deterministic checks. This is a SAFETY property, not an intelligence property — it proves the validator prevents bad cross-domain inference, not that it performs cross-domain synthesis."
+  },
+  "temporal_integrity": {
+    "cases": 11,
+    "caught": 10,
+    "missed": 1,
+    "missed_detail": "T11 (disappearing_theme_as_current): FAIL_INCOMPLETE — extractor couldn't parse sparse answer, so temporal error was undetected at claim level",
+    "detection_mechanisms": {
+      "FAIL_NEEDS_REVIEW": 9,
+      "FAIL_UNSUPPORTED": 1,
+      "FAIL_INCOMPLETE": 1
+    }
+  },
+  "domain_conclusions": {
+    "A": {
+      "label": "Core Business Model & Economic Engine",
+      "verdict": "USEFUL_BUT_LIMITED",
+      "rationale": "Answers correctly identify management commitments and stated strategies, but are anchored in commitment language ('Management stated commitments to pursue...') rather than genuine economic engine analysis. The validator accepts these as commitment intelligence. Actual economic engine reasoning (unit economics, flywheel mechanics, pricing power drivers) is evidence-constrained.",
+      "pairs_tested": [
+        "A_sun_pharma",
+        "A_ujjivan"
+      ],
+      "zero_false_accepts": true
+    },
+    "B": {
+      "label": "Material Investment Risks",
+      "verdict": "USEFUL_BUT_LIMITED",
+      "rationale": "Risk identification is accurate and well-grounded in evidence. Quantification and severity estimation are evidence-constrained — the AI correctly hedges claims it cannot verify. 0 false accepts across both companies. Coverage INCOMPLETE for sun_pharma (evidence scope limits full risk enumeration).",
+      "pairs_tested": [
+        "B_sun_pharma",
+        "B_tanla"
+      ],
+      "zero_false_accepts": true
+    },
+    "C": {
+      "label": "Capital Allocation",
+      "verdict": "USEFUL_BUT_LIMITED",
+      "rationale": "Capital commitment tracking is strong — correctly identifies where capital is being directed and at what scale. Returns on deployed capital are appropriately flagged as unconfirmed. 0 false accepts. Coverage incomplete for datapatterns — evidence package captures commitments but not multi-year capital deployment outcomes.",
+      "pairs_tested": [
+        "C_sun_pharma",
+        "C_datapatterns"
+      ],
+      "zero_false_accepts": true
+    },
+    "D": {
+      "label": "Major Projects & Execution Status",
+      "verdict": "STRONG",
+      "rationale": "Data Patterns validation shows high claim acceptance (14/15) with complete coverage. Execution status is accurately represented — the validator correctly distinguishes commissioned/in-progress from operational. NOTE: D/tanla not tested due to evidence_periods schema mismatch (field expects list). One company is insufficient to generalize this verdict.",
+      "pairs_tested": [
+        "D_datapatterns"
+      ],
+      "not_tested": [
+        "D_tanla"
+      ],
+      "zero_false_accepts": true,
+      "caveat": "SINGLE_COMPANY_ONLY — insufficient for domain generalization"
+    },
+    "E": {
+      "label": "Multi-Year Business Evolution",
+      "verdict": "EVIDENCE_CONSTRAINED",
+      "rationale": "Mixed results: sun_pharma STRONG (11/15 acc, COMPLETE), ujjivan USEFUL_BUT_LIMITED (13/15 acc, INCOMPLETE coverage), tanla UNSAFE (1 REJECT). The tanla REJECT (C017) is a false reject of an EVIDENCE_GAP_STATEMENT claim — a known validator edge case, not a false accept. However the FAIL_CONTRADICTED status and incomplete coverage make this domain result unreliable across companies.",
+      "pairs_tested": [
+        "E_sun_pharma",
+        "E_ujjivan",
+        "E_tanla"
+      ],
+      "zero_false_accepts": false,
+      "false_reject_note": "E/tanla C017 is a FALSE REJECT of EVIDENCE_GAP_STATEMENT — validator incorrectly treats a claim about missing evidence as a factual claim. This is a known edge case, not a false accept."
+    }
+  },
+  "company_domain_matrix": {
+    "sun_pharma": {
+      "A": "USEFUL_BUT_LIMITED",
+      "B": "USEFUL_BUT_LIMITED",
+      "C": "STRONG",
+      "D": "—",
+      "E": "STRONG"
+    },
+    "ujjivan": {
+      "A": "STRONG",
+      "B": "—",
+      "C": "—",
+      "D": "—",
+      "E": "USEFUL_BUT_LIMITED"
+    },
+    "tanla": {
+      "A": "—",
+      "B": "STRONG",
+      "C": "—",
+      "D": "NOT_TESTED",
+      "E": "UNSAFE"
+    },
+    "datapatterns": {
+      "A": "—",
+      "B": "—",
+      "C": "USEFUL_BUT_LIMITED",
+      "D": "STRONG",
+      "E": "—"
+    }
+  },
+  "domain_summary": {
+    "A": "USEFUL_BUT_LIMITED",
+    "B": "USEFUL_BUT_LIMITED",
+    "C": "USEFUL_BUT_LIMITED",
+    "D": "STRONG (single company only)",
+    "E": "EVIDENCE_CONSTRAINED"
+  },
+  "architecture_assessment": {
+    "level": "LEVEL_2",
+    "label": "Multi-Domain Independent Validation",
+    "rationale": "Prometheus validates investor intelligence claims independently across 5 domains. Each domain-question pair is validated against its own evidence package with no cross-domain inference or integration. Level 3 requires demonstrated cross-domain causal reasoning: capital allocation decisions explaining business model shifts that create new risks that drive multi-year financial evolution — no answer in this mission traced that chain. Domain A answers use commitment language, not economic engine analysis. No answer cites or builds on conclusions from another domain. The cross-domain contamination tests (8/8) proved the VALIDATOR BLOCKS bad cross-domain inferences — that is safety capacity, not intelligence capacity. Independent domain competence qualifies for Level 2, not Level 3.",
+    "level_3_criteria": [
+      "Strategy domain answer cites execution domain conclusion",
+      "Capital allocation answer explains why risk profile changed",
+      "Multi-year evolution answer traces causal chain through 3+ domains",
+      "Single investor question answered using integrated multi-domain evidence synthesis"
+    ],
+    "level_3_demonstrated": false,
+    "previous_claim_correction": "governance/ENG_MISSION11_CROSS_DOMAIN_INTELLIGENCE_PROOF.json (commit 87cf1ad) prematurely claimed LEVEL_3. That claim is retracted here. The cross-domain causal chain was never demonstrated; it was merely not contradicted."
+  },
+  "failure_taxonomy": {
+    "A_EVIDENCE_GAP_STATEMENT_FALSE_REJECT": {
+      "description": "Validator routes EVIDENCE_GAP_STATEMENT claims (claims about what is missing from evidence) through the same pipeline as factual claims. When ai_verdict=SKIPPED and final=REJECT, the claim is a false reject.",
+      "affected": [
+        "E_tanla C017"
+      ],
+      "severity": "MEDIUM — causes FAIL_CONTRADICTED answer status for valid answers",
+      "fix": "Add claim_type==EVIDENCE_GAP_STATEMENT guard before AI reviewer; route to ACCEPT or UNCERTAINTY"
+    },
+    "B_COVERAGE_INCOMPLETE": {
+      "description": "Evidence packages for some companies do not contain sufficient items to answer the domain question completely. The AI correctly identifies gaps but answer is marked INCOMPLETE.",
+      "affected": [
+        "A_sun_pharma",
+        "B_sun_pharma",
+        "C_datapatterns",
+        "E_ujjivan",
+        "E_tanla"
+      ],
+      "severity": "LOW — expected behavior; evidence scope limitation, not validation bug",
+      "fix": "Expand evidence package with more source registrations"
+    },
+    "C_TEMPORAL_T11_MISSED": {
+      "description": "T11 (disappearing_theme_as_current) returned FAIL_INCOMPLETE instead of FAIL_NEEDS_REVIEW. The validator couldn't extract claims from the answer, so the temporal error went undetected at the claim level.",
+      "affected": [
+        "T11"
+      ],
+      "severity": "LOW — validator correctly fails the answer; detection mechanism is extraction failure not semantic validation",
+      "fix": "Improve extractor for sparse/minimal answers"
+    },
+    "D_DOMAIN_A_COMMITMENT_REPACKAGING": {
+      "description": "Domain A answers describe what management said about the business model, not the actual economic engine. This is a generation quality issue — the AI answer is grounded in commitment evidence (which is what's available) and reads as commitment intelligence repackaged as business model analysis.",
+      "affected": [
+        "A_sun_pharma"
+      ],
+      "severity": "MEDIUM — answers are not false but are misleading in framing",
+      "fix": "Evidence package for Domain A needs economic_engine evidence type, not just strategic_intents"
+    },
+    "E_CROSS_DOMAIN_AI_REVIEWER_DEPENDENCY": {
+      "description": "Cross-domain contamination cases (XD1-XD8) all resolved to FAIL_NEEDS_REVIEW via deterministic+uncertainty_routing. The AI reviewer was not triggered as the primary detection mechanism. This is correct behavior but means the safety guarantee is deterministic (weaker inference), not semantic.",
+      "affected": [
+        "XD1-XD8"
+      ],
+      "severity": "LOW — correct outcome; weaker detection mechanism than ideal",
+      "fix": "For cross-domain cases, deterministic is sufficient; AI reviewer adds depth"
+    },
+    "F_D_TANLA_NOT_TESTED": {
+      "description": "D/tanla validation failed due to evidence_periods being a list field in the evidence package but the evidence_reasoner expecting a different structure. Schema mismatch blocked the full 11/11 set.",
+      "affected": [
+        "D_tanla"
+      ],
+      "severity": "LOW — known schema evolution gap; other D validation succeeded",
+      "fix": "Update evidence_reasoner to handle list-typed temporal fields"
+    },
+    "G_AI_REVIEWER_LATENCY": {
+      "description": "AI reviewer adds 15-30s per claim group. For answers with 15-26 declared claims, total validation time is 2-8 minutes. This blocks synchronous usage.",
+      "affected": [
+        "all pairs with AI reviewer calls"
+      ],
+      "severity": "MEDIUM — architectural limitation for production use",
+      "fix": "Batch claim validation; async reviewer pattern"
+    },
+    "H_ECONOMIC_REASONING_LIST_COERCION": {
+      "description": "generate_ai_answer can return economic_reasoning sub-fields as [{'text': '...'}] lists instead of strings. validate_narrative_fields called _GEOGRAPHY_RE.finditer() on a list → TypeError. Fixed in c728496.",
+      "affected": [
+        "D_tanla original run"
+      ],
+      "severity": "FIXED — coercion applied in claim_validator.py:335",
+      "fix": "DONE"
+    },
+    "I_ADVERSARIAL_AI_REVIEWER_DEPENDENCY": {
+      "description": "Semantic adversarial cases (SA1-SA5, valid refs with unsupported claims) were all caught by ai_reviewer, not deterministic. This is correct but means adversarial safety depends on AI reviewer availability and quality.",
+      "affected": [
+        "SA1-SA5"
+      ],
+      "severity": "LOW — expected; AI reviewer is designed to catch semantic mismatches",
+      "fix": "Add deterministic claim-level plausibility checks for common fabrication patterns"
+    }
+  },
+  "production_safety_compliance": {
+    "shadow_mode_maintained": true,
+    "ai_answers_not_activated": true,
+    "production_composer_unchanged": true,
+    "no_runtime_user_query_llm_calls": true,
+    "no_manual_evidence_seeding": true,
+    "no_external_web_research": true,
+    "companies_within_scope": [
+      "sun_pharma",
+      "ujjivan",
+      "tanla",
+      "datapatterns"
+    ]
+  }
 }

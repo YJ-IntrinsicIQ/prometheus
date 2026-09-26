@@ -10954,3 +10954,78 @@ Distinction confirmed: legitimate answers → `FAIL_NEEDS_REVIEW`; adversarial a
 Governance proof: `governance/ENG_MISSION10_EVIDENCE_INTELLIGENCE_HARDENING_PROOF.json` (mission_status: CLOSED)
 
 Residual: MC-0001 suspected FP (upstream LLM condensed the subject out of text, Stage C regex cannot catch condensed form). QUARANTINE outcome suppresses it from investor-facing output. No investor-facing impact.
+
+---
+
+## ENG-MISSION11: Cross-Domain Investor Intelligence Validation
+**Date**: 2026-09-26  
+**Status**: CLOSED  
+**Architecture Level Achieved**: LEVEL_2 (Multi-Domain Independent Validation)
+
+### Mission Scope
+- 5 investor-intelligence domains × 4 companies = 20 possible pairs
+- 11 pairs planned (selective coverage); 10 completed; 1 not tested (D/tanla schema)
+- Domains: A=Business Model, B=Investment Risks, C=Capital Allocation, D=Projects, E=Multi-year Change
+- Companies: sun_pharma, ujjivan, tanla, datapatterns
+
+### Generation & Validation Results
+- 152 total declared claims across 10 validated pairs
+- 126 accepted | 25 needs_review | 1 rejected
+- 0 false accepts; 1 false reject (E/tanla C017: EVIDENCE_GAP_STATEMENT edge case)
+- coverage: COMPLETE in 5 pairs, INCOMPLETE in 5 pairs
+
+### Adversarial Safety (Steps 1–2)
+- 25/25 trivial adversarial caught (empty evidence_refs — citation-absence detection)
+- 5/5 semantic adversarial caught via AI reviewer with VALID refs that don't support claims
+- Categories verified: fabricated segment, generic risk → specific harm, capex → confirmed return, commissioned → operational, correlation → causation
+- Assessment: validator safety is SUBSTANTIVE, not merely citation-checking
+
+### Cross-Domain Safety (Step 3)
+- 8/8 cross-domain contamination cases contained
+- Detection mechanism: deterministic checks + uncertainty routing (NOT AI reviewer primary)
+- Classification: intent≠outcome (2), project status mismatch (3), scope mismatch (1), unverified return (1), period mismatch (1)
+- Note: cross-domain blocking is a SAFETY property, not intelligence synthesis capacity
+
+### Temporal Integrity (Step 4)
+- 10/11 temporal fabrications caught (T11 missed: FAIL_INCOMPLETE — extractor parsed sparse answer)
+- Detection breakdown: FAIL_NEEDS_REVIEW (9), FAIL_UNSUPPORTED (1), FAIL_INCOMPLETE (1 missed)
+
+### Domain-Level Conclusions (Step 6)
+| Domain | Verdict |
+|--------|---------|
+| A — Business Model | USEFUL_BUT_LIMITED (commitment language, not economic engine analysis) |
+| B — Investment Risks | USEFUL_BUT_LIMITED (identification strong; quantification evidence-constrained) |
+| C — Capital Allocation | USEFUL_BUT_LIMITED (commitment tracking strong; returns unconfirmable) |
+| D — Project Execution | STRONG (single company only — insufficient to generalize) |
+| E — Multi-year Change | EVIDENCE_CONSTRAINED (1 UNSAFE; mixed coverage) |
+
+### Architecture Level (Step 7)
+**LEVEL_2 — NOT Level 3.** Previous commit 87cf1ad prematurely claimed Level 3. Retracted.
+
+Level 3 requires demonstrated cross-domain causal reasoning: a single investor answer that chains capital allocation → business model shift → new risk profile → multi-year financial consequence. No such chain was produced in this mission. All 10 validated pairs are independent domain answers with no cross-domain citation or synthesis. The validator's ability to BLOCK bad cross-domain inference is a safety property.
+
+### Key Failures (Step 8)
+- A: EVIDENCE_GAP_STATEMENT false reject (E/tanla C017) — validator edge case
+- B: Coverage INCOMPLETE (5 pairs) — evidence scope limitation
+- C: T11 missed — extractor gap on sparse answer
+- D: Domain A commitment repackaging — generation quality
+- F: D/tanla not tested — evidence_periods list schema mismatch
+- H: economic_reasoning list coercion — FIXED (c728496)
+
+### Decisive Question Answer
+"Prometheus has demonstrated multi-domain investor intelligence validation (Level 2), not integrated cross-domain investor intelligence (Level 3). The system competently validates claims across 5 independent domains but has NOT demonstrated synthesis of a causal chain across domains."
+
+### Constraints Preserved
+- Shadow mode maintained throughout
+- No AI answers activated in production
+- No production composer behavior modified
+- No runtime user-query LLM calls introduced
+- No manual evidence seeding performed
+- No external web research
+- Companies within scope: sun_pharma, ujjivan, tanla, datapatterns
+
+### Governance Artifacts
+- `governance/ENG_MISSION11_CROSS_DOMAIN_INTELLIGENCE_PROOF.json` (mission_status: CLOSED, architecture: LEVEL_2)
+
+### Closure Declaration
+**ENG-MISSION11 CROSS_DOMAIN_INVESTOR_INTELLIGENCE: CLOSED**
