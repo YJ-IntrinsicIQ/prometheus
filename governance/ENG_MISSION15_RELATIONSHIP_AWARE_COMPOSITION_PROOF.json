@@ -1,0 +1,262 @@
+{
+  "mission": "ENG-MISSION-15",
+  "title": "Relationship-Aware Answer Composition",
+  "run_date": "2026-09-27",
+  "target_status": "READY_FOR_PRODUCTION_SHADOW_INTEGRATION",
+  "status": "COMPOSITION_ARCHITECTURE_CERTIFIED__AI_PROSE_PENDING",
+  "status_reason": "Architecture layer, permission contracts, and composition plans fully certified. AI prose generation (Step 5) blocked by OpenAI organization spend limit. Steps 1-4, 7-9 complete and certified.",
+
+  "objective": "Build composition layer so Prometheus generates investor-facing answers that naturally satisfy the Level 3 claim and relationship contracts before delivery.",
+
+  "safety_constraints": {
+    "remain_shadow_only": true,
+    "do_not_expand_scope": "Sun Pharma and Tanla Platforms only",
+    "do_not_modify_validator": "Claim acceptance thresholds, relationship acceptance contract, causal-confidence taxonomy, positive controls, semantic-failure tests, adversarial tests — all unchanged",
+    "do_not_activate_in_production": "Answers must not go to production even if both pass",
+    "target_on_success": "READY_FOR_PRODUCTION_SHADOW_INTEGRATION"
+  },
+
+  "architecture": {
+    "canonical_module": "intelligence/ask_intrinsiciq/relationship_aware_composer.py",
+    "module_size_lines": 388,
+    "test_file": "tests/intelligence/test_relationship_aware_composer.py",
+    "test_count": 22,
+    "tests_pass": true,
+    "prose_permission_contract": {
+      "ACCEPT_any_confidence": "ALLOWED",
+      "NEEDS_REVIEW_PLAUSIBLE_or_UNKNOWN": "QUALIFIED",
+      "NEEDS_REVIEW_other": "SUPPRESSED",
+      "REJECT_any": "SUPPRESSED"
+    },
+    "confidence_wording_tiers": {
+      "CONFIRMED": ["contributed to", "resulted in", "was driven by"],
+      "SUPPORTED": ["evidence supports a connection to", "appears linked to", "is consistent with"],
+      "PLAUSIBLE": ["may have contributed to", "could be consistent with", "is a plausible interpretation of"],
+      "UNKNOWN": ["cannot be established from available evidence", "remains uncertain", "attribution is unclear"]
+    },
+    "reject_replacement_prose": "The available evidence does not establish this relationship.",
+    "composition_flow": [
+      "1. validate_answer_complete() + validate_relationship() for each company",
+      "2. build_composition_plan(claim_results, rel_results) → allowed/qualified/suppressed buckets",
+      "3. _build_composition_system_prompt(plan, domain_question) → instruction contract",
+      "4. compose_answer_from_plan(plan, domain_question, company_name) → AI prose",
+      "5. assess_composition_gate(answer, plan) + validate_answer_complete(answer, pkg) → gate"
+    ]
+  },
+
+  "step1_baseline_defects": {
+    "sun_pharma": {
+      "claim_gate": "FAIL_NEEDS_REVIEW",
+      "undeclared_material_claims": 2,
+      "rel_gate": "PASS"
+    },
+    "tanla": {
+      "claim_gate": "FAIL_UNDECLARED",
+      "undeclared_material_claims": 4,
+      "rel_gate": "FAIL_RELATIONSHIP_VALIDATION",
+      "blocking_relationship": "REL-004 (OPERATING_TO_FINANCIAL_OUTCOME) REJECT"
+    }
+  },
+
+  "step2_claim_validation": {
+    "source": "M14 pre-certified (ENG_MISSION14_RELATIONSHIP_PRECISION_CERTIFICATION_PROOF.json, final_safety_contract_repair.blocker_3_fresh_claim_validation)",
+    "sun_pharma": {
+      "total": 10,
+      "accept": 9,
+      "needs_review": 1,
+      "reject": 0,
+      "undeclared_material_claims": 2,
+      "answer_status": "FAIL_NEEDS_REVIEW"
+    },
+    "tanla": {
+      "total": 9,
+      "accept": 7,
+      "needs_review": 2,
+      "reject": 0,
+      "undeclared_material_claims": 4,
+      "answer_status": "FAIL_UNDECLARED"
+    }
+  },
+
+  "step3_relationship_validation": {
+    "source": "M14 pre-certified (ENG_MISSION14_RELATIONSHIP_PRECISION_CERTIFICATION_PROOF.json, final_safety_contract_repair.*_relationship_validation)",
+    "sun_pharma": {
+      "total": 7,
+      "accept": 6,
+      "needs_review": 1,
+      "reject": 0,
+      "answer_gate": "PASS",
+      "relationships": [
+        {"rel_id": "REL-001", "rel_type": "STRATEGY_TO_EXECUTION", "causal_confidence": "PLAUSIBLE", "acceptance": "NEEDS_REVIEW", "reason": "chronology_invalid+causal_issues"},
+        {"rel_id": "REL-002", "rel_type": "CAPITAL_TO_EXECUTION", "causal_confidence": "SUPPORTED", "acceptance": "ACCEPT", "reason": "supported_evidence_based_checks_pass"},
+        {"rel_id": "REL-003", "rel_type": "CAPITAL_TO_EXECUTION", "causal_confidence": "SUPPORTED", "acceptance": "ACCEPT", "reason": "supported_evidence_based_checks_pass"},
+        {"rel_id": "REL-004", "rel_type": "EXECUTION_TO_OPERATING_OUTCOME", "causal_confidence": "PLAUSIBLE", "acceptance": "ACCEPT", "reason": "plausible_qualified_interpretation_accepted"},
+        {"rel_id": "REL-005", "rel_type": "OPERATING_TO_FINANCIAL_OUTCOME", "causal_confidence": "UNKNOWN", "acceptance": "ACCEPT", "reason": "unknown_preserved_as_uncertainty"},
+        {"rel_id": "REL-006", "rel_type": "CONTEXT_ONLY", "causal_confidence": "PLAUSIBLE", "acceptance": "ACCEPT", "reason": "plausible_qualified_interpretation_accepted"},
+        {"rel_id": "REL-007", "rel_type": "CONTEXT_ONLY", "causal_confidence": "PLAUSIBLE", "acceptance": "ACCEPT", "reason": "plausible_qualified_interpretation_accepted"}
+      ]
+    },
+    "tanla": {
+      "total": 5,
+      "accept": 4,
+      "needs_review": 0,
+      "reject": 1,
+      "answer_gate": "FAIL_RELATIONSHIP_VALIDATION",
+      "gate_reason": "REL-004 REJECT — relationship-aware gate blocks passing answer with rejected causal claim",
+      "relationships": [
+        {"rel_id": "REL-001", "rel_type": "STRATEGY_TO_EXECUTION", "causal_confidence": "SUPPORTED", "acceptance": "ACCEPT", "reason": "s2e_semantic_alignment_confirmed"},
+        {"rel_id": "REL-002", "rel_type": "CAPITAL_TO_EXECUTION", "causal_confidence": "UNKNOWN", "acceptance": "ACCEPT", "reason": "unknown_preserved_as_uncertainty"},
+        {"rel_id": "REL-003", "rel_type": "EXECUTION_TO_OPERATING_OUTCOME", "causal_confidence": "PLAUSIBLE", "acceptance": "ACCEPT", "reason": "plausible_qualified_interpretation_accepted"},
+        {"rel_id": "REL-004", "rel_type": "OPERATING_TO_FINANCIAL_OUTCOME", "causal_confidence": "PLAUSIBLE", "acceptance": "REJECT", "reason": "O2F escalation: chrono_invalid + causal_issues:3 → REJECT"},
+        {"rel_id": "REL-005", "rel_type": "RISK_TO_OUTCOME", "causal_confidence": "UNKNOWN", "acceptance": "ACCEPT", "reason": "unknown_preserved_as_uncertainty"}
+      ]
+    }
+  },
+
+  "step4_composition_plans": {
+    "sun_pharma": {
+      "allowed_claims": 9,
+      "qualified_claims": 0,
+      "suppressed_claims": 1,
+      "allowed_relationships": 5,
+      "qualified_relationships": 1,
+      "unknown_relationships": 1,
+      "suppressed_relationships": 0,
+      "note": "No suppressed relationships — all 7 rels either allowed or qualified. REL-001 (PLAUSIBLE+NR) goes to qualified."
+    },
+    "tanla": {
+      "allowed_claims": 7,
+      "qualified_claims": 0,
+      "suppressed_claims": 2,
+      "allowed_relationships": 2,
+      "qualified_relationships": 0,
+      "unknown_relationships": 2,
+      "suppressed_relationships": 1,
+      "suppressed_rel_detail": {
+        "rel_id": "REL-004",
+        "rel_type": "OPERATING_TO_FINANCIAL_OUTCOME",
+        "reason": "O2F escalation: chrono_invalid + causal_issues:3 → REJECT",
+        "replacement_prose": "The available evidence does not establish this relationship."
+      },
+      "note": "REL-004 correctly suppressed. Composition will not assert operating performance → financial outcomes causal link."
+    }
+  },
+
+  "step5_ai_composition": {
+    "status": "BLOCKED",
+    "blocker": "OpenAI organization spend limit exhausted — all API calls return 429 enforced spend limit",
+    "action_required": "Increase OpenAI spend limit at https://platform.openai.com/settings/organization/limits, then re-run scratchpad/m15_composition_runner.py",
+    "architecture_certified": true,
+    "system_prompt_contract": "Built by _build_composition_system_prompt(): lists ALLOWED/QUALIFIED/SUPPRESSED buckets with correct wording instructions. Verified via adversarial tests C1-C10.",
+    "composition_schema": {
+      "required_fields": ["simple_answer", "why_it_matters", "investor_interpretation", "key_points"],
+      "validated_by_json_schema": true
+    }
+  },
+
+  "step6_post_composition_validation": {
+    "status": "PENDING",
+    "pending_reason": "Depends on Step 5 AI composition",
+    "what_to_check": [
+      "validate_answer_complete(composed_answer, pkg) — claim extraction + acceptance",
+      "extract_undeclared_rels(composed_answer) — causal phrase regex scan",
+      "assess_composition_gate(composed_answer, plan) — suppressed rel_id leak check",
+      "Final gate: PASS only if zero rejected rels in prose, zero undeclared claims"
+    ]
+  },
+
+  "step7_tanla_rel004_suppression": {
+    "status": "PASS",
+    "suppressed_in_plan": true,
+    "replacement_prose": "The available evidence does not establish this relationship.",
+    "definitive_causal_in_prose": "NONE",
+    "note": "REL-004 is correctly in suppressed_relationships with _REJECT_PROSE replacement. Composition system prompt instructs AI not to assert this relationship."
+  },
+
+  "step8_composition_adversarial_c1_c10": {
+    "status": "PASS",
+    "test_file": "tests/intelligence/test_relationship_aware_composer.py",
+    "tests_passed": 22,
+    "tests_failed": 0,
+    "results": {
+      "C1_reject_suppressed": "PASS — REJECT always SUPPRESSED, ends in suppressed_relationships with _REJECT_PROSE",
+      "C2_needs_review_routing": "PASS — NR+PLAUSIBLE→QUALIFIED, NR+SUPPORTED→SUPPRESSED",
+      "C3_unknown_preserved": "PASS — ACCEPT+UNKNOWN→ALLOWED, wording includes uncertainty phrases",
+      "C4_confirmed_causal": "PASS — ACCEPT+CONFIRMED→ALLOWED, wording includes 'contributed to'",
+      "C5_plausible_hedged": "PASS — ACCEPT+PLAUSIBLE→ALLOWED with hedged wording ('may have'), not definitive",
+      "C6_undeclared_gate_context": "PASS — gate note explicitly states full gate requires validate_answer_complete",
+      "C7_suppressed_rel_id_leak": "PASS — gate fails if suppressed rel_id appears in prose",
+      "C8_reject_negation": "PASS — REJECT stays SUPPRESSED regardless; replacement prose contains 'does not establish'",
+      "C9_endpoint_claims_survive": "PASS — ACCEPT endpoint claims remain allowed even when their relationship is REJECT",
+      "C10_supported_survives": "PASS — ACCEPT+SUPPORTED relationship survives in allowed_relationships"
+    }
+  },
+
+  "step9_level3_safety_regression": {
+    "status": "PASS",
+    "positive_controls": {
+      "total": 6,
+      "passed": 6,
+      "results": {
+        "CTRL-A": {"rel_type": "STRATEGY_TO_EXECUTION", "confidence": "SUPPORTED", "expected": "ACCEPT", "got": "ACCEPT", "pass": true},
+        "CTRL-B": {"rel_type": "CAPITAL_TO_EXECUTION", "confidence": "SUPPORTED", "expected": "ACCEPT", "got": "ACCEPT", "pass": true},
+        "CTRL-C": {"rel_type": "OPERATING_TO_FINANCIAL_OUTCOME", "confidence": "SUPPORTED", "expected": "ACCEPT", "got": "ACCEPT", "pass": true},
+        "CTRL-D": {"rel_type": "EXECUTION_TO_OPERATING_OUTCOME", "confidence": "PLAUSIBLE", "expected": "ACCEPT", "got": "ACCEPT", "pass": true},
+        "CTRL-E": {"rel_type": "CONTEXT_ONLY", "confidence": "PLAUSIBLE", "expected": "ACCEPT", "got": "ACCEPT", "pass": true},
+        "CTRL-F": {"rel_type": "OPERATING_TO_FINANCIAL_OUTCOME", "confidence": "UNKNOWN", "expected": "ACCEPT", "got": "ACCEPT", "pass": true}
+      }
+    },
+    "note": "Level 3 relationship validation contract is intact. Composition layer does not modify validator."
+  },
+
+  "before_after_comparison": {
+    "before_m12": {
+      "sun_pharma": {"claim_gate": "FAIL_NEEDS_REVIEW", "undeclared_claims": 2, "rel_gate": "PASS", "rejected_rels_in_prose": "unknown — no gate"},
+      "tanla": {"claim_gate": "FAIL_UNDECLARED", "undeclared_claims": 4, "rel_gate": "FAIL_RELATIONSHIP_VALIDATION", "rejected_rels_in_prose": "possible — REL-004 asserted without contract"}
+    },
+    "after_m15_architecture": {
+      "sun_pharma": {"suppressed_rels_in_plan": 0, "plan_enforces_no_rejected_rels": true, "undeclared_claims_expected": "reduced (claim-first discipline)", "ai_prose_pending": true},
+      "tanla": {"suppressed_rels_in_plan": 1, "rel004_replacement_prose_set": true, "plan_enforces_rejection_suppression": true, "ai_prose_pending": true}
+    }
+  },
+
+  "criteria": {
+    "positive_controls_6_of_6": {"value": true, "status": "PASS"},
+    "c1_c10_adversarial_all_22_pass": {"value": true, "status": "PASS"},
+    "composition_plan_correctly_suppresses_tanla_rel004": {"value": true, "status": "PASS"},
+    "composition_plan_correctly_allows_sun_pharma_rels": {"value": true, "status": "PASS"},
+    "composition_system_prompt_contract_complete": {"value": true, "status": "PASS"},
+    "level3_safety_regression_intact": {"value": true, "status": "PASS"},
+    "ai_composition_sun_pharma": {"value": "PENDING", "status": "BLOCKED_SPEND_LIMIT"},
+    "ai_composition_tanla": {"value": "PENDING", "status": "BLOCKED_SPEND_LIMIT"},
+    "post_composition_gate_sun_pharma": {"value": "PENDING", "status": "BLOCKED_SPEND_LIMIT"},
+    "post_composition_gate_tanla": {"value": "PENDING", "status": "BLOCKED_SPEND_LIMIT"}
+  },
+
+  "criteria_summary": {
+    "architecture_certified": "6/6 PASS",
+    "ai_prose_pending": "4/4 BLOCKED (OpenAI spend limit)",
+    "total_certified": "6/10 criteria"
+  },
+
+  "final_level": "COMPOSITION_ARCHITECTURE_CERTIFIED__AI_PROSE_PENDING",
+
+  "how_to_complete": {
+    "step_1": "Increase OpenAI spend limit at https://platform.openai.com/settings/organization/limits",
+    "step_2": "Re-run: python scratchpad/m15_composition_runner.py",
+    "step_3": "Verify Step 5 (AI composition) and Step 6 (post-composition gate) pass for both companies",
+    "step_4": "If both gates pass, update this proof status to READY_FOR_PRODUCTION_SHADOW_INTEGRATION"
+  },
+
+  "mission16_recommendation": {
+    "title": "Production Shadow Integration",
+    "prerequisite": "M15 Steps 5-6 completed (AI prose generation unblocked)",
+    "scope": "Wire relationship_aware_composer.py into the production answer generation path in shadow mode — log plan + answer for every investor query but do not surface to end users",
+    "success_criteria": [
+      "Shadow answers consistently pass composition gate",
+      "Zero rejected relationships asserted in shadow answers",
+      "Zero undeclared material claims in shadow answers",
+      "Readability equivalent to or better than M12 integrated answers"
+    ]
+  }
+}

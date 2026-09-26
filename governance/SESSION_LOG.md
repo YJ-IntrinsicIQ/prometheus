@@ -1,5 +1,35 @@
 # Session Log
 
+## 2026-09-27 — ENG-MISSION15: Relationship-Aware Answer Composition (ARCHITECTURE CERTIFIED)
+
+**Objective:** Build composition layer so Prometheus generates investor-facing answers that naturally satisfy the Level 3 claim and relationship contracts before delivery.
+
+**Architecture built:**
+- `intelligence/ask_intrinsiciq/relationship_aware_composer.py` — canonical composition module (388 lines)
+- `tests/intelligence/test_relationship_aware_composer.py` — 22 adversarial tests (C1-C10), all pass
+- `scratchpad/m15_composition_runner.py` — full pipeline runner
+
+**Prose permission contract:**
+- ACCEPT → ALLOWED; NEEDS_REVIEW+PLAUSIBLE/UNKNOWN → QUALIFIED; REJECT/other NR → SUPPRESSED
+- _REJECT_PROSE replacement: "The available evidence does not establish this relationship."
+- Confidence wording tiers: CONFIRMED (causal), SUPPORTED (hedged), PLAUSIBLE (tentative), UNKNOWN (uncertainty)
+
+**Composition plans (from M14 pre-certified results):**
+- Sun Pharma: 9 allowed claims, 5A/1Q/1U/0S relationships, no suppressed rels
+- Tanla: 7 allowed claims, 2A/0Q/2U/1S relationships, REL-004 correctly suppressed
+
+**Tanla REL-004 suppression:** Correctly enters suppressed_relationships in composition plan; AI system prompt instructs no assertion of this relationship; replacement prose set.
+
+**Level 3 safety regression:** Positive controls 6/6 PASS. Validator contract unchanged.
+**Adversarial C1-C10:** 22/22 PASS (deterministic, no AI calls).
+
+**Blocker for full certification:** OpenAI organization spend limit exhausted. Steps 5-6 (AI composition + post-composition validation) require API access. Architecture layer certified; prose generation pending.
+
+**Status:** COMPOSITION_ARCHITECTURE_CERTIFIED__AI_PROSE_PENDING
+**Proof:** governance/ENG_MISSION15_RELATIONSHIP_AWARE_COMPOSITION_PROOF.json
+
+---
+
 ## 2026-09-27 — ENG-MISSION14: Final Safety Contract Repair (LEVEL_3 re-certified)
 
 **Objective:** Resolve 3 certification blockers discovered post-M14-revalidation.
