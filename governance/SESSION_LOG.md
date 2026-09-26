@@ -11029,3 +11029,55 @@ Level 3 requires demonstrated cross-domain causal reasoning: a single investor a
 
 ### Closure Declaration
 **ENG-MISSION11 CROSS_DOMAIN_INVESTOR_INTELLIGENCE: CLOSED**
+
+---
+
+## ENG-MISSION-12: Integrated Investment Intelligence — Level 3 Proof
+**Date:** 2026-09-26  
+**Branch:** development  
+**Companies:** Sun Pharma, Tanla (shadow mode only)
+
+### M11 Blocker Repairs
+- **A (EGS false reject):** FIXED — `elif` branch in `claim_validator.py` routes EVIDENCE_GAP_STATEMENT claims to NEEDS_REVIEW, skipping AI reviewer
+- **B (Tanla schema defect):** RESOLVED — integrated packages built from scratch; evidence_periods field not used
+- **C (Domain A evidence quality):** IMPROVED — business_model_by_year summaries from CIM+PCIM promoted to dedicated section
+
+### Integrated Evidence Packages
+| Company | Total Items | BM | Strategy | Capital | Execution | Outcomes | Financial | Risks | Gaps |
+|---------|------------|-----|----------|---------|-----------|----------|-----------|-------|------|
+| Sun Pharma | 87 | 4 | 20 | 16 | 25 | 0 | 4 | 15 | 3 |
+| Tanla | 101 | 4 | 30 | 18 | 26 | 2 | 3 | 15 | 3 |
+
+### Claim Validation
+| Company | Total | Accepted | NR | Rejected | False Accepts |
+|---------|-------|----------|----|----------|---------------|
+| Sun Pharma | 10 | 6 | 3 | 1 | 0 |
+| Tanla | 9 | 5 | 3 | 1 | 0 |
+
+### Relationship Validation
+- Sun Pharma: 7/7 ACCEPT | 0 CONFIRMED (LLM self-applied causal discipline)
+- Tanla: 5/5 ACCEPT | 0 CONFIRMED
+- LLM used: PLAUSIBLE×6, SUPPORTED×3, UNKNOWN×3 across both companies
+
+### Cross-Domain Adversarial: 9/9 correct (8/9 at auto-accept level; 1 correctly routes to NEEDS_REVIEW)
+### Temporal/Causal Integrity: 3/10 violations detected (30%) — deterministic validator catches structural violations only
+
+### Level 3 Criteria Assessment
+| Criterion | Result |
+|-----------|--------|
+| Individual claims evidence-supported | ✓ |
+| Cross-domain relationships independently validated | ✓ |
+| Unsupported causal claims rejected | ✓ |
+| Chronology preserved | ✗ — 7/10 semantic violations missed |
+| Uncertainty explicit | ✓ — 0 CONFIRMED rels, gaps declared |
+| Correct PLAUSIBLE interpretations survive | ✗ — route to NEEDS_REVIEW, not ACCEPT |
+| Integration improves investor understanding | ✓ |
+
+### Final Architecture Level: **LEVEL_2_5**
+Integrated cross-domain narrative with explicit causal confidence taxonomy. Two gaps remain for Level 3: (1) AI reviewer on relationships for semantic causal audit; (2) PLAUSIBLE auto-accept path.
+
+### Governance Artifact
+`governance/ENG_MISSION12_INTEGRATED_INTELLIGENCE_PROOF.json`
+
+### Commit
+ENG-MISSION12: pending

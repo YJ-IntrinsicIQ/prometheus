@@ -568,6 +568,20 @@ def validate_claim_with_ai(
             "scope_issues": [],
             "qualifications_missing": [],
         }
+    # EVIDENCE_GAP_STATEMENT: the AI reviewer is designed to verify factual claims.
+    # It cannot reliably validate a claim about absent evidence (it will often
+    # "contradict" a legitimate gap statement by citing something tangentially related).
+    # Route passing EGS claims directly to NEEDS_REVIEW — not auto-ACCEPT, not AI review.
+    elif claim.get("claim_type") == "EVIDENCE_GAP_STATEMENT":
+        ai_result = {
+            "verdict": "SKIPPED",
+            "confidence": "N/A",
+            "reason": "AI review skipped — EVIDENCE_GAP_STATEMENT routes to human review",
+            "scope_issues": [],
+            "qualifications_missing": [],
+        }
+        final_verdict, acceptance = det["verdict"], NEEDS_REVIEW
+
     else:
         cited_items = [
             evidence_index[ref]
