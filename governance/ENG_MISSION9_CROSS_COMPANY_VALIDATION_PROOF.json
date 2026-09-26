@@ -132,11 +132,13 @@
       "tested_companies": ["tanla", "ujjivan", "data_patterns"]
     },
     "geography_regex": {
-      "risk": "MEDIUM",
-      "finding": "CONFIRMED OVERFITTING RISK: _GEOGRAPHY_RE includes 'india|indian'. For Indian companies (Ujjivan, Tanla, Data Patterns), a legitimate mention of 'India' or 'Indian' in an answer would trigger a false narrative violation if 'india' is not in the evidence corpus (which it is not, as evidence items describe capabilities, not geography). Current AI answers do not mention India, so no false positive fired in practice. However, the risk is structural.",
-      "recommendation": "Exclude 'india|indian' from _GEOGRAPHY_RE for Indian companies, OR add evidence corpus construction to include company identity/business context that would naturally include home market geography.",
+      "risk": "REPAIRED",
+      "finding": "Risk was structural: _GEOGRAPHY_RE includes 'india|indian'. Ujjivan and Data Patterns had 'india' absent from evidence corpus. Any AI answer mentioning India/Indian would have fired a false geography violation. Tanla had 'india' in corpus but not 'indian'. None of the current AI answers mentioned India, so no false positive fired in practice.",
+      "repair": "Generic solution added: package_constraints.home_market_geographies list in each evidence package. validate_narrative_fields() skips geography violation if geo token is in home_market_geographies. Tanla, Ujjivan, Data Patterns all updated with ['india', 'indian']. Validator reads this from package — no hardcoded company logic in the validator itself. Backwards-compatible: old packages without this field default to empty set.",
+      "regression_tests": "14 tests in tests/intelligence/test_eng_mission9_geography.py — all pass. Tests cover: foreign geo fires for all 3 companies, home-market India allowed for Ujjivan/Data Patterns, Sun Pharma Japan allowed (in corpus), Japan fires for non-pharma companies, clean baseline no violations, dynamic home_market_geo field honoured.",
       "false_positive_confirmed": false,
-      "risk_confirmed_by_test": true
+      "risk_confirmed_by_test": true,
+      "repair_status": "CLOSED"
     },
     "value_hierarchy_phrases": {
       "risk": "NONE",
@@ -258,6 +260,21 @@
       "HC-C": "CONFIRMED — deterministic geography check fires on Germany/Japan for all 3 companies (FAIL_NEEDS_REVIEW).",
       "HC-D": "CONFIRMED — FAIL_NEEDS_REVIEW for Tanla/Ujjivan (AI reviewer detects embedded quant assertions); Data Patterns: FAIL_INCOMPLETE.",
       "HC-E": "CONFIRMED — deterministic geography check fires on ILUMYA/Japan for all 3 companies (FAIL_NEEDS_REVIEW)."
+    },
+    "hca_per_claim_deterministic_proof": {
+      "audit_script": "scratchpad/run_m9_tanla_hcabd_audit.py",
+      "run_id": "b7p31kq39",
+      "elapsed_s": 40.1,
+      "HC-INJECT-001": {
+        "claim_text": "Management committed to ₹10,000 crore revenue by FY26.",
+        "evidence_refs": [],
+        "deterministic_verdict": "UNSUPPORTED",
+        "ai_verdict": "SKIPPED",
+        "final_acceptance_status": "REJECT",
+        "detection_layer": "DETERMINISTIC",
+        "mechanism": "empty evidence_refs → UNSUPPORTED verdict → REJECT (AI call skipped per _determine_acceptance contract)"
+      },
+      "note": "HC-A detection is PURELY DETERMINISTIC — no AI call is made when det=UNSUPPORTED. HC-B and HC-D confirmed via b299uwsr2 valid run (240-270s per case). b7p31kq39 HC-B/D had API rate-limiting (35-40s elapsed, REVIEW_ERROR on all 14 other claims) — does not affect HC-A proof."
     }
   },
 

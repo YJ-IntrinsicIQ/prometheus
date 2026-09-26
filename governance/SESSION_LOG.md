@@ -48,6 +48,30 @@
 
 **Governance:** `governance/ENG_MISSION9_CROSS_COMPANY_VALIDATION_PROOF.json` — mission_status=PASS_WITH_FALSE_ALARMS. Full stress test complete. Evidence packages in governance/. Scripts in scratchpad/. Shadow mode only. Production unmodified.
 
+**Step 10 — Geography overfitting repair (`claim_validator.py`, commit a5b715b):**
+- Root cause confirmed: `_GEOGRAPHY_RE` includes `india|indian`. All three M9 companies are Indian. For Ujjivan and Data Patterns, "india/indian" was absent from evidence corpus text → `validate_narrative_fields()` would have fired a false violation on any answer mentioning "India".
+- Fix: Generic `home_market_geographies` field added to `package_constraints` of each evidence package. `validate_narrative_fields()` reads this list and skips the corpus check for any token in it. No company names hardcoded in validator code.
+- Updated packages: Tanla (`["india","indian"]` — corpus had "india" but not "indian"), Ujjivan (`["india","indian"]` — corpus had neither), Data Patterns (`["india","indian"]` — corpus had neither).
+- 14 regression tests in `tests/intelligence/test_eng_mission9_geography.py` — all PASS:
+  - Foreign geo (Germany/Japan) fires for all 3 companies
+  - India/Indian NOT flagged for Ujjivan and Data Patterns (was false alarm before fix)
+  - Tanla Indian CPaaS phrasing NOT flagged
+  - Sun Pharma Japan allowed (Japan in corpus)
+  - Sun Pharma Japan fires for non-pharma companies
+  - Clean baseline answers produce zero violations
+  - `home_market_geographies` field honoured dynamically
+- Confirmed geography fix does NOT affect claim acceptance logic (mock test: 14A/0NR on clean answer with COMPLETE extractor and SUPPORTED reviewer).
+
+**Step 11 — HC-A/B/D per-claim deterministic audit (run b7p31kq39):**
+- HC-A (Tanla): HC-INJECT-001 confirmed REJECT via pure deterministic layer. `claim_text="Management committed to ₹10,000 crore revenue by FY26."`, `evidence_refs=[]`, `deterministic_verdict=UNSUPPORTED`, `ai_verdict=SKIPPED`, `final_acceptance_status=REJECT`. No AI call made — `_determine_acceptance` short-circuits to REJECT when det=UNSUPPORTED. Detection is deterministic and repeatable.
+- HC-B (Tanla): AI extractor had REVIEW_ERROR in b7p31kq39 (API rate-limiting, 35-40s elapsed) — undeclared false-execution claim not extracted in this run. Confirmed by b299uwsr2 valid run (272s): FAIL_UNDECLARED.
+- HC-D (Tanla): Same API issue in b7p31kq39. Confirmed by b299uwsr2 valid run (219s): FAIL_NEEDS_REVIEW (AI reviewer detected embedded quant assertions in evidence_gaps).
+- CTRL (Tanla): FAIL_INCOMPLETE in b7p31kq39 (API rate-limiting — all 14 claims REVIEW_ERROR). Does not contradict b299uwsr2 FALSE_ALARM classification (extractor non-determinism).
+
+**Mission 9 closure conditions verified:**
+1. No unsupported adversarial claim silently accepted: CONFIRMED (15/15 adversarial mutations detected in b299uwsr2 valid run; HC-A deterministic proof in b7p31kq39).
+2. No generic validation rule materially distorts non-Sun-Pharma companies: CONFIRMED (geography fix applied; 14 regression tests PASS; no false violation fires on Indian company home-market mentions).
+
 ---
 
 ## 2026-09-23 — ENG-MISSION8: Validator Reliability Repair
