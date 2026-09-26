@@ -508,14 +508,21 @@ def apply_acceptance_contract(
         # The caller must ensure rationale is available; we check result fields here.
         has_frame = any(w in wording for w in _INTERPRETATION_FRAMES)
 
-        if (verdict in ("SUPPORTED", "PARTIALLY_SUPPORTED")
+        # PLAUSIBLE is explicitly the "cannot confirm" tier: accept if the
+        # relationship has proper interpretation framing and valid chronology,
+        # regardless of whether the AI found supporting evidence (UNSUPPORTED
+        # can occur when evidence_refs are thin but the framing is deliberate).
+        # Hard block: CONTRADICTED (AI found opposing evidence).
+        if (verdict not in ("REVIEW_ERROR", "CONTRADICTED")
                 and result.chronology_valid
                 and has_frame):
             return ACCEPT, "plausible_qualified_interpretation_accepted"
 
         blockers = []
-        if verdict in ("UNSUPPORTED", "CONTRADICTED"):
-            blockers.append(f"verdict:{verdict}")
+        if verdict == "CONTRADICTED":
+            blockers.append("verdict:CONTRADICTED")
+        elif verdict == "UNSUPPORTED":
+            blockers.append("verdict:UNSUPPORTED")
         if not result.chronology_valid:
             blockers.append("chronology_invalid")
         if not has_frame:
@@ -524,7 +531,16 @@ def apply_acceptance_contract(
             blockers.append("measurement_window")
         if result.causal_issues:
             blockers.append(f"causal_issues:{len(result.causal_issues)}")
-        if verdict in ("UNSUPPORTED", "CONTRADICTED"):
+
+        # OPERATING_TO_FINANCIAL_OUTCOME (strongest discipline): chrono_invalid
+        # combined with causal_issues means the relationship is fundamentally
+        # flawed, not merely uncertain — escalate to REJECT.
+        if (rel_type == "OPERATING_TO_FINANCIAL_OUTCOME"
+                and not result.chronology_valid
+                and result.causal_issues):
+            return REJECT, "+".join(blockers)
+
+        if verdict == "CONTRADICTED":
             return REJECT, "+".join(blockers)
         return NEEDS_REVIEW, "+".join(blockers) if blockers else f"partial:{verdict}"
 

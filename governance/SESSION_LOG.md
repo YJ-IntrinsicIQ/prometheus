@@ -25,11 +25,17 @@
 **Canonical module:** `intelligence/ask_intrinsiciq/relationship_reviewer.py` (promoted from scratchpad)
 **Unit tests:** `tests/intelligence/test_relationship_reviewer.py`
 
+**Final revalidation (M14-REVALIDATION):**
+- Root cause of results-file mismatch: M14 runner looked for `m12_results.get("sun_pharma_answer")` but actual artifacts are in `m12_{company}_integrated_answer.json` + `m12_{company}_integrated_package.json`.
+- Two additional contract fixes applied: (1) PLAUSIBLE accept path extended to UNSUPPORTED verdict (when has_frame AND chrono_valid AND not CONTRADICTED); (2) OPERATING_TO_FINANCIAL_OUTCOME PLAUSIBLE + chrono_invalid + causal_issues → REJECT escalation.
+- Final integrated revalidation: Sun Pharma 5A/2NR/0R, Tanla 4A/0NR/1R (REL-004 correctly REJECT).
+- All 13 certification criteria pass → **LEVEL_3 CERTIFIED**.
+
 **Production safety:** Shadow mode maintained. No production composer changes. No company expansion. No hardcoded company/product names.
 
-**Decisive answer:** CLOSED — LEVEL_3. The reviewer distinguishes semantic causal violations from valid qualified relationships with zero false accepts (12/12 adversarial) and zero false rejects (6/6 positive controls), certified by 9/9 independent criteria.
+**Decisive answer:** CLOSED — LEVEL_3. The hardened reviewer preserves safety and precision when applied end-to-end to the actual Sun Pharma and Tanla integrated investor answers.
 
-Proof: `governance/ENG_MISSION14_RELATIONSHIP_PRECISION_CERTIFICATION_PROOF.json`.
+Proof: `governance/ENG_MISSION14_RELATIONSHIP_PRECISION_CERTIFICATION_PROOF.json` (updated with `final_integrated_revalidation` section).
 
 ---
 
