@@ -45,6 +45,23 @@
 
 **Governance:** `governance/ENG_MISSION10_EVIDENCE_INTELLIGENCE_HARDENING_PROOF.json` — acceptance_met=true. Shadow mode enforced. Production unmodified.
 
+**Final closure audit (same session — additional steps):**
+
+**Step 1 (verified from disk):** Ujjivan: 51 canonical / 60 quarantined / 45 material promises / 7 accountability promises. Data Patterns: 33 canonical / 101 quarantined / 21 material promises / 5 accountability promises. Counts confirmed from actual artifacts.
+
+**Step 5 — Evidence precision audit:**
+- Ujjivan (51 canonical): 51/51 genuine. All 7 accountability promises genuine — specific future-oriented actions (NRI digital framework, mobile app, fintech alliances, insurance launches, MSE products, RAC expansion). **Precision: 100%.**
+- Data Patterns (33 canonical): 29/33 genuine. 3 clear false positives (item 8: Ministry target/external actor; item 19: historical retrospective; item 33: external context). 1 ineligible type (item 17: `expectation`). 2 of 5 accountability promises are false positives (PT-0017 historical achievement, PT-0013 historical retrospective). **Canonical precision: 88%. Accountability precision: 60%.**
+- Finding: all Data Patterns defects are pre-existing Stage C extraction issues (management_summary_generator.py admitted external-actor and historical statements). NOT caused by Mission 10 classifier change.
+
+**Step 7 — Classifier regression: PASS.** 21/21 new verb forms recognized. 10/10 non-commitments excluded. Sun Pharma/Tanla/Ujjivan/DataPatterns all 15/15 canonical commitments still eligible (100%).
+
+**Steps 2, 3, 6 BLOCKED:** OpenAI credits exhausted (`credit_balance_exhausted`). Anthropic API key invalid (401). AI answer generation, full validation chain, live adversarial safety tests cannot run until API restored. Added `knowledge/ai/anthropic.py` AnthropicProvider as fallback. Scripts ready: `scratchpad/m10_generate_and_validate.py`, `scratchpad/run_m9_stress_test.py`.
+
+**Mission status: PARTIAL_CLOSURE_PENDING_AI_VALIDATION.** Deterministic steps (1, 4, 5, 7, 8) all pass. AI steps (2, 3, 6) blocked by API credits.
+
+**Open items logged in proof:** M10-OPEN-1 (complete AI validation), M10-OPEN-2 (Data Patterns Stage C extraction precision — items 8/19/33), M10-OPEN-3 (VC false positive accountability promises PT-0017/PT-0013).
+
 ---
 
 ## 2026-09-26 — ENG-MISSION9: Cross-Company Generalization Validation
