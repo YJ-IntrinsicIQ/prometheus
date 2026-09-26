@@ -1,0 +1,392 @@
+{
+  "schema_version": "evidence_package.v1",
+  "package_id": "EP-UJJIVAN-Q-MGMT-PROMISE-001",
+  "question_id": "what-has-management-promised",
+  "company_slug": "ujjivan",
+  "generated_at": "2026-09-26T06:23:56.637045Z",
+  "package_purpose": "Read-only structured evidence for AI-assisted reasoning on 'What has management promised?' for ujjivan. Mission 9 generalization test. No new inference.",
+  "canonical_source_fingerprints": {
+    "gold_promise_tracker": "9049c0479c7dedd3",
+    "management_commitments": "357f92131f2cd85e",
+    "management_progression": "dc7a3e5d443167cd",
+    "company_model": "8dee849419644d98"
+  },
+  "sections": {
+    "verifiable_commitments": [],
+    "strategic_intents": [],
+    "observable_execution_evidence": [
+      {
+        "item_id": "OE-001",
+        "source_item_id": "MP-0067-industry_outlook_future_outlook_fintech_",
+        "evidence_type": "MANAGEMENT_PROGRESSION",
+        "semantic_role": "EXECUTION_CONTEXT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "theme": "Emphasises digital growth as central to transformation with planned enhancements across self-...",
+        "current_status": "announced",
+        "management_credibility_signal": "UNABLE_TO_VERIFY",
+        "investor_implication": {
+          "conclusion": "Emphasises digital growth as central to transformation with planned enhancements across self-... is visible, but outcome evidence remains incomplete.",
+          "economic_mechanism": "Investor conviction should move only when management action creates observable operating capability, utilization, customer adoption, cash generation, or returns.",
+          "thesis_impact": "unresolved",
+          "confidence": {
+            "level": "medium",
+            "basis": [
+              "deterministic progression assembly"
+            ],
+            "limitations": []
+          },
+          "what_to_watch": [
+            "Later operating outcome evidence",
+            "Financial payoff or cash conversion",
+            "Whether management updates remain consistent with the original claim"
+          ]
+        },
+        "linked_company_model_ids": [
+          "retail_credit_products",
+          "msme_working_capital_loans",
+          "deposit_funding_franchise",
+          "branch_and_digital_distribution",
+          "lending_interest_spread",
+          "fees_and_commissions"
+        ],
+        "source_ref": {
+          "source_name": "management_progression",
+          "path": "progression_items"
+        },
+        "limitations": [
+          "Progression items reflect management's own disclosed milestones — not independently verified outcomes.",
+          "current_status reflects the last updated state; does not guarantee delivery."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management disclosed this execution milestone"
+          ],
+          "must_not_assert": [
+            "This constitutes an independently verified delivered outcome"
+          ]
+        }
+      },
+      {
+        "item_id": "OE-002",
+        "source_item_id": "MP-0076-initiatives_digital_products_lending_seg",
+        "evidence_type": "MANAGEMENT_PROGRESSION",
+        "semantic_role": "EXECUTION_CONTEXT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "theme": "Continued focus on the Micro, Small, and Medium Enterprises (MSME) sector with substantial pr...",
+        "current_status": "announced",
+        "management_credibility_signal": "UNABLE_TO_VERIFY",
+        "investor_implication": {
+          "conclusion": "Continued focus on the Micro, Small, and Medium Enterprises (MSME) sector with substantial pr... is visible, but outcome evidence remains incomplete.",
+          "economic_mechanism": "Investor conviction should move only when management action creates observable operating capability, utilization, customer adoption, cash generation, or returns.",
+          "thesis_impact": "unresolved",
+          "confidence": {
+            "level": "medium",
+            "basis": [
+              "deterministic progression assembly"
+            ],
+            "limitations": []
+          },
+          "what_to_watch": [
+            "Later operating outcome evidence",
+            "Financial payoff or cash conversion",
+            "Whether management updates remain consistent with the original claim"
+          ]
+        },
+        "linked_company_model_ids": [
+          "retail_credit_products",
+          "msme_working_capital_loans",
+          "deposit_funding_franchise",
+          "branch_and_digital_distribution",
+          "lending_interest_spread",
+          "fees_and_commissions"
+        ],
+        "source_ref": {
+          "source_name": "management_progression",
+          "path": "progression_items"
+        },
+        "limitations": [
+          "Progression items reflect management's own disclosed milestones — not independently verified outcomes.",
+          "current_status reflects the last updated state; does not guarantee delivery."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management disclosed this execution milestone"
+          ],
+          "must_not_assert": [
+            "This constitutes an independently verified delivered outcome"
+          ]
+        }
+      },
+      {
+        "item_id": "OE-003",
+        "source_item_id": "MP-0080-innovation_technology",
+        "evidence_type": "MANAGEMENT_PROGRESSION",
+        "semantic_role": "EXECUTION_CONTEXT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "theme": "Emphasis on utilising digital platforms and multi-channel distribution to acquire customers,...",
+        "current_status": "announced",
+        "management_credibility_signal": "UNABLE_TO_VERIFY",
+        "investor_implication": {
+          "conclusion": "Emphasis on utilising digital platforms and multi-channel distribution to acquire customers,... is visible, but outcome evidence remains incomplete.",
+          "economic_mechanism": "Investor conviction should move only when management action creates observable operating capability, utilization, customer adoption, cash generation, or returns.",
+          "thesis_impact": "unresolved",
+          "confidence": {
+            "level": "medium",
+            "basis": [
+              "deterministic progression assembly"
+            ],
+            "limitations": []
+          },
+          "what_to_watch": [
+            "Later operating outcome evidence",
+            "Financial payoff or cash conversion",
+            "Whether management updates remain consistent with the original claim"
+          ]
+        },
+        "linked_company_model_ids": [
+          "retail_credit_products",
+          "msme_working_capital_loans",
+          "deposit_funding_franchise",
+          "branch_and_digital_distribution",
+          "lending_interest_spread",
+          "fees_and_commissions"
+        ],
+        "source_ref": {
+          "source_name": "management_progression",
+          "path": "progression_items"
+        },
+        "limitations": [
+          "Progression items reflect management's own disclosed milestones — not independently verified outcomes.",
+          "current_status reflects the last updated state; does not guarantee delivery."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management disclosed this execution milestone"
+          ],
+          "must_not_assert": [
+            "This constitutes an independently verified delivered outcome"
+          ]
+        }
+      },
+      {
+        "item_id": "OE-004",
+        "source_item_id": "MP-0035-digital_account_opening_resident_indians",
+        "evidence_type": "MANAGEMENT_PROGRESSION",
+        "semantic_role": "EXECUTION_CONTEXT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "theme": "End-to-end digital FD/SB account opening for resident Indians; tablet-based customer acquisit...",
+        "current_status": "delivered",
+        "management_credibility_signal": "DELIVERED",
+        "investor_implication": {
+          "conclusion": "End-to-end digital FD/SB account opening for resident Indians; tablet-based customer acquisit... shows evidence of follow-through, but economic value still depends on later utilization or returns.",
+          "economic_mechanism": "Investor conviction should move only when management action creates observable operating capability, utilization, customer adoption, cash generation, or returns.",
+          "thesis_impact": "neutral",
+          "confidence": {
+            "level": "medium",
+            "basis": [
+              "deterministic progression assembly"
+            ],
+            "limitations": []
+          },
+          "what_to_watch": [
+            "Later operating outcome evidence",
+            "Financial payoff or cash conversion",
+            "Whether management updates remain consistent with the original claim"
+          ]
+        },
+        "linked_company_model_ids": [
+          "retail_credit_products",
+          "msme_working_capital_loans",
+          "deposit_funding_franchise",
+          "branch_and_digital_distribution"
+        ],
+        "source_ref": {
+          "source_name": "management_progression",
+          "path": "progression_items"
+        },
+        "limitations": [
+          "Progression items reflect management's own disclosed milestones — not independently verified outcomes.",
+          "current_status reflects the last updated state; does not guarantee delivery."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management disclosed this execution milestone"
+          ],
+          "must_not_assert": [
+            "This constitutes an independently verified delivered outcome"
+          ]
+        }
+      },
+      {
+        "item_id": "OE-005",
+        "source_item_id": "MP-0077-innovation",
+        "evidence_type": "MANAGEMENT_PROGRESSION",
+        "semantic_role": "EXECUTION_CONTEXT",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "theme": "Rolled out self-service loan applications (Hello Ujjivan), scaled WhatsApp banking, deployed...",
+        "current_status": "announced",
+        "management_credibility_signal": "UNABLE_TO_VERIFY",
+        "investor_implication": {
+          "conclusion": "Rolled out self-service loan applications (Hello Ujjivan), scaled WhatsApp banking, deployed... is visible, but outcome evidence remains incomplete.",
+          "economic_mechanism": "Investor conviction should move only when management action creates observable operating capability, utilization, customer adoption, cash generation, or returns.",
+          "thesis_impact": "unresolved",
+          "confidence": {
+            "level": "medium",
+            "basis": [
+              "deterministic progression assembly"
+            ],
+            "limitations": []
+          },
+          "what_to_watch": [
+            "Later operating outcome evidence",
+            "Financial payoff or cash conversion",
+            "Whether management updates remain consistent with the original claim"
+          ]
+        },
+        "linked_company_model_ids": [
+          "retail_credit_products",
+          "msme_working_capital_loans",
+          "deposit_funding_franchise",
+          "branch_and_digital_distribution",
+          "lending_interest_spread",
+          "fees_and_commissions"
+        ],
+        "source_ref": {
+          "source_name": "management_progression",
+          "path": "progression_items"
+        },
+        "limitations": [
+          "Progression items reflect management's own disclosed milestones — not independently verified outcomes.",
+          "current_status reflects the last updated state; does not guarantee delivery."
+        ],
+        "ai_reasoning_guidance": {
+          "may_assert": [
+            "Management disclosed this execution milestone"
+          ],
+          "must_not_assert": [
+            "This constitutes an independently verified delivered outcome"
+          ]
+        }
+      }
+    ],
+    "business_model_context": [
+      {
+        "item_id": "BC-CM-001",
+        "evidence_type": "BUSINESS_MODEL_CONTEXT",
+        "semantic_role": "COMMERCIAL_FRAME",
+        "source_authority": "COMPANY_MODEL",
+        "company_slug": "ujjivan",
+        "field": "how_revenue_happens",
+        "content": "Interest income and spread from retail, microfinance, secured, vehicle, MSME or working-capital lending; Fee and commission income from insurance, dealer, distribution or lending-related services; Treasury or investment returns from liquidity, securities and money-market operations",
+        "source_ref": {
+          "source_name": "company_model",
+          "path": "current_business_model.how_revenue_happens"
+        },
+        "limitations": [
+          "Describes the current model; does not attribute specific outcomes to commitments."
+        ]
+      },
+      {
+        "item_id": "BC-CM-002",
+        "evidence_type": "BUSINESS_MODEL_CONTEXT",
+        "semantic_role": "VALUE_CREATION_MECHANISM",
+        "source_authority": "COMPANY_MODEL",
+        "company_slug": "ujjivan",
+        "field": "economic_mechanism",
+        "content": "Provide credit and working-capital solutions to under-penetrated rural, semi-urban and emerging urban segments via branch/BC networks, dealer partnerships and digital channels; improve customer lifetime value by migrating group-loan customers to higher-ticket individual loans and expanding product suites (MSME, vehicle finance, secured loans).",
+        "source_ref": {
+          "source_name": "company_model",
+          "path": "current_business_model.economic_mechanism"
+        },
+        "limitations": [
+          "Describes the current model; does not attribute specific outcomes to commitments."
+        ]
+      }
+    ],
+    "adverse_evidence": [
+      {
+        "item_id": "AE-GOLD-001",
+        "evidence_type": "ADVERSE_EVIDENCE",
+        "semantic_role": "ACCOUNTABILITY_COVERAGE",
+        "source_authority": "CANONICAL",
+        "company_slug": "ujjivan",
+        "description": "0 material promises tracked; all have outcome_status=UNVERIFIED. status_breakdown={\"achieved\": 0, \"partially_achieved\": 0, \"delayed\": 0, \"missed\": 0, \"abandoned\": 0, \"unverified\": 0}.",
+        "raw_summary": {
+          "company_slug": "ujjivan",
+          "tracked_promises": 0,
+          "trivial_excluded": 1,
+          "status_breakdown": {
+            "achieved": 0,
+            "partially_achieved": 0,
+            "delayed": 0,
+            "missed": 0,
+            "abandoned": 0,
+            "unverified": 0
+          },
+          "promise_type_breakdown": {},
+          "credibility_patterns_count": 0,
+          "silence_is_not_failure_note": "UNVERIFIED status means no later evidence is available — it does not imply the promise was missed.",
+          "accountability_metrics": {
+            "material_verifiable_commitments": 0,
+            "verified_commitments": 0,
+            "partially_verified_commitments": 0,
+            "contradicted_commitments": 0,
+            "unresolved_verifiable_commitments": 0,
+            "strategic_intents": 0,
+            "aspirations": 0,
+            "policies_or_principles": 0
+          }
+        },
+        "source_ref": {
+          "source_name": "gold_promise_tracker",
+          "path": "summary"
+        },
+        "limitations": [
+          "UNVERIFIED means absence of evidence, not evidence of failure.",
+          "UNVERIFIED status means no later evidence is available — it does not imply the promise was missed."
+        ]
+      }
+    ],
+    "source_limitations": [
+      {
+        "limitation_id": "SL-001",
+        "type": "SOURCE_EVIDENCE_MISSING",
+        "description": "gold_promise_tracker for ujjivan has no material promises. No verifiable commitments can be assessed."
+      }
+    ]
+  },
+  "package_constraints": {
+    "silence_is_not_failure": "UNVERIFIED status means no later evidence is available — it does not imply the promise was missed.",
+    "accountability_metrics": {
+      "material_verifiable_commitments": 0,
+      "verified_commitments": 0,
+      "partially_verified_commitments": 0,
+      "contradicted_commitments": 0,
+      "unresolved_verifiable_commitments": 0,
+      "strategic_intents": 0,
+      "aspirations": 0,
+      "policies_or_principles": 0
+    },
+    "cross_company_contamination_check": {
+      "all_items_company_slug": "ujjivan",
+      "gold_company_slug": "ujjivan",
+      "management_progression_company_slug": "ujjivan",
+      "company_model_slug": "ujjivan",
+      "contamination_detected": false
+    },
+    "ai_reasoning_global_constraints": [
+      "Do not infer commitment fulfillment from temporal proximity of events",
+      "Do not treat UNVERIFIED as equivalent to FAILED or ACHIEVED",
+      "Do not create financial attribution without explicit canonical evidence",
+      "Do not merge accountability_promises and strategic_intents into one fulfillment percentage",
+      "All reasoning must stay within the evidence boundaries declared per item",
+      "All evidence in this package is for ujjivan only — do not import facts from other companies"
+    ]
+  },
+  "package_fingerprint": "38c0565e80c22ea7"
+}

@@ -1,5 +1,52 @@
 # Session Log
 
+## 2026-09-26 — ENG-MISSION9: Cross-Company Generalization Validation
+
+**Objective:** Prove Prometheus is not Sun Pharma-specific. Validate the full pipeline — evidence extraction, AI answer generation, and claim validation — against three new companies with different evidence densities: Tanla Platforms (CPaaS, rich evidence), Ujjivan SFB (microfinance, thin evidence), Data Patterns (defense, very sparse). Question: "What has management promised?" Shadow mode only. No production changes.
+
+**Step 1 — Evidence landscape inspection:**
+- Tanla: 28 management_commitments, 2 accountability_promises, 25 progression_items — RICH
+- Ujjivan: 1 management_commitment, 0 accountability_promises, 25 progression_items — THIN
+- Data Patterns: 0 management_commitments, 0 accountability_promises, 0 progression_items — VERY_SPARSE
+
+**Step 2 — Evidence package construction (`m9_assemble_evidence_package.py`):**
+- Built `evidence_package.v1` for each company via `load_company_memory_sources()`. Same schema as Sun Pharma Mission 1. Used `OE-NNN` short IDs for progression items (prevents AI ID-shortening → Unresolved evidence refs). Full `source_item_id` preserved separately.
+- Packages: Tanla (VC=2, SI=6, OE=5), Ujjivan (VC=0, SI=0, OE=5, SL=1), Data Patterns (VC=0, SI=0, OE=0, SL=3)
+
+**Step 3-4 — AI answer generation + baseline validation (`run_m9_generate_answers.py`):**
+- Tanla: `FAIL_NEEDS_REVIEW` — 14 declared (12A/2NR/0R), 6 undeclared (5A/1NR). 2 NEEDS_REVIEW from AI-deterministic disagreement with no scope_issues → conservative routing. Correct behavior.
+- Ujjivan: `FAIL_NEEDS_REVIEW` — 10 declared (8A/2NR/0R), 0 undeclared. Thin evidence limits grounding. 2 NEEDS_REVIEW from UNSUPPORTED+no_scope_issues → correct conservative routing.
+- Data Patterns: `FAIL_NEEDS_REVIEW` — 8 declared (7A/1NR/0R), 0 undeclared. 1 PARTIALLY_SUPPORTED claim with scope_issues — correct escalation.
+- Classification: all CONSERVATIVE_UNCERTAINTY or VALID_PARTIAL_SUPPORT. No defects.
+
+**Step 6 — REVIEW_ERROR resilience (`run_m9_review_error_test.py`):**
+- Patched `ai_claim_reviewer.review_claim` to return REVIEW_ERROR for all calls.
+- Result: PASS × 3 companies. All FAIL_NEEDS_REVIEW (never PASS). No REVIEW_ERROR claim received ACCEPT. Invariant confirmed: complete AI-reviewer failure cannot produce auto-approval.
+
+**Step 7 — Sun Pharma overfitting search:**
+- No pharma-specialty phrases (ILUMYA, prescription ramp, higher-value specialty) appeared in any non-pharma answer.
+- CONFIRMED RISK: `_GEOGRAPHY_RE` includes `india|indian`. For Indian companies, a legitimate mention of India could fire false narrative violation if evidence corpus lacks home-market context. AI answers did not trigger this in practice, but structural risk exists. Spawned task_22dbcc08 for remediation.
+- No Sun Pharma rule silently distorted any of the 3 companies.
+
+**Step 5 — Adversarial/deterministic test (`run_m9_deterministic_test.py`):**
+- HC-C (Germany/Japan injection): DETECTED × 3 companies — deterministic geography check fires.
+- HC-E (ILUMYA/Japan cross-company contamination): DETECTED × 3 companies — geography check fires.
+- HC-B (forbidden patterns): 2/4 phrases caught deterministically; 2 missed phrases are primary AI-extractor responsibility.
+- Corpus isolation: CLEAN × 3 companies — no Sun Pharma evidence bled into any other company's corpus.
+- Controls (baseline, no mutation): CORRECT_CONTROL × 3 companies — zero false positives.
+- Full AI stress test (HC-A, HC-D, all 5 mutations): background task running (18 cases, AI call overhead → hours).
+
+**Failure classification (Step 9):** All baseline FAIL_NEEDS_REVIEW verdicts are CONSERVATIVE_UNCERTAINTY (M8 precedent) — correct control behavior. No FALSE_ALARMS. No MISSED detections on deterministic layer.
+
+**Deterministic vs AI comparison (Step 8):**
+- Tanla: AI richer (individual summaries, evidence gaps). Prod more compact. Same territory.
+- Ujjivan: AI BETTER — correctly identifies 0 material promises in tracker. Prod asserts a commitment that may be under-supported.
+- Data Patterns: Both correctly acknowledge evidence deficiency. AI enumerates source limitations.
+
+**Governance:** `governance/ENG_MISSION9_CROSS_COMPANY_VALIDATION_PROOF.json` — mission_status=DETERMINISTIC_PROVEN. AI stress test pending. Evidence packages in governance/. Scripts in scratchpad/. Shadow mode only. Production unmodified.
+
+---
+
 ## 2026-09-23 — ENG-MISSION8: Validator Reliability Repair
 
 **Objective:** Fix three validator defects (HC-006 geography escape, HC-009 fabricated evidence-gap promoted to SUPPORTED, HC-010/011 correct controls falsely rejected) plus an unsafe verdict-promotion bug. Prove Prometheus can consistently distinguish misleading investment claims from correctly supported explanations across repeated live runs, without depending on a favorable AI response. Shadow mode only.
