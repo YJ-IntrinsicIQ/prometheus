@@ -1,5 +1,30 @@
 # Session Log
 
+## 2026-09-27 — AI Cost-Control Hardening Pass
+
+**Objective:** Reduce Prometheus LLM token consumption, API-call volume, and repeated certification cost without weakening any existing evidence, claim, relationship, or causal-safety guarantees.
+
+**Infrastructure built:**
+- `knowledge/ai/cache.py` — deterministic LLM result cache (sha256 fingerprint keys; `.prometheus_cache/` storage; configurable via `PROMETHEUS_CACHE_DIR`; write failures non-fatal)
+- `knowledge/ai/telemetry.py` — per-call token/cost telemetry accumulator (`TelemetryCollector`; configurable pricing via env vars)
+- `knowledge/ai/budget.py` — execution budget guard (`AIBudgetExceededError`; `PROMETHEUS_AI_MAX_CALLS/MAX_TOKENS/MAX_COST_USD`; `PROMETHEUS_AI_BUDGET_OVERRIDE=1` for certification runs)
+- `intelligence/ask_intrinsiciq/ai_claim_reviewer.py` — added `review_claims_batch()`: N claims → 1 API call; malformed/absent items route to `VERDICT_REVIEW_ERROR` (never auto-accept)
+- `intelligence/ask_intrinsiciq/relationship_reviewer.py` — added `validate_relationships_batch()`: M relationships → 1 API call; acceptance contract applied per-relationship identically to single-rel path; Level 3 contract unchanged
+- `tests/test_cost_hardening.py` — 25 deterministic tests covering cache, batch, budget, telemetry (no live API calls required)
+- `governance/ENG_AI_COST_CONTROL_HARDENING_PROOF.json` — full governance record
+
+**Test results:** 25/25 PASS (all new); pre-existing failure in `test_management_commitment_answers_surface_specific_material_commitments` confirmed pre-existing (reproduced on clean checkout); all M15/M14 adversarial tests unaffected (185 pass, 5 warnings, same pre-existing 1 failure).
+
+**Expected savings (static analysis):**
+- Batching: 18 calls/company → 5 calls/company (72% fewer), ~35K tokens → ~18K tokens (49% fewer)
+- Caching: unchanged analysis → 0 tokens, 0 calls
+
+**Mission 15 status preserved:** `COMPOSITION_ARCHITECTURE_CERTIFIED__AI_PROSE_PENDING`
+**Level 3 validation contracts:** Unchanged. `relationship_reviewer.py` acceptance contract unmodified.
+**Mission 16:** NOT started.
+
+**Next step:** Increase OpenAI spend limit → `python scratchpad/m15_composition_runner.py`
+
 ## 2026-09-27 — ENG-MISSION15: Relationship-Aware Answer Composition (ARCHITECTURE CERTIFIED)
 
 **Objective:** Build composition layer so Prometheus generates investor-facing answers that naturally satisfy the Level 3 claim and relationship contracts before delivery.

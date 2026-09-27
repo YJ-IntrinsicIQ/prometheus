@@ -16,6 +16,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from knowledge.ai import get_llm, AIProviderError, AIResponseError
+from knowledge.ai.cache import cache_get, cache_put, make_fingerprint
 
 VERDICTS = frozenset({"SUPPORTED", "PARTIALLY_SUPPORTED", "UNSUPPORTED", "CONTRADICTED"})
 VERDICT_REVIEW_ERROR = "REVIEW_ERROR"
@@ -335,3 +336,160 @@ def review_claim(
             "scope_issues": [],
             "qualifications_missing": [],
         }
+
+
+# ── Batch claim review ────────────────────────────────────────────────────────
+
+_BATCH_REVIEW_SCHEMA = {
+    "type": "object",
+    "required": ["reviews"],
+    "properties": {
+        "reviews": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["claim_id", "verdict", "confidence", "reason", "scope_issues", "qualifications_missing"],
+                "properties": {
+                    "claim_id": {"type": "string"},
+                    "verdict": {"type": "string", "enum": ["SUPPORTED", "PARTIALLY_SUPPORTED", "UNSUPPORTED", "CONTRADICTED"]},
+                    "confidence": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+                    "reason": {"type": "string"},
+                    "scope_issues": {"type": "array", "items": {"type": "string"}},
+                    "qualifications_missing": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        }
+    },
+}
+
+_BATCH_REVIEWER_SYSTEM_PROMPT = """\
+You are an independent investment research validator. Review multiple investor claims independently.
+Each claim must be evaluated on its own merits — your verdict for one claim must NOT influence others.
+For any claim you cannot confidently evaluate, return verdict=UNSUPPORTED with a reason explaining why.
+Apply the same evaluation criteria as for individual claims:
+- Does the cited evidence establish the claim? (not merely cite it)
+- Scope match: company, product, geography, period
+- Outcome vs intention framing
+- Causal limits: temporal proximity is not causation
+- Omitted qualifications
+Return ONLY valid JSON: {"reviews": [{claim_id, verdict, confidence, reason, scope_issues, qualifications_missing}, ...]}.
+One entry per input claim, in the same order. Never omit a claim.
+"""
+
+
+def _safe_review_item(raw_item: dict) -> dict:
+    """Normalise one item from a batch response; route malformed items to REVIEW_ERROR."""
+    verdict = raw_item.get("verdict", "")
+    if verdict not in VERDICTS:
+        return {
+            "verdict": VERDICT_REVIEW_ERROR,
+            "confidence": "LOW",
+            "reason": f"Malformed batch item: verdict={verdict!r}",
+            "scope_issues": [],
+            "qualifications_missing": [],
+        }
+    return {
+        "verdict": verdict,
+        "confidence": raw_item.get("confidence", "MEDIUM"),
+        "reason": raw_item.get("reason", ""),
+        "scope_issues": raw_item.get("scope_issues") or [],
+        "qualifications_missing": raw_item.get("qualifications_missing") or [],
+    }
+
+
+def review_claims_batch(
+    claims_with_evidence: list,
+    model: str = "gpt-5-mini-2025-08-07",
+    schema_version: str = "1",
+) -> dict:
+    """
+    Review multiple claims in a single AI call.
+
+    Args:
+        claims_with_evidence: list of dicts, each containing:
+            claim_id, claim_text, claim_type, evidence_refs,
+            evidence_items (list of resolved evidence dicts)
+        model: AI model to use
+        schema_version: increment to invalidate cache on prompt/schema changes
+
+    Returns:
+        dict mapping claim_id → review result dict (same shape as review_claim()).
+        Malformed or missing items are routed to VERDICT_REVIEW_ERROR.
+        A claim absent from the batch response is also routed to VERDICT_REVIEW_ERROR.
+    """
+    if not claims_with_evidence:
+        return {}
+
+    # Build prompt
+    items_text = []
+    for c in claims_with_evidence:
+        ev_lines = [_serialize_evidence_item(e) for e in (c.get("evidence_items") or [])]
+        items_text.append(
+            f"claim_id: {c['claim_id']}\n"
+            f"claim_text: {c.get('claim_text', '')}\n"
+            f"claim_type: {c.get('claim_type', 'UNKNOWN')}\n"
+            f"evidence_refs: {c.get('evidence_refs') or []}\n"
+            f"evidence:\n" + ("\n".join(f"  {l}" for l in ev_lines) if ev_lines else "  (none)")
+        )
+    prompt = (
+        "Review each claim independently. Return one verdict per claim.\n\n"
+        + "\n\n---\n\n".join(items_text)
+        + "\n\nReturn JSON: {\"reviews\": [{claim_id, verdict, confidence, reason, scope_issues, qualifications_missing}, ...]}"
+    )
+
+    # Cache lookup
+    fp = make_fingerprint(model, prompt, _BATCH_REVIEWER_SYSTEM_PROMPT, 0.0, schema_version)
+    cached = cache_get(fp)
+    if cached:
+        raw_reviews = cached["result"]
+    else:
+        try:
+            llm = get_llm(model=model)
+            response = llm.generate(
+                prompt=prompt,
+                response_schema=_BATCH_REVIEW_SCHEMA,
+                max_tokens=4000,
+                system_prompt=_BATCH_REVIEWER_SYSTEM_PROMPT,
+            )
+            raw_text = response.text if hasattr(response, "text") else str(response)
+            raw_reviews = json.loads(raw_text.strip()).get("reviews", [])
+            cache_put(fp, raw_reviews, {
+                "model": model,
+                "stage": "claim_review_batch",
+                "batch_size": len(claims_with_evidence),
+                "schema_version": schema_version,
+                "prompt_tokens": getattr(response, "prompt_tokens", None),
+                "completion_tokens": getattr(response, "completion_tokens", None),
+            })
+        except Exception as exc:
+            # Fail the whole batch safely — callers will see REVIEW_ERROR per claim
+            error_result = {
+                "verdict": VERDICT_REVIEW_ERROR,
+                "confidence": "LOW",
+                "reason": f"Batch AI call failed: {type(exc).__name__}: {exc}",
+                "scope_issues": [],
+                "qualifications_missing": [],
+            }
+            return {c["claim_id"]: error_result for c in claims_with_evidence}
+
+    # Build claim_id → result dict; missing items → REVIEW_ERROR
+    by_id = {}
+    for item in (raw_reviews or []):
+        cid = item.get("claim_id")
+        if cid:
+            by_id[cid] = _safe_review_item(item)
+
+    results = {}
+    for c in claims_with_evidence:
+        cid = c["claim_id"]
+        if cid in by_id:
+            results[cid] = by_id[cid]
+        else:
+            results[cid] = {
+                "verdict": VERDICT_REVIEW_ERROR,
+                "confidence": "LOW",
+                "reason": "Claim absent from batch response",
+                "scope_issues": [],
+                "qualifications_missing": [],
+            }
+    return results

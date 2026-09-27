@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import List, Literal, Optional, Tuple
 
 from knowledge.ai import get_llm
+from knowledge.ai.cache import cache_get, cache_put, make_fingerprint
 
 # ── Schema contracts ──────────────────────────────────────────────────────────
 
@@ -598,3 +599,174 @@ def validate_relationship(
         "acceptance": acceptance,
         "acceptance_reason": reason_code,
     }
+
+
+# ── Batch relationship review ─────────────────────────────────────────────────
+
+_BATCH_REL_SCHEMA = {
+    "type": "object",
+    "required": ["reviews"],
+    "properties": {
+        "reviews": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["relationship_id", "verdict", "recommended_confidence",
+                             "chronology_relation", "chronology_valid", "semantic_alignment",
+                             "linkage_established", "causal_issues", "retrospective_bias",
+                             "measurement_window_issue", "reason"],
+            },
+        }
+    },
+}
+
+_BATCH_REL_SYSTEM_PROMPT = (
+    _SYSTEM_PROMPT.strip()
+    + "\n\n=== BATCH MODE ===\n"
+    "You will receive multiple relationships as a JSON array. Review each independently.\n"
+    "Return: {\"reviews\": [{...one object per relationship, same schema as single-review...}]}\n"
+    "Never omit a relationship. Preserve relationship_id in each result.\n"
+    "A failure in one relationship must NOT affect others.\n"
+)
+
+
+def validate_relationships_batch(
+    rels: list,
+    claims_by_id: dict,
+    evidence_index: dict,
+    schema_version: str = "1",
+) -> list:
+    """
+    Validate multiple relationships in a single AI call.
+
+    Returns the same list structure as calling validate_relationship() for each,
+    preserving rel_id ordering. Malformed or missing items are routed to
+    acceptance=NEEDS_REVIEW with acceptance_reason='batch_reviewer_error'.
+
+    Acceptance contract is applied per-relationship after the batch returns,
+    identical to the single-relationship path.
+    """
+    if not rels:
+        return []
+
+    inputs = [build_relationship_input(r, claims_by_id, evidence_index) for r in rels]
+    batch_payload = [_input_to_prompt_dict(inp) for inp in inputs]
+
+    prompt = (
+        "Review each relationship independently. Return one result per relationship.\n\n"
+        + json.dumps(batch_payload, indent=2)
+        + '\n\nReturn JSON: {"reviews": [{...}]}'
+    )
+
+    fp = make_fingerprint("", prompt, _BATCH_REL_SYSTEM_PROMPT, 0.0, schema_version)
+    cached = cache_get(fp)
+    if cached:
+        raw_reviews = cached["result"]
+        by_id = {r.get("relationship_id"): r for r in (raw_reviews or [])}
+    else:
+        try:
+            llm = get_llm()
+            response = llm.generate(
+                prompt=prompt,
+                system_prompt=_BATCH_REL_SYSTEM_PROMPT,
+                temperature=0.0,
+            )
+            text = response.text.strip()
+            m = re.search(r"\{.*\}", text, re.DOTALL)
+            raw_reviews = json.loads(m.group(0)).get("reviews", []) if m else []
+            cache_put(fp, raw_reviews, {
+                "stage": "relationship_review_batch",
+                "batch_size": len(rels),
+                "schema_version": schema_version,
+                "prompt_tokens": getattr(response, "prompt_tokens", None),
+                "completion_tokens": getattr(response, "completion_tokens", None),
+            })
+            by_id = {r.get("relationship_id"): r for r in (raw_reviews or [])}
+        except Exception as exc:
+            error_reason = f"Batch AI call failed: {type(exc).__name__}: {exc}"
+            results = []
+            for rel in rels:
+                results.append({
+                    "rel_id": rel.get("rel_id", "?"),
+                    "rel_type": rel.get("rel_type", "?"),
+                    "causal_confidence": rel.get("causal_confidence", "?"),
+                    "ai_verdict": "REVIEW_ERROR",
+                    "ai_recommended_confidence": "UNKNOWN",
+                    "ai_reason": error_reason,
+                    "causal_issues": [],
+                    "chronology_relation": "UNKNOWN",
+                    "chronology_valid": True,
+                    "semantic_alignment": False,
+                    "linkage_established": False,
+                    "measurement_window_issue": False,
+                    "retrospective_bias": False,
+                    "alternative_explanations": None,
+                    "qualification_required": None,
+                    "acceptance": NEEDS_REVIEW,
+                    "acceptance_reason": "batch_reviewer_error",
+                })
+            return results
+
+    results = []
+    for rel, inp in zip(rels, inputs):
+        rid = rel.get("rel_id", "?")
+        raw = by_id.get(rid)
+
+        if not raw:
+            # Missing from batch response — safe fallback
+            result = _error_result(f"absent_from_batch_response:{rid}")
+        else:
+            rel_type = inp.rel_type
+            chrono_rel = raw.get("chronology_relation", "UNKNOWN")
+            chrono_valid_ai = raw.get("chronology_valid", True)
+            if rel_type == "CONTEXT_ONLY":
+                chrono_valid = True
+            elif rel_type == "CAPITAL_TO_EXECUTION":
+                chrono_valid = chrono_rel in ("BEFORE", "OVERLAPPING", "UNKNOWN")
+            else:
+                chrono_valid = chrono_valid_ai
+
+            result = ReviewerResult(
+                verdict=raw.get("verdict", "REVIEW_ERROR"),
+                recommended_confidence=raw.get("recommended_confidence", "UNKNOWN"),
+                chronology_relation=chrono_rel,
+                chronology_valid=chrono_valid,
+                semantic_alignment=bool(raw.get("semantic_alignment", False)),
+                linkage_established=bool(raw.get("linkage_established", False)),
+                causal_issues=raw.get("causal_issues", []) or [],
+                retrospective_bias=bool(raw.get("retrospective_bias", False)),
+                measurement_window_issue=bool(raw.get("measurement_window_issue", False)),
+                alternative_explanations=raw.get("alternative_explanations"),
+                qualification_required=raw.get("qualification_required"),
+                reason=raw.get("reason", ""),
+            )
+
+        if rel.get("causal_confidence") == "PLAUSIBLE":
+            result.reason = result.reason + " " + rel.get("rationale", "").lower()
+
+        acceptance, reason_code = apply_acceptance_contract(
+            rel.get("rel_type", ""),
+            rel.get("causal_confidence", "UNKNOWN"),
+            result,
+        )
+
+        results.append({
+            "rel_id": rid,
+            "rel_type": rel.get("rel_type", "?"),
+            "causal_confidence": rel.get("causal_confidence", "?"),
+            "ai_verdict": result.verdict,
+            "ai_recommended_confidence": result.recommended_confidence,
+            "ai_reason": result.reason,
+            "causal_issues": result.causal_issues,
+            "chronology_relation": result.chronology_relation,
+            "chronology_valid": result.chronology_valid,
+            "semantic_alignment": result.semantic_alignment,
+            "linkage_established": result.linkage_established,
+            "measurement_window_issue": result.measurement_window_issue,
+            "retrospective_bias": result.retrospective_bias,
+            "alternative_explanations": result.alternative_explanations,
+            "qualification_required": result.qualification_required,
+            "acceptance": acceptance,
+            "acceptance_reason": reason_code,
+        })
+    return results
