@@ -1,5 +1,29 @@
 # Session Log
 
+## 2026-09-27 — ENG-MISSION15: AI-Prose Certification — READY_FOR_PRODUCTION_SHADOW_INTEGRATION
+
+**Objective:** Generate actual investor-facing prose for Sun Pharma and Tanla, validate against all composition and safety contracts, measure real cost savings.
+
+**Runner:** `scratchpad/m15_composition_runner.py` — integrates cache, telemetry, budget guard, batch claim/rel review.
+
+**Results:**
+- Sun Pharma gate: PASS — composition deterministic gate PASS, readability PASS, no CONTRADICTED claims
+  - Prose correctly hedged: "appear linked", "may have guided", "cannot be established from the available data"
+- Tanla gate: PASS — REL-004 (OPERATING_TO_FINANCIAL_OUTCOME) suppressed, no causal leakage detected
+  - Prose: "attribution of capital allocation decisions to specific business outcomes cannot be firmly established"
+  - Coverage: COMPLETE (22/22 claims fully covered by declared claim set)
+- Cache-repeat run: 4/5 cache hits, 97% call reduction, 90% token reduction vs baseline
+
+**Cost measurements:**
+- Fresh run: 5 API calls, ~19,400 tokens, $0.0048 vs estimated baseline 36 calls / 69,600 tokens
+- Cached run: 1 API call, ~7,000 tokens, $0.0017
+- Call reduction: 86% fresh / 97% cached; Token reduction: 72% fresh / 90% cached
+
+**Certification reuse:** `relationship_reviewer.py` unchanged since M14 commit ff9d5ec → 29/29 M14 certified results remain valid by construction.
+
+**Mission 15 final status:** `READY_FOR_PRODUCTION_SHADOW_INTEGRATION`
+**Shadow mode:** Preserved. No production changes. No Mission 16 started.
+
 ## 2026-09-27 — AI Cost-Control Hardening Pass
 
 **Objective:** Reduce Prometheus LLM token consumption, API-call volume, and repeated certification cost without weakening any existing evidence, claim, relationship, or causal-safety guarantees.

@@ -1,0 +1,900 @@
+{
+  "run_date": "2026-09-27T06:59:03.107381Z",
+  "run_label": "cache_repeat_run",
+  "model": "gpt-5-mini",
+  "companies": {
+    "sun_pharma": {
+      "answer": {
+        "simple_answer": "Management has committed to continuing disciplined R&D focused on differentiated generics, while the company documents capex and R&D spending and has continued to pay dividends; site-level and environmental/energy projects are observable and appear linked to those capital allocations. Financial trends (revenue and cashflow) are visible, but direct attribution of those financial outcomes to specific capital allocations or to any specialty segment margin cannot be established from the available data.",
+        "why_it_matters": "How management allocates capital — between R&D, site investments and shareholder returns — drives future product differentiation, manufacturing capacity/compliance and operating cost structure, all of which affect competitive position and returns. Observable investments in facilities and environmental projects can support regulatory readiness and lower energy/waste costs, but their impact on revenue, margins and cashflow remains uncertain without segment-level profitability and clearer attribution.",
+        "investor_interpretation": "Management's stated strategy to persist with disciplined R&D for differentiated generics may have guided specific site and sustainability investments (this is a plausible interpretation supported by disclosed spending and visible projects). Evidence supports a connection between capital outlays (capex and R&D) and execution at sites (MKM facility work, ZLD, biomass boilers and heat-pump projects appear linked to those allocations). Those execution steps could be consistent with improved operational resilience, regulatory compliance and potential cost efficiencies, but whether and how much they translated into reported revenue or margin improvement cannot be established from the disclosed information. Investors should watch R&D pipeline progress, capex/R&D trends, site project completions, ESG metrics and disclosures on intercompany financing/corporate authority as these affect capital flexibility and risk exposure (including material climate/ESG and acquisition-related risks).",
+        "key_points": [
+          "Management states it will continue disciplined R&D for differentiated generics.",
+          "Capex and R&D spending are documented in disclosures, and the company has paid dividends.",
+          "Site-level execution and environmental/energy projects are observable (MKM facility work; zero-liquid-discharge, biomass boilers and heat-pump installations).",
+          "Reported revenue ranged from INR 43,886 crore (FY23) to INR 58,462 crore; there is no segment-level profitability data and attribution of financial changes to specific capital allocation choices remains uncertain."
+        ],
+        "claims": [
+          {
+            "claim_id": "CL-002",
+            "claim_text": "Management states it will continue disciplined R&D for differentiated generics",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-003",
+            "claim_text": "capex and R&D spending documented; dividends paid",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-004",
+            "claim_text": "Site-level execution projects observable (MKM facility, ZLD, biomass)",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-005",
+            "claim_text": "Revenue INR 43,886 crore (FY23) to INR 58,462 crore",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-006",
+            "claim_text": "No segment-level profitability data; no direct evidence of specialty margin contribution",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-007",
+            "claim_text": "Environmental/energy projects observable (ZLD, biomass boilers, heat pumps)",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-008",
+            "claim_text": "Material climate/ESG and acquisition-related risks",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-009",
+            "claim_text": "Intercompany loans and corporate-authority structure",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-010",
+            "claim_text": "Revenue and cashflow trends visible; attribution of financial change uncertain",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          }
+        ],
+        "relationships": [
+          {
+            "rel_id": "REL-002",
+            "rel_type": "CAPITAL_TO_EXECUTION",
+            "causal_confidence": "SUPPORTED",
+            "acceptance": "ACCEPT",
+            "acceptance_reason": "supported_evidence_based_checks_pass",
+            "from_claim_id": "",
+            "to_claim_id": ""
+          },
+          {
+            "rel_id": "REL-003",
+            "rel_type": "CAPITAL_TO_EXECUTION",
+            "causal_confidence": "SUPPORTED",
+            "acceptance": "ACCEPT",
+            "acceptance_reason": "supported_evidence_based_checks_pass",
+            "from_claim_id": "",
+            "to_claim_id": ""
+          },
+          {
+            "rel_id": "REL-004",
+            "rel_type": "EXECUTION_TO_OPERATING_OUTCOME",
+            "causal_confidence": "PLAUSIBLE",
+            "acceptance": "ACCEPT",
+            "acceptance_reason": "plausible_qualified_interpretation_accepted (PARTIALLY_SUPPORTED + has_frame + chrono_valid)",
+            "from_claim_id": "",
+            "to_claim_id": ""
+          },
+          {
+            "rel_id": "REL-006",
+            "rel_type": "CONTEXT_ONLY",
+            "causal_confidence": "PLAUSIBLE",
+            "acceptance": "ACCEPT",
+            "acceptance_reason": "plausible_qualified_interpretation_accepted",
+            "from_claim_id": "",
+            "to_claim_id": ""
+          },
+          {
+            "rel_id": "REL-007",
+            "rel_type": "CONTEXT_ONLY",
+            "causal_confidence": "PLAUSIBLE",
+            "acceptance": "ACCEPT",
+            "acceptance_reason": "plausible_qualified_interpretation_accepted",
+            "from_claim_id": "",
+            "to_claim_id": ""
+          },
+          {
+            "rel_id": "REL-001",
+            "rel_type": "STRATEGY_TO_EXECUTION",
+            "causal_confidence": "PLAUSIBLE",
+            "acceptance": "NEEDS_REVIEW",
+            "acceptance_reason": "chronology_invalid+causal_issues",
+            "from_claim_id": "",
+            "to_claim_id": ""
+          },
+          {
+            "rel_id": "REL-005",
+            "rel_type": "OPERATING_TO_FINANCIAL_OUTCOME",
+            "causal_confidence": "UNKNOWN",
+            "acceptance": "ACCEPT",
+            "acceptance_reason": "unknown_preserved_as_uncertainty",
+            "from_claim_id": "",
+            "to_claim_id": ""
+          }
+        ],
+        "evidence_gaps": [],
+        "_composition_plan_summary": {
+          "allowed_claims": 9,
+          "qualified_claims": 0,
+          "suppressed_claims": 1,
+          "allowed_rels": 5,
+          "qualified_rels": 1,
+          "suppressed_rels": 0,
+          "unknown_rels": 1
+        }
+      },
+      "composition_cache_hit": true,
+      "composition_gate": {
+        "gate": "PASS",
+        "gate_issues": [],
+        "suppressed_rel_ids_found_in_prose": [],
+        "has_suppressed_rels": false,
+        "plan_summary": {
+          "allowed_claims": 9,
+          "qualified_claims": 0,
+          "suppressed_claims": 1,
+          "allowed_rels": 5,
+          "qualified_rels": 1,
+          "suppressed_rels": 0,
+          "unknown_rels": 1
+        },
+        "note": "Full gate requires validate_answer_complete() + extract_hidden_relationships()."
+      },
+      "extraction": {
+        "extracted_claims": [
+          {
+            "claim_text": "Management has committed to continuing disciplined R&D focused on differentiated generics,",
+            "source_field": "simple_answer",
+            "claim_type": "COMMITMENT_STATEMENT",
+            "declared_match": "CL-002",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-001"
+          },
+          {
+            "claim_text": "the company documents capex and R&D spending",
+            "source_field": "simple_answer",
+            "claim_type": "BUSINESS_CONTEXT",
+            "declared_match": "CL-003",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-002"
+          },
+          {
+            "claim_text": "has continued to pay dividends;",
+            "source_field": "simple_answer",
+            "claim_type": "DIVIDEND_STATEMENT",
+            "declared_match": "CL-003",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-003"
+          },
+          {
+            "claim_text": "site-level and environmental/energy projects are observable",
+            "source_field": "simple_answer",
+            "claim_type": "SITE_EXECUTION",
+            "declared_match": "CL-004",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-004"
+          },
+          {
+            "claim_text": "site-level and environmental/energy projects are observable",
+            "source_field": "simple_answer",
+            "claim_type": "ENVIRONMENTAL_PROJECT_STATEMENT",
+            "declared_match": "CL-007",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-005"
+          },
+          {
+            "claim_text": "and appear linked to those capital allocations.",
+            "source_field": "simple_answer",
+            "claim_type": "ECONOMIC_INTERPRETATION",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-006"
+          },
+          {
+            "claim_text": "Financial trends (revenue and cashflow) are visible,",
+            "source_field": "simple_answer",
+            "claim_type": "BUSINESS_CONTEXT",
+            "declared_match": "CL-010",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-007"
+          },
+          {
+            "claim_text": "direct attribution of those financial outcomes to specific capital allocations or to any specialty segment margin cannot be established from the available data.",
+            "source_field": "simple_answer",
+            "claim_type": "EVIDENCE_GAP_STATEMENT",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-008"
+          },
+          {
+            "claim_text": "How management allocates capital — between R&D, site investments and shareholder returns — drives future product differentiation, manufacturing capacity/compliance and operating cost structure, all of which affect competitive position and returns.",
+            "source_field": "why_it_matters",
+            "claim_type": "ECONOMIC_INTERPRETATION",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-009"
+          },
+          {
+            "claim_text": "Observable investments in facilities and environmental projects can support regulatory readiness and lower energy/waste costs,",
+            "source_field": "why_it_matters",
+            "claim_type": "ECONOMIC_INTERPRETATION",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-010"
+          },
+          {
+            "claim_text": "but their impact on revenue, margins and cashflow remains uncertain without segment-level profitability and clearer attribution.",
+            "source_field": "why_it_matters",
+            "claim_type": "EVIDENCE_GAP_STATEMENT",
+            "declared_match": "CL-006",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-011"
+          },
+          {
+            "claim_text": "Management states it will continue disciplined R&D for differentiated generics.",
+            "source_field": "key_points[0]",
+            "claim_type": "COMMITMENT_STATEMENT",
+            "declared_match": "CL-002",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-012"
+          },
+          {
+            "claim_text": "Capex and R&D spending are documented in disclosures, and the company has paid dividends.",
+            "source_field": "key_points[1]",
+            "claim_type": "BUSINESS_CONTEXT",
+            "declared_match": "CL-003",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-013"
+          },
+          {
+            "claim_text": "Site-level execution and environmental/energy projects are observable (MKM facility work; zero-liquid-discharge, biomass boilers and heat-pump installations).",
+            "source_field": "key_points[2]",
+            "claim_type": "SITE_EXECUTION",
+            "declared_match": "CL-004",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-014"
+          },
+          {
+            "claim_text": "Reported revenue ranged from INR 43,886 crore (FY23) to INR 58,462 crore;",
+            "source_field": "key_points[3]",
+            "claim_type": "BUSINESS_CONTEXT",
+            "declared_match": "CL-005",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-015"
+          },
+          {
+            "claim_text": "there is no segment-level profitability data",
+            "source_field": "key_points[3]",
+            "claim_type": "EVIDENCE_GAP_STATEMENT",
+            "declared_match": "CL-006",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-016"
+          },
+          {
+            "claim_text": "attribution of financial changes to specific capital allocation choices remains uncertain.",
+            "source_field": "key_points[3]",
+            "claim_type": "EVIDENCE_GAP_STATEMENT",
+            "declared_match": "CL-010",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-017"
+          },
+          {
+            "claim_text": "Management's stated strategy to persist with disciplined R&D for differentiated generics may have guided specific site and sustainability investments (this is a plausible interpretation supported by disclosed spending and visible projects).",
+            "source_field": "economic_reasoning.economic_purpose",
+            "claim_type": "ECONOMIC_INTERPRETATION",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-018"
+          },
+          {
+            "claim_text": "Evidence supports a connection between capital outlays (capex and R&D) and execution at sites (MKM facility work, ZLD, biomass boilers and heat-pump projects appear linked to those allocations).",
+            "source_field": "economic_reasoning.economic_purpose",
+            "claim_type": "ECONOMIC_INTERPRETATION",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-019"
+          },
+          {
+            "claim_text": "Those execution steps could be consistent with improved operational resilience, regulatory compliance and potential cost efficiencies,",
+            "source_field": "economic_reasoning.economic_purpose",
+            "claim_type": "ECONOMIC_INTERPRETATION",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-020"
+          },
+          {
+            "claim_text": "but whether and how much they translated into reported revenue or margin improvement cannot be established from the disclosed information.",
+            "source_field": "economic_reasoning.economic_purpose",
+            "claim_type": "EVIDENCE_GAP_STATEMENT",
+            "declared_match": "CL-010",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-021"
+          },
+          {
+            "claim_text": "Investors should watch R&D pipeline progress, capex/R&D trends, site project completions, ESG metrics and disclosures on intercompany financing/corporate authority as these affect capital flexibility and risk exposure (including material climate/ESG and acquisition-related risks).",
+            "source_field": "economic_reasoning.economic_purpose",
+            "claim_type": "RISK_STATEMENT",
+            "declared_match": "CL-008",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-022"
+          }
+        ],
+        "undeclared_claims": [
+          {
+            "claim_text": "and appear linked to those capital allocations.",
+            "source_field": "simple_answer",
+            "claim_type": "ECONOMIC_INTERPRETATION",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-006"
+          },
+          {
+            "claim_text": "direct attribution of those financial outcomes to specific capital allocations or to any specialty segment margin cannot be established from the available data.",
+            "source_field": "simple_answer",
+            "claim_type": "EVIDENCE_GAP_STATEMENT",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-008"
+          },
+          {
+            "claim_text": "How management allocates capital — between R&D, site investments and shareholder returns — drives future product differentiation, manufacturing capacity/compliance and operating cost structure, all of which affect competitive position and returns.",
+            "source_field": "why_it_matters",
+            "claim_type": "ECONOMIC_INTERPRETATION",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-009"
+          },
+          {
+            "claim_text": "Observable investments in facilities and environmental projects can support regulatory readiness and lower energy/waste costs,",
+            "source_field": "why_it_matters",
+            "claim_type": "ECONOMIC_INTERPRETATION",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-010"
+          },
+          {
+            "claim_text": "Management's stated strategy to persist with disciplined R&D for differentiated generics may have guided specific site and sustainability investments (this is a plausible interpretation supported by disclosed spending and visible projects).",
+            "source_field": "economic_reasoning.economic_purpose",
+            "claim_type": "ECONOMIC_INTERPRETATION",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-018"
+          },
+          {
+            "claim_text": "Evidence supports a connection between capital outlays (capex and R&D) and execution at sites (MKM facility work, ZLD, biomass boilers and heat-pump projects appear linked to those allocations).",
+            "source_field": "economic_reasoning.economic_purpose",
+            "claim_type": "ECONOMIC_INTERPRETATION",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-019"
+          },
+          {
+            "claim_text": "Those execution steps could be consistent with improved operational resilience, regulatory compliance and potential cost efficiencies,",
+            "source_field": "economic_reasoning.economic_purpose",
+            "claim_type": "ECONOMIC_INTERPRETATION",
+            "declared_match": null,
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-020"
+          }
+        ],
+        "undeclared_count": 7,
+        "total_extracted": 22,
+        "coverage_assessment": {
+          "status": "PARTIAL",
+          "reason": "Some medium/high material claims (notably assertions that site and environmental projects 'appear linked' to capital allocations, and that investments 'can support' regulatory readiness/cost reductions and that evidence supports a connection between capex/R&D and site execution) are not matched to any declared_claims; several other claims are covered by declared_claims."
+        },
+        "coverage_notes": ""
+      },
+      "batch_reviews": {
+        "EX-006": {
+          "verdict": "UNSUPPORTED",
+          "confidence": 0.65,
+          "reason": "The claim is a fragment asserting a linkage to unspecified 'capital allocations' but provides no evidence, no identification of the company, time period, which capital allocations, nor which outcomes are claimed to be linked. With no data or documentation showing a temporal or causal connection, the linkage cannot be established.",
+          "scope_issues": "Unspecified company/entity, unspecified capital allocation categories, unspecified outcomes/time period.",
+          "qualifications_missing": "Specific data showing the capital allocations, the observed outcomes, timing of allocations vs outcomes, and analysis demonstrating causation (vs correlation)."
+        },
+        "EX-008": {
+          "verdict": "UNSUPPORTED",
+          "confidence": 0.7,
+          "reason": "The claim asserts that direct attribution cannot be established from the 'available data' but no dataset or description of the available data is provided for review. Without knowing what data exists and its limitations, I cannot verify the assertion that attribution is impossible.",
+          "scope_issues": "No definition of 'available data' (which datasets, time period, company, or metrics).",
+          "qualifications_missing": "Identification of the actual datasets reviewed, their coverage and limitations, and an explanation why they preclude direct attribution (e.g., lack of granularity, timing mismatch, missing variables)."
+        },
+        "EX-009": {
+          "verdict": "SUPPORTED",
+          "confidence": 0.8,
+          "reason": "As a general economic/strategic principle, it is well established that management choices about capital allocation (R&D, site investments, shareholder returns) influence future product differentiation, manufacturing capacity and compliance, and cost structure, and that those factors materially affect competitive position and returns. The claim is framed as a causal chain of plausible mechanisms rather than a specific empirical assertion requiring additional firm-level data.",
+          "scope_issues": "This is a general statement (no specific company, geography, or time period).",
+          "qualifications_missing": "Magnitude and timing of effects depend on execution, the industry context, regulatory environment, and specific investment scale; firm-level evidence would be needed to quantify the impact for a particular company."
+        },
+        "EX-010": {
+          "verdict": "SUPPORTED",
+          "confidence": 0.78,
+          "reason": "In general, investments in facilities and environmental projects can reasonably support regulatory readiness and reduce energy/waste costs (through compliance upgrades, efficiency measures, or process changes). The claim is conditional ('can'), which is consistent with standard engineering and regulatory outcomes, though firm-specific evidence is not provided here.",
+          "scope_issues": "No firm, project, or timeframe specified; outcomes depend on project scope and execution.",
+          "qualifications_missing": "Specific evidence linking particular investments to measured regulatory outcomes and quantified energy/waste cost reductions for the entity in question; time horizon for realizing cost savings."
+        },
+        "EX-018": {
+          "verdict": "UNSUPPORTED",
+          "confidence": 0.68,
+          "reason": "The claim posits that management's stated R&D strategy 'may have guided' site and sustainability investments and asserts it is a plausible interpretation 'supported by disclosed spending and visible projects.' No statements, disclosed spending details, or project documentation are provided to substantiate the connection; thus the inference cannot be independently verified.",
+          "scope_issues": "Undefined company, unspecified 'stated strategy', undisclosed spending figures and projects not provided.",
+          "qualifications_missing": "Citations of management statements, detailed spending disclosures, timelines linking strategy statements to investment decisions, and documentation showing that specific projects were commissioned to implement the stated R&D strategy."
+        },
+        "EX-019": {
+          "verdict": "UNSUPPORTED",
+          "confidence": 0.66,
+          "reason": "The claim asserts that evidence supports a connection between capex/R&D and execution at specific sites (naming MKM facility work, ZLD, biomass boilers, heat-pump projects) but provides no supporting evidence. Without transaction-level capex/R&D breakdowns, project budgets, timing, or statements linking expenditures to those projects, the asserted connection cannot be established.",
+          "scope_issues": "Projects named but no company, no time period, and no documentation tying expenditures to the listed site activities.",
+          "qualifications_missing": "Project-level capital spending records, R&D allocation details, timelines showing spending preceded/caused the site work, and/or direct company disclosures linking the expenditures to those projects."
+        },
+        "EX-020": {
+          "verdict": "SUPPORTED",
+          "confidence": 0.75,
+          "reason": "The conditional statement that 'those execution steps could be consistent with improved operational resilience, regulatory compliance and potential cost efficiencies' is a plausible inference: investments in facility upgrades and environmental projects can lead to such outcomes. The phrasing is appropriately cautious ('could be consistent') and matches widely accepted cause–effect mechanisms, though it does not claim proven results.",
+          "scope_issues": "No specific company, project scale, or timeframe provided; outcomes are contingent on execution and context.",
+          "qualifications_missing": "Empirical evidence tying the specific execution steps to measured improvements in resilience, compliance metrics, or cost reductions for the entity referenced; information on the scale and effectiveness of the implemented measures."
+        }
+      },
+      "final_gate": {
+        "gate_status": "PASS",
+        "issues": [],
+        "coverage_assessment": {
+          "status": "PARTIAL",
+          "reason": "Some medium/high material claims (notably assertions that site and environmental projects 'appear linked' to capital allocations, and that investments 'can support' regulatory readiness/cost reductions and that evidence supports a connection between capex/R&D and site execution) are not matched to any declared_claims; several other claims are covered by declared_claims."
+        },
+        "undeclared_material_claims": 7,
+        "composition_gate": "PASS",
+        "leakage_check": "N/A"
+      },
+      "gate_status": "PASS",
+      "readability": {
+        "passed": true,
+        "issues": [],
+        "warnings": [],
+        "simple_answer_length": 503,
+        "key_points_count": 4,
+        "has_hedging_language": true
+      }
+    },
+    "tanla": {
+      "answer": {
+        "simple_answer": "Management has prioritized enterprise CPaaS/messaging product development and has raised debt and stated access to capital markets, and it has executed products such as Trubloq and Wisely (ATP/OTT/Platform/Network). The attribution of capital allocation decisions to specific business outcomes cannot be firmly established from the available evidence.",
+        "why_it_matters": "Product development and external funding choices affect the firm’s ability to scale enterprise engagement and compete in CPaaS/messaging markets; reported metrics (revenue growth and capex) are observable markers of those choices. However, without clearer segment-profitability data and direct capital-to-outcome attribution, investors face uncertainty about the returns on those investments and the effectiveness of capital allocation.",
+        "investor_interpretation": "Evidence supports a connection between management’s strategy and observable execution: launches/rollouts like Trubloq and Wisely appear linked to a focus on CPaaS/messaging and enterprise engagement. Reported financials show revenue trends (FY22 +36.9%, FY25 +2.5%, FY26 Q1 +9.7%) and FY25 capex (~49 crore), which could be consistent with investment in those initiatives. Management has also demonstrated access to external funding (debt raised; access to capital markets stated), but attribution of specific capital allocation to the observed operating or financial outcomes cannot be established from the available information. Material risks (cybersecurity, partner dependency) and evidence gaps (no segment profitability detail, no primary-source disclosure) keep the overall return profile uncertain and warrant monitoring of ROI, segment margins, and use of proceeds disclosures.",
+        "key_points": [
+          "Business focus: CPaaS/messaging platforms and enterprise engagement (management strategy/execution).",
+          "Execution evidence: product initiatives such as Trubloq and Wisely (ATP/OTT/Platform/Network) have been rolled out.",
+          "Capital stance: debt has been raised and management has stated access to capital markets; FY25 capex ~49 crore.",
+          "Performance & gaps: reported revenue growth — FY22 +36.9%, FY25 +2.5%, FY26 Q1 +9.7% — but no segment-level profitability and no primary-source disclosure to link capital allocation to outcomes; risks include cybersecurity and partner dependency."
+        ],
+        "claims": [
+          {
+            "claim_id": "CL-003",
+            "claim_text": "CPaaS/messaging platforms, enterprise engagement",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-004",
+            "claim_text": "Debt raised; access to capital markets stated",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-005",
+            "claim_text": "Observable execution: Trubloq, Wisely ATP/OTT/Platform/Network",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-006",
+            "claim_text": "Reported Q and annual results (FY25, FY26 Q1)",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-007",
+            "claim_text": "Canonical metrics: revenue fy22 +36.9%, fy25 +2.5%, fy26 +9.7%; capex fy25 49cr",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-008",
+            "claim_text": "Material risks: cybersecurity, partner dependency",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          },
+          {
+            "claim_id": "CL-009",
+            "claim_text": "Evidence gaps: no segment profitability, no primary source",
+            "final_acceptance_status": "ACCEPT",
+            "evidence_refs": []
+          }
+        ],
+        "relationships": [
+          {
+            "rel_id": "REL-001",
+            "rel_type": "STRATEGY_TO_EXECUTION",
+            "causal_confidence": "SUPPORTED",
+            "acceptance": "ACCEPT",
+            "acceptance_reason": "s2e_semantic_alignment_confirmed",
+            "from_claim_id": "",
+            "to_claim_id": ""
+          },
+          {
+            "rel_id": "REL-003",
+            "rel_type": "EXECUTION_TO_OPERATING_OUTCOME",
+            "causal_confidence": "PLAUSIBLE",
+            "acceptance": "ACCEPT",
+            "acceptance_reason": "plausible_qualified_interpretation_accepted",
+            "from_claim_id": "",
+            "to_claim_id": ""
+          },
+          {
+            "rel_id": "REL-002",
+            "rel_type": "CAPITAL_TO_EXECUTION",
+            "causal_confidence": "UNKNOWN",
+            "acceptance": "ACCEPT",
+            "acceptance_reason": "unknown_preserved_as_uncertainty",
+            "from_claim_id": "",
+            "to_claim_id": ""
+          },
+          {
+            "rel_id": "REL-005",
+            "rel_type": "RISK_TO_OUTCOME",
+            "causal_confidence": "UNKNOWN",
+            "acceptance": "ACCEPT",
+            "acceptance_reason": "unknown_preserved_as_uncertainty",
+            "from_claim_id": "",
+            "to_claim_id": ""
+          },
+          {
+            "rel_id": "REL-004",
+            "rel_type": "OPERATING_TO_FINANCIAL_OUTCOME",
+            "causal_confidence": "PLAUSIBLE",
+            "acceptance": "REJECT",
+            "acceptance_reason": "O2F escalation: chrono_invalid + causal_issues:3 → REJECT",
+            "from_claim_id": "CL-006",
+            "to_claim_id": "CL-007"
+          }
+        ],
+        "evidence_gaps": [],
+        "_composition_plan_summary": {
+          "allowed_claims": 7,
+          "qualified_claims": 0,
+          "suppressed_claims": 2,
+          "allowed_rels": 2,
+          "qualified_rels": 0,
+          "suppressed_rels": 1,
+          "unknown_rels": 2
+        }
+      },
+      "composition_cache_hit": true,
+      "composition_gate": {
+        "gate": "PASS",
+        "gate_issues": [],
+        "suppressed_rel_ids_found_in_prose": [],
+        "has_suppressed_rels": true,
+        "plan_summary": {
+          "allowed_claims": 7,
+          "qualified_claims": 0,
+          "suppressed_claims": 2,
+          "allowed_rels": 2,
+          "qualified_rels": 0,
+          "suppressed_rels": 1,
+          "unknown_rels": 2
+        },
+        "note": "Full gate requires validate_answer_complete() + extract_hidden_relationships()."
+      },
+      "rel004_leakage": {
+        "passed": true,
+        "leaks": [],
+        "reject_prose_present": false,
+        "full_prose_length": 2251,
+        "verdict": "PASS"
+      },
+      "extraction": {
+        "extracted_claims": [
+          {
+            "claim_text": "Management has prioritized enterprise CPaaS/messaging product development",
+            "source_field": "simple_answer",
+            "declared_match": "CL-003",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-001"
+          },
+          {
+            "claim_text": "has raised debt",
+            "source_field": "simple_answer",
+            "declared_match": "CL-004",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-002"
+          },
+          {
+            "claim_text": "stated access to capital markets",
+            "source_field": "simple_answer",
+            "declared_match": "CL-004",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-003"
+          },
+          {
+            "claim_text": "it has executed products such as Trubloq and Wisely (ATP/OTT/Platform/Network)",
+            "source_field": "simple_answer",
+            "declared_match": "CL-005",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-004"
+          },
+          {
+            "claim_text": "The attribution of capital allocation decisions to specific business outcomes cannot be firmly established from the available evidence.",
+            "source_field": "simple_answer",
+            "declared_match": "CL-009",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-005"
+          },
+          {
+            "claim_text": "Product development and external funding choices affect the firm’s ability to scale enterprise engagement and compete in CPaaS/messaging markets",
+            "source_field": "why_it_matters",
+            "declared_match": "CL-003",
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-006"
+          },
+          {
+            "claim_text": "reported metrics (revenue growth and capex) are observable markers of those choices.",
+            "source_field": "why_it_matters",
+            "declared_match": "CL-007",
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-007"
+          },
+          {
+            "claim_text": "However, without clearer segment-profitability data and direct capital-to-outcome attribution, investors face uncertainty about the returns on those investments and the effectiveness of capital allocation.",
+            "source_field": "why_it_matters",
+            "declared_match": "CL-009",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-008"
+          },
+          {
+            "claim_text": "Business focus: CPaaS/messaging platforms and enterprise engagement (management strategy/execution).",
+            "source_field": "key_points[0]",
+            "declared_match": "CL-003",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-009"
+          },
+          {
+            "claim_text": "Execution evidence: product initiatives such as Trubloq and Wisely (ATP/OTT/Platform/Network) have been rolled out.",
+            "source_field": "key_points[1]",
+            "declared_match": "CL-005",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-010"
+          },
+          {
+            "claim_text": "debt has been raised",
+            "source_field": "key_points[2]",
+            "declared_match": "CL-004",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-011"
+          },
+          {
+            "claim_text": "management has stated access to capital markets",
+            "source_field": "key_points[2]",
+            "declared_match": "CL-004",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-012"
+          },
+          {
+            "claim_text": "FY25 capex ~49 crore",
+            "source_field": "key_points[2]",
+            "declared_match": "CL-007",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-013"
+          },
+          {
+            "claim_text": "reported revenue growth — FY22 +36.9%, FY25 +2.5%, FY26 Q1 +9.7%",
+            "source_field": "key_points[3]",
+            "declared_match": "CL-007",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-014"
+          },
+          {
+            "claim_text": "no segment-level profitability",
+            "source_field": "key_points[3]",
+            "declared_match": "CL-009",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-015"
+          },
+          {
+            "claim_text": "no primary-source disclosure to link capital allocation to outcomes",
+            "source_field": "key_points[3]",
+            "declared_match": "CL-009",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-016"
+          },
+          {
+            "claim_text": "risks include cybersecurity and partner dependency",
+            "source_field": "key_points[3]",
+            "declared_match": "CL-008",
+            "suggested_refs": [],
+            "materiality": "MEDIUM",
+            "extraction_id": "EX-017"
+          },
+          {
+            "claim_text": "Evidence supports a connection between management’s strategy and observable execution: launches/rollouts like Trubloq and Wisely appear linked to a focus on CPaaS/messaging and enterprise engagement.",
+            "source_field": "economic_reasoning.economic_purpose",
+            "declared_match": "CL-005",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-018"
+          },
+          {
+            "claim_text": "Reported financials show revenue trends (FY22 +36.9%, FY25 +2.5%, FY26 Q1 +9.7%) and FY25 capex (~49 crore), which could be consistent with investment in those initiatives.",
+            "source_field": "economic_reasoning.economic_purpose",
+            "declared_match": "CL-007",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-019"
+          },
+          {
+            "claim_text": "Management has also demonstrated access to external funding (debt raised; access to capital markets stated)",
+            "source_field": "economic_reasoning.economic_purpose",
+            "declared_match": "CL-004",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-020"
+          },
+          {
+            "claim_text": "attribution of specific capital allocation to the observed operating or financial outcomes cannot be established from the available information.",
+            "source_field": "economic_reasoning.economic_purpose",
+            "declared_match": "CL-009",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-021"
+          },
+          {
+            "claim_text": "Material risks (cybersecurity, partner dependency) and evidence gaps (no segment profitability detail, no primary-source disclosure) keep the overall return profile uncertain",
+            "source_field": "economic_reasoning.economic_purpose",
+            "declared_match": "CL-009",
+            "suggested_refs": [],
+            "materiality": "HIGH",
+            "extraction_id": "EX-022"
+          }
+        ],
+        "undeclared_claims": [],
+        "undeclared_count": 0,
+        "total_extracted": 22,
+        "coverage_assessment": "COMPLETE",
+        "coverage_notes": ""
+      },
+      "batch_reviews": {},
+      "final_gate": {
+        "gate_status": "PASS",
+        "issues": [],
+        "coverage_assessment": "COMPLETE",
+        "undeclared_material_claims": 0,
+        "composition_gate": "PASS",
+        "leakage_check": "PASS"
+      },
+      "gate_status": "PASS",
+      "readability": {
+        "passed": true,
+        "issues": [],
+        "warnings": [],
+        "simple_answer_length": 351,
+        "key_points_count": 4,
+        "has_hedging_language": true
+      }
+    }
+  },
+  "certification_reuse": {
+    "reviewer_unchanged_since_last_commit": true,
+    "reviewer_file_hash": "a955b2fa5831bd1b",
+    "m14_final_level": "LEVEL_3",
+    "m14_certified_results_reused": true,
+    "recertification_required": false,
+    "note": "relationship_reviewer.py unchanged since M14 commit ff9d5ec → 29/29 M14 certified results remain valid by construction."
+  },
+  "telemetry": {
+    "total_calls": 5,
+    "cache_hits": 4,
+    "total_prompt_tokens": 5600,
+    "total_completion_tokens": 1400,
+    "total_tokens": 7000,
+    "estimated_cost_usd": 0.00168,
+    "by_stage": {
+      "composition": {
+        "calls": 2,
+        "cache_hits": 2,
+        "tokens": 0,
+        "cost_usd": 0.0
+      },
+      "claim_extraction": {
+        "calls": 2,
+        "cache_hits": 2,
+        "tokens": 0,
+        "cost_usd": 0.0
+      },
+      "claim_review_batch": {
+        "calls": 1,
+        "cache_hits": 0,
+        "tokens": 7000,
+        "cost_usd": 0.0016799999999999999
+      }
+    }
+  },
+  "final_mission15_status": "READY_FOR_PRODUCTION_SHADOW_INTEGRATION",
+  "before_after_comparison": {
+    "baseline_calls": 36,
+    "baseline_tokens": 69600,
+    "actual_total_calls": 5,
+    "actual_fresh_calls": 1,
+    "actual_cache_hits": 4,
+    "actual_tokens": 7000,
+    "actual_cost_usd": 0.00168
+  }
+}
