@@ -5,6 +5,7 @@ from typing import Iterable, Optional
 
 from .base import BaseAIProvider
 from .exceptions import AIProviderError
+from .anthropic_provider import AnthropicProvider
 from .groq import GroqProvider
 from .mock import MockProvider
 from .openai import OpenAIProvider
@@ -18,6 +19,8 @@ def get_llm(
 ) -> BaseAIProvider:
     selected_provider = (provider or os.getenv("AI_PROVIDER") or "mock").strip().lower()
 
+    if selected_provider == "anthropic":
+        return AnthropicProvider(model=model)
     if selected_provider == "groq":
         return GroqProvider(model=model)
     if selected_provider == "openai":

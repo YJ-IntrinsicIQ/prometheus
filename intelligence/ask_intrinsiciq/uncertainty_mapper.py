@@ -44,7 +44,7 @@ QUESTION_UNCERTAINTY_PRIORITY: Dict[str, List[str]] = {
     "what-has-management-promised": ["management_promise_tracking"],
     "did-past-claims-come-true": ["management_promise_tracking"],
     "how-is-capital-allocated": ["capex_split", "capacity_payoff"],
-    "what-incentives-matter": ["management_promise_tracking"],
+    "what-incentives-matter": ["share_count_comparability", "management_promise_tracking"],
     "what-should-i-ask-ir": ["capex_split", "working_capital_drivers", "share_count_comparability"],
     "what-would-graham-worry-about": ["working_capital_drivers", "share_count_comparability", "product_revenue_mix"],
     "what-would-buffett-focus-on": ["capex_split", "product_revenue_mix", "working_capital_drivers", "share_count_comparability"],
@@ -71,7 +71,6 @@ UNCERTAINTY_THEME_REGISTRY: Dict[str, Dict[str, Any]] = {
         "affected_question_ids": [
             "what-is-owner-earnings",
             "how-is-capital-allocated",
-            "what-incentives-matter",
             "which-disclosure-is-missing",
             "what-evidence-would-change-the-view",
             "what-needs-management-clarification",
@@ -373,7 +372,6 @@ UNCERTAINTY_THEME_REGISTRY: Dict[str, Dict[str, Any]] = {
         "affected_question_ids": [
             "what-has-management-promised",
             "did-past-claims-come-true",
-            "what-incentives-matter",
             "what-should-i-ask-ir",
         ],
         "severity": "high",
@@ -388,7 +386,6 @@ UNCERTAINTY_THEME_REGISTRY: Dict[str, Dict[str, Any]] = {
         "why_it_matters": "When two active interpretations disagree, the prudent next step is to resolve the gap before leaning too hard on one conclusion.",
         "affected_topics": ["Financial interpretation"],
         "affected_question_ids": [
-            "what-incentives-matter",
             "what-evidence-would-change-the-view",
             "what-remains-unresolved",
         ],

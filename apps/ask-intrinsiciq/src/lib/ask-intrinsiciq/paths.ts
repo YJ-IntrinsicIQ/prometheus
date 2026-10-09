@@ -11,6 +11,7 @@ export type AskIntrinsicIqPaths = {
   businessJourney: string;
   productsServices: string;
   answerCards: string;
+  shadowLevel3HybridAnswers: string;
   financialVisualSummaries: string;
   uncertaintyMap: string;
   manifest: string;
@@ -50,6 +51,7 @@ export function getAskIntrinsicIqPaths(
     businessJourney: path.join(outputRoot, "business_journey.json"),
     productsServices: path.join(outputRoot, "products_services.json"),
     answerCards: path.join(outputRoot, "answer_cards.json"),
+    shadowLevel3HybridAnswers: path.join(outputRoot, "shadow_level3_hybrid_answers.json"),
     financialVisualSummaries: path.join(
       outputRoot,
       "financial_visual_summaries.json",

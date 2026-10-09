@@ -3369,3 +3369,126 @@ def test_compact_business_economics_preserves_trajectory_fields():
     assert engine["trajectory"] == "decelerating", "trajectory field must survive compaction"
     assert engine["growth_momentum"] == "decelerating", "growth_momentum must survive compaction"
     assert engine["scale_status"] == "major", "scale_status must survive compaction"
+
+
+# ── ENG-NEW-INVESTOR-PANEL: Source Contract Repair Tests ────────────────────
+
+def test_panel_filter_doctrine_echoes_removes_lens_preamble():
+    from intelligence.investor_panel.runner import _filter_doctrine_echoes
+    warnings = []
+    items = ["Benjamin Graham consumes financial_strength_inputs from PCIM."]
+    result = _filter_doctrine_echoes(items, "key_findings", warnings)
+    assert result == [], "Lens preamble must be removed"
+    assert any("doctrine-echo" in w for w in warnings)
+
+
+def test_panel_filter_doctrine_echoes_removes_uncertainty_rules():
+    from intelligence.investor_panel.runner import _filter_doctrine_echoes
+    warnings = []
+    items = [
+        "Do not infer valuation, safety, or solvency from business quality evidence alone.",
+        "Escalate uncertainty when core financial-strength evidence is missing or partial.",
+        "When evidence conflicts, prefer the more conservative interpretation.",
+        "If dividend or distribution evidence lacks cash-flow context, treat it as monitoring.",
+        "If the business cannot be explained simply from available evidence, the output must say so.",
+    ]
+    result = _filter_doctrine_echoes(items, "open_uncertainties", warnings)
+    assert result == [], f"All uncertainty rules must be removed, got: {result}"
+    assert len(warnings) == 5
+
+
+def test_panel_filter_doctrine_echoes_preserves_company_observations():
+    from intelligence.investor_panel.runner import _filter_doctrine_echoes
+    warnings = []
+    company_items = [
+        "Balance sheet evidence points to scale and reported strength.",
+        "Management does not disclose segment-level margins.",
+        "Costs could escalate if raw-material prices rise in the formulations segment.",
+        "Free cash flow is described as derived, not explicitly disclosed.",
+        "Governance risk is classified as worsening with no disclosed remediation.",
+    ]
+    result = _filter_doctrine_echoes(company_items, "key_findings", warnings)
+    assert result == company_items, f"Company observations must survive: dropped {set(company_items) - set(result)}"
+    assert warnings == [], f"No warnings expected for clean items: {warnings}"
+
+
+def test_panel_scaffold_key_findings_no_doctrine_metadata():
+    """Deterministic scaffold _key_findings must not inject lens preamble or primary_focus."""
+    from intelligence.investor_panel.runner import _key_findings
+    doctrine = {
+        "investor_lens": "Benjamin Graham",
+        "doctrine_id": "graham",
+        "primary_focus": ["Downside protection", "Balance-sheet resilience"],
+        "uncertainty_rules": ["Escalate uncertainty when...", "Do not infer..."],
+    }
+    findings = _key_findings(doctrine, ["balance_sheet_strength_inputs"], ["cash_conversion_inputs"])
+    for f in findings:
+        assert "Primary focus" not in f, f"Doctrine metadata in scaffold finding: {f!r}"
+        assert "consumes" not in f.lower(), f"Lens preamble in scaffold finding: {f!r}"
+        assert "primary_focus" not in f.lower(), f"Primary focus key in scaffold finding: {f!r}"
+
+
+def test_panel_scaffold_open_uncertainties_no_uncertainty_rules():
+    """Deterministic scaffold _open_uncertainties must not include doctrine.uncertainty_rules."""
+    from intelligence.investor_panel.runner import _open_uncertainties
+    doctrine = {
+        "investor_lens": "Benjamin Graham",
+        "doctrine_id": "graham",
+        "uncertainty_rules": [
+            "Escalate uncertainty when core financial-strength evidence is missing or partial.",
+            "Do not infer valuation from business quality evidence.",
+        ],
+    }
+    uncertainties = _open_uncertainties(doctrine, ["cash_conversion_inputs"], {})
+    for u in uncertainties:
+        assert "Escalate uncertainty" not in u, f"Doctrine rule in scaffold uncertainty: {u!r}"
+        assert "Do not infer" not in u, f"Doctrine rule in scaffold uncertainty: {u!r}"
+
+
+def test_panel_prompt_no_uncertainty_rules_key():
+    """The LLM prompt doctrine_block must not contain 'uncertainty_rules' key."""
+    import json
+    from intelligence.investor_panel.runner import _build_llm_prompt
+    from pathlib import Path
+    import inspect
+
+    # Check the source code to confirm uncertainty_rules key was removed from doctrine_block
+    source = inspect.getsource(_build_llm_prompt)
+    # The doctrine_block should not include uncertainty_rules
+    assert '"uncertainty_rules"' not in source or "removed from prompt" in source, \
+        "uncertainty_rules should not be in doctrine_block sent to LLM"
+
+
+def test_panel_prompt_anti_echo_rules_present():
+    """The LLM prompt rules list must include anti-echo output rules."""
+    import inspect
+    from intelligence.investor_panel.runner import _build_llm_prompt
+    source = inspect.getsource(_build_llm_prompt)
+    assert "analyst_focus_areas" in source or "never reproduce" in source.lower() or "company-specific observation" in source, \
+        "Anti-echo rule must be present in prompt construction"
+
+
+def test_panel_ask_artifacts_doctrine_free_after_source_fix():
+    """All Ask artifacts for all 4 companies must be doctrine-free (verified post-fix)."""
+    import json
+    from pathlib import Path
+    DOCTRINE_SIGNALS = [
+        "primary focus:", "all investment lens-required", "do not infer",
+        "escalate uncertainty", "when evidence conflicts", "when the story",
+    ]
+    companies = ["sun_pharma", "tanla", "ujjivan", "datapatterns"]
+    leaks = []
+    for company in companies:
+        path = Path(f"companies/{company}/company_memory/ask_intrinsiciq/answer_cards.json")
+        if not path.exists():
+            continue
+        cards = json.loads(path.read_text())
+        for a in cards.get("answers", []):
+            interp = a.get("interpretation", {}) or {}
+            all_fields = (a.get("key_points", []) + interp.get("unresolved", []) +
+                          interp.get("what_to_watch", []) + interp.get("positive_evidence", []) +
+                          interp.get("negative_evidence", []))
+            for f in all_fields:
+                if any(s in str(f).lower() for s in DOCTRINE_SIGNALS):
+                    leaks.append(f"{company}/{a['question_id']}: {str(f)[:60]!r}")
+    assert leaks == [], f"Doctrine in Ask artifacts: {leaks}"

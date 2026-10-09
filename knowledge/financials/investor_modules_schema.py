@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 MODULE_STATUS = {"pass", "warning", "partial", "invalid", "skipped"}
 OWNER_EARNINGS_PRECISION = {"precise", "estimate_available", "partial", "unavailable"}
 ROI_MEASURABILITY = {"measurable", "partially_measurable", "not_yet_measurable", "unreliable"}
-WORKING_CAPITAL_STATUS = {"healthy", "watch", "stretched", "severe", "insufficient_data"}
+WORKING_CAPITAL_STATUS = {"healthy", "watch", "stretched", "severe", "insufficient_data", "not_applicable"}
 CONVERSION_STATUS = {"strong", "watch", "stretched", "insufficient_data"}
 DILUTION_STATUS = {
     "no_material_dilution_detected",

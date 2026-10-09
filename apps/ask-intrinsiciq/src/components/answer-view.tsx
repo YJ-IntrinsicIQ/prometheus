@@ -22,9 +22,10 @@ type AnswerViewProps = {
   companySlug: string;
   company: CompanyResearchView;
   answer: ResearchAnswerCard;
+  canarySource?: "HYBRID_CANARY";
 };
 
-export function AnswerView({ companySlug, company, answer }: AnswerViewProps) {
+export function AnswerView({ companySlug, company, answer, canarySource }: AnswerViewProps) {
   const categoryLookup = new Map(
     company.categories.flatMap((category) =>
       category.questions.map((question) => [question.id, category.title] as const),
@@ -51,12 +52,18 @@ export function AnswerView({ companySlug, company, answer }: AnswerViewProps) {
       cleanPublicList([answer.interpretation.conclusion], { seen, limit: 1 });
       cleanPublicList([answer.interpretation.whyItMatters], { seen, limit: 1 });
       cleanPublicList([answer.interpretation.economicMechanism], { seen, limit: 1 });
-      cleanPublicList(answer.interpretation.whatChanged, { seen, limit: 3 });
       cleanPublicList(answer.interpretation.positiveEvidence, { seen, limit: 3 });
       cleanPublicList(answer.interpretation.negativeEvidence, { seen, limit: 3 });
       cleanPublicList(answer.interpretation.unresolved, { seen, limit: 3 });
       cleanPublicList(answer.interpretation.whatToWatch, { seen, limit: 3 });
     }
+    // Deduplicate key_points against evidence already shown in EvidenceDisclosure.
+    // interpretation.whatChanged is not rendered in the investor UI and must not
+    // suppress key_points that are selected as investor-facing evidence.
+    cleanPublicList(
+      answer.evidenceSummary.map((item) => item.detail),
+      { seen, limit: answer.evidenceSummary.length },
+    );
     if (answer.progression) {
       cleanPublicList([answer.progression.headline], { seen, limit: 1 });
       cleanPublicList([answer.progression.whatChanged], { seen, limit: 1 });
@@ -82,6 +89,11 @@ export function AnswerView({ companySlug, company, answer }: AnswerViewProps) {
         <div className="mt-4 inline-flex rounded-full border border-border bg-[rgba(255,255,255,0.62)] px-3 py-1 text-[0.72rem] tracking-[0.01em] text-muted">
           {statusLabel(answer.answerStatus)}
         </div>
+        {canarySource === "HYBRID_CANARY" ? (
+          <div className="ml-2 mt-4 inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[0.68rem] tracking-[0.04em] text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400">
+            Level-3 Research Preview
+          </div>
+        ) : null}
         <h1 className="mt-4 font-serif text-[2.1rem] leading-tight text-foreground md:text-[2.5rem] xl:text-[2.65rem]">
           {answer.title}
         </h1>
@@ -163,6 +175,16 @@ export function AnswerView({ companySlug, company, answer }: AnswerViewProps) {
 
         <EvidenceDisclosure items={answer.evidenceSummary} />
         <NextQuestions questions={nextQuestionHrefs} exploreHref={backHref} />
+        {canarySource === "HYBRID_CANARY" ? (
+          <div className="rounded-[18px] border border-amber-200/60 bg-amber-50/60 px-4 py-3 dark:border-amber-800/40 dark:bg-amber-950/20">
+            <p className="text-[0.75rem] font-medium text-amber-800 dark:text-amber-400">
+              Internal review — Level-3 Research Preview
+            </p>
+            <p className="mt-0.5 text-[0.72rem] text-amber-700/80 dark:text-amber-500/80">
+              Send feedback to the Prometheus team: was this answer more useful? Any issues?
+            </p>
+          </div>
+        ) : null}
         {company.sourceState.mode === "demo" ? (
           <p className="text-sm leading-6 text-muted">
             Development fixture only. Canonical Ask IntrinsicIQ output is not

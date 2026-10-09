@@ -342,27 +342,31 @@ def progression_items_for_question(progression: Dict[str, Any], question_id: str
     items = _records(progression, "progression_items")
     if not items or _coverage(progression) == "insufficient_evidence":
         return []
+    data_max_fy = max((_item_latest_fy(i) for i in items), default=0)
+
+    def _rank(item: Dict[str, Any]) -> Tuple[int, int, int, int]:
+        return _progression_rank(item, question_id, company_model=company_model, data_max_fy=data_max_fy)
+
     if question_id == "did-past-claims-come-true":
         selected = [item for item in items if _is_claim_view_item(item, company_model=company_model)]
-        return sorted(selected, key=lambda item: _progression_rank(item, question_id, company_model=company_model), reverse=True)
+        return sorted(selected, key=_rank, reverse=True)
     if question_id in _PROMISE_QUESTION_IDS:
         selected = [item for item in items if _is_promise_view_item(item, company_model=company_model)]
-        return sorted(selected, key=lambda item: _progression_rank(item, question_id, company_model=company_model), reverse=True)
+        return sorted(selected, key=_rank, reverse=True)
     if question_id == _PROJECT_QUESTION_ID:
         selected = [item for item in items if _is_project_view_item(item, company_model=company_model)]
-        return sorted(selected, key=lambda item: _progression_rank(item, question_id, company_model=company_model), reverse=True)
+        return sorted(selected, key=_rank, reverse=True)
     if question_id == _CAPACITY_QUESTION_ID:
         selected = [item for item in items if _is_capacity_view_item(item, company_model=company_model)]
-        return sorted(selected, key=lambda item: _progression_rank(item, question_id, company_model=company_model), reverse=True)
+        return sorted(selected, key=_rank, reverse=True)
     if question_id == _COMMENTARY_QUESTION_ID:
-        selected = [item if _is_commentary_view_item(item, company_model=company_model) else None for item in items]
-        selected = [item for item in selected if item is not None]
-        return sorted(selected, key=lambda item: _progression_rank(item, question_id, company_model=company_model), reverse=True)
+        selected = [item for item in items if _is_commentary_view_item(item, company_model=company_model)]
+        return sorted(selected, key=_rank, reverse=True)
     if question_id == "how-is-capital-allocated":
         selected = _filter_progression(items, stream_types={"capital_allocation", "legacy_capital_allocation"}, event_types={"capital_deployment"})
-        return sorted(selected, key=lambda item: _progression_rank(item, question_id, company_model=company_model), reverse=True)
+        return sorted(selected, key=_rank, reverse=True)
     if question_id == "what-incentives-matter":
-        return items
+        return sorted(items, key=_rank, reverse=True)
     return []
 
 
@@ -524,7 +528,60 @@ def _filter_progression(
     return selected
 
 
-def _progression_rank(item: Dict[str, Any], question_id: str, *, company_model: Dict[str, Any] | None = None) -> Tuple[int, int, int, int]:
+def _item_latest_fy(item: Dict[str, Any]) -> int:
+    """Return the most recent financial year (as int, e.g. 2026) across all events for an item.
+    Returns 0 when no parseable period is found.
+    """
+    fys = []
+    for event in _records(item, "events"):
+        for field in ("event_period", "source_period"):
+            val = str(event.get(field) or "").lower().strip()
+            m = re.match(r"fy(\d+)$", val)
+            if m:
+                yy = int(m.group(1))
+                fys.append(2000 + yy if yy <= 99 else yy)
+    return max(fys, default=0)
+
+
+# Current-state questions rank evidence by recency: what matters today must lead.
+_CURRENT_STATE_QUESTION_IDS = {
+    _CAPACITY_QUESTION_ID,
+    "what-incentives-matter",
+    _PROJECT_QUESTION_ID,
+}
+
+
+def _temporal_recency_score(item: Dict[str, Any], question_id: str, data_max_fy: int) -> int:
+    """Recency adjustment for current-state questions.
+
+    Historical events may still be material when they have ongoing consequences —
+    detected by the presence of recent events (latest event FY is recent).
+    Items whose only evidence is very old are demoted, not deleted: they remain
+    as context but do not lead current-state answers.
+
+    No hard age cutoff: the penalty is relative to data_max_fy (the newest FY
+    seen across the full item set), so the scale self-adjusts as the data grows.
+    """
+    if data_max_fy <= 0 or question_id not in _CURRENT_STATE_QUESTION_IDS:
+        return 0
+    latest_fy = _item_latest_fy(item)
+    if latest_fy <= 0:
+        return 0
+    age = data_max_fy - latest_fy
+    # CURRENT (0–2 years): no penalty
+    if age <= 2:
+        return 0
+    # RECENT (3–5 years): minor demotion — relevant but not the headline
+    if age <= 5:
+        return -10
+    # OLDER (6–10 years): moderate demotion — supporting context
+    if age <= 10:
+        return -20
+    # HISTORICAL (>10 years): strong demotion — context only unless recent events confirm ongoing impact
+    return -30
+
+
+def _progression_rank(item: Dict[str, Any], question_id: str, *, company_model: Dict[str, Any] | None = None, data_max_fy: int = 0) -> Tuple[int, int, int, int]:
     events = _records(item, "events")
     texts = [_strip_progression_scaffolding(_event_text(event)) for event in events]
     specific_count = sum(1 for text in texts if _is_specific_progression_text(text))
@@ -537,17 +594,18 @@ def _progression_rank(item: Dict[str, Any], question_id: str, *, company_model: 
     promise_count = sum(1 for event in events if _first_text(event.get("statement_text"), event.get("future_intent"), event.get("promise_text"), event.get("project_text"), event.get("commentary_text"), event.get("milestone_text"), event.get("action_taken")))
     event_count = len(events)
     relevance_score = _business_relevance_score(item, question_id=question_id, company_model=company_model)
+    temporal_score = _temporal_recency_score(item, question_id, data_max_fy)
     if question_id == "did-past-claims-come-true":
         return (relevance_score, _later_evidence_count(item), outcome_count, specific_count)
     if question_id == "what-has-management-promised":
         return (relevance_score, promise_count, specific_count, _material_anchor_count(texts))
     if question_id == _PROJECT_QUESTION_ID:
-        return (relevance_score + _project_materiality_score(item), specific_count, event_count, outcome_count)
+        return (relevance_score + _project_materiality_score(item) + temporal_score, specific_count, event_count, outcome_count)
     if question_id == _CAPACITY_QUESTION_ID:
-        return (relevance_score + _capacity_materiality_score(item), specific_count, outcome_count, event_count)
+        return (relevance_score + _capacity_materiality_score(item) + temporal_score, specific_count, outcome_count, event_count)
     if question_id == _COMMENTARY_QUESTION_ID:
         return (relevance_score + _commentary_materiality_score(item), len(texts), specific_count, event_count)
-    return (relevance_score, specific_count, event_count, outcome_count)
+    return (relevance_score + temporal_score, specific_count, event_count, outcome_count)
 
 
 def _empty_business_journey(company_slug: str, generated_at: str) -> Dict[str, Any]:

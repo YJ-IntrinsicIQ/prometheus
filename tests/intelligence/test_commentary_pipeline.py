@@ -62,6 +62,57 @@ def test_commentary_cleaner_groups_company_and_external_items(tmp_path, monkeypa
     assert "source_chunk" not in json.dumps(grouped)
 
 
+def test_classify_third_party_future_becomes_external_context():
+    """Third-party collective-subject future statements must not become company_promise."""
+    mc0005 = (
+        "Innovator pharmaceutical companies will continue to explore new treatment "
+        "approaches and technologies to better address unmet medical needs."
+    )
+    result = generator._classify_management_item({"value": mc0005}, "promise", mc0005)
+    assert result["context_type"] == generator.CONTEXT_TYPE_EXTERNAL_CONTEXT, (
+        f"MC-0005 style statement must classify as external_context, got {result['context_type']!r}"
+    )
+    assert result["agency"] == "external_not_controlled"
+    assert result["should_feed_management_consistency"] is False
+    assert result["should_feed_external_context"] is True
+
+
+def test_classify_legitimate_company_commitment_not_suppressed():
+    """First-person 'will' commitments must still reach company_promise."""
+    for text in [
+        "We will continue to invest in our branded generics portfolio and expand our specialty pipeline.",
+        "Our management team will prioritize complex injectables and biosimilar pipelines by FY24.",
+        "The company will expand its API capacity in Dadra by FY23.",
+    ]:
+        result = generator._classify_management_item({"value": text}, "promise", text)
+        assert result["context_type"] == generator.CONTEXT_TYPE_COMPANY_PROMISE, (
+            f"Legitimate commitment mis-classified: {text[:60]!r} → {result['context_type']!r}"
+        )
+
+
+def test_classify_other_third_party_collectives():
+    """Other collective-noun subjects ('providers will', 'manufacturers will') must also go to external_context."""
+    for text in [
+        "Generic manufacturers will face price erosion as new entrants arrive.",
+        "Healthcare providers will increasingly adopt digital platforms for patient engagement.",
+    ]:
+        result = generator._classify_management_item({"value": text}, "promise", text)
+        assert result["context_type"] == generator.CONTEXT_TYPE_EXTERNAL_CONTEXT, (
+            f"Industry observation mis-classified: {text[:60]!r} → {result['context_type']!r}"
+        )
+
+
+def test_classify_first_person_overrides_collective_noun():
+    """'We, as manufacturers, will…' must remain company_promise despite containing a collective noun.
+    _normalize_text strips punctuation so 'we, as manufacturers, will' becomes 'we as manufacturers will';
+    the first-person regex must bridge up to 4 intervening words to still fire."""
+    text = "We, as manufacturers, will upgrade all API plants by FY24 to meet WHO GMP standards."
+    result = generator._classify_management_item({"value": text}, "promise", text)
+    assert result["context_type"] == generator.CONTEXT_TYPE_COMPANY_PROMISE, (
+        f"First-person override failed: got {result['context_type']!r}"
+    )
+
+
 def test_management_summary_uses_grouped_commentary_without_mixing_external_context():
     profile = {
         "projects": [],

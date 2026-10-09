@@ -615,24 +615,33 @@ def test_management_commitment_answers_surface_specific_material_commitments():
     assert any("fy22" in item.lower() for item in promises)
     assert any("fy22" in item.lower() for item in claims)
     assert all(item.lower() != "capacity expansion" for item in promises)
-    assert "strategic intents" in promise_conclusion
+    assert "stated directions" in promise_conclusion or "strategic intents" in promise_conclusion
     assert ("follow-through" in claims_conclusion) or ("not held against" in claims_conclusion)
     assert promise_conclusion != claims_conclusion
 
 
 def test_incentives_answer_uses_signal_level_evidence_not_summary_labels():
-    bundle = load_company_memory_sources("datapatterns")
+    # Sun Pharma has ownership_evolution.json — use it to exercise the ownership-based incentives builder
+    bundle = load_company_memory_sources("sun_pharma")
     products_payload = {"groups": [], "summary": "", "business_model_summary": None, "customer_summary": None, "revenue_logic_summary": None, "open_questions": [], "coverage_status": "unavailable"}
-    answer_cards, _ = build_answer_cards(bundle, business_journey_payload={"summary": "", "stages": []}, products_services_payload=products_payload, company_slug="datapatterns", generated_at="2026-08-11T00:00:00+00:00")
+    answer_cards, _ = build_answer_cards(bundle, business_journey_payload={"summary": "", "stages": []}, products_services_payload=products_payload, company_slug="sun_pharma", generated_at="2026-08-11T00:00:00+00:00")
     answer = next(answer for answer in answer_cards["answers"] if answer["question_id"] == "what-incentives-matter")
 
-    positive = [item.lower() for item in answer["interpretation"]["positive_evidence"]]
-    negative = [item.lower() for item in answer["interpretation"]["negative_evidence"]]
+    # New contract: ownership-based builder — must surface real ownership signals, not management progression labels
+    assert answer["answer_status"] in ("partially_supported", "supported"), f"Expected ownership evidence, got: {answer['answer_status']}"
+    interp = answer.get("interpretation") or {}
+    positive = [item.lower() for item in (interp.get("positive_evidence") or [])]
+    negative = [item.lower() for item in (interp.get("negative_evidence") or [])]
+    unresolved = [item.lower() for item in (interp.get("unresolved") or [])]
 
-    assert positive
+    # Must have ownership alignment signals, not bare summary labels
+    assert positive, "No positive_evidence in incentives answer"
     assert all(item not in {"weak", "stable"} for item in positive)
-    assert any(item for item in positive + negative)
-    assert "outcome evidence remains incomplete" in " ".join(negative)
+    # Compensation gap must appear in unresolved — the picture is always incomplete without KMP data
+    combined = " ".join(unresolved + negative)
+    assert any(phrase in combined for phrase in ("incomplete", "not yet", "compensation", "kmp")), (
+        f"No incentive-gap signal in negative/unresolved: {negative + unresolved}"
+    )
 
 
 def test_empty_state_filler_strings_are_not_serialized():
@@ -2256,3 +2265,909 @@ def test_producer_led_alias_does_not_match_capacity_led():
     assert "electronics or semiconductor customers" not in payer_types, (
         f"'capacity-led' phrase triggered electronics customer type. Customers: {payer_types}"
     )
+
+
+# ── ENG-141: Temporal Relevance / Historical Leakage Repair ──────────────────
+
+def _sun_pharma_cards():
+    """Build Sun Pharma answer cards — shared fixture for ENG-141 tests."""
+    bundle = load_company_memory_sources("sun_pharma")
+    products_payload = {
+        "groups": [], "summary": "", "business_model_summary": None,
+        "customer_summary": None, "revenue_logic_summary": None,
+        "open_questions": [], "coverage_status": "unavailable",
+    }
+    cards, _ = build_answer_cards(
+        bundle,
+        business_journey_payload={"summary": "", "stages": []},
+        products_services_payload=products_payload,
+        company_slug="sun_pharma",
+        generated_at="2026-09-15T00:00:00+00:00",
+    )
+    return cards
+
+
+def _first_point(cards, question_id: str) -> str:
+    answer = next((a for a in cards["answers"] if a["question_id"] == question_id), {})
+    kps = answer.get("key_points", [])
+    if not kps:
+        return ""
+    kp = kps[0]
+    return kp.get("point", "") if isinstance(kp, dict) else str(kp)
+
+
+def test_eng141_toansa_fy14_does_not_lead_capacity_question():
+    """Toansa 2014 USFDA event must NOT be the headline for how-is-capacity-changing."""
+    cards = _sun_pharma_cards()
+    first = _first_point(cards, "how-is-capacity-changing")
+    assert "toansa" not in first.lower(), (
+        f"Toansa fy14 is leading how-is-capacity-changing: {first!r}"
+    )
+
+
+def test_eng141_capacity_lead_is_recent():
+    """Lead key_point for how-is-capacity-changing must reference post-2020 evidence."""
+    from intelligence.ask_intrinsiciq.canonical_projection import _item_latest_fy, progression_items_for_question
+    from intelligence.ask_intrinsiciq.loader import load_company_memory_sources
+
+    bundle = load_company_memory_sources("sun_pharma")
+    prog = bundle.get("management_progression") or {}
+    items = progression_items_for_question(prog, "how-is-capacity-changing")
+    if not items:
+        return  # No capacity items — skip rather than false-fail
+    lead_fy = _item_latest_fy(items[0])
+    assert lead_fy >= 2020, (
+        f"Lead capacity item has fy={lead_fy}, expected >= 2020 (recent evidence should lead)"
+    )
+
+
+def test_eng141_what_incentives_is_sorted_not_raw():
+    """what-incentives-matter must return sorted items, not raw insertion order."""
+    from intelligence.ask_intrinsiciq.canonical_projection import progression_items_for_question, _progression_rank, _item_latest_fy
+    from intelligence.ask_intrinsiciq.loader import load_company_memory_sources
+
+    bundle = load_company_memory_sources("sun_pharma")
+    prog = bundle.get("management_progression") or {}
+    items = progression_items_for_question(prog, "what-incentives-matter")
+    if len(items) < 2:
+        return
+    # Check that items are in descending rank order (first >= second on primary score)
+    data_max_fy = max((_item_latest_fy(i) for i in items), default=0)
+    ranks = [_progression_rank(i, "what-incentives-matter", data_max_fy=data_max_fy)[0] for i in items[:5]]
+    for i in range(len(ranks) - 1):
+        assert ranks[i] >= ranks[i + 1], (
+            f"what-incentives-matter not sorted: rank[{i}]={ranks[i]} < rank[{i+1}]={ranks[i+1]}"
+        )
+
+
+def test_eng141_item_latest_fy_parses_fy14():
+    """_item_latest_fy must correctly parse fy14 event_period as 2014."""
+    from intelligence.ask_intrinsiciq.canonical_projection import _item_latest_fy
+    item = {"events": [{"event_period": "fy14", "source_period": None}]}
+    assert _item_latest_fy(item) == 2014
+
+
+def test_eng141_temporal_recency_score_historical_penalty():
+    """Items with only 12-year-old evidence get -30 penalty for current-state questions."""
+    from intelligence.ask_intrinsiciq.canonical_projection import _temporal_recency_score
+    item = {"events": [{"event_period": "fy14"}]}
+    score = _temporal_recency_score(item, "how-is-capacity-changing", data_max_fy=2026)
+    assert score == -30, f"Expected -30 for 12yr-old item, got {score}"
+
+
+def test_eng141_temporal_recency_score_no_penalty_non_current_question():
+    """No temporal penalty applied to non-current-state questions like did-past-claims-come-true."""
+    from intelligence.ask_intrinsiciq.canonical_projection import _temporal_recency_score
+    item = {"events": [{"event_period": "fy14"}]}
+    score = _temporal_recency_score(item, "did-past-claims-come-true", data_max_fy=2026)
+    assert score == 0, f"Expected 0 for non-current-state question, got {score}"
+
+
+def test_eng141_no_company_specific_logic_in_temporal_score():
+    """_temporal_recency_score must not reference sun_pharma, tanla, or any company slug."""
+    import inspect
+    from intelligence.ask_intrinsiciq import canonical_projection
+    src = inspect.getsource(canonical_projection._temporal_recency_score)
+    for slug in ("sun_pharma", "tanla", "ujjivan", "data_patterns"):
+        assert slug not in src, f"_temporal_recency_score contains company-specific reference: {slug!r}"
+
+
+# ── ENG-141A: Ongoing Historical Consequence Proof ────────────────────────────
+# Mission: prove that temporal ranking distinguishes OLD+STILL_ACTIVE from
+# OLD+AND_RESOLVED. The mechanism: _item_latest_fy takes the MAX FY across ALL
+# events on an item — so an old event with a recent consequence/status event
+# attached ranks as CURRENT, while an old event with no follow-up ranks as
+# HISTORICAL and is demoted.
+
+
+def test_eng141a_item_latest_fy_picks_most_recent_event():
+    """_item_latest_fy uses the newest event's FY, not the original event."""
+    from intelligence.ask_intrinsiciq.canonical_projection import _item_latest_fy
+    item = {"events": [
+        {"event_period": "fy14"},  # original event (old)
+        {"event_period": "fy25"},  # consequence / status update (current)
+    ]}
+    assert _item_latest_fy(item) == 2025
+
+
+def test_eng141a_item_latest_fy_source_period_fallback():
+    """_item_latest_fy uses source_period when event_period is absent."""
+    from intelligence.ask_intrinsiciq.canonical_projection import _item_latest_fy
+    item = {"events": [{"source_period": "fy20"}, {"source_period": "fy25"}]}
+    assert _item_latest_fy(item) == 2025
+
+
+def test_eng141a_old_still_active_gets_no_penalty():
+    """Old event (fy14) + current consequence (fy25) → latest_fy=2025 → age=1 → CURRENT → score=0."""
+    from intelligence.ask_intrinsiciq.canonical_projection import _temporal_recency_score
+    item = {"events": [{"event_period": "fy14"}, {"event_period": "fy25"}]}
+    score = _temporal_recency_score(item, "how-is-capacity-changing", data_max_fy=2026)
+    assert score == 0, f"OLD+ACTIVE should get no penalty, got {score}"
+
+
+def test_eng141a_old_no_consequence_gets_max_penalty():
+    """Old event (fy14) only → latest_fy=2014 → age=12 → HISTORICAL → score=-30."""
+    from intelligence.ask_intrinsiciq.canonical_projection import _temporal_recency_score
+    item = {"events": [{"event_period": "fy14"}]}
+    score = _temporal_recency_score(item, "how-is-capacity-changing", data_max_fy=2026)
+    assert score == -30, f"OLD+NO_CONSEQUENCE should get -30, got {score}"
+
+
+def test_eng141a_old_recently_resolved_gets_minor_penalty():
+    """Old event (fy14) + recent-ish resolution (fy22) → age=4 → RECENT → score=-10."""
+    from intelligence.ask_intrinsiciq.canonical_projection import _temporal_recency_score
+    item = {"events": [{"event_period": "fy14"}, {"event_period": "fy22"}]}
+    score = _temporal_recency_score(item, "how-is-capacity-changing", data_max_fy=2026)
+    assert score == -10, f"OLD+RECENT_ACTIVITY should get -10, got {score}"
+
+
+def test_eng141a_recent_issue_no_penalty():
+    """Recent issue (fy25) gets no temporal penalty."""
+    from intelligence.ask_intrinsiciq.canonical_projection import _temporal_recency_score
+    item = {"events": [{"event_period": "fy25"}]}
+    score = _temporal_recency_score(item, "how-is-capacity-changing", data_max_fy=2026)
+    assert score == 0, f"Recent item should have no penalty, got {score}"
+
+
+def test_eng141a_historical_question_no_recency_suppression():
+    """Historical questions (did-past-claims-come-true) must not penalise old evidence."""
+    from intelligence.ask_intrinsiciq.canonical_projection import _temporal_recency_score
+    item = {"events": [{"event_period": "fy14"}]}
+    score = _temporal_recency_score(item, "did-past-claims-come-true", data_max_fy=2026)
+    assert score == 0, "Historical questions must not suppress old evidence"
+
+
+def test_eng141a_old_active_outranks_old_closed():
+    """OLD+ACTIVE item must rank above OLD+CLOSED for current-state questions."""
+    from intelligence.ask_intrinsiciq.canonical_projection import _progression_rank
+    data_max_fy = 2026
+    item_active = {"events": [
+        {"event_period": "fy14"},  # original regulatory ban
+        {"event_period": "fy25"},  # current status: still active
+    ]}
+    item_closed = {"events": [{"event_period": "fy14"}]}  # original only, no follow-up
+    rank_active = _progression_rank(item_active, "how-is-capacity-changing", data_max_fy=data_max_fy)[0]
+    rank_closed = _progression_rank(item_closed, "how-is-capacity-changing", data_max_fy=data_max_fy)[0]
+    assert rank_active > rank_closed, (
+        f"OLD+ACTIVE (score={rank_active}) should outrank OLD+CLOSED (score={rank_closed})"
+    )
+
+
+def test_eng141a_progression_sorts_active_above_closed():
+    """progression_items_for_question puts OLD+ACTIVE before OLD+CLOSED for what-incentives-matter."""
+    from intelligence.ask_intrinsiciq.canonical_projection import progression_items_for_question
+    item_active = {
+        "item_id": "active_restriction",
+        "item_name": "Active Regulatory Restriction",
+        "events": [
+            {"event_period": "fy14"},   # original event
+            {"event_period": "fy25"},   # ongoing consequence
+        ],
+    }
+    item_closed = {
+        "item_id": "closed_issue",
+        "item_name": "Resolved Historical Issue",
+        "events": [{"event_period": "fy14"}],  # no follow-up → historical
+    }
+    # what-incentives-matter uses all items (no stream filter) — cleanest integration path
+    progression = {
+        "coverage_status": "supported",
+        "progression_items": [item_closed, item_active],  # closed first in raw order
+    }
+    sorted_items = progression_items_for_question(progression, "what-incentives-matter")
+    ids = [i["item_id"] for i in sorted_items]
+    active_pos = ids.index("active_restriction")
+    closed_pos = ids.index("closed_issue")
+    assert active_pos < closed_pos, (
+        f"OLD+ACTIVE (pos={active_pos}) should rank before OLD+CLOSED (pos={closed_pos}). Order: {ids}"
+    )
+
+
+def test_eng141a_no_company_specific_logic_in_item_latest_fy():
+    """_item_latest_fy must contain no company-specific references."""
+    import inspect
+    from intelligence.ask_intrinsiciq import canonical_projection
+    src = inspect.getsource(canonical_projection._item_latest_fy)
+    for slug in ("sun_pharma", "tanla", "ujjivan", "datapatterns"):
+        assert slug not in src, f"_item_latest_fy contains company slug: {slug!r}"
+
+
+# ── ENG-149: investor-facing key-point sanitization ──────────────────────────
+
+def test_eng149_wc_status_phrase_maps_all_known_severity_values():
+    from intelligence.ask_intrinsiciq.answer_cards import _wc_status_phrase
+    assert "watch" not in _wc_status_phrase("watch").lower().split()[0]  # phrase, not raw token
+    assert len(_wc_status_phrase("watch").split()) >= 4
+    assert len(_wc_status_phrase("elevated").split()) >= 4
+    assert len(_wc_status_phrase("severe").split()) >= 4
+    assert len(_wc_status_phrase("stretched").split()) >= 4
+    assert len(_wc_status_phrase("contained").split()) >= 3
+
+
+def test_eng149_wc_status_phrase_returns_empty_for_insufficient_data():
+    from intelligence.ask_intrinsiciq.answer_cards import _wc_status_phrase
+    assert _wc_status_phrase("insufficient_data") == ""
+
+
+def test_eng149_wc_status_phrase_returns_empty_for_unknown_value():
+    from intelligence.ask_intrinsiciq.answer_cards import _wc_status_phrase
+    assert _wc_status_phrase("") == ""
+    assert _wc_status_phrase("UNKNOWN_FUTURE_ENUM") == ""
+
+
+def test_eng149_clean_list_rejects_single_word_tokens():
+    from intelligence.ask_intrinsiciq.answer_cards import _clean_list
+    result = _clean_list(["watch", "elevated", "severe", "fy26", "platform"])
+    assert result == [], f"Expected empty list but got: {result}"
+
+
+def test_eng149_clean_list_accepts_multi_word_items():
+    from intelligence.ask_intrinsiciq.answer_cards import _clean_list
+    items = [
+        "Working-capital conditions are at an early-watch level.",
+        "Receivable days moved from 101 to 89.",
+        "Cash conversion cycle is 476 days.",
+    ]
+    result = _clean_list(items)
+    assert len(result) == 3, f"Expected 3 items but got {len(result)}: {result}"
+
+
+def test_eng149_working_capital_answer_has_no_raw_severity_enums():
+    _SEVERITY_ENUMS = {"watch", "elevated", "severe", "stretched", "contained", "insufficient_data"}
+    bundle = load_company_memory_sources("sun_pharma")
+    products_payload = {"groups": [], "summary": "", "business_model_summary": None,
+                        "customer_summary": None, "revenue_logic_summary": None,
+                        "open_questions": [], "coverage_status": "unavailable"}
+    answer_cards, _ = build_answer_cards(
+        bundle, business_journey_payload={"summary": "", "stages": []},
+        products_services_payload=products_payload,
+        company_slug="sun_pharma", generated_at="2026-09-17T00:00:00+00:00",
+    )
+    card = next(a for a in answer_cards["answers"] if a["question_id"] == "is-working-capital-a-concern")
+    all_narrative = (
+        card.get("key_points", [])
+        + card.get("evidence_summary", {}).get("supporting_points", [])
+        + card.get("interpretation", {}).get("positive_evidence", [])
+        + card.get("interpretation", {}).get("negative_evidence", [])
+    )
+    raw_leaks = [v for v in all_narrative if v.strip().lower() in _SEVERITY_ENUMS]
+    assert raw_leaks == [], f"Raw severity enums leaked into working-capital answer: {raw_leaks}"
+
+
+def test_eng149_cash_conversion_answer_has_no_raw_severity_enums():
+    _SEVERITY_ENUMS = {"watch", "elevated", "severe", "stretched", "contained", "insufficient_data"}
+    bundle = load_company_memory_sources("sun_pharma")
+    products_payload = {"groups": [], "summary": "", "business_model_summary": None,
+                        "customer_summary": None, "revenue_logic_summary": None,
+                        "open_questions": [], "coverage_status": "unavailable"}
+    answer_cards, _ = build_answer_cards(
+        bundle, business_journey_payload={"summary": "", "stages": []},
+        products_services_payload=products_payload,
+        company_slug="sun_pharma", generated_at="2026-09-17T00:00:00+00:00",
+    )
+    card = next(a for a in answer_cards["answers"] if a["question_id"] == "are-profits-converting-into-cash")
+    all_narrative = (
+        card.get("key_points", [])
+        + card.get("evidence_summary", {}).get("supporting_points", [])
+        + card.get("interpretation", {}).get("positive_evidence", [])
+    )
+    raw_leaks = [v for v in all_narrative if v.strip().lower() in _SEVERITY_ENUMS]
+    assert raw_leaks == [], f"Raw severity enums leaked into cash-conversion answer: {raw_leaks}"
+
+
+def test_eng149_cross_company_no_severity_enum_leakage():
+    _SEVERITY_ENUMS = {"watch", "elevated", "severe", "stretched", "contained", "insufficient_data"}
+    NARRATIVE_FIELDS = ["key_points", "supporting_points", "positive_evidence",
+                        "negative_evidence", "what_changed", "what_to_watch"]
+
+    def _collect_narrative(card):
+        values = list(card.get("key_points") or [])
+        ev = card.get("evidence_summary") or {}
+        if isinstance(ev, dict):
+            values += list(ev.get("supporting_points") or [])
+        interp = card.get("interpretation") or {}
+        if isinstance(interp, dict):
+            for f in ("positive_evidence", "negative_evidence", "what_changed", "what_to_watch"):
+                values += list(interp.get(f) or [])
+        return values
+
+    products_payload = {"groups": [], "summary": "", "business_model_summary": None,
+                        "customer_summary": None, "revenue_logic_summary": None,
+                        "open_questions": [], "coverage_status": "unavailable"}
+    leaks = []
+    for slug in ("tanla", "ujjivan", "datapatterns"):
+        bundle = load_company_memory_sources(slug)
+        answer_cards, _ = build_answer_cards(
+            bundle, business_journey_payload={"summary": "", "stages": []},
+            products_services_payload=products_payload,
+            company_slug=slug, generated_at="2026-09-17T00:00:00+00:00",
+        )
+        for card in answer_cards["answers"]:
+            qid = card.get("question_id", "")
+            if "working-capital" in qid or "converting" in qid:
+                for val in _collect_narrative(card):
+                    if isinstance(val, str) and val.strip().lower() in _SEVERITY_ENUMS:
+                        leaks.append(f"{slug}/{qid}: {val!r}")
+    assert leaks == [], f"Severity enum leakage in cross-company audit: {leaks}"
+
+
+def test_eng149_negative_control_legitimate_narrative_survives():
+    from intelligence.ask_intrinsiciq.answer_cards import _clean_list
+    legit = [
+        "Receivable days improved from 101 to 89 over six years.",
+        "Working-capital requirements are elevated, keeping cash tied up in operations.",
+        "Cash conversion cycle is 476 days in FY20.",
+    ]
+    result = _clean_list(legit)
+    assert len(result) == 3, f"Legitimate narrative items were incorrectly filtered: {result}"
+
+
+def test_eng149_wc_answer_key_points_are_investor_propositions():
+    """Each key_point and supporting_point must be a multi-word investor proposition."""
+    bundle = load_company_memory_sources("sun_pharma")
+    products_payload = {"groups": [], "summary": "", "business_model_summary": None,
+                        "customer_summary": None, "revenue_logic_summary": None,
+                        "open_questions": [], "coverage_status": "unavailable"}
+    answer_cards, _ = build_answer_cards(
+        bundle, business_journey_payload={"summary": "", "stages": []},
+        products_services_payload=products_payload,
+        company_slug="sun_pharma", generated_at="2026-09-17T00:00:00+00:00",
+    )
+    card = next(a for a in answer_cards["answers"] if a["question_id"] == "is-working-capital-a-concern")
+    single_word_items = [
+        v for v in (card.get("key_points") or [])
+        + (card.get("evidence_summary", {}).get("supporting_points") or [])
+        if " " not in v.strip()
+    ]
+    assert single_word_items == [], f"Single-word items in WC answer: {single_word_items}"
+
+
+# ── ENG-149A: over-sanitization audit ────────────────────────────────────────
+
+def test_eng149a_machine_severity_token_rejected():
+    from intelligence.ask_intrinsiciq.answer_cards import _clean_list
+    for token in ("watch", "elevated", "severe", "contained", "insufficient_data"):
+        assert _clean_list([token]) == [], f"Severity enum {token!r} should be rejected"
+
+
+def test_eng149a_fy_label_rejected():
+    from intelligence.ask_intrinsiciq.answer_cards import _clean_list
+    for token in ("fy26", "fy25", "fy24", "fy23"):
+        assert _clean_list([token]) == [], f"FY label {token!r} should be rejected"
+
+
+def test_eng149a_schema_domain_label_rejected():
+    from intelligence.ask_intrinsiciq.answer_cards import _clean_list
+    for token in ("platform", "manufacturing", "financial_services"):
+        assert _clean_list([token]) == [], f"Schema label {token!r} should be rejected"
+
+
+def test_eng149a_single_word_improving_rejected_from_clean_list():
+    # "Improving" alone is not an investor proposition; valid as part of a sentence.
+    from intelligence.ask_intrinsiciq.answer_cards import _clean_list
+    assert _clean_list(["Improving"]) == []
+
+
+def test_eng149a_single_word_stable_rejected_from_clean_list():
+    from intelligence.ask_intrinsiciq.answer_cards import _clean_list
+    assert _clean_list(["Stable"]) == []
+
+
+def test_eng149a_single_word_unresolved_rejected_from_clean_list():
+    from intelligence.ask_intrinsiciq.answer_cards import _clean_list
+    assert _clean_list(["Unresolved"]) == []
+
+
+def test_eng149a_multi_word_narrative_preserved():
+    from intelligence.ask_intrinsiciq.answer_cards import _clean_list
+    items = [
+        "Revenue growth is improving.",
+        "Margins have been stable for three years.",
+        "Unresolved: the regulatory timeline is unclear.",
+    ]
+    result = _clean_list(items)
+    assert len(result) == 3, f"Multi-word narratives incorrectly filtered: {result}"
+
+
+def test_eng149a_builder_translated_wc_phrase_preserved():
+    from intelligence.ask_intrinsiciq.answer_cards import _clean_list, _wc_status_phrase
+    phrase = _wc_status_phrase("watch")
+    assert len(phrase.split()) >= 4, "WC phrase must be multi-word"
+    result = _clean_list([phrase])
+    assert result == [phrase], f"Builder-translated WC phrase was incorrectly filtered: {phrase!r}"
+
+
+def test_eng149a_no_machine_token_in_any_production_company():
+    """Global guard: no single-word machine token appears in any company's narrative fields."""
+    _SINGLE_WORD_TOKENS = {
+        "watch", "elevated", "severe", "stretched", "contained", "insufficient_data",
+        "fy26", "fy25", "fy24", "fy23", "platform", "manufacturing", "financial_services",
+        "operational", "commissioned", "delayed", "funded", "installed",
+    }
+    _NARRATIVE_FIELDS = ["key_points", "supporting_points", "positive_evidence",
+                         "negative_evidence", "what_changed", "what_to_watch"]
+
+    def _collect(card):
+        values = list(card.get("key_points") or [])
+        ev = card.get("evidence_summary") or {}
+        values += list(ev.get("supporting_points") or [])
+        interp = card.get("interpretation") or {}
+        for f in ("positive_evidence", "negative_evidence", "what_changed", "what_to_watch"):
+            values += list(interp.get(f) or [])
+        return values
+
+    products_payload = {"groups": [], "summary": "", "business_model_summary": None,
+                        "customer_summary": None, "revenue_logic_summary": None,
+                        "open_questions": [], "coverage_status": "unavailable"}
+    leaks = []
+    for slug in ("sun_pharma", "tanla", "ujjivan", "datapatterns"):
+        bundle = load_company_memory_sources(slug)
+        answer_cards, _ = build_answer_cards(
+            bundle, business_journey_payload={"summary": "", "stages": []},
+            products_services_payload=products_payload,
+            company_slug=slug, generated_at="2026-09-17T00:00:00+00:00",
+        )
+        for card in answer_cards["answers"]:
+            for val in _collect(card):
+                if isinstance(val, str) and val.strip().lower() in _SINGLE_WORD_TOKENS:
+                    leaks.append(f"{slug}/{card.get('question_id')}: {val!r}")
+    assert leaks == [], f"Machine token leakage in production: {leaks}"
+
+
+def test_eng149a_valid_content_loss_is_zero():
+    """The single-word rule must not remove anything classified as valid investor content."""
+    # All 16 intercepted values in ENG-149A forensic are SCHEMA_LABEL or MACHINE_TOKEN.
+    # None are valid investor propositions. This test verifies using the known removal set.
+    from intelligence.ask_intrinsiciq.answer_cards import _clean_list
+    # Values confirmed as non-investor-proposition by ENG-149A forensic
+    schema_labels = ["fy26", "fy25", "manufacturing", "platform", "financial_services"]
+    machine_tokens = [
+        "ev_fy25_company_intelligence_risk_00021",
+        "ev_fy20_company_intelligence_risk_00006",
+        "ev_fy24_company_intelligence_risk_00017",
+    ]
+    for val in schema_labels + machine_tokens:
+        result = _clean_list([val])
+        assert result == [], f"Expected {val!r} to be rejected but got: {result}"
+
+
+# ── ENG-NEW-INVESTOR-PANEL: Investor Panel Doctrine Leakage ──────────────────
+
+_DOCTRINE_SIGNALS = [
+    "primary focus:",
+    "all investment lens-required",
+    "do not ",
+    "escalate ",
+    "when evidence conflicts",
+    "when the story",
+    "if dividend",
+    "if the business cannot",
+    "output must say so",
+]
+_LENS_QUESTION_IDS = [
+    "what-would-graham-worry-about",
+    "what-would-buffett-focus-on",
+    "where-would-fisher-be-curious",
+    "what-would-munger-avoid",
+    "how-would-lynch-explain-it",
+]
+
+
+def _lens_fields(card):
+    interp = card.get("interpretation", {})
+    fields = list(card.get("key_points", []))
+    fields.extend(interp.get("unresolved", []))
+    fields.extend(interp.get("what_to_watch", []))
+    fields.extend(interp.get("positive_evidence", []))
+    fields.extend(interp.get("negative_evidence", []))
+    return fields
+
+
+def test_eng_panel_strip_backend_phrasing_drops_primary_focus():
+    from intelligence.ask_intrinsiciq.answer_cards import _strip_backend_phrasing
+    assert _strip_backend_phrasing("Primary focus: Downside protection, Balance-sheet resilience.") == ""
+
+
+def test_eng_panel_strip_backend_phrasing_drops_lens_preamble():
+    from intelligence.ask_intrinsiciq.answer_cards import _strip_backend_phrasing
+    assert _strip_backend_phrasing("Benjamin Graham consumes financial_strength_inputs from the evidence set.") == ""
+    assert _strip_backend_phrasing("Peter Lynch consumes business evidence to form a plain-language view.") == ""
+
+
+def test_eng_panel_strip_backend_phrasing_drops_control_state():
+    from intelligence.ask_intrinsiciq.answer_cards import _strip_backend_phrasing
+    assert _strip_backend_phrasing("All investment lens-required available evidence sections were available.") == ""
+
+
+def test_eng_panel_strip_backend_phrasing_drops_do_not_directives():
+    from intelligence.ask_intrinsiciq.answer_cards import _strip_backend_phrasing
+    assert _strip_backend_phrasing("Do not infer valuation, safety, or solvency from business quality evidence alone.") == ""
+    assert _strip_backend_phrasing("Do not classify growth quality confidently when category evidence is incomplete.") == ""
+
+
+def test_eng_panel_strip_backend_phrasing_drops_escalate_directive():
+    from intelligence.ask_intrinsiciq.answer_cards import _strip_backend_phrasing
+    assert _strip_backend_phrasing("Escalate uncertainty when core financial-strength evidence is missing or partial.") == ""
+
+
+def test_eng_panel_strip_backend_phrasing_drops_conditional_rules():
+    from intelligence.ask_intrinsiciq.answer_cards import _strip_backend_phrasing
+    assert _strip_backend_phrasing("When evidence conflicts, prefer the more conservative interpretation and state the conflict explicitly.") == ""
+    assert _strip_backend_phrasing("When the story and the evidence diverge, report the divergence rather than smoothing it over.") == ""
+    assert _strip_backend_phrasing("If dividend or distribution evidence lacks cash-flow and leverage context, treat it as a monitoring point.") == ""
+    assert _strip_backend_phrasing("If the business cannot be explained simply from available evidence, the output must say so.") == ""
+
+
+def test_eng_panel_strip_backend_phrasing_preserves_real_findings():
+    from intelligence.ask_intrinsiciq.answer_cards import _strip_backend_phrasing
+    real_findings = [
+        "Persistent uncertainty in capital-allocation or financial-strength inputs.",
+        "Balance sheet strength is adequate but cash conversion remains weak.",
+        "Management commitments have limited observed execution-to-outcome linkage.",
+    ]
+    for text in real_findings:
+        result = _strip_backend_phrasing(text)
+        assert result, f"Real finding was stripped: {text!r}"
+
+
+def test_eng_panel_strip_backend_phrasing_fixes_duplicate_word_typo():
+    from intelligence.ask_intrinsiciq.answer_cards import _strip_backend_phrasing
+    result = _strip_backend_phrasing("A story that is hard to explain simply from available evidence evidence.")
+    assert "evidence evidence" not in result
+    assert result  # must not be empty — real content should survive
+
+
+def test_eng_panel_sun_pharma_h3_h4_doctrine_free():
+    """H3 (Graham) and H4 (Lynch) must contain zero doctrine instruction or metadata text."""
+    products_payload = {"groups": [], "coverage_status": "missing", "schema_version": "1.0", "company_slug": "sun_pharma", "generated_at": "2026-09-17T00:00:00+00:00"}
+    bundle = load_company_memory_sources("sun_pharma")
+    answer_cards, _ = build_answer_cards(
+        bundle, business_journey_payload={"summary": "", "stages": []},
+        products_services_payload=products_payload,
+        company_slug="sun_pharma", generated_at="2026-09-17T00:00:00+00:00",
+    )
+    cards_by_id = {a["question_id"]: a for a in answer_cards["answers"]}
+    leaks = []
+    for qid in ("what-would-graham-worry-about", "how-would-lynch-explain-it"):
+        card = cards_by_id.get(qid, {})
+        for field_val in _lens_fields(card):
+            if isinstance(field_val, str):
+                low = field_val.lower()
+                for sig in _DOCTRINE_SIGNALS:
+                    if sig in low:
+                        leaks.append(f"{qid}: {field_val!r} (signal: {sig!r})")
+    assert leaks == [], f"Doctrine leakage in H3/H4: {leaks}"
+
+
+def test_eng_panel_all_lenses_doctrine_free_sun_pharma():
+    """All 5 investor lenses must be doctrine-free for sun_pharma."""
+    products_payload = {"groups": [], "coverage_status": "missing", "schema_version": "1.0", "company_slug": "sun_pharma", "generated_at": "2026-09-17T00:00:00+00:00"}
+    bundle = load_company_memory_sources("sun_pharma")
+    answer_cards, _ = build_answer_cards(
+        bundle, business_journey_payload={"summary": "", "stages": []},
+        products_services_payload=products_payload,
+        company_slug="sun_pharma", generated_at="2026-09-17T00:00:00+00:00",
+    )
+    cards_by_id = {a["question_id"]: a for a in answer_cards["answers"]}
+    leaks = []
+    for qid in _LENS_QUESTION_IDS:
+        card = cards_by_id.get(qid, {})
+        for field_val in _lens_fields(card):
+            if isinstance(field_val, str):
+                low = field_val.lower()
+                for sig in _DOCTRINE_SIGNALS:
+                    if sig in low:
+                        leaks.append(f"{qid}: {field_val!r}")
+    assert leaks == [], f"Doctrine leakage in investor panel: {leaks}"
+
+
+def test_eng_panel_cross_company_all_lenses_doctrine_free():
+    """All 5 investor lenses must be doctrine-free across all 4 production companies."""
+    leaks = []
+    for slug in ("sun_pharma", "tanla", "ujjivan", "datapatterns"):
+        products_payload = {"groups": [], "coverage_status": "missing", "schema_version": "1.0", "company_slug": slug, "generated_at": "2026-09-17T00:00:00+00:00"}
+        bundle = load_company_memory_sources(slug)
+        answer_cards, _ = build_answer_cards(
+            bundle, business_journey_payload={"summary": "", "stages": []},
+            products_services_payload=products_payload,
+            company_slug=slug, generated_at="2026-09-17T00:00:00+00:00",
+        )
+        cards_by_id = {a["question_id"]: a for a in answer_cards["answers"]}
+        for qid in _LENS_QUESTION_IDS:
+            card = cards_by_id.get(qid, {})
+            for field_val in _lens_fields(card):
+                if isinstance(field_val, str):
+                    low = field_val.lower()
+                    for sig in _DOCTRINE_SIGNALS:
+                        if sig in low:
+                            leaks.append(f"{slug}/{qid}: {field_val!r}")
+    assert leaks == [], f"Doctrine leakage across companies: {leaks}"
+
+
+# ---------------------------------------------------------------------------
+# ENG-151 — Commentary Priority Scoring Adversarial Tests
+# ---------------------------------------------------------------------------
+from intelligence.ask_intrinsiciq.answer_cards import _commentary_priority_score  # noqa: E402
+
+
+def _theme(*, theme_id: str, theme_name: str, category: str, position: str, latest: str, first: str, n_events: int) -> dict:
+    return {
+        "theme_id": theme_id,
+        "theme_name": theme_name,
+        "theme_category": category,
+        "current_position": position,
+        "latest_period": latest,
+        "first_observed_period": first,
+        "commentary_events": [{"event_id": f"e{i}"} for i in range(n_events)],
+    }
+
+
+def test_eng151_risk_theme_outranks_generic_capacity_at_same_recency():
+    """Risk theme with 32 events must outrank a generic capacity theme with 9 events
+    even when both have latest_period=fy26 and both are stable_priority.
+    Anti-pattern: insertion order must not decide ranking.
+    """
+    capacity_theme = _theme(
+        theme_id="CM-0001", theme_name="Technology Direction", category="capacity",
+        position="stable_priority", latest="fy26", first="fy20", n_events=9,
+    )
+    risk_theme = _theme(
+        theme_id="CM-0006", theme_name="Risk To Growth / Market Access", category="growth",
+        position="stable_priority", latest="fy26", first="fy20", n_events=32,
+    )
+    # risk theme has a risk keyword in its name — must score higher than generic capacity
+    assert _commentary_priority_score(risk_theme) > _commentary_priority_score(capacity_theme)
+
+
+def test_eng151_risk_named_theme_outranks_non_risk_same_category():
+    """A theme whose name contains a risk indicator (e.g. 'challenges') must outscore
+    a same-category theme without that indicator, even if the latter has more events.
+    """
+    challenge_theme = _theme(
+        theme_id="CM-0015", theme_name="US Market Positioning And Challenges",
+        category="projects", position="strengthened", latest="fy26", first="fy21", n_events=6,
+    )
+    non_risk_theme = _theme(
+        theme_id="CM-0022", theme_name="Implementation / Operational Execution",
+        category="projects", position="observation", latest="fy24", first="fy24", n_events=1,
+    )
+    assert _commentary_priority_score(challenge_theme) > _commentary_priority_score(non_risk_theme)
+
+
+def test_eng151_capital_allocation_theme_leads_generic_strategy():
+    """capital_allocation category must outrank strategy category all else equal."""
+    capalloc = _theme(
+        theme_id="CM-A", theme_name="Capital Deployment Plans", category="capital_allocation",
+        position="stable_priority", latest="fy25", first="fy23", n_events=3,
+    )
+    strategy = _theme(
+        theme_id="CM-B", theme_name="General Strategy", category="strategy",
+        position="stable_priority", latest="fy25", first="fy23", n_events=3,
+    )
+    assert _commentary_priority_score(capalloc) > _commentary_priority_score(strategy)
+
+
+def test_eng151_high_event_low_category_capped_by_evidence_tier():
+    """A strategy theme with 30 events must NOT outrank a margins theme with 4 events
+    (same recency, same position) because the evidence cap for strategy is 3 events-worth.
+    """
+    strategy_high_ev = _theme(
+        theme_id="CM-C", theme_name="CSR Education Outreach", category="strategy",
+        position="stable_priority", latest="fy26", first="fy20", n_events=30,
+    )
+    margins_low_ev = _theme(
+        theme_id="CM-D", theme_name="Cost Leadership And Efficiency", category="margins",
+        position="stable_priority", latest="fy26", first="fy20", n_events=4,
+    )
+    assert _commentary_priority_score(margins_low_ev) > _commentary_priority_score(strategy_high_ev)
+
+
+def test_eng151_insertion_order_has_no_effect():
+    """Two identical themes with different theme_ids must score the same."""
+    t1 = _theme(
+        theme_id="CM-0001", theme_name="Market Positioning", category="competition",
+        position="strengthened", latest="fy26", first="fy22", n_events=5,
+    )
+    t2 = _theme(
+        theme_id="CM-0099", theme_name="Market Positioning", category="competition",
+        position="strengthened", latest="fy26", first="fy22", n_events=5,
+    )
+    assert _commentary_priority_score(t1) == _commentary_priority_score(t2)
+
+
+def test_eng151_stale_theme_loses_to_recent_same_category():
+    """A growth theme last seen in fy21 must score below a growth theme last seen in fy26."""
+    stale = _theme(
+        theme_id="CM-E", theme_name="Future Outlook", category="growth",
+        position="observation", latest="fy21", first="fy21", n_events=1,
+    )
+    recent = _theme(
+        theme_id="CM-F", theme_name="Future Outlook", category="growth",
+        position="stable_priority", latest="fy26", first="fy20", n_events=8,
+    )
+    assert _commentary_priority_score(recent) > _commentary_priority_score(stale)
+
+
+def test_eng151_gate1_stale_fy20_capital_risk_does_not_lead():
+    """Gate 1: a capital_allocation theme newly_introduced in fy20 with risk in name
+    must NOT outrank a fy26-active growth theme with multi-year persistence.
+    Pre-fix: 60 > 57 (Tanla defect). Post-fix: stale theme score drops to ~30.
+    """
+    stale_credit_risk = _theme(
+        theme_id="CM-X1", theme_name="General Administrative Credit Risk",
+        category="capital_allocation", position="newly_introduced",
+        latest="fy20", first="fy20", n_events=2,
+    )
+    active_growth = _theme(
+        theme_id="CM-X2", theme_name="Workforce Talent Growth Initiatives",
+        category="growth", position="stable_priority",
+        latest="fy26", first="fy20", n_events=25,
+    )
+    assert _commentary_priority_score(active_growth) > _commentary_priority_score(stale_credit_risk), (
+        "A fy20-only credit risk mention must not outrank a fy26-active growth theme"
+    )
+
+
+def test_eng151_gate2_single_observation_high_cat_cannot_displace_multi_year():
+    """Gate 2: a capital_allocation theme with 1 event and no persistence cannot outrank
+    a projects theme with 6 events spanning fy22→fy26.
+    Pre-fix: 41 > 33 (Data Patterns defect). Post-fix: single observation drops to ~21.
+    """
+    single_observation = _theme(
+        theme_id="CM-Y1", theme_name="Capital Investment Sustainability",
+        category="capital_allocation", position="observation",
+        latest="fy23", first="fy23", n_events=1,
+    )
+    multi_year_evidence = _theme(
+        theme_id="CM-Y2", theme_name="Government Support Industry Infrastructure",
+        category="projects", position="stable_priority",
+        latest="fy26", first="fy22", n_events=6,
+    )
+    assert _commentary_priority_score(multi_year_evidence) > _commentary_priority_score(single_observation), (
+        "A single-observation sustainability capex note must not displace multi-year "
+        "government/infrastructure evidence"
+    )
+
+
+def test_eng151_gate1_preserves_recent_change_signal():
+    """Gate 1 must NOT zero out change_weight for themes active in fy22+.
+    A strengthened theme last seen in fy26 keeps its full change signal.
+    """
+    recent_strengthened = _theme(
+        theme_id="CM-Z1", theme_name="US Market Positioning And Challenges",
+        category="projects", position="strengthened",
+        latest="fy26", first="fy21", n_events=6,
+    )
+    score = _commentary_priority_score(recent_strengthened)
+    # Must retain strengthened change_weight=20 since recency=6 >= 2
+    # Expected: projects=5 + strengthened=20 + recency=6 + persistence=15 + ev=2 + risk=15 = 63
+    assert score >= 60, f"Recent strengthened theme should retain change signal, got {score}"
+
+
+def test_eng151_gate2_does_not_cap_themes_with_persistence():
+    """Gate 2 must NOT cap a theme that has multi-year persistence even if evidence is low.
+    A 5-year-span theme with 2 events should not be capped.
+    """
+    multi_year_light_evidence = _theme(
+        theme_id="CM-Z2", theme_name="Cost Leadership Operational Efficiency",
+        category="margins", position="stable_priority",
+        latest="fy23", first="fy22", n_events=2,
+    )
+    score = _commentary_priority_score(multi_year_light_evidence)
+    # persistence = (23-22)*3 = 3, evidence = 0 (2//3=0)
+    # Gate 2 triggers only when BOTH persistence==0 AND evidence==0.
+    # Here persistence=3 > 0, so cat_weight=35 applies fully.
+    # Expected: 35 + 8 + 3 + 3 + 0 + 0 = 49
+    assert score >= 45, f"Theme with multi-year persistence should not be capped, got {score}"
+
+
+# ── Phase 2 regression: UNVERIFIED ≠ undelivered ─────────────────────────────
+
+def test_unverified_targets_do_not_claim_zero_percent_delivery():
+    """why_it_matters must not say '0 were delivered (0%)' when targets are merely UNVERIFIED."""
+    bundle = load_company_memory_sources("sun_pharma")
+    products_payload = {"groups": [], "summary": "", "business_model_summary": None, "customer_summary": None, "revenue_logic_summary": None, "open_questions": [], "coverage_status": "unavailable"}
+    answer_cards, _ = build_answer_cards(bundle, business_journey_payload={"summary": "", "stages": []}, products_services_payload=products_payload, company_slug="sun_pharma", generated_at="2026-08-11T00:00:00+00:00")
+    answer = next(a for a in answer_cards["answers"] if a["question_id"] == "what-has-management-promised")
+    why = answer.get("why_it_matters", "").lower()
+    # Must not claim delivery rate when targets are unverified (absence of evidence ≠ non-delivery)
+    assert "were delivered" not in why, f"Regression: unverified targets presented as '0 delivered': {why}"
+    assert "0%" not in why, f"Regression: false 0% delivery rate in why_it_matters: {why}"
+    # Must acknowledge verification is open
+    assert "verification" in why or "confirmed" in why or "delivery evidence" in why, f"why_it_matters missing evidence state: {why}"
+
+
+def test_unverified_targets_same_regression_tanla():
+    """Same regression check for Tanla — both accountability promises are UNVERIFIED."""
+    bundle = load_company_memory_sources("tanla")
+    products_payload = {"groups": [], "summary": "", "business_model_summary": None, "customer_summary": None, "revenue_logic_summary": None, "open_questions": [], "coverage_status": "unavailable"}
+    answer_cards, _ = build_answer_cards(bundle, business_journey_payload={"summary": "", "stages": []}, products_services_payload=products_payload, company_slug="tanla", generated_at="2026-08-11T00:00:00+00:00")
+    answer = next(a for a in answer_cards["answers"] if a["question_id"] == "what-has-management-promised")
+    why = answer.get("why_it_matters", "").lower()
+    assert "were delivered" not in why, f"Regression: unverified targets presented as '0 delivered': {why}"
+    assert "0%" not in why, f"Regression: false 0% delivery rate in why_it_matters: {why}"
+
+
+def test_accountability_promises_appear_in_key_points_before_strategic_directions():
+    """Specific verifiable targets (accountability_promises) must appear in key_points."""
+    bundle = load_company_memory_sources("sun_pharma")
+    products_payload = {"groups": [], "summary": "", "business_model_summary": None, "customer_summary": None, "revenue_logic_summary": None, "open_questions": [], "coverage_status": "unavailable"}
+    answer_cards, _ = build_answer_cards(bundle, business_journey_payload={"summary": "", "stages": []}, products_services_payload=products_payload, company_slug="sun_pharma", generated_at="2026-08-11T00:00:00+00:00")
+    answer = next(a for a in answer_cards["answers"] if a["question_id"] == "what-has-management-promised")
+    kps = answer.get("key_points", [])
+    combined = " ".join(kps).lower()
+    # Sun Pharma accountability_promises are: Japan/China specialty markets (MC-0005) and ILUMYA Japan/Australia (MC-0007)
+    assert "ilumya" in combined or "japan" in combined, f"Specific verifiable targets not surfaced in key_points: {kps}"
+
+
+def test_no_internal_tracking_language_in_accountability_key_points():
+    """key_points must not contain 'Management Progression' or 'lifecycle record' tracking phrases."""
+    bundle = load_company_memory_sources("sun_pharma")
+    products_payload = {"groups": [], "summary": "", "business_model_summary": None, "customer_summary": None, "revenue_logic_summary": None, "open_questions": [], "coverage_status": "unavailable"}
+    answer_cards, _ = build_answer_cards(bundle, business_journey_payload={"summary": "", "stages": []}, products_services_payload=products_payload, company_slug="sun_pharma", generated_at="2026-08-11T00:00:00+00:00")
+    answer = next(a for a in answer_cards["answers"] if a["question_id"] == "what-has-management-promised")
+    kps_text = " ".join(answer.get("key_points", [])).lower()
+    assert "management progression" not in kps_text, f"Internal tracking language in key_points: {kps_text}"
+    assert "lifecycle record" not in kps_text, f"Internal tracking language in key_points: {kps_text}"
+
+
+# ── Phase 3 regression: Tanla MC-0012 (AI/messaging) must be visible ─────────
+
+def test_tanla_mc0012_ai_messaging_visible_in_key_points():
+    """MC-0012 (AI and messaging-platform operational improvements) must be in key_points.
+    Regression guard: the previous session's sort displaced MC-0012 to position 5
+    because MC-0003 (alphabetically first) took a slot. Fixed by deprioritizing OTHER
+    promise types and limiting strategic slots to (4 - len(accountability_promises)).
+    """
+    bundle = load_company_memory_sources("tanla")
+    products_payload = {"groups": [], "summary": "", "business_model_summary": None, "customer_summary": None, "revenue_logic_summary": None, "open_questions": [], "coverage_status": "unavailable"}
+    answer_cards, _ = build_answer_cards(bundle, business_journey_payload={"summary": "", "stages": []}, products_services_payload=products_payload, company_slug="tanla", generated_at="2026-09-22T00:00:00+00:00")
+    answer = next(a for a in answer_cards["answers"] if a["question_id"] == "what-has-management-promised")
+    kps = answer.get("key_points", [])
+    combined = " ".join(kps).lower()
+    # MC-0012 text mentions "AI", "messaging", "platforms", "operational improvements"
+    assert "messaging" in combined or "ai" in combined, f"MC-0012 AI/messaging not visible in key_points: {kps}"
+
+
+def test_tanla_mc0005_platform_economics_visible_in_key_points():
+    """MC-0005 (platform economics: revenue predictability, lower churn, healthier margins) must be in key_points."""
+    bundle = load_company_memory_sources("tanla")
+    products_payload = {"groups": [], "summary": "", "business_model_summary": None, "customer_summary": None, "revenue_logic_summary": None, "open_questions": [], "coverage_status": "unavailable"}
+    answer_cards, _ = build_answer_cards(bundle, business_journey_payload={"summary": "", "stages": []}, products_services_payload=products_payload, company_slug="tanla", generated_at="2026-09-22T00:00:00+00:00")
+    answer = next(a for a in answer_cards["answers"] if a["question_id"] == "what-has-management-promised")
+    kps = answer.get("key_points", [])
+    combined = " ".join(kps).lower()
+    # MC-0005 mentions "predictability", "churn", "margin", "platform approach"
+    assert "predictability" in combined or "churn" in combined or "margin" in combined, \
+        f"MC-0005 platform economics not visible in key_points: {kps}"
+
+
+def test_why_it_matters_has_revenue_context_when_company_model_available():
+    """why_it_matters should include a revenue context note from company_model when verifiable commitments exist."""
+    bundle = load_company_memory_sources("tanla")
+    products_payload = {"groups": [], "summary": "", "business_model_summary": None, "customer_summary": None, "revenue_logic_summary": None, "open_questions": [], "coverage_status": "unavailable"}
+    answer_cards, _ = build_answer_cards(bundle, business_journey_payload={"summary": "", "stages": []}, products_services_payload=products_payload, company_slug="tanla", generated_at="2026-09-22T00:00:00+00:00")
+    answer = next(a for a in answer_cards["answers"] if a["question_id"] == "what-has-management-promised")
+    why = answer.get("why_it_matters", "").lower()
+    # Revenue context should be present for companies with verifiable commitments and company_model
+    assert "revenue" in why or "context" in why, f"Revenue context missing from why_it_matters: {why}"

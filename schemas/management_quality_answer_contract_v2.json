@@ -1,0 +1,140 @@
+{
+  "schema_name": "management_quality_answer_contract",
+  "schema_version": 2,
+  "mission": "ENG-MISSION46",
+  "description": "Minimum semantic payload required for a management quality answer to reach human review. Derived from M37.8 Sun Pharma baseline. M45.2 candidate failed this contract.",
+  "created": "2026-10-06T00:00:00Z",
+
+  "required_fields": {
+    "simple_answer": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "Must contain factual grounding: specific counts, named items, or evidence references — not only editorial synthesis",
+      "eiv_rule": "EIV-MQ-01",
+      "why": "The delivery descriptor alone (FOLLOW_THROUGH_LARGELY_UNVERIFIED) is meaningless without the counts that ground it"
+    },
+    "key_points": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "At least 3 entries; at least one must contain factual specifics (counts, named items, lifecycle states)",
+      "eiv_rule": "EIV-MQ-01",
+      "why": "M45.2 candidate's 4 generic dimension summaries provided no evidence an investor could act on"
+    },
+    "what_evidence_shows": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "Non-empty list; entries must reference observable events or metrics, not only conclusions",
+      "eiv_rule": "EIV-MQ-02",
+      "why": "Evidence density: investors need to see what actually happened, not only what it implies"
+    },
+    "what_is_not_yet_proven": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "Non-empty string or list; must name at least one material unresolved state",
+      "eiv_rule": "EIV-MQ-03",
+      "why": "UNKNOWN preservation — M45.2 candidate omitted explicit uncertainty enumeration"
+    },
+    "deterministic_precision_facts": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "List with >= 3 entries; each entry must have metric, value, semantic_meaning; delivery follow-through entry required",
+      "eiv_rule": "EIV-MQ-04",
+      "why": "DPFs are the machine-verifiable evidence grounding; M45.2 candidate had zero DPFs — PACP cannot detect this absence"
+    },
+    "behavioral_descriptor": {
+      "classification": "REQUIRED_FOR_SEMANTIC_SAFETY",
+      "constraint": "Must appear verbatim in simple_answer; must match canonical descriptor from management_progression",
+      "eiv_rule": "EIV-MQ-01",
+      "why": "Descriptor anchors the synthesis to canonical evidence state"
+    }
+  },
+
+  "required_for_semantic_safety": {
+    "what_to_monitor": {
+      "classification": "REQUIRED_FOR_SEMANTIC_SAFETY",
+      "constraint": "Non-empty list; at least one item referencing an unresolved management commitment or risk",
+      "eiv_rule": "EIV-MQ-06",
+      "why": "Monitoring value — investors need actionable forward-looking items, not only backward assessment"
+    }
+  },
+
+  "optional_fields": {
+    "what_may_mean_economically": {
+      "classification": "OPTIONAL_PRESENTATION",
+      "constraint": "If present: financial metrics may not independently establish management quality",
+      "note": "Required when financial context is material to management assessment; absence acceptable if financial evidence is limited"
+    },
+    "what_management_says": {
+      "classification": "OPTIONAL_PRESENTATION",
+      "constraint": "If present: must quote/paraphrase actual disclosures, not synthesize management intent",
+      "note": "Useful but not structurally required"
+    },
+    "where_management_was_consistent": {
+      "classification": "OPTIONAL_PRESENTATION",
+      "note": "Adds nuance; not structurally required"
+    },
+    "management_consistency_map": {
+      "classification": "OPTIONAL_PRESENTATION",
+      "note": "Machine-readable supplement; not required for investor value"
+    }
+  },
+
+  "derivable_fields": {
+    "claims": {
+      "classification": "DERIVABLE",
+      "note": "Internal plan metadata; not investor-facing. Presence acceptable; not required. Must not contain prohibited language that is absent from investor-facing text (residual defect from M45.2 MQS-006)."
+    },
+    "relationships": {
+      "classification": "DERIVABLE",
+      "note": "Internal structure metadata; not investor-facing"
+    }
+  },
+
+  "deterministic_fact_pack_sources": {
+    "progression_counts": "management_progression.json → progression_items[].current_status counts",
+    "commitment_counts": "management_commitments.json → commitment_count + status_counts",
+    "behavioral_descriptor": "derived from progression_counts via derive_behavioral_descriptor()",
+    "strongest_weakest_dimension": "management_quality_summary.json → strongest_dimension, weakest_dimension",
+    "overall_direction": "management_quality_summary.json → overall_direction",
+    "conviction_changes": "management_quality_summary.json → what_strengthened_conviction, what_weakened_conviction",
+    "uncertainty_items": "management_quality_summary.json → unresolved_questions",
+    "financial_metrics": "financial_truth_pack.json → usable_current_metrics (latest year revenue, PAT)",
+    "dpfs": "deterministically assembled from progression_counts + commitment_counts + financial_metrics"
+  },
+
+  "llm_vs_deterministic_boundary": {
+    "llm_generates": [
+      "simple_answer prose",
+      "what_evidence_shows narrative",
+      "what_may_mean_economically explanation",
+      "investor_interpretation",
+      "what_management_says paraphrase",
+      "where_management_was_consistent narrative"
+    ],
+    "deterministic_assembler_provides": [
+      "progression lifecycle counts",
+      "commitment counts and status",
+      "behavioral descriptor verbatim",
+      "deterministic_precision_facts entries",
+      "what_is_not_yet_proven from unresolved_questions",
+      "what_to_monitor from what_to_watch + mq evidence",
+      "management_consistency_map structure",
+      "key_points factual count entries (injected if LLM omits)"
+    ],
+    "invariant": "If LLM omits a deterministic factual value, the assembler still preserves it. LLM prose cannot overwrite deterministic counts or DPF values."
+  },
+
+  "release_eligibility": {
+    "condition": "PACP_PASS AND EXTERNAL_INVESTOR_VALUE_PASS AND ARTIFACT_IDENTITY_VALID",
+    "pacp_role": "Tests semantic safety (no rating leakage, descriptor present, evidence fidelity)",
+    "eiv_role": "Tests investor completeness (factual counts, DPFs, uncertainty coverage, monitoring value)",
+    "human_review_role": "Final authority — approves exact digest",
+    "note": "PACP PASS alone is no longer sufficient. M45.2 demonstrated a PACP-passing answer can be WORSE than the certified baseline."
+  },
+
+  "contract_fingerprint_components": [
+    "schema_version (2)",
+    "deterministic_fact_pack_schema_version",
+    "dpf_schema_version",
+    "llm_synthesis_template_version",
+    "assembler_policy_version",
+    "eiv_policy_version",
+    "prompt_policy_version",
+    "descriptor_policy_version"
+  ]
+}

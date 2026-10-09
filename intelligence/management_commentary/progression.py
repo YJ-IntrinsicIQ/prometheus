@@ -118,30 +118,41 @@ class ManagementCommentaryProgressionAdapter:
         current_state = str(timeline.get("current_state") or "unable_to_verify")
         turning_points = timeline.get("turning_points") or []
         events = timeline.get("events") or []
+        # Use latest event description when available — more informative than a positional label
+        latest_desc = str(events[-1].get("description") or "") if events else ""
+        first_desc = str(events[0].get("description") or "") if events else ""
+        multi_period = len({e.get("period") for e in events if e.get("period")}) > 1
         if current_state in {"contradicted"}:
             conviction = "weakened"
             summary = "Later commentary conflicts with earlier framing, so conviction should soften."
+            if latest_desc:
+                summary = f"Later commentary conflicts with earlier framing. Latest: {latest_desc}"
         elif current_state in {"dropped_without_follow_up"}:
             conviction = "weakened"
             summary = "The theme stopped getting follow-up, so its importance appears to have faded."
         elif current_state in {"softened", "reduced_priority"}:
             conviction = "weakened"
-            summary = "Management appears less forceful or less focused on this theme than before."
+            summary = latest_desc or "Management appears less forceful or less focused on this theme than before."
         elif current_state in {"strengthened", "increasing_priority"}:
             conviction = "strengthened"
-            summary = "Management is emphasizing the theme more clearly or more persistently."
+            if multi_period and latest_desc and first_desc and latest_desc != first_desc:
+                summary = latest_desc
+            elif latest_desc:
+                summary = latest_desc
+            else:
+                summary = "Management is emphasizing the theme more clearly or more persistently."
         elif current_state in {"revised"}:
             conviction = "unchanged"
-            summary = "Management reframed the theme, so the narrative changed rather than simply intensified."
+            summary = latest_desc or "Management reframed the theme, so the narrative changed rather than simply intensified."
         elif current_state in {"newly_introduced"}:
             conviction = "unchanged"
-            summary = "The theme has newly appeared in management commentary."
+            summary = latest_desc or "The theme has newly appeared in management commentary."
         elif current_state in {"stable_priority"}:
             conviction = "unchanged"
-            summary = "Management keeps returning to the same theme without a major change in emphasis."
+            summary = latest_desc or "Management keeps returning to the same theme without a major change in emphasis."
         else:
             conviction = "unclear"
-            summary = "There is not enough commentary history to judge the theme confidently."
+            summary = latest_desc or "There is not enough commentary history to judge the theme confidently."
         why = "The latest commentary updated the language, priority, or specificity around this theme."
         if turning_points:
             why = f"The latest turning point is {turning_points[-1].get('change_type') or 'an evidence update'}."

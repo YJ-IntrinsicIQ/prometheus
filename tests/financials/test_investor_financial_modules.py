@@ -182,6 +182,9 @@ def test_build_investor_financial_modules_creates_expected_payloads(tmp_path: Pa
         _write_json(company_root / year / "financials" / "financial_truth_reconciliation_report.json", _reconciliation_payload())
         _write_json(company_root / year / "financials" / "financial_artifact_quarantine_report.json", _quarantine_payload())
     _write_json(company_root / "fy25" / "financials" / "corporate_actions.json", _corporate_actions_payload("qip_issue"))
+    # company_model.json required for identity-first WC applicability (ENG-150C)
+    _write_json(company_root / "company_memory" / "company_model" / "company_model.json",
+                {"current_business_model": {"business_model_type": "manufacturing"}})
 
     payloads = build_investor_financial_modules(company="acme", company_root=company_root)
 

@@ -49,7 +49,13 @@ def title_case_label(value: Any) -> str:
     text = sanitize_public_text(value)
     if not text:
         return ""
-    return " ".join(piece.capitalize() for piece in text.split())
+    # Replace underscores with spaces; capitalize only the first letter of each word
+    # without lowercasing the rest — preserves abbreviations like R&D, MSME, UAT.
+    text = text.replace("_", " ")
+    return " ".join(
+        (piece[0].upper() + piece[1:]) if piece else piece
+        for piece in text.split()
+    )
 
 
 def extract_year_label(value: Any) -> str:

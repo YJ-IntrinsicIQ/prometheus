@@ -453,6 +453,26 @@ def test_payable_days_uses_closing_balance_with_precision_warning_when_opening_m
     assert "used closing value because prior-year average was unavailable" in report.ratios["payable_days"].warnings
 
 
+def test_cash_conversion_cycle_reports_precise_missing_components(tmp_path):
+    normalized_path = tmp_path / "normalized_fundamentals.json"
+    reconciliation_path = tmp_path / "financial_reconciliation_report.json"
+    payload = _normalized_payload()
+    payload["balance_sheet"]["inventories"] = _entry("inventories", value_crore=60.0)
+    payload["balance_sheet"]["inventories"]["comparatives"] = []
+    payload["balance_sheet"]["payables"] = _entry("payables", value_crore=None, unit_original="", confidence="missing")
+    _write_json(normalized_path, payload)
+    _write_json(reconciliation_path, _reconciliation_payload())
+
+    report = calculate_financial_ratios(
+        company="acme", year="fy25", normalized_path=normalized_path, reconciliation_path=reconciliation_path
+    )
+
+    assert report.ratios["cash_conversion_cycle"].value is None
+    warning = report.ratios["cash_conversion_cycle"].warnings[0]
+    assert "missing components" in warning
+    assert "payable_days" in warning
+
+
 def test_payable_days_rejects_incompatible_total_expenses_denominator(tmp_path):
     normalized_path = tmp_path / "normalized_fundamentals.json"
     reconciliation_path = tmp_path / "financial_reconciliation_report.json"

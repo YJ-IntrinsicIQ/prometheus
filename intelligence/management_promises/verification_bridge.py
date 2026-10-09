@@ -440,10 +440,13 @@ def _classify_promise(
             # Condition 2: event type compatible with commitment category
             if ev.event_type not in compatible_types:
                 continue
-            # Condition 3: document evidence_period >= announcement_period
-            # (use evidence_period — the document date — as the authoritative gate,
-            # since action_period extraction from multi-market text is unreliable)
-            if not _fy_ge(ev.evidence_period, announcement_period):
+            # Condition 3: the ACTION must not predate the commitment.
+            # Use event_period (actual action date) when available; fall back to
+            # evidence_period (document date) only when no action date was extracted.
+            # A document describing a pre-commitment action cannot verify a later
+            # commitment even if that document was published after the commitment.
+            effective_period = ev.event_period if ev.event_period else ev.evidence_period
+            if not _fy_ge(effective_period, announcement_period):
                 continue
             # Condition 4: action is not merely announced
             if ev.status == "announced":

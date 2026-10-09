@@ -191,6 +191,9 @@ def _extract_company_memory_risk_candidates(company_root: Path) -> List[Dict[str
                 "evo_canonical_id": evo_id,
                 "evo_severity_by_year": risk.get("severity_by_year") or {},
                 "evo_latest_severity": risk.get("latest_severity"),
+                # Pass through source-derived narrative from evolution
+                "what_changed": risk.get("what_changed"),
+                "evidence_summary": risk.get("evidence_summary"),
             })
 
     working_capital = _load_json(company_root / "company_memory" / "financials" / "investor_financial_modules" / "working_capital_quality_drilldown.json")

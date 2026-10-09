@@ -4,7 +4,7 @@ import { AppFrame } from "@/src/components/layout/app-frame";
 import { BrandMark } from "@/src/components/brand-mark";
 import {
   getCompanyResearchView,
-  getResearchAnswerCard,
+  getResearchAnswerCardWithSource,
   getResearchQuestionParams,
 } from "@/src/lib/ask-intrinsiciq";
 
@@ -23,12 +23,12 @@ export async function generateStaticParams() {
 
 export default async function QuestionPage({ params }: QuestionPageProps) {
   const { companySlug, questionId } = await params;
-  const [company, answer] = await Promise.all([
+  const [company, answerWithSource] = await Promise.all([
     getCompanyResearchView(companySlug),
-    getResearchAnswerCard(companySlug, questionId),
+    getResearchAnswerCardWithSource(companySlug, questionId),
   ]);
 
-  if (!company || !answer) {
+  if (!company || !answerWithSource) {
     notFound();
   }
 
@@ -37,7 +37,12 @@ export default async function QuestionPage({ params }: QuestionPageProps) {
       <section className="editorial-card rounded-[32px] px-6 py-8 md:px-10 md:py-10">
         <BrandMark />
         <div className="mt-12">
-          <AnswerView companySlug={companySlug} company={company} answer={answer} />
+          <AnswerView
+            companySlug={companySlug}
+            company={company}
+            answer={answerWithSource.card}
+            canarySource={answerWithSource.source === "HYBRID_CANARY" ? "HYBRID_CANARY" : undefined}
+          />
         </div>
       </section>
     </AppFrame>

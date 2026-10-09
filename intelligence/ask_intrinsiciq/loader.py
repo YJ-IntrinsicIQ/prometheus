@@ -19,6 +19,7 @@ SOURCE_REGISTRY = {
     "working_capital_quality_drilldown": "company_memory/financials/investor_financial_modules/working_capital_quality_drilldown.json",
     "capital_allocation_roi_ledger": "company_memory/financials/investor_financial_modules/capital_allocation_roi_ledger.json",
     "per_share_compounding_analysis": "company_memory/financials/investor_financial_modules/per_share_compounding_analysis.json",
+    "ownership_evolution": "company_memory/financials/ownership_evolution.json",
     "committee_synthesis": "company_memory/investor_panel/committee_synthesis.json",
     "graham_analysis": "company_memory/investor_panel/graham_analysis.json",
     "buffett_analysis": "company_memory/investor_panel/buffett_analysis.json",

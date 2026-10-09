@@ -222,13 +222,16 @@ def _is_obviously_truncated_text(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
         return True
-    if stripped.endswith(("...", "…", "'", "’")):
+    if stripped.endswith(("...", "…")):
+        return True
+    # Closing quote after sentence-terminal punctuation is complete, not truncated
+    if stripped.endswith(("’", "’")) and (len(stripped) < 2 or stripped[-2] not in ".?!"):
         return True
     if stripped.endswith(("(", "[", "{", "/", "-", "–", "—", ":", ";")):
         return True
     if "..." in stripped or "…" in stripped:
         return True
     words = stripped.split()
-    if len(words) >= 12 and not stripped.endswith((".", "?", "!")):
+    if len(words) >= 12 and not stripped.rstrip("'\"").endswith((".", "?", "!")):
         return True
     return False

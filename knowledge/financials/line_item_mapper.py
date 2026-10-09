@@ -179,6 +179,17 @@ _FORBIDDEN_BY_FIELD = {
         "payment",
         "payments",
     ),
+    # Indirect-method cash flow statements open the operating section with PBT as the
+    # first adjustment row.  Any row whose label contains "before tax" or "profit before"
+    # is an intermediate accounting line, never the net operating cash flow total.
+    "cfo": (
+        "before tax",
+        "before taxation",
+        "profit before",
+        "loss before",
+        "profit / loss before",
+        "profit/(loss) before",
+    ),
     "other_assets": (
         "deposits",
         "demand deposits",

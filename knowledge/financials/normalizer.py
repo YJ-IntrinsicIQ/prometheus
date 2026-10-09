@@ -1148,9 +1148,24 @@ def _entry_rank(entry: Dict[str, Any], target_year: str) -> Tuple[int, int, int,
             # Note table with "Total Assets" (e.g., Business Combinations note) - heavily penalize
             wrong_scope_penalty = -80
 
-    # CFO: strongly prefer primary cash flow "Net cash from operating activities"
+    # CFO: strongly prefer the final net operating cash-flow line.
+    # The indirect method opens with PBT then lists adjustments; the true CFO is the
+    # final summation line.  That line varies in wording across years:
+    #   FY20-FY23: "Net cash generated from operating activities (A)"
+    #   FY24-FY26: "Net cash generated from / (used in) operating activities (A)"
+    # We therefore match any primary-statement row that contains both "net cash" and
+    # "operating activities" without a "before tax" qualifier (which would indicate PBT).
     if canonical_field == "cfo":
-        if is_primary and ("net cash generated from operating" in normalized_line_item or "net cash from operating" in normalized_line_item):
+        if is_primary and (
+            "net cash generated from operating" in normalized_line_item
+            or "net cash from operating" in normalized_line_item
+            or (
+                "net cash" in normalized_line_item
+                and "operating activities" in normalized_line_item
+                and "before tax" not in normalized_line_item
+                and "before taxation" not in normalized_line_item
+            )
+        ):
             schedule_specificity = 5
 
     return (

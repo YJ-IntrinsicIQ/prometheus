@@ -178,6 +178,10 @@ class ManagementProgressionProducer:
         consistency_data = loaded_payload(self.sources, "management_consistency")
         cross_year = build_cross_year_links(items, consistency_data=consistency_data or None)
         execution_outcomes = build_execution_outcome_summary(items)
+        meo_by_id = {r["initiative_id"]: r for r in execution_outcomes.get("records", [])}
+        for item in items:
+            item["exec_states"] = _exec_states_for_item(meo_by_id.get(item["item_id"], {}))
+            item["source_items"] = _source_items_for_item(item)
         return {
             "schema_version": SCHEMA_VERSION,
             "company_slug": self.company_slug,
@@ -988,7 +992,7 @@ def _transition_role_verification(transition_type: str, current_state: str) -> t
 
 def _status_to_current(status: Any) -> str:
     text = str(status or "").lower()
-    if any(token in text for token in ("delivered", "completed", "commissioned", "fulfilled", "implemented")):
+    if any(token in text for token in ("delivered", "completed", "commissioned", "fulfilled", "implemented", "operational")):
         return "delivered"
     if any(token in text for token in ("partial", "early", "progress")):
         return "partially_delivered"
@@ -1246,6 +1250,41 @@ def _period_sort_key(period: Any) -> int:
         return -1
     value = int(match.group(1))
     return value % 100 if value >= 100 else value
+
+
+def _exec_states_for_item(meo_record: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not meo_record:
+        return []
+    return [{
+        "execution_state": meo_record.get("execution_state"),
+        "evidence_ids": meo_record.get("execution_evidence_ids") or [],
+        "action_actor": meo_record.get("action_actor"),
+        "management_execution_eligible": meo_record.get("management_execution_eligible"),
+        "outcome_state": meo_record.get("outcome_state"),
+    }]
+
+
+def _source_items_for_item(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    source_items: List[Dict[str, Any]] = []
+    seen: set = set()
+    for event in item.get("events", []):
+        role = event.get("role")
+        ev_id_fallback = str(event.get("event_id") or "")
+        for eref in event.get("evidence", []):
+            ev_id = eref.get("evidence_id") or ""
+            key = ev_id or ev_id_fallback
+            if key in seen:
+                continue
+            seen.add(key)
+            source_items.append({
+                "evidence_id": ev_id,
+                "source_artifact": eref.get("source_artifact"),
+                "source_item_id": eref.get("source_item_id") or ev_id_fallback,
+                "source_period": eref.get("source_period"),
+                "passage": eref.get("excerpt"),
+                "event_role": role,
+            })
+    return source_items
 
 
 def main(argv: Optional[List[str]] = None) -> None:

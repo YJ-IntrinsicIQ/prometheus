@@ -61,7 +61,7 @@ QUESTION_CATALOG: List[Dict[str, Any]] = [
             {"id": "how-is-capital-allocated", "title": "How is capital allocated?", "short_label": "Capital allocation", "recommended": False},
             {"id": "which-investments-created-value", "title": "Which investments have actually created value?", "short_label": "Value created", "recommended": False},
             {"id": "what-is-the-return-on-capex", "title": "What is the return on capex?", "short_label": "Capex return", "recommended": False},
-            {"id": "what-incentives-matter", "title": "What signals management quality?", "short_label": "Management quality", "recommended": False},
+            {"id": "what-incentives-matter", "title": "What incentives matter?", "short_label": "Incentives", "recommended": False},
         ],
     },
     {
@@ -227,7 +227,7 @@ QUESTION_DEPENDENCY_MAP: Dict[str, List[str]] = {
     "what-is-committee-direction": ["committee_synthesis"],
     "where-does-the-committee-agree": ["committee_synthesis"],
     "where-does-the-committee-disagree": ["committee_synthesis"],
-    "what-incentives-matter": ["management_progression", "management_quality_dimensions"],
+    "what-incentives-matter": ["ownership_evolution", "per_share_compounding_analysis", "management_quality_dimensions"],
     "what-should-i-ask-ir": ["management_progression", "committee_synthesis"],
     "what-would-graham-worry-about": ["graham_analysis", "financial_truth_pack"],
     "what-would-buffett-focus-on": ["buffett_analysis", "committee_synthesis", "gold_credibility", "gold_capital_allocation"],
@@ -473,8 +473,9 @@ def build_answer_for_question(
         "financial_visual_refs": [],
         "progression": draft.get("progression"),
         # Investor-lens builders own explicit evidence-bucket semantics. Other
-        # question families retain their established finalization path.
-        "interpretation": draft.get("interpretation") if get_question_type_for_question(question_id) == "investor_lens" else None,
+        # question families retain their established finalization path, unless
+        # the builder already computed a full interpretation (e.g. commentary).
+        "interpretation": draft.get("interpretation") if (get_question_type_for_question(question_id) == "investor_lens" or draft.get("interpretation")) else None,
         "evidence_summary": draft["evidence_summary"],
         "uncertainty_note": draft["uncertainty_note"],
         "next_questions": _build_next_questions(question_id),
@@ -686,9 +687,25 @@ def _build_evidence_thin_answer(source_bundle: Dict[str, Any], *, business_journ
     )
 
 
+# Internal severity enum → investor-readable phrase. Never pass raw enum values to _draft.
+_WC_SEVERITY_LABEL: Dict[str, str] = {
+    "watch":             "Working-capital conditions are at an early-watch level warranting close monitoring.",
+    "elevated":          "Working-capital requirements are elevated, keeping cash tied up in operations.",
+    "severe":            "Working-capital strain is severe, reflecting material funding pressure.",
+    "stretched":         "Working-capital requirements are stretched, limiting near-term financial flexibility.",
+    "contained":         "Working-capital requirements are well-contained.",
+    "insufficient_data": "",
+}
+
+
+def _wc_status_phrase(status: str) -> str:
+    return _WC_SEVERITY_LABEL.get((status or "").strip().lower(), "")
+
+
 def _build_cash_conversion_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
     bridge = _latest_year_record(_source_payload(source_bundle, "owner_earnings_bridge"), "bridges")
-    working_capital = _latest_year_record(_source_payload(source_bundle, "working_capital_quality_drilldown"), "drilldown")
+    wc_payload = _source_payload(source_bundle, "working_capital_quality_drilldown")
+    working_capital = _latest_year_record(wc_payload, "drilldown")
     per_share = _latest_year_record(_source_payload(source_bundle, "per_share_compounding_analysis"), "analysis")
     pat = _get_number(bridge, "reported_pat")
     cfo = _get_number(bridge, "cfo")
@@ -701,27 +718,56 @@ def _build_cash_conversion_answer(source_bundle: Dict[str, Any], *, business_jou
             "The current source set does not include a usable current-year profit-to-cash bridge.",
         )
     current_year = _year_label(bridge) or _year_label(working_capital) or "the latest reported year"
+    wc_applicability_state = wc_payload.get("working_capital_applicability")
+    wc_not_applicable = wc_applicability_state == "not_economically_meaningful"
+    wc_unknown = wc_applicability_state == "unknown"
+    ccc_text = (
+        "The industrial cash-conversion cycle is not applicable to this financial institution's business model."
+        if wc_not_applicable
+        else (
+            "Working-capital framework applicability has not been established for this company."
+            if wc_unknown
+            else (
+                "inventory and payable days are not available for this period, so a full cash conversion cycle cannot be computed."
+                if _get_number(working_capital, "cash_conversion_cycle") is None
+                else f"the cash conversion cycle is {format_number(_get_number(working_capital, 'cash_conversion_cycle'))} days."
+            )
+        )
+    )
+    rec_days_text = (
+        "Receivable days reflect the loan portfolio, not trade debtors, and are not meaningful in the industrial sense."
+        if wc_not_applicable
+        else (
+            "Working-capital metrics are not available."
+            if wc_unknown
+            else f"Receivable days are {format_number(_get_number(working_capital, 'receivable_days'))};"
+        )
+    )
     return _draft(
         answer_status="supported" if pat is not None and cfo is not None else "partially_supported",
         simple_answer=(
             f"In {current_year.upper()}, reported profit is {format_crore(pat)}, operating cash flow is {format_crore(cfo)}, "
             f"and a conservative owner-earnings estimate of {format_crore(owner)} is available. "
-            f"Cash conversion still looks stretched because receivable days are {format_number(_get_number(working_capital, 'receivable_days'))}, "
-            f"inventory days are {format_number(_get_number(working_capital, 'inventory_days'))}, and the cash conversion cycle is {format_number(_get_number(working_capital, 'cash_conversion_cycle'))} days."
+            f"{rec_days_text} {ccc_text}"
         ),
-        why_it_matters="This matters because accounting profit can look healthy while cash remains trapped in receivables, inventory, or project timing. Investors care about both the profit and the path from profit to cash.",
+        why_it_matters="This matters because accounting profit can look healthy while cash conversion lags. For a financial institution, the path from profit to cash differs from industrial companies — loan book growth absorbs capital rather than trade receivables or inventory.",
         key_points=[
             f"Reported profit is {format_crore(pat)} and operating cash flow is {format_crore(cfo)}.",
             f"A conservative owner-earnings estimate of {format_crore(owner)} is available after identified capex.",
+        ] + ([] if wc_not_applicable else [
             f"Receivable days are {format_number(_get_number(working_capital, 'receivable_days'))}, inventory days are {format_number(_get_number(working_capital, 'inventory_days'))}, and payable days are {format_number(_get_number(working_capital, 'payable_days'))}.",
+        ]) + [
             f"Owner earnings per share is {format_per_share(_get_number(per_share, 'owner_earnings_per_share'))}.",
         ],
-        detailed_explanation="Profit and cash are related but not identical. Operating cash flow shows what cash actually came in from operations, while owner earnings try to adjust profit for reinvestment needs. The current evidence shows positive cash generation, but it also shows very heavy working-capital demands that can delay conversion from reported profit into readily usable cash.",
+        detailed_explanation=(
+            "Profit and cash are related but not identical. For a financial institution, operating cash flow reflects lending and funding dynamics rather than trade-cycle efficiency. The industrial working-capital frame — receivables, inventory, payables — does not describe what drives cash generation here."
+            if wc_not_applicable
+            else "Profit and cash are related but not identical. Operating cash flow shows what cash actually came in from operations, while owner earnings try to adjust profit for reinvestment needs. The current evidence shows positive cash generation, but it also shows very heavy working-capital demands that can delay conversion from reported profit into readily usable cash."
+        ),
         evidence_status="direct",
         evidence_summary="Supported by current financial truth, owner-earnings, and working-capital evidence.",
         evidence_points=[
             _first_string(_get_list(bridge, "owner_earnings_warnings"), _get_list(bridge, "warnings")),
-            _get_string(working_capital, "cash_strain_risk"),
         ],
         uncertainty=_first_string(_get_list(bridge, "owner_earnings_warnings"), _get_list(_source_payload(source_bundle, "financial_truth_pack"), "precision_limits"))
         or "Maintenance versus growth capex is not fully disclosed, so owner-earnings precision remains limited.",
@@ -768,6 +814,48 @@ def _build_owner_earnings_answer(source_bundle: Dict[str, Any], *, business_jour
 
 def _build_working_capital_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
     wc_payload = _source_payload(source_bundle, "working_capital_quality_drilldown")
+
+    wc_applicability = wc_payload.get("working_capital_applicability")
+
+    # Business identity not yet established: cannot determine framework applicability
+    if wc_applicability == "unknown":
+        return _draft(
+            answer_status="not_supported",
+            simple_answer="The working-capital framework applicability for this company has not yet been established. A canonical business-model classification is required before industrial working-capital metrics can be interpreted.",
+            why_it_matters="Applying the industrial cash-conversion cycle to the wrong business model produces misleading numbers. The framework is meaningful for manufacturers but not for financial institutions or pure-service companies.",
+            key_points=[
+                "Business identity must be established before working-capital framework applicability can be determined.",
+                "Available financial data is insufficient to classify this company's operating model with confidence.",
+            ],
+            detailed_explanation="Working-capital analysis requires first knowing whether the company has a physical goods cycle (manufacturing), a services model (no inventory), or a financial institution model. Without canonical business-model classification, any working-capital interpretation risks being applied to the wrong framework.",
+            evidence_status="not_applicable",
+            evidence_summary="Business identity not established.",
+            evidence_points=[],
+            uncertainty="Business model classification required before working-capital assessment can proceed.",
+            products_refs=[],
+            business_journey_ref=None,
+        )
+
+    # Financial institutions: the industrial WC framework is not economically meaningful
+    if wc_applicability == "not_economically_meaningful":
+        return _draft(
+            answer_status="supported",
+            simple_answer="Working-capital concerns in the industrial sense do not apply here. This is a financial institution: what appears as 'receivables' in the financial statements is the loan portfolio, not trade debtors. The industrial framework — measuring how long cash is tied up in trade receivables, inventory, and payables — does not reflect this company's business model.",
+            why_it_matters="For a financial institution, the relevant operating metrics are net interest margin, loan-book quality (NPA ratios), capital adequacy, and funding costs — not the industrial cash-conversion cycle.",
+            key_points=[
+                "The industrial working-capital framework does not apply to financial institutions.",
+                "Reported 'receivables' represent the loan portfolio, not trade debtors; computing receivable-days from these figures is arithmetically valid but economically meaningless.",
+                "The relevant credit and funding metrics for this business model require a bank-specific analysis framework.",
+            ],
+            detailed_explanation="The industrial cash-conversion cycle measures how long cash is locked in trade receivables, inventory, and trade payables. For a bank, none of these three components exist in the same economic sense: loans are not trade receivables, there is no physical inventory, and funding liabilities are not trade payables. Applying the industrial formula would produce figures that look alarming but carry no economic information about the company's actual operating efficiency.",
+            evidence_status="direct",
+            evidence_summary="Supported by sector applicability analysis of the working-capital drilldown.",
+            evidence_points=[],
+            uncertainty="Bank-specific credit quality and NIM evidence requires a separate financial-institution analysis framework.",
+            products_refs=[],
+            business_journey_ref=None,
+        )
+
     drilldown = _get_record_list(wc_payload, "drilldown")
     drilldown_sorted = sorted(drilldown, key=lambda d: _year_sort_key(_year_label(d)))
 
@@ -777,6 +865,25 @@ def _build_working_capital_answer(source_bundle: Dict[str, Any], *, business_jou
     inv_series = [(d, _get_number(d, "inventory_days")) for d in drilldown_sorted if _get_number(d, "inventory_days") is not None]
 
     if not rec_series and not ccc_series:
+        # Distinguish: framework applicable (manufacturer) with missing data vs genuinely unavailable
+        if wc_applicability == "applicable":
+            return _draft(
+                answer_status="not_supported",
+                simple_answer="The working-capital framework applies to this business, but the available financial data is insufficient to assess it. Receivable days and cash-conversion-cycle evidence are not available for the periods covered.",
+                why_it_matters="For a manufacturing business, how long cash is locked in receivables, inventory, and payables directly affects funding needs and operating efficiency. The framework is applicable here — the current data gaps prevent quantification, not the business model.",
+                key_points=[
+                    "The industrial working-capital framework is applicable to this company's manufacturing business model.",
+                    "Receivable days, inventory days, and cash-conversion-cycle data are not available in the current period coverage.",
+                    "Data gaps reflect extraction limitations, not structural absence of working-capital activity.",
+                ],
+                detailed_explanation="This company operates a manufacturing business where trade receivables, inventory, and payables cycles are economically meaningful. The working-capital framework applies. However, the extracted financial data does not include sufficient receivable or cash-cycle metrics to quantify the current working-capital position. As source data is expanded, these metrics should become available.",
+                evidence_status="not_applicable",
+                evidence_summary="Framework applicable; metric data not available.",
+                evidence_points=[],
+                uncertainty="Working-capital metrics will be assessable once receivable days or CCC evidence is extracted from source financials.",
+                products_refs=[],
+                business_journey_ref=None,
+            )
         return _build_unavailable_answer(
             question,
             "The required working-capital evidence is not available in the current source set.",
@@ -794,7 +901,7 @@ def _build_working_capital_answer(source_bundle: Dict[str, Any], *, business_jou
         last_d, last_val = rec_series[-1]
         first_yr = _year_label(first_d).upper()
         last_yr = _year_label(last_d).upper()
-        direction = "improved" if last_val < first_val else "worsened"
+        direction = "improvement" if last_val < first_val else "worsening"
         rec_trend_parts.append(
             f"Receivable days moved from {format_number(first_val)} ({first_yr}) to {format_number(last_val)} ({last_yr}) — a modest {direction}."
         )
@@ -808,7 +915,10 @@ def _build_working_capital_answer(source_bundle: Dict[str, Any], *, business_jou
         _, ccc_val = ccc_series[-1]
         ccc_d = ccc_series[-1][0]
         ccc_yr = _year_label(ccc_d).upper()
-        ccc_note = f"Cash conversion cycle is {format_number(ccc_val)} days ({ccc_yr})."
+        # Label historical-only / single-period CCC clearly so readers know it is not the current figure
+        ccc_only_yr = len(ccc_series) == 1
+        ccc_suffix = " — only one period with compatible inventory and payables data available" if ccc_only_yr else ""
+        ccc_note = f"Cash conversion cycle is {format_number(ccc_val)} days ({ccc_yr}{ccc_suffix})."
 
     # Inventory note if available
     inv_note = ""
@@ -816,8 +926,8 @@ def _build_working_capital_answer(source_bundle: Dict[str, Any], *, business_jou
         _, inv_val = inv_series[-1]
         inv_note = f"Inventory days at {format_number(inv_val)} — structurally long for a pharma supply chain."
 
-    intensity = _get_string(working_capital, "working_capital_intensity_status") or "elevated"
     strain = _get_string(working_capital, "cash_strain_risk") or ""
+    strain_phrase = _wc_status_phrase(strain)
 
     simple = (
         f"Yes. Working-capital intensity remains a concern. "
@@ -829,8 +939,7 @@ def _build_working_capital_answer(source_bundle: Dict[str, Any], *, business_jou
         rec_trend_parts[0] if rec_trend_parts else "",
         ccc_note,
         inv_note,
-        strain,
-        f"Latest working-capital intensity status: {intensity}.",
+        strain_phrase,
     ])
 
     return _draft(
@@ -844,8 +953,12 @@ def _build_working_capital_answer(source_bundle: Dict[str, Any], *, business_jou
         ),
         evidence_status="direct",
         evidence_summary="Supported by the working-capital drilldown with multi-year receivable days and cash-cycle evidence.",
-        evidence_points=[intensity, strain],
-        uncertainty="Inventory days are not consistently available for every year. The cash conversion cycle is computable only where all three components are present.",
+        evidence_points=[],
+        uncertainty=(
+            "Inventory days are not consistently available for every year. The cash conversion cycle is computable only where all three components are present."
+            + (" Compatible inventory and payables denominators are unavailable for the most recent periods, so a full current CCC cannot be established."
+               if ccc_series and rec_series and _year_label(ccc_series[-1][0]) != _year_label(rec_series[-1][0]) else "")
+        ),
         products_refs=[],
         business_journey_ref=None,
     )
@@ -1242,18 +1355,18 @@ def _commitment_lifecycle_status_label(commitment: Dict[str, Any], lifecycle_ind
 def _commitment_authority_note(commitment: Dict[str, Any], lifecycle_index: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
     key = _commitment_lifecycle_status_key(commitment, lifecycle_index)
     if key == "delivered":
-        return "Management Progression contains verified delivery or outcome evidence."
+        return "Follow-through evidence available."
     if key == "partially_delivered":
-        return "Management Progression contains partial follow-through evidence."
+        return "Partial follow-through evidence available."
     if key == "in_progress":
-        return "Management Progression shows action evidence, but final delivery remains unproven."
+        return "Progress evidence found; final delivery not yet confirmed."
     if key == "delayed":
-        return "Management Progression shows delay evidence."
+        return "Delay evidence found."
     if key == "missed":
-        return "Management Progression shows missed, cancelled, or contradicted execution evidence."
+        return "Execution was cancelled, missed, or contradicted."
     if key == "unable_to_verify":
-        return "Management Progression has not verified delivery."
-    return "No matching Management Progression lifecycle record was found."
+        return "No delivery evidence available."
+    return ""
 
 
 def _commitment_display_text(commitment: Dict[str, Any], *, max_words: int = 25) -> str:
@@ -1289,12 +1402,27 @@ def _clean_display_phrase(text: str, *, limit_words: int = 12) -> str:
     words = cleaned.split()
     if len(words) <= limit_words:
         return cleaned
-    if cleaned.endswith((".", "?", "!")):
+    if cleaned.rstrip("'\"").endswith((".", "?", "!")):
         return cleaned
     return ""
 
 
 def _strip_backend_phrasing(text: str) -> str:
+    # Short-circuit: structural doctrine/metadata items have no investor content — drop entirely
+    _DOCTRINE_STRUCTURAL_GUARDS = [
+        r"^\s*primary focus\s*:",                    # "Primary focus: ..." doctrine metadata header
+        r"^\s*all investment lens.required\b",        # "All investment lens-required..." control state
+        r"^\s*(?:benjamin|warren|peter|philip|charlie)\s+\w+\s+consumes\b",  # "[InvestorName] [Name] consumes ..." lens preamble
+        r"^\s*do\s+not\s+(?:infer|classify|interpret|treat|assume|upgrade|calculate|rely|use|state|prefer|consider)\b",  # prescriptive analyst directive
+        r"^\s*escalate\b",                           # prescriptive escalation directive
+        r"^\s*when\s+evidence\s+conflicts\b",         # conditional evidence-handling rule
+        r"^\s*when\s+the\s+story\b",                 # conditional story-evidence divergence rule
+        r"^\s*if\s+dividend\b",                      # conditional dividend-handling rule
+        r"^\s*if\s+the\s+business\s+cannot\b",       # conditional business-explanation rule
+        r"^\s*fy\d+\s+projects?\s*:",               # schema annotation "fy26 projects: No items..."
+    ]
+    if any(re.match(pat, text, re.IGNORECASE) for pat in _DOCTRINE_STRUCTURAL_GUARDS):
+        return ""
     cleaned = sanitize_public_text(text)
     if not cleaned:
         return ""
@@ -1347,6 +1475,8 @@ def _strip_backend_phrasing(text: str) -> str:
     )
     for needle, replacement in replacements:
         cleaned = re.sub(re.escape(needle), replacement, cleaned, flags=re.IGNORECASE)
+    # Collapse repeated adjacent words (template artifact typos like "evidence evidence")
+    cleaned = re.sub(r'\b(\w+)( \1)+\b', r'\1', cleaned, flags=re.IGNORECASE)
     cleaned = " ".join(cleaned.split()).strip(" ,;:-")
     return sanitize_public_text(cleaned)
 
@@ -1356,20 +1486,23 @@ def _commitment_summary(commitment: Dict[str, Any], *, include_status: bool = Tr
     label = _commitment_topic_label(commitment)
     later_evidence = _commitment_authority_note(commitment, lifecycle_index)
     later_evidence = _clean_display_phrase(later_evidence, limit_words=18)
-    significance = first_available_text(
-        _get_string(commitment, "investor_implication"),
-        later_evidence,
+    note = _clean_display_phrase(
+        first_available_text(_get_string(commitment, "investor_implication"), later_evidence),
+        limit_words=18,
     )
-    significance = _clean_display_phrase(significance, limit_words=18)
+    def _ensure_period(s: str) -> str:
+        s = s.strip()
+        return s if s.endswith(".") else s + "."
+
     parts = []
     if period:
-        parts.append(f"{period.upper()} — {label}")
+        parts.append(_ensure_period(f"{period.upper()}: {label}"))
     else:
-        parts.append(label)
+        parts.append(_ensure_period(label))
     if include_status:
-        parts.append(f"Current: {_commitment_lifecycle_status_label(commitment, lifecycle_index)}.")
-    parts.append(f"Later evidence: {later_evidence}.")
-    parts.append(f"Investor significance: {significance}.")
+        parts.append(_ensure_period(_commitment_lifecycle_status_label(commitment, lifecycle_index)))
+    if note:
+        parts.append(_ensure_period(note))
     return " ".join(part.strip() for part in parts if part.strip())
 
 
@@ -1739,7 +1872,7 @@ def _gold_promise_display_text(record: Dict[str, Any]) -> str:
 
 def _gold_promise_status_label(record: Dict[str, Any]) -> str:
     status = _normalize_sentence(_get_string(record, "current_status"))
-    return {
+    label = {
         "achieved": "Delivered",
         "partially_achieved": "Partially delivered",
         "delayed": "Delayed",
@@ -1748,19 +1881,41 @@ def _gold_promise_status_label(record: Dict[str, Any]) -> str:
         "unverified": "Not yet verified",
         "in_progress": "In progress",
     }.get(status, "Not yet verified")
+    if label == "Not yet verified":
+        ontology = str(record.get("accountability_ontology") or "").upper()
+        if ontology == "ASPIRATION":
+            return "Stated aspiration"
+        if ontology == "STRATEGIC_INTENT":
+            return "Stated direction"
+    return label
 
 
-def _gold_promise_record_points(gold: Dict[str, Any], *, max_items: int = 4, claim_outcome: bool = False) -> List[str]:
-    records = [r for r in (gold.get("accountability_promises") or gold.get("material_promises") or []) if isinstance(r, dict)]
+def _gold_promise_record_points(gold: Dict[str, Any], *, max_items: int = 4, claim_outcome: bool = False, exclude_fingerprints: Optional[set] = None) -> List[str]:
+    records = [r for r in (gold.get("material_promises") or gold.get("accountability_promises") or []) if isinstance(r, dict)]
     if claim_outcome:
         order = {"ACHIEVED": 0, "PARTIALLY_ACHIEVED": 1, "MISSED": 2, "DELAYED": 3, "UNVERIFIED": 4}
         records = sorted(records, key=lambda r: (order.get(str(r.get("current_status") or "UNVERIFIED"), 5), r.get("announcement_period") or r.get("source_period") or ""))
+    else:
+        mat_order = {"high": 0, "medium": 1, "low": 2, "unclear": 3}
+        def _record_sort_key(r: Dict[str, Any]) -> tuple:
+            linked = r.get("linked_company_model_ids") or []
+            n_linked = len(linked) if isinstance(linked, list) else (0 if not linked or str(linked).strip() in ("", "[]", "None") else 1)
+            other_penalty = 1 if str(r.get("promise_type") or "").upper() == "OTHER" else 0
+            return (
+                mat_order.get(str(r.get("materiality") or "unclear"), 3),
+                -n_linked,              # more economic links sorts first
+                other_penalty,          # generic cultural statements sort last within same materiality
+                str(r.get("management_commitment_id") or ""),
+            )
+        records = sorted(records, key=_record_sort_key)
     pts: List[str] = []
     seen: set[str] = set()
     for record in records:
         text = _gold_promise_display_text(record)
         fingerprint = _get_string(record, "commitment_fingerprint")
         if not text or not fingerprint or fingerprint in seen:
+            continue
+        if exclude_fingerprints and fingerprint in exclude_fingerprints:
             continue
         seen.add(fingerprint)
         period = _first_string(_get_string(record, "announcement_period"), _get_string(record, "source_period"))
@@ -1774,6 +1929,44 @@ def _gold_promise_record_points(gold: Dict[str, Any], *, max_items: int = 4, cla
         if len(pts) >= max_items:
             break
     return _clean_list(pts)[:max_items]
+
+
+def _clean_gold_investor_interpretation(record: Dict[str, Any]) -> str:
+    """Return investor-safe interpretation text, cleaning internal tracking phrases."""
+    raw = _get_string(record, "investor_interpretation") or ""
+    lowered = raw.lower()
+    # These phrases contain internal tracking system references (space vs underscore bypasses sanitizer)
+    if "management progression" in lowered or "lifecycle record" in lowered:
+        exec_status = str(record.get("execution_status") or "").upper()
+        if exec_status == "CLAIM_ONLY":
+            return "No later execution or outcome evidence is available."
+        return "No later evidence available to verify this commitment."
+    return raw
+
+
+def _gold_promise_accountability_key_points(gold: Dict[str, Any]) -> List[str]:
+    """Surface accountability_promises (specific verifiable targets) with evidence state and context.
+
+    These are distinct from strategic_intent statements: they have specific targets and are
+    checkable. Prioritising them in key_points ensures investors see what was specifically
+    promised before seeing broader strategic directions.
+    """
+    records = [r for r in (gold.get("accountability_promises") or []) if isinstance(r, dict)]
+    pts: List[str] = []
+    for record in records:
+        text = _gold_promise_display_text(record)
+        if not text:
+            continue
+        period = _first_string(_get_string(record, "announcement_period"), _get_string(record, "source_period"))
+        period_prefix = f"{period.upper()}: " if period else ""
+        status = _gold_promise_status_label(record)
+        context = _clean_gold_investor_interpretation(record)
+        context = _clean_display_phrase(context, limit_words=20)
+        entry = f"{period_prefix}{text.rstrip('.')} — {status}."
+        if context:
+            entry += f" {context.rstrip('.')}."
+        pts.append(entry)
+    return _clean_list(pts)
 
 
 def _mc_specific_promise_points(commitment_list: List[Dict[str, Any]], *, max_items: int = 4, lifecycle_index: Optional[Dict[str, Dict[str, Any]]] = None) -> List[str]:
@@ -1840,10 +2033,25 @@ def _build_management_promises_answer(source_bundle: Dict[str, Any], *, business
         thesis = "strengthens" if (achieved + partially) > missed else "neutral"
         # Gold owns the investor-facing tracked promise universe. Use Gold records
         # for examples so Ask cannot inflate counts with unmatched MC rows.
-        specific_pts = _gold_promise_record_points(gold, max_items=4)
+        # Collect accountability_promise fingerprints to exclude them from strategic_pts
+        # (they're a subset of material_promises and would otherwise duplicate).
+        acct_fingerprints: set = {
+            r.get("commitment_fingerprint")
+            for r in (gold.get("accountability_promises") or [])
+            if isinstance(r, dict) and r.get("commitment_fingerprint")
+        }
+        # Strategic slots = total budget minus accountability slots, so combined stays at 4.
+        # This prevents accountability promises from displacing economically material strategic records.
+        strategic_slots = max(1, 4 - len(acct_fingerprints))
+        specific_pts = _gold_promise_record_points(gold, max_items=strategic_slots, exclude_fingerprints=acct_fingerprints)
         if specific_pts:
             type_pts = [p for p in _gold_promise_key_points(gold) if "commitment(s)" in p]
             key_pts = _clean_list(specific_pts + type_pts[:1])[:4]
+        # Prioritise accountability_promises (specific verifiable targets) in key_points.
+        # They sort to the bottom of material_promises by materiality and are otherwise invisible.
+        acct_pts = _gold_promise_accountability_key_points(gold)
+        if acct_pts:
+            key_pts = _clean_list(acct_pts + key_pts)[:4]
         mc_available = bool(_source_payload(source_bundle, "management_commitments"))
         # Q-A simple_answer: describe what was promised (themes + status mix) — distinct from Q-B credibility verdict
         tracked = int(accountability.get("material_verifiable_commitments", gold_summary.get("tracked_promises") or 0))
@@ -1868,23 +2076,41 @@ def _build_management_promises_answer(source_bundle: Dict[str, Any], *, business
         else:
             qa_simple = gp_text or f"{tracked} management commitments tracked."
         if accountability:
-            commitment_word = "commitment" if tracked == 1 else "commitments"
-            resolved_note = f"{delivery_count} {'has' if delivery_count == 1 else 'have'} delivery evidence" if delivery_count else "none yet with delivery evidence"
-            pending_note = f"{unverified} {'remains' if unverified == 1 else 'remain'} unresolved" if unverified else ""
-            status_parts = [p for p in [resolved_note, pending_note] if p]
-            intent_note = ""
-            if strategic_count or aspiration_count:
-                intent_parts = []
-                if strategic_count:
-                    intent_parts.append(f"{strategic_count} strategic {'intent' if strategic_count == 1 else 'intents'}")
-                if aspiration_count:
-                    intent_parts.append(f"{aspiration_count} {'aspiration' if aspiration_count == 1 else 'aspirations'}")
-                intent_note = f" Separately, {_join_human_list(intent_parts)} are tracked as stated direction, not as checkable commitments."
+            total_all = tracked + strategic_count + aspiration_count
+            type_parts: List[str] = []
+            if tracked > 0:
+                delivery_desc = (
+                    f"{delivery_count} with delivery evidence"
+                    if delivery_count
+                    else (f"none with confirmed delivery, {unverified} open" if unverified else "none yet with delivery evidence")
+                )
+                type_parts.append(f"{tracked} verifiable {'target' if tracked == 1 else 'targets'} ({delivery_desc})")
+            if strategic_count > 0:
+                type_parts.append(f"{strategic_count} stated {'direction' if strategic_count == 1 else 'directions'}")
+            if aspiration_count > 0:
+                type_parts.append(f"{aspiration_count} {'aspiration' if aspiration_count == 1 else 'aspirations'}")
+            _DOMAIN_DISPLAY = {
+                "PRODUCT_LAUNCH": "product launches",
+                "DIGITAL_OR_TECH": "technology",
+                "CAPACITY": "capacity",
+                "CAPITAL_ALLOCATION": "capital deployment",
+                "MARKET_EXPANSION": "market expansion",
+                "GROWTH_TARGET": "growth targets",
+                "CUSTOMER_OR_SERVICE": "customer service",
+            }
+            top_domains = [
+                _DOMAIN_DISPLAY[k]
+                for k, v in sorted(tb.items(), key=lambda x: -x[1])
+                if isinstance(v, int) and v > 0 and k in _DOMAIN_DISPLAY
+            ][:3]
+            stmt_word = "statement" if total_all == 1 else "statements"
             qa_simple = (
-                f"Management has made {tracked} material, checkable {commitment_word}: "
-                + "; ".join(status_parts) + "."
-                + intent_note
+                f"Management has {total_all} tracked {stmt_word}: {_join_human_list(type_parts)}."
+                if type_parts
+                else f"Management has {total_all} tracked {stmt_word}."
             )
+            if top_domains:
+                qa_simple += f" Focus areas: {_join_human_list(top_domains)}."
         # Fix uncertainty note: only reference commitment evidence as missing when it actually is absent
         uncertainty = (
             "Full commitment-level detail and individual claim evidence requires the complete commitment evidence set."
@@ -1892,21 +2118,48 @@ def _build_management_promises_answer(source_bundle: Dict[str, Any], *, business
             else ""
         )
         # Build company-specific why_it_matters from the actual commitment data
-        if tracked:
-            if unverified == 0:
+        total_all = tracked + strategic_count + aspiration_count
+        if total_all == 0:
+            _promise_why = "Commitment tracking matters because it gives investors a checkable record of what management said it would do."
+        elif tracked > 0 and unverified == 0:
+            _promise_why = (
+                f"All {tracked} verifiable {'target' if tracked == 1 else 'targets'} have delivery evidence — "
+                f"worth testing whether these targets were specific enough to be a real test of execution."
+            )
+        elif tracked > 0:
+            if delivery_count > 0:
+                _delivery_ratio = int(delivery_count / tracked * 100)
                 _promise_why = (
-                    f"All {tracked} tracked {'commitment' if tracked == 1 else 'commitments'} have delivery evidence — "
-                    f"this is an unusually clean track record and worth testing against whether these commitments were specific enough to be a real test."
+                    f"Of {tracked} verifiable {'target' if tracked == 1 else 'targets'}, "
+                    f"{delivery_count} {'has' if delivery_count == 1 else 'have'} confirmed delivery evidence ({_delivery_ratio}%) — "
+                    f"this tests how reliably management's stated direction translates to execution."
                 )
             else:
-                _delivery_ratio = int(delivery_count / tracked * 100) if tracked else 0
+                # UNVERIFIED ≠ undelivered: absence of delivery evidence is not evidence of non-delivery
                 _promise_why = (
-                    f"Of {tracked} checkable {'commitment' if tracked == 1 else 'commitments'}, "
-                    f"{delivery_count} {'was' if delivery_count == 1 else 'were'} delivered ({_delivery_ratio}%) — "
-                    f"this ratio tests how reliably management's stated direction translates to execution at this company."
+                    f"{tracked} verifiable {'target is' if tracked == 1 else 'targets are'} tracked "
+                    f"but none have confirmed delivery evidence yet — "
+                    f"verification is open, not confirmed failure."
                 )
         else:
-            _promise_why = "Commitment tracking matters because it gives investors a checkable record of what management said it would do."
+            _promise_why = (
+                f"Management has outlined {total_all} stated {'direction' if total_all == 1 else 'directions'} but no specific verifiable targets are tracked — "
+                f"investors cannot currently assess execution accountability from this record."
+            )
+        # Phase 3-A: append business-model economic context so investors understand why
+        # these commitments matter — uses company_model how_revenue_happens as a supported
+        # factual statement about revenue sources, not an inferred causal claim.
+        company_model_payload = _source_payload(source_bundle, "company_model") or {}
+        cbm = (company_model_payload.get("current_business_model") or {})
+        how_rev = _get_string(cbm, "how_revenue_happens") or ""
+        if how_rev and tracked > 0:
+            # Ensure terminal punctuation so _is_obviously_truncated_text does not discard the line
+            how_rev_clean = how_rev.rstrip(";, ").rstrip()
+            if how_rev_clean and not how_rev_clean.endswith((".", "?", "!")):
+                how_rev_clean += "."
+            rev_note = _clean_display_phrase(how_rev_clean, limit_words=20)
+            if rev_note:
+                _promise_why += f" Revenue context: {rev_note.rstrip('.')}."
         return _draft(
             answer_status=answer_st,
             simple_answer=qa_simple,
@@ -2745,6 +2998,84 @@ def _build_capacity_answer(source_bundle: Dict[str, Any], *, business_journey_pa
     )
 
 
+# Investor-relevance weights for commentary theme category and change-signal dimensions.
+# Scores are additive; no single dimension dominates. Anti-patterns: word count, insertion
+# order, mention count alone, latest-year alone, LLM excitement, sentiment alone.
+_COMMENTARY_CATEGORY_INVESTOR_WEIGHT: Dict[str, int] = {
+    "risk": 40, "capital_allocation": 35, "margins": 35, "cash_flow": 30,
+    "working_capital": 25, "growth": 20, "execution": 18, "competition": 15,
+    "acquisitions": 12, "geography": 12, "products": 10, "customers": 10,
+    "demand": 8, "strategy": 5, "technology": 5, "capacity": 5,
+    "projects": 5, "governance": 2, "other": 1,
+}
+_COMMENTARY_POSITION_CHANGE_WEIGHT: Dict[str, int] = {
+    "strengthened": 20, "contradicted": 20, "increasing_priority": 20,
+    "softened": 15, "revised": 15, "dropped_without_follow_up": 15, "reduced_priority": 15,
+    "newly_introduced": 10, "stable_priority": 8,
+    "observation": 3, "unresolved": 2, "unable_to_verify": 0,
+}
+# High-relevance categories allow full evidence credit; lower-relevance categories are capped
+# so high-event-count low-relevance themes cannot crowd out fewer-but-more-critical themes.
+_COMMENTARY_HIGH_REL_CATS: frozenset = frozenset({
+    "risk", "capital_allocation", "margins", "cash_flow", "working_capital", "growth",
+})
+_COMMENTARY_MED_REL_CATS: frozenset = frozenset({
+    "execution", "competition", "acquisitions", "geography", "products", "customers", "demand",
+})
+# Risk-signal keywords on the theme_name field (computed label, not raw prose).
+# Deterministic substring match; not text analysis on management commentary.
+_COMMENTARY_RISK_NAME_INDICATORS: tuple = (
+    "risk", "challenge", "concern", "headwind", "weakness", "pressure", "threat",
+)
+
+
+def _commentary_priority_score(theme: Dict[str, Any]) -> float:
+    """Composite investor-relevance score for a management commentary theme.
+
+    Dimensions: category investor weight + change signal + recency (capped) +
+    persistence (years covered) + evidence depth (category-tier-capped) +
+    risk-name bonus (theme_name keyword, deterministic).
+    """
+    category = _get_string(theme, "theme_category")
+    cat_weight = _COMMENTARY_CATEGORY_INVESTOR_WEIGHT.get(category, 5)
+
+    position = _get_string(theme, "current_position")
+    change_weight = _COMMENTARY_POSITION_CHANGE_WEIGHT.get(position, 0)
+
+    # Recency: 0 for fy20 or earlier, +1 per year above fy20, capped at 6.
+    latest = _get_string(theme, "latest_period")
+    recency = max(0, min(6, _year_sort_key(latest) - 20))
+
+    # Persistence: years covered × 3, capped at 15.
+    first = _get_string(theme, "first_observed_period")
+    years_span = max(0, _year_sort_key(latest) - _year_sort_key(first)) if latest and first else 0
+    persistence = min(15, years_span * 3)
+
+    # Evidence depth: capped by category tier so generic high-volume themes don't dominate.
+    ev_cap = 10 if category in _COMMENTARY_HIGH_REL_CATS else (6 if category in _COMMENTARY_MED_REL_CATS else 3)
+    n_events = len(_get_list(theme, "commentary_events"))
+    evidence = min(ev_cap, n_events // 3)
+
+    # Risk-name bonus: structural label signal on theme_name (not commentary prose).
+    theme_name_lower = _get_string(theme, "theme_name").lower()
+    risk_bonus = 15 if any(ind in theme_name_lower for ind in _COMMENTARY_RISK_NAME_INDICATORS) else 0
+
+    # Gate 1: change signal requires recent activity (recency >= 2, i.e. fy22+).
+    # A newly_introduced or revised signal from fy20 that was never revisited is not
+    # a current change signal — zeroing it prevents stale introductions from ranking high.
+    if recency < 2:
+        change_weight = 0
+
+    # Gate 2: a theme with zero persistence AND zero evidence depth cannot rank on
+    # category weight alone. Caps cat_weight to medium-relevance level so a single
+    # fy23 capital-allocation observation does not displace multi-year evidence from
+    # lower-relevance categories.
+    if persistence == 0 and evidence == 0:
+        cat_weight = min(cat_weight, 15)
+
+    return float(cat_weight + change_weight + recency + persistence + evidence + risk_bonus)
+
+
 def _build_commentary_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
     themes = _source_payload(source_bundle, "commentary_themes")
     commentary_themes = _get_record_list(themes, "themes")
@@ -2758,59 +3089,70 @@ def _build_commentary_answer(source_bundle: Dict[str, Any], *, business_journey_
             why="Commentary matters because management language often changes before the underlying operating effect is obvious.",
             limitation="The current source set does not include enough commentary evidence to trace evolving emphasis responsibly.",
         )
-    featured = commentary_themes[:4]
+    sorted_themes = sorted(
+        commentary_themes,
+        key=_commentary_priority_score,
+        reverse=True,
+    )
+    featured = sorted_themes[:4]
+    # Build multi-theme progression — use the primary theme for the anchor progression,
+    # then surface what_changed / investor_implication across all featured themes.
     progression = _commentary_progression(featured[0])
+    all_emphases = _clean_list([_get_string(t, "current_emphasis") for t in featured])
+    all_implications = _clean_list([_get_string(t, "investor_implication") for t in featured])
+    all_what_changed = _clean_list([_get_string(t, "what_changed") for t in featured])
+    all_why_changed = _clean_list([_get_string(t, "why_it_changed") for t in featured])
+    all_unresolved = _clean_list(
+        sum([_get_string_list(t, "unresolved_questions") for t in featured], [])
+    )[:4]
     current_emphasis = first_available_text(
-        _get_string(featured[0], "current_emphasis"),
+        all_emphases[0] if all_emphases else "",
         _get_string(featured[0], "investor_implication"),
         "Management commentary shows what management is emphasizing right now, but the operating payoff is still only partly visible.",
     )
+    # Lead conclusion from the most prominent theme; surface multi-theme trajectory.
     investor_conclusion = first_available_text(
         _get_string(featured[0], "investor_implication"),
-        "Management is emphasizing technology upgrades, but the business payoff is still unproven.",
+        "Management is signaling strategic priorities across multiple themes; the operating payoff is still unfolding.",
     )
-    unresolved = _clean_list(
-        _get_string_list(featured[0], "unresolved_questions") + [current_emphasis]
-    )[:3]
+    unresolved = (all_unresolved or [current_emphasis])[:3]
     interpretation = build_interpretation_contract(
         conclusion=investor_conclusion,
-        what_changed=_clean_list([
-            _get_string(featured[0], "theme_name"),
-            _get_string(featured[0], "current_emphasis"),
-            _get_string(featured[0], "investor_implication"),
-        ])[:3],
+        what_changed=_clean_list(all_what_changed + all_emphases)[:3],
         why_it_matters="Changing commentary can reveal where management is leaning before the numbers fully catch up.",
         economic_mechanism="Commentary matters when a change in emphasis anticipates a change in execution, capital deployment, or operating capability.",
         thesis_impact="neutral",
-        positive_evidence=_clean_list([
-            _get_string(featured[0], "what_changed"),
-            _get_string(featured[0], "why_it_changed"),
-            _get_string(featured[0], "investor_implication"),
-        ])[:3],
+        positive_evidence=_clean_list(all_what_changed + all_why_changed + all_implications)[:3],
         negative_evidence=unresolved,
         unresolved=unresolved,
-        what_to_watch=_clean_list([
-            _get_string(featured[0], "what_changed"),
-            _get_string(featured[0], "why_it_changed"),
-            _get_string(featured[0], "investor_implication"),
-        ])[:3],
-        confidence={"level": "medium", "basis": ["Supported by the commentary theme registry and its progression summary."], "limitations": ["Some commentary themes are newly introduced and still lack long follow-through."]},
+        what_to_watch=_clean_list(all_what_changed + all_why_changed + all_implications)[:3],
+        confidence={"level": "medium", "basis": ["Supported by the commentary theme registry across multiple themes."], "limitations": ["Some commentary themes are newly introduced and still lack long follow-through."]},
     )
+    def _commentary_theme_point(theme: Dict[str, Any]) -> str:
+        """Format a commentary theme as an investor-readable key point with source text."""
+        name = _get_string(theme, "theme_name") or _get_string(theme, "normalized_theme")
+        emphasis = _get_string(theme, "what_changed") or _get_string(theme, "current_emphasis")
+        first_p = _get_string(theme, "first_observed_period")
+        latest_p = _get_string(theme, "latest_period")
+        if not emphasis:
+            return name or ""
+        period_tag = ""
+        if first_p and latest_p and first_p.lower() != latest_p.lower():
+            period_tag = f" ({first_p.upper()}→{latest_p.upper()})"
+        elif latest_p:
+            period_tag = f" ({latest_p.upper()})"
+        prefix = f"{name}{period_tag}: " if name else ""
+        return f"{prefix}{emphasis}"
+
     return _draft(
         answer_status="partially_supported",
         simple_answer=interpretation["conclusion"],
         why_it_matters=interpretation["why_it_matters"],
-        key_points=[
-            _first_string(_get_string(item, "theme_name"), _get_string(item, "normalized_theme"), _get_string(item, "current_emphasis")) for item in featured
-        ],
+        key_points=_clean_list([_commentary_theme_point(item) for item in featured]),
         detailed_explanation="Commentary is most useful when read as a progression stream: what changed, why it changed, and whether the change should alter conviction.",
         evidence_status="partial",
-        evidence_summary="Supported by the commentary theme registry and its progression summary.",
-        evidence_points=[
-            _get_string(featured[0], "what_changed"),
-            _get_string(featured[0], "why_it_changed"),
-            _get_string(featured[0], "investor_implication"),
-        ],
+        evidence_summary=f"Supported by {len(featured)} commentary theme(s) from the theme registry.",
+        evidence_points=_clean_list(all_what_changed + all_why_changed + all_implications)[:4],
         uncertainty="Some commentary themes are newly introduced and still lack long follow-through.",
         products_refs=[],
         business_journey_ref=None,
@@ -3266,13 +3608,25 @@ def _build_canonical_progression_answer(source_bundle: Dict[str, Any], *, busine
     latest_evidence = _clean_list(summary.get("latest_evidence") or [])
     conclusion = coverage_conclusion or _progression_conclusion(question_id, summary)
     confidence = _progression_confidence(question_id, summary, implication, coverage)
+    positive_for_interp = [e for e in latest_evidence if not _looks_unresolved_like(e)]
+    if get_question_type_for_question(question_id) == "risk":
+        positive_for_interp = []
+    # Risk answers intentionally keep evidence in the negative/uncertainty
+    # buckets; do not backfill positive evidence from another progression item.
+    if not positive_for_interp and get_question_type_for_question(question_id) != "risk":
+        for _fallback_item in items[1:4]:
+            _fb_sum = summarize_progression_item(_fallback_item, question_id)
+            _fb_pos = [e for e in _clean_list(_fb_sum.get("latest_evidence") or []) if not _looks_unresolved_like(e)]
+            if _fb_pos:
+                positive_for_interp = _fb_pos
+                break
     interpretation = build_interpretation_contract(
         conclusion=_complete_sentence(conclusion),
         what_changed=_clean_list([summary.get("what_changed")] + key_points)[:3],
         why_it_matters=_progression_why_it_matters(question_id),
         economic_mechanism=_first_string(_get_string(implication, "economic_mechanism"), _progression_economic_mechanism(question_id)),
         thesis_impact=_first_string(_get_string(implication, "thesis_impact"), "unresolved"),
-        positive_evidence=[item for item in latest_evidence if not _looks_unresolved_like(item)][:3],
+        positive_evidence=positive_for_interp[:3],
         negative_evidence=[item for item in unresolved if item][:3],
         unresolved=unresolved[:3],
         what_to_watch=_progression_watch_items(question_id, implication, unresolved),
@@ -3918,7 +4272,7 @@ def _build_break_thesis_answer(source_bundle: Dict[str, Any], *, business_journe
         why_it_matters="Break points matter because they identify the few things that would actually damage the business case rather than ordinary volatility.",
         economic_mechanism="A thesis breaks when cash gets trapped, demand becomes too concentrated, or capital spending fails to create durable economic return.",
         thesis_impact="weakens",
-        positive_evidence=watch_items,
+        positive_evidence=[],
         negative_evidence=_clean_list([
             _get_string(progression, "current_state"),
             _first_string(_get_string_list(progression, "unresolved_items")),
@@ -3955,11 +4309,15 @@ def _build_break_thesis_answer(source_bundle: Dict[str, Any], *, business_journe
 
 
 def _build_missing_disclosure_answer(source_bundle: Dict[str, Any], *, business_journey_payload: Dict[str, Any], products_services_payload: Dict[str, Any], question: Dict[str, Any]) -> Dict[str, Any]:
+    import re as _re
     committee = _source_payload(source_bundle, "committee_synthesis")
     truth = _source_payload(source_bundle, "financial_truth_pack")
+    # precision_limits mixes investor sentences with raw "fyNN: metric is value" data strings — keep only sentences
+    raw_precision = _get_string_list(truth, "precision_limits")
+    investor_precision = [p for p in raw_precision if not _re.match(r'^fy\d{2}:', p.strip(), _re.IGNORECASE)]
     missing = _clean_list(
         _get_string_list(_get_record(committee, "financial_committee_view"), "missing_financial_data")
-        + _get_string_list(truth, "precision_limits")
+        + investor_precision
     )[:4]
     if not missing:
         return _build_generic_not_supported_answer(source_bundle, business_journey_payload=business_journey_payload, products_services_payload=products_services_payload, question=question)
@@ -3971,7 +4329,7 @@ def _build_missing_disclosure_answer(source_bundle: Dict[str, Any], *, business_
         detailed_explanation="Missing disclosure matters most when it changes judgment, not when it merely leaves trivia unanswered. Here, the most important gaps affect owner-earnings precision, per-share comparability, and the consistency of current financial interpretation.",
         evidence_status="direct",
         evidence_summary="Supported by financial limitation fields and committee follow-up gaps already present in the source set.",
-        evidence_points=missing[:3],
+        evidence_points=[],
         uncertainty="These are the clearest documented disclosure gaps in the current evidence set.",
         products_refs=[],
         business_journey_ref=None,
@@ -4038,7 +4396,7 @@ def _build_unresolved_answer(source_bundle: Dict[str, Any], *, business_journey_
         detailed_explanation="The current evidence does not fail because it says nothing. It fails because a few high-value questions remain open. Those open questions cluster around owner-economics precision, the real drivers of cash conversion, and how confidently current shareholder-level economics can be compared over time.",
         evidence_status="derived",
         evidence_summary="Supported by committee unknowns and investor-panel uncertainties.",
-        evidence_points=unresolved[:3],
+        evidence_points=[],
         uncertainty="These unresolved points come directly from the current evidence set.",
         products_refs=[],
         business_journey_ref=None,
@@ -5006,6 +5364,164 @@ def _build_regulatory_risks_answer(source_bundle: Dict[str, Any], *, business_jo
     )
 
 
+def _build_incentives_answer(
+    source_bundle: Dict[str, Any],
+    *,
+    question: Dict[str, Any],
+    business_journey_payload: Dict[str, Any] = None,
+    products_services_payload: Dict[str, Any] = None,
+    **_: Any,
+) -> Dict[str, Any]:
+    ownership = _source_payload(source_bundle, "ownership_evolution")
+    per_share = _source_payload(source_bundle, "per_share_compounding_analysis")
+
+    if not ownership:
+        return _build_unavailable_answer(
+            question,
+            "Ownership alignment data is not available for this company.",
+            "Incentive analysis requires shareholding pattern data.",
+            "",
+        )
+
+    promoter_records = [
+        r for r in (ownership.get("promoter_holding") or [])
+        if isinstance(r.get("value"), (int, float)) and 0 < r["value"] < 100
+    ]
+    sorted_promoter = sorted(promoter_records, key=lambda r: r.get("year", ""))
+    latest_p = sorted_promoter[-1] if sorted_promoter else None
+    earliest_p = sorted_promoter[0] if sorted_promoter else None
+
+    pledge_records = ownership.get("pledge") or []
+
+    fii_records = [
+        r for r in (ownership.get("fii") or [])
+        if isinstance(r.get("value"), (int, float)) and 0 < r["value"] < 100
+    ]
+    latest_fii = sorted(fii_records, key=lambda r: r.get("year", ""))[-1] if fii_records else None
+
+    dilution_present = False
+    if per_share:
+        for rec in (per_share.get("analysis") or []):
+            basic = rec.get("weighted_average_basic_shares")
+            diluted = rec.get("weighted_average_diluted_shares")
+            if basic and diluted and abs(diluted - basic) / basic > 0.001:
+                dilution_present = True
+                break
+
+    key_points: List[str] = []
+
+    if latest_p:
+        fy = str(latest_p.get("year", "")).upper()
+        pct = latest_p["value"]
+        if earliest_p and earliest_p is not latest_p:
+            fy_first = str(earliest_p.get("year", "")).upper()
+            delta = pct - earliest_p["value"]
+            direction = "unchanged" if abs(delta) < 0.1 else (f"up {abs(delta):.1f} pp" if delta > 0 else f"down {abs(delta):.1f} pp")
+            key_points.append(
+                f"Promoter/Insider ownership: {pct:.1f}% as of {fy} ({direction} from {earliest_p['value']:.1f}% in {fy_first}), "
+                "showing concentrated promoter ownership."
+            )
+        else:
+            key_points.append(
+                f"Promoter/Insider ownership: {pct:.1f}% as of {fy}, sourced from shareholding pattern disclosures."
+            )
+
+    if not pledge_records:
+        key_points.append(
+            "No promoter share pledging is disclosed in the available evidence — "
+            "absence of pledging reduces forced-sale risk."
+        )
+    else:
+        key_points.append(
+            f"Promoter pledge data is present ({len(pledge_records)} record(s)). Pledging creates forced-sale risk if share price falls."
+        )
+
+    if per_share:
+        if not dilution_present:
+            key_points.append(
+                "Share count is stable — basic and diluted shares are equal in all reported years. "
+                "No dilution from equity issuances or option exercises is visible in the disclosed data."
+            )
+        else:
+            key_points.append(
+                "Basic and diluted share counts differ in one or more reported years, indicating dilution from options, warrants, or convertibles."
+            )
+
+    key_points.append(
+        "KMP and director compensation amounts, performance-linked pay, and ESOP schemes are not yet extracted "
+        "from annual report filings — these material incentive signals remain unknown from the current evidence set."
+    )
+
+    if latest_p:
+        fy = str(latest_p.get("year", "")).upper()
+        pct = latest_p["value"]
+        pledge_clause = "No share pledging is disclosed." if not pledge_records else "Pledge data is present."
+        dilution_clause = (" No dilution visible." if not dilution_present else " Some dilution present.") if per_share else ""
+        simple_answer = (
+            f"Promoters hold approximately {pct:.1f}% of shares as of {fy}, representing substantial economic exposure and concentrated ownership. "
+            f"{pledge_clause}{dilution_clause} "
+            "Compensation and equity incentive details are not yet available from filed sources."
+        )
+        answer_status = "partially_supported"
+    else:
+        simple_answer = (
+            "Structured ownership percentages are not available in interpretable form. "
+            "Compensation and equity incentive details are also not yet available."
+        )
+        answer_status = "not_supported"
+
+    positive_ev: List[str] = []
+    if latest_p and latest_p["value"] > 30:
+        positive_ev.append(
+            f"Promoter ownership of {latest_p['value']:.1f}% indicates substantial economic exposure and concentrated control; ownership alone does not establish minority-shareholder alignment."
+        )
+    if not pledge_records and latest_p:
+        positive_ev.append("No promoter share pledging disclosed — reduces forced-sale and financial-stress risk.")
+    if per_share and not dilution_present:
+        positive_ev.append("Share count stable with no visible dilution — per-share value is not being eroded through issuances.")
+
+    unresolved_ev: List[str] = [
+        "KMP compensation amounts, performance-linked pay, and ESOP schemes are not yet extracted from annual report filings — "
+        "the incentive picture is materially incomplete until this data is available."
+    ]
+
+    return _draft(
+        answer_status=answer_status,
+        simple_answer=simple_answer,
+        why_it_matters=(
+            "Economic incentives determine whether management acts in shareholders' long-term interest. "
+            "Ownership stakes show economic exposure and control concentration; pledge levels signal financial stress risk; "
+            "dilution measures whether per-share value is being eroded; compensation governs what management is rewarded for."
+        ),
+        key_points=[p for p in key_points if p],
+        detailed_explanation=(
+            "This answer draws on shareholding pattern disclosures and per-share compounding data. "
+            "Promoter ownership is sourced from BSE/NSE shareholding filings. "
+            "Compensation, ESOP, and performance-linked pay require extraction from KMP remuneration schedules in annual reports — "
+            "that extraction is not yet in place. This answer does not substitute strategic commentary for compensation incentives."
+        ),
+        evidence_status="direct" if latest_p else "unavailable",
+        evidence_summary="Derived from shareholding pattern disclosures and per-share compounding analysis.",
+        evidence_points=[p for p in key_points[:2] if p],
+        uncertainty=(
+            "Shareholding data confidence is medium — sourced from regulatory filings but rounding may apply. "
+            "FII and mutual fund data may be in inconsistent units across years. "
+            "Compensation picture is materially incomplete until KMP remuneration data is extracted."
+        ),
+        products_refs=[],
+        business_journey_ref=None,
+        interpretation={
+            "conclusion": simple_answer,
+            # Ownership concentration and absence of pledge/dilution are facts;
+            # they do not, by themselves, establish positive alignment.
+            "thesis_impact": "neutral",
+            "positive_evidence": positive_ev,
+            "negative_evidence": [],
+            "unresolved": unresolved_ev,
+        },
+    )
+
+
 ANSWER_BUILDERS = {
     "what-does-company-do": _build_canonical_business_summary_answer,
     "who-are-the-customers": _build_canonical_customers_answer,
@@ -5026,10 +5542,10 @@ ANSWER_BUILDERS = {
     "which-investments-created-value": _build_value_creation_answer,
     "what-projects-are-underway": _build_projects_answer,
     "how-is-capacity-changing": _build_canonical_progression_answer,
-    "what-is-management-commentary-saying": _build_canonical_progression_answer,
+    "what-is-management-commentary-saying": _build_commentary_answer,
     "how-is-capital-allocated": _build_capital_allocation_answer,
     "what-is-the-return-on-capex": _build_return_on_capex_answer,
-    "what-incentives-matter": _build_canonical_progression_answer,
+    "what-incentives-matter": _build_incentives_answer,
     "what-regulatory-risks-remain-active": _build_regulatory_risks_answer,
     "what-is-committee-direction": _build_committee_direction_answer,
     "where-does-the-committee-agree": _build_committee_agree_answer,
@@ -5222,6 +5738,7 @@ def _clean_list(values: List[Any]) -> List[str]:
             or normalized in seen
             or normalized in boilerplate
             or contains_forbidden_public_term(text)
+            or " " not in text  # single tokens are not investor propositions
         ):
             continue
         seen.add(normalized)
@@ -5342,7 +5859,7 @@ def _canonical_risk_groups(source_bundle: Dict[str, Any]) -> Dict[str, List[Dict
 def _risk_group_point(entry: Dict[str, Any], label: str) -> str:
     """Format a single risk entry as an investor-facing key point."""
     name = _clean_display_phrase(entry.get("risk_name") or "", limit_words=8)
-    why = _clean_display_phrase(entry.get("why_it_changed") or entry.get("what_changed") or "", limit_words=20)
+    why = _clean_display_phrase(entry.get("what_changed") or entry.get("why_it_changed") or "", limit_words=20)
     response_status = entry.get("management_response_status") or "NO_RESPONSE_DISCLOSED"
     if response_status == "NO_RESPONSE_DISCLOSED":
         response_note = " No management response identified in available evidence."
@@ -5902,6 +6419,8 @@ def _looks_unresolved_like(text: str) -> bool:
         "in progress",
         "central caution",
         "remains underway",
+        "unavailable",
+        "unresolved",
     )
     return any(pattern in normalized for pattern in patterns)
 

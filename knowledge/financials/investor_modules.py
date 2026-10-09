@@ -507,11 +507,87 @@ def _build_capital_allocation_roi_ledger(company: str, bundles: Dict[str, Dict[s
     return payload
 
 
-def _build_working_capital_quality_drilldown(company: str, bundles: Dict[str, Dict[str, Any]], truth_pack: Dict[str, Any]) -> Dict[str, Any]:
+# Business model type → WC applicability mapping.
+# Business identity determines metric applicability; financial data determines metric availability.
+# These are the canonical business_model_type values from company_model.json.
+_WC_MANUFACTURING_MODEL_TYPES: frozenset = frozenset({
+    "manufacturing", "industrial", "pharma", "pharmaceutical",
+    "chemical", "fmcg", "auto", "auto_ancillary", "construction",
+    "infrastructure", "mining", "semiconductor", "electronics",
+    "defense_manufacturing", "food_beverage", "agriculture",
+})
+
+_WC_FINANCIAL_MODEL_TYPES: frozenset = frozenset({
+    "financial_services", "banking", "nbfc", "insurance",
+    "asset_management", "fintech_lending", "microfinance",
+})
+
+_WC_SERVICE_MODEL_TYPES: frozenset = frozenset({
+    "platform", "content_ip", "saas", "services", "it_services",
+    "media", "consulting", "technology", "software",
+    "marketplace", "ecommerce_platform", "data_services", "telecom",
+})
+
+
+def _detect_wc_applicability(bundles: Dict[str, Dict[str, Any]], business_model_type: Optional[str] = None) -> Tuple[str, str]:
+    """Detect working-capital framework applicability from canonical business identity.
+
+    Returns (applicability, reason). Applicability is one of:
+      'applicable'                  — industrial/manufacturing company; WC framework applies
+      'partially_applicable'        — service/platform/content company; no inventory cycle by design
+      'not_economically_meaningful' — financial institution; industrial WC framework inapplicable
+      'unknown'                     — business identity not established; do not infer from data shape
+
+    Detection priority:
+      1. RBI banking schedule source_section_type (schedule_6_, schedule_9_, etc.) — canonical proof
+         of banking balance sheet format; takes precedence even if business_model_type absent
+      2. business_model_type from company_model.json — semantic owner of business identity
+      3. No identity signal → 'unknown'; data shape (missing inventory/COGS) is NOT used as proxy
+
+    This is identity-first: an industrial company with DSO=420 remains 'applicable'.
+    A bank with DSO=90 remains 'not_economically_meaningful'.
+    A manufacturer with no extracted inventory data remains 'applicable' (data unavailability,
+    not structural absence of inventory). Missing data → metric unavailable, not framework inapplicable.
+    """
+    years = _years_covered(bundles)
+    if not years:
+        return "applicable", "no_years_available"
+
+    # Step 1: Banking schedule source detection — canonical identity for financial institutions.
+    # RBI-prescribed schedules (schedule_6_cash_rbi, schedule_9_advances, etc.) appear only in
+    # banking balance sheets. An industrial company never uses these section types.
+    for year in years:
+        bundle = bundles[year]
+        normalized = bundle.get("normalized") or {}
+        rec_norm = (normalized.get("balance_sheet") or {}).get("receivables") or {}
+        source_section_type = rec_norm.get("source_section_type") or ""
+        if source_section_type.startswith("schedule_"):
+            return "not_economically_meaningful", "banking_schedule_source"
+
+    # Step 2: Canonical business model type — semantic owner of business identity.
+    # business_model_type comes from company_model.json current_business_model.business_model_type.
+    if business_model_type:
+        bmt = business_model_type.lower().strip()
+        if bmt in _WC_MANUFACTURING_MODEL_TYPES:
+            return "applicable", f"business_model_type:{bmt}"
+        if bmt in _WC_FINANCIAL_MODEL_TYPES:
+            return "not_economically_meaningful", f"business_model_type:{bmt}"
+        if bmt in _WC_SERVICE_MODEL_TYPES:
+            return "partially_applicable", f"business_model_type:{bmt}"
+        return "unknown", f"unrecognized_business_model_type:{bmt}"
+
+    # Step 3: No canonical identity signal available.
+    # Do NOT infer business identity from data shape: missing inventory ≠ service business.
+    # A manufacturer with un-extracted inventory data is still a manufacturer.
+    return "unknown", "no_business_identity_signal"
+
+
+def _build_working_capital_quality_drilldown(company: str, bundles: Dict[str, Dict[str, Any]], truth_pack: Dict[str, Any], business_model_type: Optional[str] = None) -> Dict[str, Any]:
     drilldown: List[Dict[str, Any]] = []
     warnings: List[str] = []
     limitations: List[str] = []
     precise_missing_ids = _precise_missing_ids(truth_pack)
+    wc_applicability, applicability_reason = _detect_wc_applicability(bundles, business_model_type)
 
     for year in _years_covered(bundles):
         bundle = bundles[year]
@@ -530,34 +606,47 @@ def _build_working_capital_quality_drilldown(company: str, bundles: Dict[str, Di
         inv_days = _fact_value(inventory_days)
         pay_days = _fact_value(payable_days)
         ccc_value = _fact_value(ccc)
-        severity_score = 0
-        for value in (rec_days, inv_days, ccc_value):
-            if value is None:
-                continue
-            if value >= 150:
-                severity_score = max(severity_score, 4)
-            elif value >= 90:
-                severity_score = max(severity_score, 3)
-            elif value >= 60:
-                severity_score = max(severity_score, 2)
-            else:
-                severity_score = max(severity_score, 1)
-        intensity = {0: "insufficient_data", 1: "healthy", 2: "watch", 3: "stretched", 4: "severe"}[severity_score]
-
-        quality_questions: List[str] = []
-        if rec_days is not None and rec_days >= 90:
-            quality_questions.append("Are receivable days elevated because of billing cycles, milestone collection, or collectability pressure?")
-        if inv_days is not None and inv_days >= 90:
-            quality_questions.append("Do inventory days reflect ageing, obsolescence, or a long project/production cycle?")
-        if pay_days is None and _metric_key("payables") in precise_missing_ids:
-            quality_questions.append("Which payable component is missing, and does that limit cash-conversion interpretation?")
-        if pay_days is not None:
-            payable_support_quality = "available"
-        elif _fact_value(payables) is not None:
-            payable_support_quality = "present_but_days_unavailable"
+        if wc_applicability == "not_economically_meaningful":
+            intensity = "not_applicable"
+            cash_strain_risk = "not_applicable"
+            quality_questions: List[str] = []
+            payable_support_quality = "not_applicable"
+        elif wc_applicability == "unknown":
+            intensity = "insufficient_data"
+            cash_strain_risk = "not_applicable"
+            quality_questions = []
+            payable_support_quality = "not_applicable"
         else:
-            payable_support_quality = "missing"
-        cash_strain_risk = "elevated" if intensity in {"stretched", "severe"} else ("watch" if intensity == "watch" else "contained")
+            severity_score = 0
+            for value in (rec_days, inv_days, ccc_value):
+                if value is None:
+                    continue
+                if value >= 150:
+                    severity_score = max(severity_score, 4)
+                elif value >= 90:
+                    severity_score = max(severity_score, 3)
+                elif value >= 60:
+                    severity_score = max(severity_score, 2)
+                else:
+                    severity_score = max(severity_score, 1)
+            intensity = {0: "insufficient_data", 1: "healthy", 2: "watch", 3: "stretched", 4: "severe"}[severity_score]
+
+            quality_questions = []
+            if rec_days is not None and rec_days >= 365:
+                quality_questions.append("Receivable days exceed 365 — extreme for a trade cycle. Does this reflect genuine overdue receivables, government-customer payment delays, disputed amounts, or a denominator anomaly?")
+            elif rec_days is not None and rec_days >= 90:
+                quality_questions.append("Are receivable days elevated because of billing cycles, milestone collection, or collectability pressure?")
+            if inv_days is not None and inv_days >= 90:
+                quality_questions.append("Do inventory days reflect ageing, obsolescence, or a long project/production cycle?")
+            if pay_days is None and _metric_key("payables") in precise_missing_ids:
+                quality_questions.append("Which payable component is missing, and does that limit cash-conversion interpretation?")
+            if pay_days is not None:
+                payable_support_quality = "available"
+            elif _fact_value(payables) is not None:
+                payable_support_quality = "present_but_days_unavailable"
+            else:
+                payable_support_quality = "missing"
+            cash_strain_risk = "elevated" if intensity in {"stretched", "severe"} else ("watch" if intensity == "watch" else "contained")
 
         rec_vs_rev = None
         if _fact_value(receivables_growth) is not None and _fact_value(revenue_growth) is not None:
@@ -579,20 +668,34 @@ def _build_working_capital_quality_drilldown(company: str, bundles: Dict[str, Di
             "inventory_growth_vs_revenue_growth": inv_vs_rev,
             "payable_support_quality": payable_support_quality,
             "working_capital_intensity_status": intensity,
+            "working_capital_applicability": wc_applicability,
+            "applicability_reason": applicability_reason,
             "cash_strain_risk": cash_strain_risk,
             "quality_questions": quality_questions,
             "source_provenance": _source_provenance(receivables, inventory, payables, receivable_days, inventory_days, payable_days, ccc, revenue_growth, receivables_growth, inventory_growth),
         }
         drilldown.append(item)
-        if pay_days is None and _fact_value(payables) is not None:
-            _append_unique(warnings, f"{year}: Payables are present, but payable-days evidence is incomplete.")
+        if wc_applicability not in {"not_economically_meaningful", "unknown"}:
+            if pay_days is None and _fact_value(payables) is not None:
+                _append_unique(warnings, f"{year}: Payables are present, but payable-days evidence is incomplete.")
         if len(_years_covered(bundles)) == 1:
             _append_unique(limitations, "Only one year is available, so working-capital analysis is a current-year snapshot rather than a trend.")
+
+    if wc_applicability == "not_economically_meaningful":
+        _append_unique(limitations, "The industrial working-capital framework — trade receivables, inventory, and payables cycles — does not apply to this company's business model. Reported 'receivables' represent the loan portfolio, not trade debtors.")
+    elif wc_applicability == "partially_applicable":
+        _append_unique(limitations, "Inventory is structurally absent in this business model. Receivable days remain a valid efficiency metric; the full cash-conversion cycle is not applicable to this company's operating structure.")
+    elif wc_applicability == "applicable":
+        _append_unique(limitations, "The working-capital framework applies to this business. Where individual metrics (inventory days, payable days, CCC) are unavailable, this reflects data extraction gaps, not structural absence of those business activities.")
+    elif wc_applicability == "unknown":
+        _append_unique(limitations, "Business identity has not been established for this company. Working-capital framework applicability cannot be determined without canonical business-model classification.")
 
     payload = {
         "company": company,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "years_covered": _years_covered(bundles),
+        "working_capital_applicability": wc_applicability,
+        "applicability_reason": applicability_reason,
         "drilldown": drilldown,
         "warnings": warnings,
         "limitations": limitations,
@@ -857,15 +960,26 @@ def _build_per_share_compounding_analysis(
     return payload
 
 
+def _load_business_model_type(company_root: Path) -> Optional[str]:
+    """Load canonical business_model_type from company_model.json. Returns None if unavailable."""
+    path = company_root / "company_memory" / "company_model" / "company_model.json"
+    try:
+        data = json.loads(path.read_text())
+        return (data.get("current_business_model") or {}).get("business_model_type") or None
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+
+
 def build_investor_financial_modules(*, company: str, company_root: Path) -> Dict[str, Dict[str, Any]]:
     bundles = load_financial_truth_by_year(company_root=company_root)
     if not bundles:
         raise RuntimeError(f"investor_financials requires at least one financial year for {company}")
     truth_pack = build_financial_truth_pack(company=company, company_root=company_root)
     modules_dir = company_root / "company_memory" / "financials" / MODULE_DIRNAME
+    business_model_type = _load_business_model_type(company_root)
     owner = _build_owner_earnings_bridge(company, bundles, truth_pack)
     capital = _build_capital_allocation_roi_ledger(company, bundles, truth_pack)
-    working = _build_working_capital_quality_drilldown(company, bundles, truth_pack)
+    working = _build_working_capital_quality_drilldown(company, bundles, truth_pack, business_model_type)
     order = _build_order_revenue_cash_conversion_tracker(company, bundles, truth_pack)
     per_share = _build_per_share_compounding_analysis(company, bundles, truth_pack, company_root, owner)
 

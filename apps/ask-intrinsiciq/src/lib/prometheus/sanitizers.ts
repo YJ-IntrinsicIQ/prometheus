@@ -24,7 +24,7 @@ const FORBIDDEN_PATTERNS: Array<[RegExp, string]> = [
   [/\bprompt\b/gi, "internal input"],
   [/\bLLM\b/gi, "model"],
   [/\bartifact[_-]contract\b/gi, "internal structure"],
-  [/\bpipeline\b/gi, "process"],
+  [/\b(?:data|ingestion|ML|AI|LLM|ETL|CI|CD|deployment|processing|training|inference|feature|extraction|scoring)\s+pipeline\b/gi, "process"],
   [/\braw artifact\b/gi, "raw source"],
   [/\bsource chunk\b/gi, "source excerpt"],
   [/\binput pack\b/gi, "source package"],

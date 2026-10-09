@@ -130,9 +130,20 @@ def _load_financial_artifacts(company_root: Path) -> Dict[str, Any]:
     }
 
 
-def is_management_commentary(text: Any, *, actor: Any = "", source_bucket: str = "") -> bool:
+def is_management_commentary(text: Any, *, actor: Any = "", source_bucket: str = "", theme: Any = "") -> bool:
     normalized = " ".join(str(text or "").lower().split())
     actor_text = str(actor or "").lower()
+    # Reject financial-table prose early — e.g. "EBITDA stood at ₹691 Cr ... due to a decrease in
+    # gross margin" contains "due to" (a thought_marker) but is not management commentary voice.
+    financial_table_markers = (
+        "ebitda stood at", "ebitda margin declined", "gnpa is", "nnpa is",
+        "crar declined", "par is", "crar is",
+    )
+    if any(m in normalized for m in financial_table_markers):
+        return False
+    # Require minimum substance — too-short phrases ("Focus on growth.") are not commentary.
+    if len(normalized.split()) < 6:
+        return False
     thought_markers = (
         "management believes", "management expects", "management attributed", "management explained",
         "we believe", "we expect", "expect", "we plan", "we intend", "we aim", "our strategy", "management said",
@@ -140,17 +151,26 @@ def is_management_commentary(text: Any, *, actor: Any = "", source_bucket: str =
         "in order to", "with the objective", "to prepare for", "views", "caution",
     )
     corporate_fact_markers = ("approved", "completed", "installed", "acquired", "debt increased", "capex investment", "dividend paid")
-    has_thought = any(marker in normalized for marker in thought_markers)
+    # thought_markers fire only for management/company-type actors (not analyst, auditor, external)
+    management_actors = {"management", "company_management", "company board", "board", "company", ""}
+    has_thought = any(marker in normalized for marker in thought_markers) and actor_text in management_actors
     explicit_management = actor_text in {"management", "company_management", "company board", "board"}
     if any(marker in normalized for marker in corporate_fact_markers) and not has_thought:
         return False
-    return has_thought or (explicit_management and source_bucket in {"management_focus", "management_credibility"})
+    # Accept company-actor items where the extractor already assigned a strategic theme label
+    # and the text is a substantive sentence (>8 words) — the theme is the extractor's signal.
+    themed_company = (
+        bool(theme)
+        and actor_text in {"company", "management"}
+        and len(normalized.split()) > 8
+    )
+    return has_thought or (explicit_management and source_bucket in {"management_focus", "management_credibility"}) or themed_company
 
 
 def _extract_candidate_items(year_record: Dict[str, Any]) -> List[Dict[str, Any]]:
     commentary_items: List[Dict[str, Any]] = []
     management_summary = year_record.get("management_summary") or {}
-    for bucket_name in ("company_management_actions", "company_results", "risk_responses"):
+    for bucket_name in ("company_management_actions", "company_results", "risk_responses", "company_promises"):
         items = management_summary.get(bucket_name) or []
         if not isinstance(items, list):
             continue
@@ -159,10 +179,12 @@ def _extract_candidate_items(year_record: Dict[str, Any]) -> List[Dict[str, Any]
                 continue
             if bucket_name == "company_management_actions" and not item.get("should_feed_management_consistency", True):
                 continue
+            if bucket_name == "company_promises" and not item.get("should_feed_company_strategy", True):
+                continue
             commentary_text = select_commentary_text(item)
             if not commentary_text:
                 continue
-            if not is_management_commentary(commentary_text, actor=item.get("actor"), source_bucket=bucket_name):
+            if not is_management_commentary(commentary_text, actor=item.get("actor"), source_bucket=bucket_name, theme=item.get("theme")):
                 continue
             raw_theme = item.get("theme") or item.get("category") or item.get("value") or commentary_text
             theme_name = build_theme_name({"theme": raw_theme, "category": item.get("category"), "value": item.get("value"), "commentary": commentary_text})

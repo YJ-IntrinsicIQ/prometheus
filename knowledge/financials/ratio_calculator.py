@@ -600,7 +600,17 @@ def calculate_financial_ratios(
     ccc_warnings: List[str] = []
     ccc = None if rec_days is None or inv_days is None or pay_days is None else rec_days + inv_days - pay_days
     if ccc is None:
-        ccc_warnings.append("missing working capital fields")
+        missing_components = [
+            name for name, value in (
+                ("receivable_days", rec_days),
+                ("inventory_days", inv_days),
+                ("payable_days", pay_days),
+            ) if value is None
+        ]
+        ccc_warnings.append(
+            "cash_conversion_cycle unavailable: missing components "
+            + ", ".join(missing_components)
+        )
         _append_unique(report_warnings, "working capital fields missing")
     _set_ratio(
         ratios,

@@ -545,6 +545,14 @@ def _candidate_amount(item: Dict[str, Any], ledger_entry: Dict[str, Any]) -> Opt
     if item.get("suppress_ledger_amount"):
         return None
 
+    # Ledger aggregates are not transaction consideration.  In particular,
+    # an acquisition record may only carry an amount when its own source item
+    # discloses that consideration; never project the annual acquisitions
+    # aggregate onto a named target.
+    category = str(item.get("allocation_category") or item.get("category") or "").lower()
+    if category in {"acquisition", "acquisition_integration", "strategic_investment", "joint_venture", "subsidiary_investment"}:
+        return None
+
     # Ledger numeric crore fields — typed in producer, safe to trust
     for field in _LEDGER_CRORE_FIELDS:
         v = ledger_entry.get(field)
@@ -1325,7 +1333,7 @@ def _candidate_from_item(
     normalized_name = _normalize_text(allocation_name)
     family_key = _family_key(allocation_category, allocation_name)
     funding_source = _infer_funding_source(allocation_category, item, ledger_entry)
-    amount = _candidate_amount(item, ledger_entry)
+    amount = _candidate_amount({**item, "allocation_category": allocation_category}, ledger_entry)
     amount_basis = _amount_basis(item, ledger_entry, amount)
     source_reference = _compact_source_item(year, item, group_name)
     if ledger_entry:

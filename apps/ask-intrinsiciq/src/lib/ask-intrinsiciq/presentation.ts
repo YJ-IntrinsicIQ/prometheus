@@ -10,6 +10,10 @@ const LENS_PREFIXES = [
   /^Receivables and working-capital dynamics:\s*/i,
 ];
 
+// Versioned contract. Must match pipelines/pacp_adversarial.py _SANITIZER_CONTRACT_VERSION.
+// Canonical spec: governance/sanitizer_contract.json
+export const SANITIZER_CONTRACT_VERSION = "2.0";
+
 const PUBLIC_NOISE_PATTERNS = [
   /company memory/i,
   /company-memory/i,
@@ -31,7 +35,7 @@ const PUBLIC_NOISE_PATTERNS = [
   /\bpcim\b/i,
   /\bcim\b/i,
   /\bllm\b/i,
-  /\bpipeline\b/i,
+  /\b(?:data|ingestion|ML|AI|LLM|ETL|CI|CD|deployment|processing|training|inference|feature|extraction|scoring)\s+pipeline\b/i,
   /\bartifact(s)?\b/i,
   /\bschema\b/i,
   /\bcanonical\b/i,

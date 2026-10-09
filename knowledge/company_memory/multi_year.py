@@ -923,10 +923,9 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
                     }
                     for item in mentions
                 ],
-                "what_changed": (
-                    f"{risk_label} remains visible across {len(years)} year(s)."
-                    if len(years) >= 2
-                    else f"{risk_label} is identified in the source evidence."
+                "what_changed": next(
+                    (item["value"] for item in reversed(mentions) if item.get("value")),
+                    f"{risk_label} remains visible across {len(years)} year(s)." if len(years) >= 2 else f"{risk_label} is identified in the source evidence.",
                 ),
                 "why_it_changed": (
                     "Later filings keep pointing to the same underlying mechanism."
@@ -937,6 +936,9 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
                     f"{risk_label} remains under observation across the available years."
                     if len(years) >= 2
                     else f"{risk_label} has been identified, but follow-through is not yet visible."
+                ),
+                "evidence_summary": " | ".join(
+                    item["value"] for item in mentions if item.get("value")
                 ),
                 "investor_implication": (
                     "The risk remains live in the evidence and should stay in view."

@@ -1893,28 +1893,24 @@ def _generic_section_assessment(
 
 
 def _key_findings(doctrine: Dict[str, Any], consumed_sections: List[str], missing_sections: List[str]) -> List[str]:
-    findings = [
-        f"{doctrine['investor_lens']} consumes {', '.join(consumed_sections)} from PCIM."
-    ]
-    findings.append(
-        f"Primary focus: {', '.join(doctrine.get('primary_focus', [])[:3])}."
-    )
+    # Deterministic scaffold: produce only company-state observations, not doctrine metadata.
+    # Lens preamble, primary_focus headers, and control-state strings must not appear in output.
+    findings = []
     if missing_sections:
         findings.append(
-            f"Evidence gaps remain in: {', '.join(missing_sections)}."
+            f"Evidence is incomplete for {', '.join(missing_sections)} — findings from these areas are limited."
         )
-    else:
-        findings.append("All doctrine-required PCIM sections were available.")
     return findings
 
 
 def _open_uncertainties(doctrine: Dict[str, Any], missing_sections: List[str], pcim: Dict[str, Any]) -> List[str]:
+    # Deterministic scaffold: populate only company-specific unknowns.
+    # Doctrine uncertainty_rules are analyst reasoning guides — never included in output.
     uncertainties = []
     if missing_sections:
         uncertainties.append(
-            f"Required PCIM sections missing or thin: {', '.join(missing_sections)}."
+            f"The following evidence areas are missing or thin, limiting analytical confidence: {', '.join(missing_sections)}."
         )
-    uncertainties.extend(doctrine.get("uncertainty_rules", []))
     for note in (pcim.get("uncertainty_missing_data") or {}).get("missing_sections", [])[:5]:
         year = note.get("year")
         section = note.get("section")
@@ -4025,16 +4021,19 @@ def _build_llm_prompt(
         "Never mention internal system names such as PCIM, CIM, artifact, JSON, evidence IDs, source artifacts, input sections, schema, validation, prompt, or LLM wording.",
         "Write as an investment analyst speaking to a human reader, not as a pipeline describing its internals.",
         "When evidence is present, make a qualified judgment — do not write 'insufficient evidence'. State what additional evidence would strengthen the assessment.",
+        "Every item in key_findings must be a company-specific observation: what was found in this company's evidence, what a metric showed, what a trend indicates, or what a disclosure gap means for this company. Never reproduce or paraphrase the lens definition, analyst_focus_areas, reasoning rules, or any system instruction.",
+        "Every item in open_uncertainties must be a company-specific unknown: a missing disclosure, an unresolved question about this company's evidence, or a gap that prevents judgment. Never reproduce reasoning rules or operational guidelines.",
     ]
     doctrine_block = {
         "doctrine_id": doctrine["doctrine_id"],
         "investor_lens": doctrine["investor_lens"],
-        "primary_focus": doctrine.get("primary_focus", [])[:4],
+        # analyst_focus_areas is reasoning context only — never reproduce it in output fields
+        "analyst_focus_areas": doctrine.get("primary_focus", [])[:4],
         "financial_rules": _financial_instruction_block(doctrine["doctrine_id"])[:12],
         "doctrine_differentiation": _doctrine_differentiation_block(doctrine["doctrine_id"]),
         "canonical_questions": doctrine.get("canonical_questions", [])[:4],
         "red_flags": doctrine.get("red_flags", [])[:4],
-        "uncertainty_rules": doctrine.get("uncertainty_rules", [])[:4],
+        # uncertainty_rules removed from prompt — they are analyst reasoning guides, not output content
     }
     return "\n".join(
         [
@@ -4223,6 +4222,41 @@ def _normalize_findings_with_map(value: Any, field: str) -> Tuple[List[str], Lis
             if evidence_id not in merged_evidence:
                 merged_evidence.append(evidence_id)
     return findings, merged_evidence, per_item_evidence
+
+
+_DOCTRINE_ECHO_PATTERNS = [
+    # Lens preamble — "[PersonName] [PersonName] consumes [data]..."
+    re.compile(r"^\s*(?:benjamin|warren|peter|philip|charlie)\s+\w+\s+consumes\b", re.IGNORECASE),
+    # Doctrine metadata header — "Primary focus: ..."
+    re.compile(r"^\s*primary\s+focus\s*:", re.IGNORECASE),
+    # Control-state string — "All [investment/doctrine]-required ... available."
+    re.compile(r"^\s*all\s+(?:investment|doctrine).lens.required\b", re.IGNORECASE),
+    re.compile(r"^\s*all\s+doctrine.required\b", re.IGNORECASE),
+    # Prescriptive directives with analytical verbs — analyst behavior rules, not company observations
+    re.compile(r"^\s*do\s+not\s+(?:infer|classify|interpret|treat|assume|upgrade|calculate|rely|use|state|prefer|consider)\b", re.IGNORECASE),
+    re.compile(r"^\s*escalate\s+uncertainty\b", re.IGNORECASE),
+    re.compile(r"^\s*when\s+evidence\s+conflicts\b", re.IGNORECASE),
+    re.compile(r"^\s*when\s+the\s+story\b", re.IGNORECASE),
+    re.compile(r"^\s*if\s+dividend\b", re.IGNORECASE),
+    re.compile(r"^\s*if\s+the\s+business\s+cannot\b", re.IGNORECASE),
+]
+
+
+def _filter_doctrine_echoes(items: List[str], field: str, schema_warnings: List[str]) -> List[str]:
+    """Remove items that match structural doctrine-echo patterns.
+
+    These are analyst reasoning guides that the LLM should not reproduce
+    in company-analysis output fields.
+    """
+    clean: List[str] = []
+    for item in items:
+        if any(pat.match(item) for pat in _DOCTRINE_ECHO_PATTERNS):
+            schema_warnings.append(
+                f"{field}: doctrine-echo item removed: {item[:80]!r}"
+            )
+        else:
+            clean.append(item)
+    return clean
 
 
 def _normalize_optional_text_list_fields(parsed: Dict[str, Any], schema_warnings: List[str]) -> Dict[str, List[str]]:
@@ -6849,6 +6883,9 @@ def _validate_repaired_llm_panel_output(
     open_uncertainties, uncertainty_evidence, uncertainty_map = _normalize_findings_with_map(
         parsed.get("open_uncertainties"), "open_uncertainties"
     )
+    # Strip doctrine-echo items the LLM may have reproduced from prompt context
+    key_findings = _filter_doctrine_echoes(key_findings, "key_findings", schema_warnings)
+    open_uncertainties = _filter_doctrine_echoes(open_uncertainties, "open_uncertainties", schema_warnings)
     _normalize_optional_text_list_fields(parsed, schema_warnings)
     financial_metrics_used_raw, metric_normalization_warnings = _normalize_financial_metric_refs(
         parsed.get("financial_metrics_used")

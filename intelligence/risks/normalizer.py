@@ -179,6 +179,9 @@ def normalize_candidate(
         "evo_canonical_id": candidate.get("evo_canonical_id"),
         "evo_severity_by_year": candidate.get("evo_severity_by_year") or {},
         "evo_latest_severity": candidate.get("evo_latest_severity"),
+        # Source-derived narrative from evolution — passed through unchanged
+        "what_changed": candidate.get("what_changed"),
+        "evidence_summary": candidate.get("evidence_summary"),
     }
 
 

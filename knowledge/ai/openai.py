@@ -215,7 +215,9 @@ class OpenAIProvider(BaseAIProvider):
         if temperature not in (None, 0, 0.0):
             payload["temperature"] = temperature
         if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
+            # gpt-5+ models use max_completion_tokens; older models use max_tokens
+            token_key = "max_completion_tokens" if "gpt-5" in self.model.lower() else "max_tokens"
+            payload[token_key] = max_tokens
         if response_schema is not None:
             payload["response_format"] = {"type": "json_object"}
         return payload

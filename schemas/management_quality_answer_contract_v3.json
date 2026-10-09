@@ -1,0 +1,213 @@
+{
+  "schema_name": "management_quality_answer_contract",
+  "schema_version": 3,
+  "mission": "ENG-MISSION48",
+  "description": "Contract V3 adds semantic capability parity enforcement. Promotes five previously-optional sections to REQUIRED after M47 candidate demonstrated material regression. Adds hard commitment granularity and NPM requirements. M47 candidate would FAIL this contract.",
+  "created": "2026-10-06T16:00:00Z",
+  "predecessor": "management_quality_answer_contract_v2.json",
+  "why_v3": "M47 human review (M47.1) found 7 semantic regressions vs M37.8 trusted baseline. EIV V1 was too permissive — it checked minimum structure but not semantic richness. Contract V2 had what_evidence_shows/what_management_says/where_management_was_consistent/management_consistency_map/what_may_mean_economically as OPTIONAL — LLM omitted all five. Contract V3 makes them REQUIRED.",
+
+  "required_fields": {
+    "simple_answer": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "Must contain factual grounding: specific counts, behavioral descriptor verbatim, named items — not only editorial synthesis",
+      "eiv_rule": "EIV-MQ-01",
+      "semantic_purpose": "Primary investor summary anchored in canonical evidence",
+      "min_content": "behavioral descriptor verbatim + at least 2 factual counts (delivery count, commitment count, or financial metric)",
+      "allowed_empty_state": false,
+      "evidence_source": "progression_counts, commitment_counts, behavioral_descriptor from fact_pack"
+    },
+    "key_points": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "At least 3 entries; at least one must contain factual specifics (counts, named items, lifecycle states)",
+      "eiv_rule": "EIV-MQ-01",
+      "semantic_purpose": "Scannable factual takeaways for investor decision support",
+      "min_content": "3 items, at least 1 with delivery count or financial figure",
+      "allowed_empty_state": false,
+      "evidence_source": "fact_pack.progression_counts, fact_pack.strongest_dimension, fact_pack.financial_context"
+    },
+    "what_evidence_shows": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "Non-empty list with >= 2 entries; each entry must reference observable events, not only conclusions",
+      "eiv_rule": "EIV-MQ-02 + EIV-MQ-11",
+      "semantic_purpose": "Evidence transparency: investor sees what actually happened, enabling independent verification",
+      "min_content": "2 bullets referencing specific progression items, commitment outcomes, or observable risk events",
+      "allowed_empty_state": false,
+      "evidence_source": "management_quality_evidence.json, management_progression.json",
+      "upgrade_from_v2": "Was OPTIONAL in V2 — M47 candidate omitted entirely. Now REQUIRED.",
+      "why_required": "Evidence density: investors need observable facts, not only synthesis. M47.1: absence is SEMANTIC_REGRESSION severity=SIGNIFICANT"
+    },
+    "what_management_says": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "Non-empty list with >= 1 entry; must quote or paraphrase actual disclosed management intentions",
+      "eiv_rule": "EIV-MQ-14",
+      "semantic_purpose": "Management's stated intentions vs actual delivery — required for follow-through assessment",
+      "min_content": "1 bullet paraphrasing management's stated strategic intentions from canonical evidence",
+      "allowed_empty_state": false,
+      "evidence_source": "management_quality_evidence.json, management_quality_summary.json",
+      "upgrade_from_v2": "Was OPTIONAL in V2. Now REQUIRED.",
+      "why_required": "Management's stated intentions are a required input for evaluating follow-through. M47.1: absence is SEMANTIC_REGRESSION severity=SIGNIFICANT"
+    },
+    "where_management_was_consistent": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "Non-empty list with >= 1 entry; must name specific dimensions where consistency was observed",
+      "eiv_rule": "EIV-MQ-14",
+      "semantic_purpose": "Positive evidence of reliability in specific domains — separates weak areas from consistent areas",
+      "min_content": "1 bullet naming at least one dimension with observed consistency pattern",
+      "allowed_empty_state": false,
+      "evidence_source": "management_quality_dimensions.json",
+      "upgrade_from_v2": "Was OPTIONAL in V2. Now REQUIRED.",
+      "why_required": "Consistency map requires this foundation. M47.1: absence is SEMANTIC_REGRESSION severity=SIGNIFICANT"
+    },
+    "management_consistency_map": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "Dict with >= 3 entries; each entry must have a status (CONSISTENT/INCONSISTENT/UNABLE_TO_VERIFY/DELAYED)",
+      "eiv_rule": "EIV-MQ-09",
+      "semantic_purpose": "Structured dimension-by-dimension consistency map for investor decision support",
+      "min_content": "3 dimension entries with status classification",
+      "allowed_empty_state": false,
+      "evidence_source": "management_quality_dimensions.json (assessment field per dimension)",
+      "upgrade_from_v2": "Was OPTIONAL in V2. Now REQUIRED.",
+      "why_required": "Machine-readable consistency map is core investor value. M47.1: absence is SEMANTIC_REGRESSION severity=SIGNIFICANT"
+    },
+    "what_may_mean_economically": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "Non-empty string; must contain at least one financial metric (margin %, revenue, PAT, NPM) relevant to management assessment",
+      "eiv_rule": "EIV-MQ-15",
+      "semantic_purpose": "Economic interpretation of management evidence — links management quality to investment thesis",
+      "min_content": "1 sentence with specific financial metric; must not be speculative forward-looking inference",
+      "allowed_empty_state": false,
+      "evidence_source": "financial_truth_pack.json (revenue, PAT, NPM)",
+      "upgrade_from_v2": "Was OPTIONAL in V2. Now REQUIRED.",
+      "why_required": "Economic context connects management evidence to investor thesis. M47.1: absence is SEMANTIC_REGRESSION severity=SIGNIFICANT"
+    },
+    "what_is_not_yet_proven": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "Non-empty string; must name at least one specific commitment, risk, or disclosure pattern — not only abstract generic questions",
+      "eiv_rule": "EIV-MQ-03 + EIV-MQ-12",
+      "semantic_purpose": "Investor uncertainty map: what to withhold conviction on until resolved",
+      "min_content": "At least one named specific: commitment name, filing deadline, risk category, quantified target",
+      "allowed_empty_state": false,
+      "evidence_source": "management_quality_summary.json.unresolved → MUST BE ENRICHED with named commitment IDs",
+      "v3_requirement": "Must not be raw mq_summary.unresolved output. Must name specific commitments or risks from canonical evidence.",
+      "why_required": "M47 regression: raw unresolved list is too generic for investor use. M37.8 named Nidlegy, carbon reduction, supply chain, FX, IP."
+    },
+    "deterministic_precision_facts": {
+      "classification": "REQUIRED_FOR_INVESTOR_VALUE",
+      "constraint": "List with >= 3 entries; each must have metric, value, semantic_meaning; commitment DPF must include granularity beyond total+UTV",
+      "eiv_rule": "EIV-MQ-04 + EIV-MQ-10",
+      "semantic_purpose": "Machine-verifiable evidence anchor points",
+      "min_content": "delivery DPF + commitment DPF with hard/delivered breakdown + financial DPF",
+      "allowed_empty_state": false,
+      "evidence_source": "fact_pack_v2.dpfs",
+      "v3_requirement": "Commitment DPF must include hard commitment count when hard commitments exist (not just total + UTV)"
+    },
+    "what_to_monitor": {
+      "classification": "REQUIRED_FOR_SEMANTIC_SAFETY",
+      "constraint": "List with >= 3 items; each item must be a specific named actionable monitor — not a bare category label",
+      "eiv_rule": "EIV-MQ-06 + EIV-MQ-13",
+      "semantic_purpose": "Forward-looking investor monitoring agenda",
+      "min_content": "3 items, each >25 chars, referencing specific metrics, products, filings, or named risks",
+      "allowed_empty_state": false,
+      "evidence_source": "management_quality_summary.json.what_to_watch → MUST BE ENRICHED with specific named items",
+      "v3_requirement": "Must not be raw mq_summary.what_to_watch. Must be enriched with specific trackable items from canonical evidence."
+    },
+    "behavioral_descriptor": {
+      "classification": "REQUIRED_FOR_SEMANTIC_SAFETY",
+      "constraint": "Must appear verbatim in simple_answer; must match canonical descriptor from management_progression",
+      "eiv_rule": "EIV-MQ-01 + EIV-MQ-08",
+      "semantic_purpose": "Canonical delivery state anchoring synthesis to evidence",
+      "min_content": "One of: FOLLOW_THROUGH_LARGELY_UNVERIFIED, PARTIAL_DELIVERY_WITH_MATERIAL_OUTCOME_GAPS, MULTIPLE_DELIVERIES_WITH_ECONOMIC_ATTRIBUTION_GAPS, HIGH_DELIVERY_COUNT_WITH_CAPITAL_OUTCOMES_UNATTRIBUTED",
+      "allowed_empty_state": false,
+      "evidence_source": "derived deterministically from management_progression.json via fact_pack"
+    }
+  },
+
+  "deterministic_semantic_sections": {
+    "description": "Sections that must be pre-populated deterministically from canonical data BEFORE LLM generation. LLM may enrich but cannot omit or overwrite.",
+    "sections": [
+      "what_evidence_shows",
+      "what_management_says",
+      "where_management_was_consistent",
+      "management_consistency_map",
+      "what_is_not_yet_proven",
+      "what_to_monitor"
+    ],
+    "invariant": "MODEL_COMPRESSION_CANNOT_REMOVE_DETERMINISTIC_SEMANTICS",
+    "assembler_version": "m48_assembler_v3"
+  },
+
+  "fact_pack_v2_requirements": {
+    "hard_commitment_count": {
+      "required": true,
+      "derivation": "management_commitments.json → items where expected_timeframe is a specific date (not unspecified/ongoing)",
+      "purpose": "Enables hard commitment granularity in DPFs and simple_answer"
+    },
+    "npm": {
+      "required": true,
+      "derivation": "financial_truth_pack.json → PAT / Revenue for latest year",
+      "purpose": "NPM belongs in DPF financial scale and what_may_mean_economically"
+    },
+    "evidence_observations": {
+      "required": true,
+      "derivation": "management_quality_evidence.json → items of type project_operational/capital_outcome",
+      "purpose": "Seeds what_evidence_shows"
+    },
+    "management_statements": {
+      "required": true,
+      "derivation": "management_quality_evidence.json → commitment items",
+      "purpose": "Seeds what_management_says"
+    },
+    "consistency_observations": {
+      "required": true,
+      "derivation": "management_quality_dimensions.json → per-dimension assessment",
+      "purpose": "Seeds where_management_was_consistent and management_consistency_map"
+    }
+  },
+
+  "llm_vs_deterministic_boundary_v3": {
+    "deterministic_assembler_provides": [
+      "progression lifecycle counts",
+      "commitment counts and status including hard_commitment_count",
+      "behavioral descriptor verbatim",
+      "deterministic_precision_facts entries (with hard commitment granularity and NPM)",
+      "what_evidence_shows skeleton from evidence_observations",
+      "what_management_says skeleton from management_statements",
+      "where_management_was_consistent skeleton from consistency_observations",
+      "management_consistency_map structure from dimensions",
+      "what_is_not_yet_proven enriched with named commitments from hard_commitments list",
+      "what_to_monitor enriched with specific named items from evidence",
+      "key_points factual count entries"
+    ],
+    "llm_may_enrich": [
+      "simple_answer prose",
+      "what_evidence_shows narrative (above skeleton)",
+      "what_may_mean_economically explanation",
+      "where_management_was_consistent narrative (above skeleton)",
+      "what_management_says paraphrase (above skeleton)"
+    ],
+    "invariant": "LLM prose cannot overwrite or remove deterministic sections. If LLM omits a section that assembler pre-populated, assembler preserves it.",
+    "upgrade_from_v2": "V2 had what_evidence_shows/what_management_says/where_management_was_consistent/management_consistency_map/what_may_mean_economically in LLM-only territory — LLM failed to generate them. V3 assembler pre-populates skeletons so LLM compression cannot remove them."
+  },
+
+  "release_eligibility": {
+    "condition": "PACP_PASS AND EIV_V2_PASS AND SEMANTIC_PARITY_PASS AND ARTIFACT_IDENTITY_VALID",
+    "eiv_v2_role": "Tests investor completeness including capability parity (EIV-MQ-09..16 in addition to EIV-MQ-01..08)",
+    "semantic_parity_role": "validate_management_semantic_capability_parity() must PASS",
+    "human_review_role": "Final authority — approves exact digest",
+    "note": "EIV V1 PASS alone is no longer sufficient. M47 demonstrated EIV V1 passing answer can be materially weaker than certified baseline."
+  },
+
+  "contract_fingerprint_components": [
+    "schema_version (3)",
+    "deterministic_fact_pack_schema_version (management_fact_pack.v2)",
+    "dpf_schema_version",
+    "llm_synthesis_template_version",
+    "assembler_policy_version (m48_assembler_v3)",
+    "eiv_policy_version (eiv_management_quality.v2)",
+    "prompt_policy_version",
+    "descriptor_policy_version",
+    "capability_registry_version",
+    "parity_validator_version"
+  ]
+}
