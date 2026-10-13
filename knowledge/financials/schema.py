@@ -216,6 +216,7 @@ class BalanceSheet:
     short_term_debt: MonetaryValue = field(default_factory=_money_field)
     long_term_debt: MonetaryValue = field(default_factory=_money_field)
     cash_and_equivalents: MonetaryValue = field(default_factory=_money_field)
+    other_bank_balances: MonetaryValue = field(default_factory=_money_field)   # G3: 'Bank balances other than cash and cash equivalents' - reported separately, never folded into cash
     investments: MonetaryValue = field(default_factory=_money_field)
     inventories: MonetaryValue = field(default_factory=_money_field)
     receivables: MonetaryValue = field(default_factory=_money_field)
@@ -241,6 +242,7 @@ class CashFlow:
     capex: MonetaryValue = field(default_factory=_money_field)
     fcf: MonetaryValue = field(default_factory=_money_field)
     dividends_paid: MonetaryValue = field(default_factory=_money_field)
+    buyback_paid: MonetaryValue = field(default_factory=_money_field)   # G3: cash paid to repurchase shares (incl. transaction cost) - differs from the disclosed consideration
     interest_paid: MonetaryValue = field(default_factory=_money_field)
     tax_paid: MonetaryValue = field(default_factory=_money_field)
 

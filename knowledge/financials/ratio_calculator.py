@@ -322,6 +322,65 @@ def _capital_employed_values(normalized_payload: Dict[str, Any], warnings: List[
     return (current_capital + prior_capital) / 2.0, False
 
 
+def _balance_sheet_year(entry_payload: Dict[str, Any]) -> Optional[int]:
+    """Calendar year of the balance-sheet date an entry belongs to ("March 31, 2026", "FY26" and "31 March 2026" all give 2026)."""
+    period = str(entry_payload.get("period") or "")
+    match = re.search(r"(20\d{2})", period) or re.search(r"fy\s?(\d{2})\b", period, re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1)) if len(match.group(1)) == 4 else 2000 + int(match.group(1))
+
+
+def _is_banking_schedule(entry_payload: Dict[str, Any]) -> bool:
+    """Banking-format statements (RBI Schedule III) carry a `schedule_*` source section."""
+    return str(entry_payload.get("source_section_type") or "").startswith("schedule_")
+
+
+def net_debt_measure(debt_entry: Dict[str, Any], cash_entry: Dict[str, Any]) -> Dict[str, Any]:
+    """THE net debt / net cash calculation (M63/G2: the single owner; the fact registry no longer derives its own).
+
+    net debt = total borrowings - cash, using the inputs of ONE balance-sheet date and ONE reporting basis, and nothing else:
+      * a bank is NOT_APPLICABLE (its funding is deposits; borrowings-less-cash is an industrial measure);
+      * cash and debt of different balance-sheet dates, or different bases, are never netted (PERIOD_MISMATCH / BASIS_MISMATCH);
+      * a debt total built from one section line only (current OR non-current borrowings) is INCOMPLETE_DEBT, never a total;
+      * "cash and bank balances" is netted but labelled as that (`definition:` tag), never as cash and cash equivalents.
+    Returns the value (None unless status is OK), the status, and the exact components so every consumer can print what was netted.
+    """
+    debt, cash = _value(debt_entry), _value(cash_entry)
+    warnings: List[str] = []
+    components = {
+        "debt": {"value": debt, "period": debt_entry.get("period"), "basis": debt_entry.get("basis"), "source_line_item": debt_entry.get("source_line_item"), "derived": bool(debt_entry.get("derived")), "formula": debt_entry.get("formula") or ""},
+        "cash": {"value": cash, "period": cash_entry.get("period"), "basis": cash_entry.get("basis"), "source_line_item": cash_entry.get("source_line_item"), "derived": bool(cash_entry.get("derived"))},
+    }
+    result: Dict[str, Any] = {"value": None, "status": "OK", "formula": "total_debt - cash_and_equivalents", "components": components, "warnings": warnings}
+    if _is_banking_schedule(debt_entry) or _is_banking_schedule(cash_entry):
+        result["status"] = "NOT_APPLICABLE_BANK"
+        warnings.append("net debt is an industrial measure and is not computed for a bank (deposits are its funding)")
+        return result
+    if debt is None or cash is None:
+        result["status"] = "MISSING_INPUT"
+        return result
+    debt_year, cash_year = _balance_sheet_year(debt_entry), _balance_sheet_year(cash_entry)
+    if debt_year is not None and cash_year is not None and debt_year != cash_year:
+        result["status"] = "PERIOD_MISMATCH"
+        warnings.append(f"cash ({cash_year}) and debt ({debt_year}) are from different balance-sheet dates and are not netted")
+        return result
+    debt_basis, cash_basis = str(debt_entry.get("basis") or "unknown"), str(cash_entry.get("basis") or "unknown")
+    if "unknown" not in (debt_basis, cash_basis) and debt_basis != cash_basis:
+        result["status"] = "BASIS_MISMATCH"
+        warnings.append(f"cash ({cash_basis}) and debt ({debt_basis}) are on different reporting bases and are not netted")
+        return result
+    if debt_entry.get("derivation_state") == "PARTIAL_COMPONENT_ONLY":
+        result["status"] = "INCOMPLETE_DEBT"
+        warnings.append("total debt is incomplete (only one borrowings section line was found), so net debt is not computed")
+        return result
+    if "definition:cash_and_bank_balances" in " ".join(str(w) for w in cash_entry.get("warnings") or []):
+        warnings.append("definition:cash_and_bank_balances - netted cash includes bank balances other than cash equivalents")
+        components["cash"]["definition"] = "cash_and_bank_balances"
+    result["value"] = debt - cash
+    return result
+
+
 def _fcf_from(
     cfo: Optional[float],
     capex: Optional[float],
@@ -461,20 +520,23 @@ def calculate_financial_ratios(
     debt = _value(debt_entry)
     cash = _value(cash_entry)
     net_worth = _value(net_worth_entry)
-    net_debt_warnings: List[str] = []
-    net_debt = _fcf_from(debt, -cash if cash is not None else None, net_debt_warnings) if debt is not None else None
-    for warning in net_debt_warnings:
+    measure = net_debt_measure(debt_entry, cash_entry)
+    net_debt = measure["value"]
+    for warning in measure["warnings"]:
         _append_unique(report_warnings, warning)
     _set_ratio(
         ratios,
         "net_debt",
         value=net_debt,
         unit="₹ crore",
-        formula="total_debt - cash_and_equivalents",
-        inputs_used=[_input_item("total_debt", debt, "₹ crore"), _input_item("cash_and_equivalents", cash, "₹ crore")],
+        formula=measure["formula"],
+        inputs_used=[
+            {**_input_item("total_debt", debt, "₹ crore"), **{k: measure["components"]["debt"][k] for k in ("period", "basis", "source_line_item", "derived", "formula")}},
+            {**_input_item("cash_and_equivalents", cash, "₹ crore"), **{k: v for k, v in measure["components"]["cash"].items() if k != "value"}},
+        ],
         basis=basis,
-        confidence=_confidence_from_inputs(debt, cash),
-        warnings=net_debt_warnings,
+        confidence=_confidence_from_inputs(net_debt, debt, cash),
+        warnings=[f"net_debt status: {measure['status']}"] + measure["warnings"] if measure["status"] != "OK" else measure["warnings"],
         source_artifacts=_source_artifacts(debt_entry, cash_entry),
     )
 

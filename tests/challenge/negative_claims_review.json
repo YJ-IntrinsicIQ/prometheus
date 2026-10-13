@@ -1,0 +1,29 @@
+{
+  "_doc": "Classification of the negative-claim inventory (preview/m63_g0_negative_claims.json). First matching rule wins. basis = filing evidence checked at G0 (1-based PDF pages); 'keyword' = term searched in the filing text only (topic present/absent, content not read). Classes: CONTRADICTED (filing page discloses what the surface calls missing); PARTIAL (filing discloses part); KEYWORD_PRESENT (filing contains the topic, content unread); GENUINE_GAP_KEYWORD (term absent from the filing); METHOD (statement about method/verification, not a disclosure claim); REPOSITORY (true of the repository, e.g. file not held); OUT_OF_SCOPE (needs data that is not a filing item, or sector mis-frame); UI_LABEL; UNVERIFIED (not checked).",
+  "rules": [
+    {"class": "METHOD", "match": "missing disclosure (is|not)|not a finding against|not evidence of (failure|that nothing)|gap to ask about|is not counted as failure|missing disclosure, not failure|can show missing disclosure|Evidence stops at the risk|missing disclosure is a gap", "basis": "wording about how to read gaps"},
+    {"class": "REPOSITORY", "match": "FY26 report (that )?is not in the records", "basis": "no ujjivan/fy26 filing is held"},
+    {"class": "OUT_OF_SCOPE", "match": "Valuation relative to growth cannot be tested without a price", "basis": "needs market price, not a filing item"},
+    {"class": "UI_LABEL", "match": "^(Missing data|Missing disclosure|not stated)$|^timeframe=not stated;?$", "basis": "heading / cell label"},
+    {"class": "METHOD", "match": "cannot be verified from the records|calculated from disclosed tonnes, not stated by management", "basis": "verification status of a specific item; filing detail unchecked"},
+    {"class": "OUT_OF_SCOPE", "companies": ["ujjivan"], "match": "Return on capital employed is not available", "basis": "ROCE is not a banking measure (sector mis-frame)"},
+    {"class": "CONTRADICTED", "companies": ["sun-pharma"], "match": "Interest coverage is not reported", "basis": "sun_pharma_fy26 p.36: Interest Coverage 49.5 (FY25 63.4)"},
+    {"class": "GENUINE_GAP_KEYWORD", "companies": ["tanla", "datapatterns"], "match": "Interest coverage is not reported", "basis": "term 'interest coverage' absent from the FY26 report"},
+    {"class": "CONTRADICTED", "companies": ["sun-pharma"], "match": "Return on capital employed is not available", "basis": "sun_pharma_fy26 p.220: ROCE ratio table"},
+    {"class": "CONTRADICTED", "companies": ["tanla"], "match": "Return on capital employed is not available", "basis": "tanla_fy26 p.73: ROCE 24.2%"},
+    {"class": "CONTRADICTED", "companies": ["datapatterns"], "match": "Return on capital employed is not available", "basis": "datapatterns_fy26 p.6: 23% ROCE"},
+    {"class": "CONTRADICTED", "match": "revenue splits across its activities", "basis": "sun p.303 geography; tanla p.436 geography; datapatterns p.171 geography; ujjivan_fy25 p.313 segments"},
+    {"class": "PARTIAL", "match": "Margins by revenue source and the split of revenue between sources are not disclosed", "basis": "split of revenue disclosed (same pages as above); margins by source unchecked"},
+    {"class": "CONTRADICTED", "companies": ["tanla"], "match": "how much revenue comes from any one", "basis": "tanla_fy26 p.368: 2 customers >10% of revenue, >86% in aggregate"},
+    {"class": "GENUINE_GAP_KEYWORD", "companies": ["sun-pharma", "ujjivan", "datapatterns"], "match": "how much revenue comes from any one", "basis": "no customer->10% disclosure term found in the filing"},
+    {"class": "CONTRADICTED", "companies": ["datapatterns"], "match": "reporting basis|consolidated or standalone|Reporting basis not stated|basis not stated", "basis": "datapatterns_fy26 p.29: no subsidiaries, standalone only"},
+    {"class": "UNVERIFIED", "companies": ["ujjivan"], "match": "reporting basis", "basis": "ujjivan basis per year not checked"},
+    {"class": "PARTIAL", "match": "records are silent|responses exist but were not disclosed", "basis": "risk-management framework/mitigation text exists (sun p.48, 58, 113; ujjivan pp.103-105); a per-risk response table was not verified"},
+    {"class": "GENUINE_GAP_KEYWORD", "match": "maintenance[- ](versus|vs)[- ]growth|maintenance versus growth|split between maintenance and growth", "basis": "'maintenance capex/capital' absent from all four filings"},
+    {"class": "KEYWORD_PRESENT", "match": "Management incentives \\(pay, ESOP", "basis": "ESOP/remuneration text present (sun pp.52,55,62,152; tanla 40 pp; ujjivan 40 pp; dp pp.53,63-65); wording says 'structured records'"},
+    {"class": "KEYWORD_PRESENT", "companies": ["sun-pharma", "tanla", "datapatterns"], "match": "Competitive position .* is not in the records", "basis": "'market share' present in the filing"},
+    {"class": "UNVERIFIED", "companies": ["ujjivan"], "match": "Competitive position .* is not in the records", "basis": "'market share' absent in the bank report; sector framing unchecked"},
+    {"class": "KEYWORD_PRESENT", "match": "Market size, share and industry dynamics are not in the records", "basis": "industry/market-size text present in the filing"},
+    {"class": "UNVERIFIED", "match": ".", "basis": "not checked at G0 (capital-allocation outcome/utilisation gaps, project and promise details)"}
+  ]
+}

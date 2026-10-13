@@ -81,7 +81,8 @@ WARNING_REWRITES = {
 }
 
 ANALYTICAL_METRIC_GROUPS = {
-    "revenue_and_income": ("revenue", "other_income", "total_income", "ebitda", "ebit", "pat"),
+    "revenue_and_income": ("revenue", "other_income", "total_income", "net_interest_income", "ebitda", "ebit", "pat"),
+    "banking_measures": ("gross_npa_ratio", "net_npa_ratio", "capital_adequacy_ratio", "net_interest_margin", "total_deposits", "branch_network"),
     "profitability": ("ebitda", "ebit", "pat", "pbt"),
     "margins": ("gross_margin", "ebitda_margin", "ebit_margin", "opm", "npm"),
     "return_on_capital": ("roe", "roce", "roa"),
@@ -95,7 +96,7 @@ ANALYTICAL_METRIC_GROUPS = {
         "payable_days",
         "cash_conversion_cycle",
     ),
-    "balance_sheet_strength": ("total_assets", "net_worth", "reserves", "cash_and_equivalents"),
+    "balance_sheet_strength": ("total_assets", "net_worth", "reserves", "cash_and_equivalents", "contingent_liabilities", "other_bank_balances", "management_cash_and_liquid_investments"),
     "debt_and_liquidity": ("total_debt", "net_debt", "debt_to_equity", "net_debt_to_equity", "interest_coverage"),
     "per_share": (
         "eps_basic",

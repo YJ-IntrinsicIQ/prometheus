@@ -1,5 +1,109 @@
 # Session Log
 
+## 2026-10-09 — ENG-MISSION52.2d: Semantic Calibration & Investor Judgment Repair — M52_2D_CLOSED | HUMAN_DECISION PENDING | 0 AI CALLS
+
+**Rule enforced:** absence of a verified outcome != evidence of negative behaviour. S1-S10 all fixed: Candor/Risk/Adaptability/Execution -> UNABLE_TO_VERIFY (proof contract `classify_behavior`; genuine contradictions can still classify); distributions split into observation / policy consistency / effectiveness; evidence confidence scoped; tracker scoped (25 = 16 statements + 7 themes + 2 legacy projects; item-level reconciliation 0/1/7/17); MC-0031 filing / deadline / approval independent (deadline unable to verify); financial and Organon scope staged; 26 claims with evidence_refs; absence claims bounded by searched sources.
+**Found:** the rejected candidate's "no result disclosed" for MC-0029/MC-0039 was false — quantified progress exists (hazardous-waste co-processing 46.8% FY25 / 59.9% FY26 vs 30%; emissions reduction 24.69% FY25 -> 16.7% FY26 vs 35% by 2030). M37.8 shares S2/S5-class overstatements (unmodified).
+**Candidate:** `166d0a4f52b8` file `968fd15e...`, answer `84a207ec...`, contract FP `046004b4...`, evidence FP `9be9bd11...` unchanged, official freshness CURRENT. Rejected `6af00935...` and 3 interim builds retained.
+**Tests:** M522D 33/33; regression 823 executed / 804 pass / 17 excluded-deleted / 2 strict-xfail / 0 unexplained. Approval registry, M37.8, canary matrix unchanged. Limitations: density, no source PDFs, same-agent review.
+
+## 2026-10-09 — ENG-MISSION52.2c: Dependency Contract Promotion & Official Freshness — RELEASE_INTEGRITY_PASS | M52_2C_CLOSED | HUMAN_DECISION PENDING | 0 AI CALLS
+
+**Done:** M39 challenge promoted (owner-authorized, gates passed): registry v4 = v3 + `m52_contract_v5_override` (DETERMINISTIC, 0 AI calls); v3 kept byte-exact. V5 dependency tracking 6 -> 21/21 files (+2 existing modules, +4 file modules, +1 dynamic source-manifest module); 21/21 mutations DIRTY, 0 false-clean; added/removed/renamed sources DIRTY; unrelated CLEAN. Official evidence FP `9be9bd11...` (5/5 reproducible). New candidate `6c381d74ba14` (file `6af00935...`, exec `6c381d74...`, contract FP `47e3f5ba...`) — answer bytes identical to M52.2a; official freshness CURRENT; old candidate DIRTY.
+**Also:** planner reads the registry's effective contract (all V5 paths 0 AI calls, other units unchanged); `--mode test-trust` made self-isolating; Data Patterns fallback chunk read fixed (answers unchanged); baselines appended for new modules only.
+**Tests:** M522C 30/30; regression 790 executed / 771 pass / 17 excluded-deleted / 2 strict-xfail / 0 unexplained. Approval registry bytes unchanged; candidate UNAPPROVED, INACTIVE.
+**Next:** human review of file `6af00935...`; then M52.3 steps separately. M52.2b's BLOCKED record preserved.
+
+## 2026-10-09 — ENG-MISSION52.2b: Restored Registry Verification & Release Integrity — RELEASE_INTEGRITY_BLOCKED | HUMAN_DECISION PENDING | 0 AI CALLS
+
+**Verified:** approval registry (20/20 digests+fingerprints reconcile, bytes preserved), M37.8 binding (fp 37e04b439bf5cfa3), dependency registry (v3, 37 q / 7 units), runtime guards (all non-approved states blocked; 20 pairs served locally), canary matrix = 20 registered pairs.
+**Fixed:** REVOKED approvals were served (runtime + `_is_approved`); planner planned 1 AI call for the V5 unit on forced/no-baseline paths.
+**Blocked:** freshness DIRTY — official evidence FP `6793736f…` vs candidate's inherited `dc623eac…` (binding defect from M52; no evidence changed); V5 dependency coverage INCOMPLETE (15/21 consumed files untracked). M39 classification NOT rewritten; challenge + proposed delta recorded, authorization required.
+**Tests:** 764 executed / 730 pass / 32 fail (8+2+5 obsolete, 17 excluded-deleted, 0 unexplained) / 2 strict xfail; TS release-guard 11/11.
+**Deliverables:** `governance/ENG_MISSION52_2B_REGISTRY_RELEASE_INTEGRITY_PROOF.json/.md`, `M39_CLASSIFICATION_CHALLENGE_how_good_is_management_v5.json`, `answer_dependency_registry.proposed_m52.json`. No candidate regenerated; nothing approved or activated.
+
+## 2026-10-09 — ENG-MISSION52.2a: Final Investor Intelligence Quality Repair — CONTENT REPAIRED | HUMAN_DECISION PENDING | 0 AI CALLS
+
+**New candidate:** file `sha256:288a03e3...` (answer `sha256:4d2df2ae...`), execution `sha256:2f7e73f8...`, Contract V5 FP `sha256:a8f9d700...`. M37.8 and all earlier candidates unchanged.
+**Defects D1-D6 (M52.2): all FIXED.** MC-0031: filing confirmed, deadline adherence CONFLICTING (FY25 AR p.10 June 2024 vs p.35 June 3, 2025), approval pending. Consistency entries carry behavioural evidence; units preserved (35%); Organon shown as signed-not-completed; named products, acquisitions, dividends restored; monitoring specific.
+**Also found:** sanitizer-rejected wording (PACP caught), hard-coded product name in scorer, ledger rows mislabeled as acquisitions (Ujjivan/Tanla), overstated dividend consistency. Fixed generically.
+**Verdict:** M37.8 HIGH vs V5 HIGH -> V5_MODESTLY_BETTER; machine recommendation APPROVE_RECOMMENDED (content only). 222/222 related tests; 600 broad run: 554 pass, 20 excluded (deleted files), 26 active-dependency failures, 0 caused by this mission. Determinism 20/20.
+**Blockers (M52.2b):** `approval_registry.json` and `answer_dependency_registry.json` absent (official freshness recompute unavailable; independent binding passes). Not recreated.
+**Deliverables:** `governance/ENG_MISSION52_2A_INVESTOR_INTELLIGENCE_QUALITY_REPAIR_PROOF.json`, `governance/ENG_MISSION52_2A_V5_HUMAN_REVIEW.json/.md`.
+
+## 2026-10-09 — ENG-MISSION52.2: Final V5 Exact-Artifact Review — NEEDS_CHANGES | HUMAN_DECISION PENDING | 0 AI CALLS
+
+**Candidate:** file `sha256:b175c7b2...` (answer `sha256:f7fd0583...`) vs M37.8 `sha256:830679d1...` (unchanged). Identity verified, freshness CURRENT.
+**Verdict:** M37.8 HIGH vs V5 ADEQUATE → V5_WORSE. 2 HIGH (label-only/contradictory consistency map; MC-0031 status/milestone + missing from what_is_not_yet_proven via `investor_sections.py:427 sorted_hc[:2]`), 5 MEDIUM. 0 unsupported claims, 8 partially supported.
+**Release blocker:** `governance/approval_registry.json` absent — runtime fails closed, `--mode approve` would create a fresh registry, PACP G6 FAILs. Not restored (owner scope rule); owner decision needed before M52.3.
+**Tests:** 388 executed / 366 passed / 22 failed (14 excluded OUT_OF_SCOPE_INTENTIONALLY_DELETED, 8 active-dependency).
+**Deliverables:** `governance/ENG_MISSION52_2_FINAL_V5_HUMAN_REVIEW.json/.md`. No candidate mutation, approval, or activation.
+
+## 2026-10-09 — ENG-MISSION52.1a: Final Quality Repair — MC-0031 Monitoring + Historical Integrity — COMPLETE | 237/237 TESTS PASS | 0 AI CALLS
+
+**Status:** COMPLETE | MC0031_MONITORING_FIXED | HISTORICAL_INTEGRITY_PRESERVED | 25_M521A_TESTS_PASS | AWAITING_HUMAN_DECISION
+
+**AI calls M52.1a:** 0 / $0.00  
+**Tests:** 25/25 PASS (M521A) — 237/237 cumulative (40 M52 + 23 M521 + 25 M521A + prior)
+
+**Root Cause Fixed:**  
+`build_what_to_monitor()` used `sorted_hc[:2]` — silently discarded MC-0031 (Nidlegy EMA filing). Fix: removed `[:2]` slice; all hard commitments now iterated. Generic fix — no hardcoding.
+
+**Historical Integrity:**  
+- `answer_dependency_registry.json`: never in git → test_m52_27 migrated to TOKEN_TELEMETRY  
+- `ENG_MISSION51_NARRATIVE_ONLY_REGENERATION_HUMAN_REVIEW.json`: never in git → restored from committed BACKLOG.md (labeled RECONSTRUCTED)  
+- Frozen V4 identity preserved with PARTIAL reproducibility verdict (honest)  
+- Old M52 candidate (`559650df...`) preserved byte-identical
+
+**New M52.1a V5 Candidate:**  
+- New contract FP: `sha256:ab55a485...` (changed — investor_sections.py modified)  
+- New execution ID: `sha256:76315ffdb926...`  
+- New candidate digest: `sha256:f7fd0583...`  
+- what_to_monitor: 6 items including MC-0031 ✓  
+- PACP: PASS | EIV: PASS | Freshness: CURRENT | 5-run determinism: PASS | 4-company replay: PASS
+
+**Deliverables:**  
+- `intelligence/management_quality/investor_sections.py` (MC-0031 fix)  
+- `tests/intelligence/test_m521a_final_quality_repair.py` (25/25 PASS)  
+- `governance/ENG_MISSION52_1A_FINAL_DETERMINISTIC_QUALITY_REPAIR_PROOF.json`  
+- `governance/ENG_MISSION52_1A_V5_HUMAN_REVIEW.json` (AWAITING_HUMAN_DECISION)  
+- `governance/ENG_MISSION52_1A_V5_HUMAN_REVIEW.md`
+
+---
+
+## 2026-10-09 — ENG-MISSION52.1: Historical Contract Identity Audit + Contract V5 Exact-Artifact Human Review — COMPLETE | 212/212 TESTS PASS | 0 AI CALLS
+
+**Status:** COMPLETE | PART_A_CONTRACT_IDENTITY_AUDIT | PART_B_V5_VS_M37_8_REVIEW | 23_M521_TESTS_PASS | MACHINE_RECOMMENDATION_NEEDS_CHANGES | AWAITING_HUMAN_DECISION
+
+**AI calls M52.1:** 0 / $0.00  
+**Tests:** 23/23 PASS (M521) — 212/212 cumulative  
+
+**Part A — Contract Identity Audit:**
+- M51-era V4 FP: `sha256:46dbdbe9...` (frozen in governance/contracts/management_quality_contract_v4_m51_frozen.json)
+- V4 FP drifted post-M52: `sha256:cf7747...` (investor_sections.py changed)
+- investor_sections.py pre-M52 source: NOT_RECOVERABLE_FROM_GIT (same commit as M50 creation)
+- M51 execution ID: REPRODUCIBLE via compute_execution_id_v3 ✓ (`sha256:444fc5f4...`)
+- V5 execution ID: REPRODUCIBLE via compute_execution_id_v5 ✓ (`sha256:559650df...`)
+- Reproducibility verdict: PARTIAL (execution IDs intact; V4 FP source gap LOW severity)
+
+**Part B — V5 Exact-Artifact Review:**
+- HIGH regressions vs M37.8: 0
+- MEDIUM regressions: 2 (MC-0031 absent from what_to_monitor; Nidlegy not in what_is_not_yet_proven)
+- LOW regressions: 2 (no named specialty products in evidence; 4 vs 5 key_points)
+- Improvements: 7 (RC-1+RC-2 verified, canonical count 3, PAT preserved, zero AI, determinism)
+- Comparative verdict: V5_MODESTLY_BETTER_THAN_M37_8
+- Machine recommendation: NEEDS_CHANGES — required fix: build_what_to_monitor() must include MC-0031
+
+**Deliverables:**
+- `governance/contracts/management_quality_contract_v4_m51_frozen.json` (frozen V4 identity)
+- `tests/intelligence/test_m521_contract_identity_and_v5_artifact_review.py` (23/23 PASS)
+- `governance/ENG_MISSION52_1_V5_EXACT_ARTIFACT_AND_CONTRACT_IDENTITY_REVIEW.json`
+- `governance/ENG_MISSION52_CONTRACT_V5_DETERMINISTIC_PROOF.json` (recreated)
+- `governance/ENG_MISSION52_CONTRACT_V5_DETERMINISTIC_HUMAN_REVIEW.json` (updated with M52.1)
+- `governance/ENG_MISSION52_CONTRACT_V5_DETERMINISTIC_HUMAN_REVIEW.md` (updated with M52.1)
+
+---
+
 ## 2026-10-07 — ENG-MISSION52: Contract V5 Fully Deterministic Management Intelligence — COMPLETE | 189/189 TESTS PASS | 0 AI CALLS
 
 **Status:** COMPLETE | CONTRACT_V5_BUILT | FULLY_DETERMINISTIC | ZERO_AI_CALLS | HUMAN_DECISIONS_RECORDED | 40_M52_TESTS_PASS | 4_COMPANY_DETERMINISM_PASS
@@ -14432,3 +14536,252 @@ SP/DP/Tanla: SAFE. Ujjivan: NEEDS_HUMAN_JUDGMENT — "The digital execution reco
 ### Fresh AI Calls: 0 | Tokens: 0 | Cost: $0.00
 
 ### Mission Status: MANAGEMENT_INTELLIGENCE_EXACT_HUMAN_REVIEW_READY — PENDING_HUMAN_APPROVAL
+
+## 2026-10-11 — M63 / G0: Investor Truth Baseline (instrument only; no product change)
+
+Ledger note: the previous entry above is 2026-10-02 (M37.2). M52–M62 (incl. M54.13 activation, M59.4 activation of 71 answers, M60 UI, M61 audit, M62 root cause) are not in this log; live serving state is the registry hash below.
+- Commands: `npx vitest run src/lib/challenge/challenge.test.ts` (default / CHALLENGE_STRICT=1 / CHALLENGE_WRITE=1); `python3 -I tools/challenge_source_check.py`; `python3 -I tools/challenge_negative_claims.py`; full app suite `npx vitest run`.
+- Result: 25 cases = 20 predicted-FAIL (20 reproduced) + 5 controls (5 pass). +2 observations OB-01/OB-02 (both FAIL). 30/30 filing quotes verified on stated PDF pages. Strict mode: 22 red / 6 green as designed. App suite 284 pass, 3 fail (pre-existing ask-v2.test.ts).
+- Instrument fixes made after reading evidence (not to change outcomes): SP-11 pattern excluded partition counts; TN-02 "₹0" check never matched (multi-line); UJ-03 narrowed to computed metrics; UJ-04 narrowed to numeric FY26 claims; TN-03 re-based (₹1,064 cr is not the filing's cash-equivalents line); TN-04 source page 339→436; SP-09 page 87→48.
+- Run hash: 12ff947db5ccd835d5803a82516131f531c24e9be8ebd8d0c0bab0cc04a4ded5 (deterministic across 3 runs).
+- Unchanged: approval_registry.json sha256 4f6a71f2…acb028; hybrid answers sha256 sun bd09be3f…, tanla 7c7c7bb8…, ujjivan 787072a5…, datapatterns 075649c9… (full values in preview/m63_g0_results.json). No registry, answer, or approval written.
+- Not done / blocked: independent 12-case holdout NOT sealed (no independent reviewer available). G1 not started. approval_registry.json is untracked in git.
+- AI calls: 0 | Cost: $0.00
+
+## 2026-10-11 — M63 / G0 Final Verification (independent verifier; no G1 work)
+
+- Commands: `npx vitest run src/lib/challenge/challenge.test.ts` (default, CHALLENGE_STRICT=1, CHALLENGE_WRITE=1 rerun); `python3 -I tools/challenge_source_check.py`; `python3 -I tools/challenge_negative_claims.py`; fresh independent surface render + loose substring probes; sha256 comparison of registry and four answer files; find-by-mtime for modified files; full app suite.
+- Results: 20/20 predicted failures reproduce; 5/5 controls pass; strict 22 red / 6 green; app suite 284 pass + 3 pre-existing ask-v2 failures; 34/34 filing quotes verify (checker now also covers observations; report corrected from 30); negative claims 398 occurrences / 159 unique reproduced byte-identically.
+- Test defect fixed (smallest change): DP-04 was absence-only and could not fail; added positive check "dividends paid ₹44 cr" (DP FY26 p.134). Controls: positive = TN-03, UJ-01, DP-04; absence-only = UJ-03, UJ-04 (verified to fire on synthetic positives).
+- Run hash (after DP-04 change): . Previous G0 hash 12ff947db5ccd835d5803a82516131f531c24e9be8ebd8d0c0bab0cc04a4ded5.
+- Preservation: registry 4f6a71f2…acb028 and the four served-answer hashes unchanged vs G0; 91 approvals (25/22/21/23); no product/UI/financial/ATLAS change.
+- Holdout: seal 33960e6d…6e81 recorded in BACKLOG M63-HOLDOUT; file not opened; status SEALED, not evaluated; independence is agent-level/procedural.
+- Limitations: no backup of the current 91-approval registry (untracked; backups hold the 20-approval pre-activation state); 128 negative claims unverified; regex checks are pattern-bound.
+- Decision: G0 VERIFIED — GO FOR G1 (not started). AI calls: 0 | Cost: $0.00
+
+## 2026-10-12 — M63 / G1: Financial Truth & Period Identity Repair (implementation; unverified)
+
+- Preflight: registry 4f6a71f2…acb028 and four served-answer hashes equal G0; external backup served-answers-20261011-223039-IST verified (SHA256SUMS OK), not touched.
+- Root causes: (1) cash-flow "…at the beginning of the year" row carries the CURRENT column's period but the PRIOR year-end balance; mapped as balance-sheet cash (Sun FY20/22/26, DP FY24/25). (2) fuzzy alias: "Total non-current assets" -> long_term_debt (Sun, Tanla, DP, most years); bare "Borrowings" rank picked current borrowings only as total_debt; note/flow rows ("Prepayment or Repayment of Borrowings" = IPO use of proceeds) aliased to debt (DP). (3) ledger amount = one source item, period = union of years (no amount_period). (4) buyback "INR 20 lakhs for 20,00,000 shares" (INR 1/share, nominal value) taken as the buyback amount. (5) Panel used the sentence FY for balances from other years; labelled combined cash+bank balances as "cash and equivalents".
+- Changed: knowledge/financials/line_item_mapper.py, normalizer.py; intelligence/capital_allocation_outcomes/builder.py, economic_attribution/builder.py; apps/.../story/{capital,question-view,connections,discoveries,story-events}.ts, panel/{data,build-panel}.ts. Added: tests/financials/test_g1_financial_identity.py (22), src/lib/story/capital.test.ts (3), tools/g1_candidate_build.py. No served artifact, answer, approval or registry written.
+- Tests: new Python 22/22 pass (20 fail on HEAD code = red first). Full Python suite 2225 passed / 36 failed / 108 errors with AND without the change; failure sets identical (pre-existing). App vitest 287 pass + 3 pre-existing ask-v2 failures. G0 challenge default mode green (statuses unchanged on served artifacts).
+- Candidate proof (isolated scratch root, loaders pointed via ASK_INTRINSICIQ_REPO_ROOT): G0 challenge flips SP-01 FAIL->PASS; controls 5/5 stay PASS; SP-02 consumers show "in FY26" but approved answer text still stale.
+- Served output change: Data Patterns Panel now says "(as of FY25)" on a debt/net-cash figure instead of presenting it as FY26 (loader fix, not an approved answer). G0 run hash will therefore differ from 2f7b5df4…; statuses identical.
+- Not fixed / deferred: DP reporting basis "unknown" (table-local detection); DP FY26 cannot be regenerated by current normalizer (period columns unresolved, EPS reconciliation); Tanla true cash-equivalents ₹748 cr and FY26 buyback ₹175 cr not extracted; Ujjivan FY22 total_debt now 1,763.56 (was an interest-expense row) not page-verified.
+- Side effect noted: the full pytest run writes data/Review/crash__*.pdf (gitignored).
+- AI calls: 0 | Cost: $0.00 | ATLAS unchanged | Status: READY FOR INDEPENDENT G1 VERIFICATION
+
+## 2026-10-12 — M63 / G1 Independent Verification (verifier; no code changed)
+
+- Verdict: **G1 NOT VERIFIED — REMEDIATION REQUIRED** (preview/M63_G1_INDEPENDENT_VERIFICATION.md). Caveat: same assistant lineage as the implementer; figures taken from original PDFs, mapper probed over 7,559 distinct corpus labels.
+- Commands: G1 22 Python tests (22 pass); tests/financials (504 pass); capital.test.ts (3 pass); G0 challenge on served artifacts (28 pass; strict 22 red/6 green); candidate build into a separate temp dir; G0 challenge on candidate loaders (only SP-01 flips; 5 controls PASS); old-vs-new mapper diff over all corpus labels; PDF page checks (Sun pp.241/242/247, FY25 p.226, FY24 p.145; Tanla pp.73/174/383; DP FY24 p.110, FY25 pp.114/116, FY26 pp.29/132/134; Ujjivan FY22 p.115).
+- Verified to PDFs: Sun cash 9,770.51, debt 4,081.61, net cash 5,688.9; Tanla 748.01+315.62=1,063.63 and nominal-vs-175 cr buyback; DP FY25 cash 37.66 and nil borrowings; Ujjivan FY22 borrowings 1,763.56 cr (Schedule 4, p.115).
+- Blockers: B1 debt flow gate over-broad ("interest", "cost") rejects valid 'Interest bearing borrowings' / 'at amortised cost'; B2 full suite rewrites 7 Sun ask_intrinsiciq files (G1 claim 'nothing under companies/' rejected; approvals/answers/registry hashes unchanged).
+- Deferrals accepted: DP basis label -> G5 (stays OPEN); DP FY26 extraction -> G3 (separate defect; block promotion).
+- Preservation: registry and four answer hashes equal G0; backup SHA256SUMS OK; holdout untouched; no git stash; no cleanup performed.
+- AI calls: 0 | Cost: $0.00 | ATLAS unchanged
+
+## 2026-10-12 — M63 / G1.1: Close Financial Truth Verification Blockers (implementation; unverified)
+
+- Correction to the 2026-10-12 G1 entry: its statement that nothing under companies/ was written is inaccurate. The G1 full-suite run rewrote eight Sun ask_intrinsiciq files (12:18:56) via tests/test_p3_coverage.py; pre-run contents were not captured, so "unchanged" cannot be established. Registry, hybrid answers, approvals unaffected.
+- B1: _DEBT_FLOW_TOKENS bare words "interest"/"cost" -> phrases. 19 red-first cases added (4 required valid labels failed on G1 code). G1 tests 41/41; tests/financials 523 pass. Corpus (7,559 labels): G1->G1.1 changes 1 label (DP note row). Candidate facts identical to the G1-verified candidate; G0 on candidate: only SP-01 flips, controls 5/5.
+- B2: write path = tests/test_p3_coverage.py:295 (not test_ask_intrinsiciq.py); eight files, not seven. Fix = tests/conftest.py ask_intrinsiciq_sandbox (+ module mark, + guard test). Full suite run isolated: 4012 passed / 101 failed / 25 errors; 3,363-file manifest of companies/+governance/ identical before/after; 70/70 ask_intrinsiciq files identical. 101 failures = 101 with G1.1 code vs 102 with HEAD code (identical sets except one flaky). Totals differ from G1 because the conftest changes collection (torch `nn` import errors no longer hide modules).
+- Source pages: chunk-start page issue recorded OPEN for G3 (3 of 8 spot checks off by one); amounts untouched.
+- Preservation: registry and four answer hashes unchanged; backup SHA256SUMS OK; holdout untouched; no git stash; no file regenerated/restored/deleted.
+- AI calls: 0 | Cost: $0.00 | ATLAS unchanged | Status: READY FOR INDEPENDENT G1 REVERIFICATION (not VERIFIED)
+
+## 2026-10-12 — M63 / G1 Final Verification (B1, B2) — verdict: G1 BLOCKED
+
+- Report: preview/M63_G1_FINAL_VERIFICATION.md. Caveat: same assistant lineage as the implementer; B2 attacked with disposable files rather than G1.1's own guard test.
+- B1 VERIFIED: phrase tokens; 4 required valid labels accepted; independent label probe (accept/reject, balance-sheet and cash-flow context) as expected; 41/41 G1 tests; candidate facts identical to the verified candidate; corpus change = 1 DP note row. Residuals (not blocking): 'Interest accrued but not due on borrowings' accepted (matches HEAD); 'Loans (non-current)' -> long_term_debt (HEAD, G1, G1.1).
+- B2 BLOCKED: in a disposable repo the symlink sandbox is safe for os.replace/write_json_file but write_text, open('w'), shutil.copyfile and any write under symlinked directories (governance/, company_memory subdirs, fyNN) write through to the real tree; new files under symlinked dirs appear in the real tree. tests/conftest.py also changes collection: pytest --collect-only errors 108 (--noconftest) -> 25, +1,817 tests collected. Today's tests contain no such writes (static check) and the 3,363-file manifest was unchanged, so the risk is latent, not realised.
+- Remedy (not implemented): copytree company_memory instead of symlinks; remove root conftest.py (fixture local to the two test files); teardown hash tripwire + ordinary-write guard cases.
+- Preservation: registry and four answer hashes unchanged (91 approvals); backup SHA256SUMS OK; G0 28 pass / strict 22 red 6 green / controls 5/5; no candidate promoted; 70 ask_intrinsiciq files and 3,363-file companies+governance manifest unchanged; holdout untouched; no git stash; no cleanup.
+- Deferred items confirmed OPEN with owners: SRCPAGE G3, DP FY26 extraction G3, DP basis label G5 (split row M63-G5-DPBASIS), limits row updated, approved-answer corrections G7.
+- AI calls: 0 | Cost: $0.00 | ATLAS unchanged
+
+## 2026-10-12 — M63 / G1.2: Final Test-Isolation Repair (B2) — implementation; unverified
+
+- Removed tests/conftest.py. Local copy-based fixture `ask_intrinsiciq_sandbox` in tests/test_p3_coverage.py and tests/intelligence/test_ask_intrinsiciq.py: shutil.copytree of every company_memory into a temp dir outside the repo (no symlinks; only company_memory exists there, so governance/ and fyNN/ access fails with FileNotFoundError instead of falling back); setup walks the sandbox and asserts no realpath resolves into the repo; teardown tripwire hashes all companies/*/company_memory/ask_intrinsiciq files + approval_registry.json before/after.
+- Evidence: 7 isolation tests (no-symlink/realpath; os.replace, write_text, open('w'), shutil.copyfile, production writer; nested create/delete; unmodified generate_ask_intrinsiciq_view('datapatterns', force=True)) all pass with real hashes identical. Independent probe on a disposable fake repo (fixture source extracted): all mechanisms contained, governance/ access fails safely, tamper -> teardown error (tripwire fires).
+- Collection: pytest --collect-only tests = 2,412 lines / 108 errors, identical to the pre-G1.1 (--noconftest) baseline; no test gained or lost.
+- Targeted: test_p3_coverage 44 pass; both modules 213 pass / 3 pre-existing failures; G1 financial tests 41 pass (B1 unchanged); capital.test.ts 3 pass; G0 28 pass, strict 22 red/6 green, controls 5/5.
+- Preservation: 70 ask_intrinsiciq files and the 3,363-file companies+governance manifest byte-identical; registry 4f6a71f2…acb028 (91 approvals) and four served-answer hashes unchanged; backup SHA256SUMS OK; no candidate promoted; holdout untouched; no git stash; no cleanup. Prior (2026-10-12 12:18:56) Sun overwrite remains historical and unprovable.
+- AI calls: 0 | Cost: $0.00 | ATLAS unchanged | Status: B2 REPAIRED - READY FOR INDEPENDENT G1 CLOSURE (G1 not marked VERIFIED)
+
+## 2026-10-12 — M63 / G1.3: Fix the final B2 tripwire defect (implementation; unverified)
+
+- Defect (from M63_G1_CLOSURE.md, reproduced first): both fixtures hashed a fixed list enumerated once, so a new original file under ask_intrinsiciq/ went undetected (deletions failed only via incidental FileNotFoundError).
+- Fix, two test files only: _protected_snapshot(repo) re-enumerates recursively on every call (all ask_intrinsiciq files + approval registry, "<MISSING>" sentinel); _assert_protected_unchanged reports added/removed/modified relative paths; fixture body factored into _sandbox(repo, root) (fixture is a thin wrapper); 8 permanent fake-repository tests per module (new, new nested, modified, deleted, deleted nested, modified registry, deleted registry, no change).
+- Evidence: Sol's reproduction pre-fix: new file NOT DETECTED in both modules; post-fix all changes DETECTED with exact paths, unchanged passes. Permanent tests vs old logic: 5/8 fail per module; vs fixed logic: 8/8 pass. Targeted: both modules 229 pass / 3 pre-existing failures; G1 financial 41 pass; capital.test.ts 3; G0 28 pass, strict 22 red/6 green, controls 5/5; collection 2,420 lines (baseline 2,412 + 8 new tests), 108 errors unchanged.
+- Preservation: 70 ask_intrinsiciq files and 3,363-file manifest byte-identical; registry 4f6a71f2…acb028 (91 approvals) and four answer hashes unchanged; backup SHA256SUMS OK; no production/financial file or candidate touched; holdout untouched; no git stash/cleanup.
+- AI calls: 0 | Cost: $0.00 | ATLAS unchanged | Status: READY FOR SOL CLOSURE CHECK (G1 not marked VERIFIED)
+
+
+## 2026-10-12 — M63 / G1.3 independent closure — G1 VERIFIED — GO FOR G2
+
+- Bounded rerun only: `python3 /private/tmp/m63-g13-closure-check.py`; real helper logic extracted from both test modules, disposable fake repos, 14/14 probes pass (new/nested new/deleted/nested deleted/deleted registry/modified/unchanged). Added/removed/modified exact paths reported; teardown restores cwd. Earlier fixed-list blocker closed; B1 and financial repairs remain verified.
+- Preservation: 3,363-file companies/+governance/ manifest unchanged during check (excluding these two ledgers); all 70 requested ask files match prior independent snapshot (111 matching protected hashes across all 110 ask files + registry); 91 APPROVED (25/22/21/23); external backup 5/5 checksums and cmp pass.
+- Evidence: preview/M63_G1_CLOSURE.md; detailed results /private/tmp/m63-g13-closure-results.json. Regression suites/collection were not rerun; earlier independent results retained, known failures separate. Investor-visible classes remain FIX-APPLIED until G7; G3/G5 OPEN; ATLAS unchanged. Historical Sun overwrite unprovable.
+- AI/API $0; no production/tests/approved artifacts modified, no candidate promoted, holdout untouched, no stash/cleanup/deployment/G2 work. Stopped at gate decision.
+
+## 2026-10-12 — M63 / G2: Single Definition Ownership (implementation; unverified)
+
+- Ownership map: hard/verifiable commitment had 8 competing definitions (register regexes, M50.1 predicate, progression target regex, tracker keyword filter, progression text filter + 25-cap, two TS deadline readers, TS text re-parse, composer text scraping); net debt had 2 computations (ratio_calculator + registry _derive_net_debt) plus Panel's own.
+- Decision: canonical commitment classifier lives in knowledge/company_memory/management_commitments.py (register owns identity). fact_pack_v2.py was first edited, then RESTORED byte-for-byte (sha256 889581c7…aa658, pinned by a test) after three pinned contract fingerprints (test_m49_03, test_m52_01, test_m522d_16) changed: the file is hashed into V3/V4 contract identities and the V5 candidate under human review. Net debt owner: ratio_calculator.net_debt_measure; registry _derive_net_debt removed.
+- Changes: management_commitments (classify_commitment, canonical_commitment_fields, tier delegation), progression producer/linker (verdict carried, bypass of text filter/cap, measurable = register identities, identity-first dedup), management_promises builder/classifier (pass-through; canonical = material), ratio_calculator/fact_registry (net_debt_measure; derive removed; component notes), TS accountability/commitment-evidence/load-story/story-events/build-panel, tools/g1_candidate_build.py (commitments stage). Tests: tests/intelligence/test_g2_definition_ownership.py (43), story/g2-definitions.test.ts (10).
+- Evidence: red-first on HEAD code for every class; identity agreement register = tracker = progression for Sun/Tanla/Ujjivan/DP; hard sets Sun {0029,0031,0039}, Tanla {}, Ujjivan {0043}, DP {0001,0006}; net debt per year via one owner (Sun FY23/24 INCOMPLETE_DEBT, Ujjivan NOT_APPLICABLE_BANK). 88 affected test files: 1,980 pass, 81 failures identical to HEAD-code run (none differential); app vitest 297 pass + 3 pre-existing ask-v2; G1 41 pass; G0 served 28 pass / strict 22 red 6 green / controls 5/5; candidate G0: only SP-01 flips, controls 5/5, SP-11 red on frozen text.
+- Preservation: registry 4f6a71f2…acb028 (91 approvals) + four answer hashes unchanged; 70 ask_intrinsiciq files and 3,363-file companies+governance manifest identical; backup SHA256SUMS OK; no candidate promoted; holdout untouched; no git stash/cleanup.
+- Open: M50.1 predicate -> contract V6 (G7); composer text scraping (G7); frozen answers/SP-11 (G7); pending-transaction state, source pages, DP FY26 (G3); DP basis label (G5). Owner confirmations: Tanla MC-0019 not hard; "next couple of years" is a boundary, "few" is not.
+- AI calls: 0 | Cost: $0.00 | ATLAS unchanged | Status: READY FOR INDEPENDENT G2 VERIFICATION (G2 not marked VERIFIED)
+
+## 2026-10-12 — M63/G2 Independent Verification — G2 BLOCKED (2 reproducible defects) | 0 AI CALLS
+- Report: preview/M63_G2_INDEPENDENT_VERIFICATION.md. Verified: single owner wiring, identity register=tracker=progression, fact_pack_v2 byte-identical, G2 Python 84 / G1 41 / app vitest 297 (+3 pre-existing ask-v2), G0 candidate flips only SP-01, preservation (hashes, 70 files, 3,363 manifest, backup, holdout).
+- B1: Data Patterns MC-0001 (FY22 p27) is a Defence Ministry aim, not a company commitment; classified HARD and rendered 'management stated'. B2: closed-list observation detector; 'grew 24% in FY25'-type statements classify HARD. Sources of the other five hard commitments confirmed (Sun p87/p11/p95, Ujjivan p40, DP MC-0006 p8; MC-0006 'deadline passed' defensible at 2026-10-12).
+- Judgment: DP '70% by 2027' is NOT labelled overdue (27 > FY26); Tanla MC-0019 stays DATED_UNVERIFIABLE (no score published); 'couple'=2 vs 'few'=undated defensible and consistent.
+- Non-blocking: M63-G2-DATE, M63-G2-LIVE. G3/G5/G7 items stay open. No code, answer, approval, candidate promotion or holdout access.
+- Status: G2 BLOCKED - repairs B1/B2 required, then re-verify.
+
+## 2026-10-12 — M63/G2.1: Final Commitment Classification Repair — READY FOR FOCUSED INDEPENDENT G2 CLOSURE | 0 AI CALLS
+- Report: preview/M63_G2_1_REPAIR.md. B1: attribute_statement (speaker of the governing verb in the source sentence) feeds the existing actor gate; DP MC-0001 (Defence Ministry aim, FY22 p27) quarantined EXTERNAL_ACTOR. B2: clause-level tense reading; results/states are OBSERVATION, mixed statements keep only the forward clause's outcome and deadline. Source fidelity: DP MC-0006 (FY24 p8) is a pipeline outlook, not a promise -> OUTLOOK_NOT_COMMITMENT (also MC-0015).
+- Hard sets: Sun {MC-0029,0031,0039}, Tanla {}, Ujjivan {MC-0043}, DP {}. Register diff vs G2 candidate: only DP MC-0001 removed, DP MC-0006/0015 reclassified. Identity register = tracker = progression for all four; DP Story shows no 70% event and no 'deadline has passed' claim.
+- Tests: 34 new + 43 G2 + 41 G1 pass; vitest 297 + 3 pre-existing ask-v2; G0 served 28 / strict 22 red / candidate flips only SP-01; other failing files identical to the G2 baseline. Preservation: registry/answers/fact_pack_v2 hashes, 70-file + 3,363-file manifests, backup 5 OK; holdout untouched; no promotion.
+- Open: G2 not VERIFIED (needs focused independent closure); M63-G3-ATTRIB, M63-G2-DATE, M63-G2-LIVE, M63-G2-V6, M63-G2-COMPOSER, G5 DP basis, G7 reapproval (incl. DP id shift).
+- AI calls: 0 | Cost: $0.00 | Status: READY FOR FOCUSED INDEPENDENT G2 CLOSURE
+
+## 2026-10-12 — M63/G2.2: Final Surgical Repair — READY FOR FINAL G2 CLOSURE | 0 AI CALLS
+- Report: preview/M63_G2_2_FINAL_REPAIR.md. B1: named external subject now beats possessive 'our' (co-actor -> UNCLEAR, never management); 'and' no longer splits a co-subject. B2: participial result clauses inherit a historical parent unless they state their own intent or a later time boundary. Only management_commitments.py changed (+ tests).
+- Reproduced both on the original code (real builder registered 'Our government...' as hard; 'Deposits grew 24% in FY25, taking...' VERIFIABLE_UNDATED), then fixed; Sol's repro script passes. A regression caught by the real-data test (Ujjivan 50 vs 51) was fixed before completion.
+- Tests: G2.1 + G2 93 pass; G1 41 pass; commitment/progression suites pass; fingerprints agree register = tracker = progression for all four, identical to the G2.1 candidate; G0 served 28 pass, candidate flips only SP-01, controls 5/5.
+- Preservation: registry + 91 approvals, four answer hashes, fact_pack_v2.py, 70 files, 3,363 manifest, backup 5 OK; holdout untouched; no promotion.
+- Noncritical: M63-G2-STATEFORMS, M63-G2-DIRECTIVE. G2 not VERIFIED; independent final closure required.
+- AI calls: 0 | Cost: $0.00 | Status: READY FOR FINAL G2 CLOSURE
+
+## 2026-10-12 — M63/G2 Final Closure (independent) — G2 VERIFIED — GO FOR G3 | 0 AI CALLS
+- Report: preview/M63_G2_FINAL_CLOSURE.md. Sol's repro: B1 'Our government aims...' -> THIRD_PARTY, quarantined EXTERNAL_ACTOR via the real register builder; B2 'Deposits grew 24% in FY25, taking...' -> OBSERVATION. Forward controls (policy-aligned company promise, history + independent future, future + consequence) stay HARD.
+- Fresh candidate: sizes 46/28/51/15; register = tracker = progression by fingerprint; hard identities Sun MC-0029/0031/0039, Ujjivan MC-0043, Tanla/DP none; per-fingerprint class identical to G2.1 candidate.
+- G2.1+G2 tests 93 pass; G0 served 28, candidate flips only SP-01, controls 5/5. Preservation: registry/91 approvals, four answer hashes, fact_pack_v2, 70 files, 3,363 manifest, backup 5 OK; holdout untouched; no promotion.
+- Open (unchanged): G3 (M63-G3-ATTRIB etc.), G5 DP basis, G7 reapproval/contract V6/composer/lifecycle date/live registries; noncritical M63-G2-STATEFORMS, M63-G2-DIRECTIVE. Investor-visible corrections remain FIX-APPLIED until G7. ATLAS unchanged.
+
+
+## 2026-10-12 — M63/G2.2 Sol final gate recheck — G2 VERIFIED — GO FOR G3
+
+- Original `python3 /private/tmp/m63-g2-blocker-repro.py`: B1 EXTERNAL_ACTOR/hard=false, B2 OBSERVATION. Independent full synthetic register builder confirms external quarantine and retains policy-aligned, history+future and future+consequence controls as HARD by 2028. Script: `/private/tmp/m63-g22-check.py`.
+- Fresh repair candidate sizes 46/28/51/15; register/tracker/progression hard and verifiable sets agree by fingerprint; per-fingerprint source fields, class, basis and quarantine lists unchanged from G2.1. 93 focused tests pass; G0 28 pass including controls 5/5; prior G1 evidence reused.
+- Preservation: 3,363-file company/governance inventory unchanged before/after, 70 protected files match earlier audit (111 broader protected hashes); 91 approvals; registry/four served artifacts match backup; fact_pack_v2 pinned; backup 5/5 checksums plus cmp pass. Evidence: preview/M63_G2_FINAL_CLOSURE.md; `/private/tmp/m63-g22-check-results.json`.
+- Verification only; no production/test/answer/registry changes, holdout untouched, no promotion/cleanup/deployment/G3 work; $0 API. G3/G5/G7 and existing noncritical issues OPEN; investor-visible corrections FIX-APPLIED until G7; ATLAS unchanged. Stopped at gate.
+
+
+## 2026-10-12 — M63/G3 consolidated completion pass — BLOCKED, not VERIFIED
+
+- Resumed existing G3 code/candidates. No unfinished processes. Recovered actual original batch manifest: 43 modules, not 46; 42 completed summaries (821 pass/10 fail), extractor summary incomplete. Relevant missing/changed checks rerun; reconciled 43-module results 890 pass/9 baseline failures (composite, not a new full-suite run). CAP builder2 and semantic-quality1 reproduced identically against pre-G3 comparison; other6 match G2 baseline. Extra PCIM integration has pre-existing torch/nn collection error, not counted passed.
+- Source verification: all 45 known and 8 LTTS anchor quotes/component quotes match original PDF pages; reference files untouched. Frozen baseline 15/45 (33.3%), initial G3 38/45 (84.4%), final 45/45 (100%); exact-reference pages 13/45 -> 41/45. Literal-value page sweep 246/277 -> 287/287 (different denominators, not a full semantic-proof metric).
+- Shared fixes: explicit primary nil borrowings (never missing -> zero), missing placeholders vs bank highlights, direct percentage and total-network definitions, source-faithful contingent/segment observations, compact EPS rows, statement-mention/continuation trimming, adjacent primary-basis inheritance, per-basis preservation with consolidated default. Existing capital-memory/ledger consume canonical aggregate capex/FCF; same-year annual total beats component ordering and cannot inherit a PPE-only name. Existing candidate Panel consumes banking/contingent measures; no new architecture.
+- Full annual-report re-chunking reproduced with existing reader (Tanla617 vs previous wrong quarterly AFR40, Sun910, DP FY22 183). DP FY22 normalizes again (PAT93.97 p60); Sun EPS47.8 now p244. Tanla FY26 cash748.0121 + other bank balances315.6184 distinguished from management treasury1144; consideration175 distinct from outflow179.2876; CFO574.1948/capex97.6502/FCF476.5446. Ujjivan NII3636/NIM8.8/total income7201, reported GNPA2.2/NNPA0.5/CAR23.1, deposits37630/network753; bank industrial ratios remain excluded. DP standalone values/nil borrowings/contingent6.92 recovered. Organon signed/pending preserved, never completed.
+- Genuine unseen criterion NOT met: original LTTS7/8, unblinded retest8/8 after its failed anchor guided a shared repair. Separate untouched Tips FY25 evidence frozen from PDF before evaluation: 0/8, missing BS total-assets/PAT extraction prevents normalization despite available material. No tuning against that failure. Full material-anchor routing/certification/budget proof also remains OPEN. G3 BLOCKED; no self-verification.
+- Final checks: core financial375 pass; final consumer/G3 rerun83 pass including48 G3 tests; registry30; G1 41 with source-proven interest-income test correction; G2 93; pins3; app57 including G0 28/control5/5; TypeScript clean. Overlapping counts are not added. Candidate G0 flips SP-01, SP-05, TN-02, UJ-02, DP-01 only. Details/commands: preview/M63_G3_EVIDENCE_RECOVERY_REPORT.md.
+- Preservation: 3,363 company/governance inventory + frozen references/pinned sources unchanged; 70 requested ask files and prior111 protected hashes match; 91 APPROVED (25/22/21/23), registry/four served answers equal backup; 5/5 backup checksums + cmp. Sealed12 G7 cases untouched; historic Sun overwrite still unprovable. No deployment/stash/destructive cleanup/approved-answer regeneration/promotion/later-gate work. Completion model/API calls0, additional spend$0; prior recorded spend$0, total recorded$0/$2. ATLAS unchanged. Source code changed; artifacts stayed isolated. Stopped after the consolidated pass.
+
+## 2026-10-12 — M63/G3.1: Generalization Rescue — G3 BLOCKED (generalization NOT VERIFIED) | $0
+- Report: preview/M63_G3_1_GENERALIZATION_REPORT.md. Tips FY25 traced: (1) discovery missed the balance sheet because the previous page's sign-off block preceded its title (title beyond the 200-char window); (2) the declared 'INR lakhs' unit was replaced by 'INR per share' because 'per share' appeared in the statement, so no value converted and normalization correctly refused. Generic fixes in discovery.py/extractor.py plus row-enumerator fix. Tips 0/8 -> 8/8 (value and exact page); diagnostic only.
+- Added minimum anchor-family coverage contract (anchor_coverage.py): every family FOUND/NOT_DISCLOSED_WITH_SEARCH_EVIDENCE/NOT_EXTRACTED/NOT_APPLICABLE with search evidence; READY -> READY_STATEMENTS_ONLY when a mentioned family is not extracted.
+- Known companies: 45/45 value, 41/45 exact page; candidate G0 flips SP-01, SP-05, TN-02, UJ-02, DP-01, controls pass. Fresh blind company (polymatech FY25; reference authored by a separate subagent that read only the PDF; hash recorded at freeze): 0/20 -> NOT VERIFIED; coverage contract correctly BLOCKED/all families NOT_EXTRACTED. Post-freeze diagnostics only: reader text order, once-declared bracket-form unit, single-column layout. No tuning against it, no G3.2.
+- Preservation: registry/91 approvals, four answer hashes, fact_pack_v2, 70 protected files, 3,363 manifest, backup 5/5 intact; holdout untouched; nothing promoted. API $0 (cumulative G3 $0/$2). CTO decision requested: option A (bounded layout-robust reader + two new blind filings) or B (isolate via coverage contract).
+
+## 2026-10-12 — M63/G4: Material Insight & Investor Answer Quality — READY FOR INDEPENDENT G4 INVESTOR-VALUE VERIFICATION (not VERIFIED) | $0
+- Report: preview/M63_G4_INVESTOR_INTELLIGENCE_REPORT.md; packet: preview/M63_G4_CANDIDATE_ANSWERS.md. Root cause: verified evidence existed but the answer layer did not consume it; old approved answers omit 33 available material classes over 15 questions and make 2 absence claims on extraction gaps.
+- Added pipelines/g4_investor_answers.py (zero-AI): fact ledger, per-area material classes with SUPPORTED/PARTIALLY_SUPPORTED/NOT_EXTRACTED/NOT_DISCLOSED_WITH_SEARCH_EVIDENCE/NOT_APPLICABLE, omission and absence detector, deterministic composers, arithmetic audit. 16 candidates (4 per company) in /private/tmp/claude-501/g4/out; 0 PACP failures, 0 unsupported numbers, 0 absence claims on gaps. Found and fixed industrial FCF in bank precision facts.
+- Candidate G0 (candidate answers substituted on real surfaces): 5/25 baseline -> 12/25; flips SP-01, SP-05, SP-06, SP-08, TN-02, UJ-02, DP-01; controls 5/5. 13 still FAIL (extraction-dependent or G1/G2 cross-surface). Coverage metric is partly circular; no quality score awarded.
+- Tests: new 14; G1 41, G2 43+50, G3 56, mgmt-quality pin 5, app vitest 300 + 3 pre-existing ask-v2 failures.
+- Preservation: registry 4f6a71f2…/91 approvals, four answer hashes, fact_pack_v2, 70 protected files, 3,363 manifest, backup 5/5 intact; holdout untouched; nothing promoted; no Git operations.
+
+## 2026-10-13 — M63/G4 independent investor-value audit — BLOCKED
+
+- Read all 16 old/new answers, actual scratch JSON (all six principal fields match packet), G4 report/composer, G0/M61 and primary PDFs. Seven dimensions scored equally for old/new; area means: Business 6.2/10, Management 4.6/10, Risks 4.0/10, Discoveries 6.5/10. No area reaches 7/10; ChatGPT comparison NOT TESTED.
+- Primary regressions: Tanla FY25 PDF p124 food-price statement is macro Indian-economy context, internally quarantined/DEMOTE, yet selected as company input-margin risk. Sun FY25 p103 establishes 47% waste co-processing and 24.69% emissions reduction; FY26 p107 establishes 16.7%; FY25 p10/p35 confirms Nidlegy submission/validation with unresolved dates/partner limits. Candidate drops progress and says no later evidence found. DP standalone FY26 receivable days ((727.77+596.40)/2)/924.77*365 =261.3201 from pp132/133; candidate 233 derives from FY23 233.7505. Category templates also mismatch actual economic mechanisms.
+- Report: preview/M63_G4_EXTERNAL_INVESTOR_VALUE_AUDIT.md. Includes 16-answer comparison/dimension matrix, equal treatment of old-answer defects, lost/gained insights, bounded source limitations and one four-root-cause prioritized correction plan. Existing-evidence G4 composition repairs distinguished from G3 missing upstream data, G6 cross-surface and G7 approvals/promotion. No repairs initiated.
+- Commands: python3 /private/tmp/m63-g4-audit-probes.py (read-only PDFs/snapshot); python3 -m pytest -q tests/intelligence/test_g4_investor_answers.py:14 passed, sandbox cache-write warning; python3 /private/tmp/m63-g4-preserve.py:3366 checked files unchanged,91 approvals25/22/21/23; backup checksums5/5 and byte comparisons5/5. Evidence /private/tmp/m63-g4-audit. No unrelated suites/generation/API calls; $0.
+- Only report/BACKLOG/SESSION_LOG written. Code, original company artifacts, registry, approved answers, fact_pack_v2 and candidates unchanged; sealed G7 holdout not sought/opened. ATLAS and G3/G5/G6/G7 dependencies unchanged; no promotion/deployment/destructive Git operations. Stopped at gate recommendation.
+
+## 2026-10-13 — M63/G4.1: Investor Judgment & Intelligence Quality Repair — READY FOR FINAL INDEPENDENT G4 INVESTOR-VALUE ASSESSMENT (not VERIFIED) | $0
+- Reports: preview/M63_G4_1_INVESTOR_JUDGMENT_REPAIR.md; preview/M63_G4_1_REVISED_ANSWERS.md (16 revised candidates beside the approved answer and the failed G4 candidate, with matrix). Four shared root causes in the G4 composers: (1) risk eligibility/quarantine flags ignored and a fixed story attached by registry category label; (2) merged multi-year risk records presented as one dated fact, citations not tied to the displayed risk; (3) counts and a stale tracker status replacing sourced progress; (4) arithmetic without components or a next question. No new agent, layer or extraction.
+- Changes (pipelines/g4_investor_answers.py): eligibility and social-programme filters; ~20 wording-driven risk channels, conditional consequences, 'Not established here'; latest dated paged mention per risk, earlier named exposure kept (Winlevi), severity path; working capital from the canonical module with each year labelled; cash-flow statement lines both years with unit recovery; management progress retrieval by rarest-term match with verbatim page quotes, date conflicts reported, tracker initiatives, observations labelled; payout gap in amounts; statement-precision rupee formatting (M59 tidy rounding bypassed inside G4 only).
+- Red-first: 61-test file written before the repair; against the failed G4 candidates 29 failed/28 passed/4 skipped; after repair 59 passed/2 skipped. G4 14, G1 41, G2 43+50, G3 56, mgmt-quality pin 5 pass; app vitest 300 + 3 pre-existing ask-v2 failures. Candidate G0 12/25 (same seven flips), controls 5/5, no G0 file changed; SP-03 not reworded to match '11,943' vs stored 11,943.9.
+- Verified against original filings: DP FY26 receivable days 261.3201 (pp.132-133) and FY23 233.7505; Sun waste 47% FY25 p.103, emissions 21.85/24.69/16.7 pp.95/103/116, Nidlegy validation June 2024 p.10 vs June 3, 2025 p.35; Tanla food-price record is quarantined/DEMOTE.
+- Preservation: registry 4f6a71f2…/91 approvals, four answer hashes, fact_pack_v2, 70 protected files, 3,363 manifest, backup 5/5 intact; holdout untouched; nothing promoted; no Git operation. API $0.
+
+## 2026-10-13 — M63/G4.1 final independent investor-value assessment — BLOCKED
+
+- Reviewed all 16 three-version answers, actual revised JSON (five principal fields match packet), repair report, prior G4/M61/G0, source records and original PDFs. Independent seven-dimension means: Business 7.4, Management 6.0, Risks 6.9, Discoveries 7.8. Improvements substantial, gate criteria not met; no measured ChatGPT comparison (NOT TESTED).
+- Source-supported residuals: Sun FY25 PDF p103 pairs 30%-by-2025 target with 47% reported performance, so management-reported achievement is supported, not independent economic assurance. Ujjivan FY25 p40 nine additional housing RACs by FY2025–26: deadline passed March31,2026 as of October13,2026; filing predates deadline/outcome unknown, not missed. Tanla FY26 p185 critical ecosystem service disruption and Sun FY26 p297 FX exposure are materially omitted by flags. Sun p15 and Tanla p185 quoted risk summaries are not literal primary wording; Tanla positive near-zero-cost claim appears p62 and can support a labelled analytical question.
+- DP average-based FY23 233.7505 / FY26 261.3201 and non-monotonic series verified; blocker resolved. Ujjivan FY25 PDF p258 contains paired bank profits 7,261,031 / 12,814,907 in INR000 =726.1031 /1281.4907 crore; FY24 p336 confirms prior year. Decline43.3392% valid on the same statement comparative; internal unknown/consolidated labels should not introduce false source uncertainty.
+- Report: preview/M63_G4_1_FINAL_INVESTOR_VALUE_ASSESSMENT.md. 16-answer matrix, area means, blocker and three challenge findings, source-based residual table. Recommend one strictly bounded correction of four material rows and related wording/comparative cleanup; no automatic G4.2. Deferred G3/G5/G6/G7 boundaries unchanged; G4 not VERIFIED.
+- Read-only checks: python3 /private/tmp/m63-g41-source-check.py; python3 -m pytest -q -p no:cacheprovider tests/intelligence/test_g4_1_investor_judgment.py tests/intelligence/test_g4_investor_answers.py =>73 passed,2 skipped; python3 /private/tmp/m63-g41-preserve.py =>3382 protected/code/scratch JSON hashes unchanged,91 approvals25/22/21/23,backup5/5checksums+byte comparisons. No full suites or generators; no independent G0 rerun claimed.
+- Only final assessment/BACKLOG/SESSION_LOG written. No production code, registry, approved answers, candidate JSON or fact_pack_v2 modified; no sealed G7 holdout access, paid API calls, deployment or destructive Git operation. ATLAS unchanged; no G1/G2/G3 reopening or later-gate implementation. Stopped after assessment.
+
+## 2026-10-13 — M63/G4 Final Correction: Investor Trust Closure — READY FOR FOCUSED INDEPENDENT G4 CLOSURE (not VERIFIED) | $0
+- Reports: preview/M63_G4_FINAL_CORRECTION_REPORT.md; preview/M63_G4_FINAL_CANDIDATE_ANSWERS.md. Scope was the final assessment's residual-blocker table only; Business and Discoveries unchanged except Ujjivan comparative wording.
+- Changes (pipelines/g4_investor_answers.py): explicit AS_OF (--as-of) and fiscal-calendar deadline dates, unknown-after-deadline wording; quantified-target achievement judgment from retrieved same-measure passages; case-specific management caveats, tracker-evidence labelling, delivered-versus-unfinished monitoring; DEMOTE records reviewed against the source (restored only with company-operational channel, non-macro, a describing passage, and high/critical severity or stated mitigation) — Tanla third-party service disruption and Sun currency exposure restored, food-price record still withheld; PRIMARY_QUOTE/SOURCE_PARAPHRASE/ANALYST_INFERENCE attribution with the best verbatim passage; Ujjivan prior-year basis confirmed from paired P&L columns (p.258).
+- Verification: 15 of 24 focused tests failed on G4.1 candidates before the repair; 87 pass (G4 + G4.1 files, 2 skips); G1 41, G2 43+50, G3 56, pin 5; app vitest 300 + 3 pre-existing ask-v2 failures; 16/16 shown passages at 100% word coverage on the original PDF pages; candidate G0 12/25, controls 5/5, no G0 file changed.
+- Preservation: registry 4f6a71f2…/91 approvals, four answer hashes, fact_pack_v2, 70 protected files, 3,363 manifest, backup 5/5 intact; holdout untouched; nothing promoted; no Git operation. API $0.
+
+## 2026-10-13 — M63/G4 focused independent final closure — BLOCKED
+
+- Read final report/packet, actual g42 JSON, prior assessment and relevant ATLAS/BACKLOG/log. All five principal fields match packet for16 candidates; exactly10 answer objects changed versusg41,6 unchanged. Eight Management/Risks scored independently; only Ujjivan financial comparison rescored in Business/Discoveries. Means: Business7.4,Management7.4,Risks7.5,Discoveries7.9. All score thresholds met, but no-material-error condition fails.
+- Verified: Sun FY25p10347% reported achievement versus30% target, emissions/Nidlegy uncertainty preserved; Ujjivan FY25p40RAC31March2026deadline passed/unknown delivery; Tanla FY26p185critical service disruption distinct fromp62carrier terms; Sunp297FX restored; case-specific management/status advice; bank pairedP&Lp258₹1281.4907→726.1031,−43.3392% comparable.
+- Single material residual: DP Risksp8indigenous-product opportunity -> claim delivery depends on foreign-sourced technology. Source does not establish that premise. p23does disclose global material/supplier risk and some delays, so no claim that foreign suppliers are absent; this different disclosure does not validate the selected technology-dependence interpretation. Tanla cyber independently confirmed in p185heat map; Sun positive quality/supply quotes support conditional scenarios, not actual-failure claims. Word-cap cuts acceptable because relevant precision/context remains in actual candidates.
+- Report preview/M63_G4_FOCUSED_CLOSURE_ASSESSMENT.md; source/identity/quote/hash evidence /private/tmp/m63-g42-audit. Recommendation: CTO decide restriction of unsupported capability or separately commission a bounded correction; no automaticG4repair. G3 remains BLOCKED for blind unfamiliar-filing generalisation; G4 unverified, no production certification/promotion permission,91 approvals remain frozen.
+- Focused command python3 -m pytest -q -p no:cacheprovider tests/intelligence/test_g4_1_investor_judgment.py tests/intelligence/test_g4_investor_answers.py =>87passed,2skipped,PyMuPDFdeprecationwarnings. Page-word test does not establish inference; independently inspected16 risk passage contents/context, not claimed16literal contiguous full-page matches. python3 /private/tmp/m63-g42-preserve.py =>3382hashes unchanged,91approvals25/22/21/23,backup5/5checksums and byte comparisons. No full suites/generators or fresh independentG0claim.
+- Only report/BACKLOG/SESSION_LOG written. No production-code/candidate/certified-artifact changes, sealedG7holdout access, G1/G2/G3reopening, G5/G6/G7implementation, paidcalls, deployment/destructiveGit. ATLAS unchanged. Stopped after focused decision.
+
+## 2026-10-13 — M63/G4 Surgical Correction: Data Patterns risk inference — READY FOR SINGLE-DEFECT INDEPENDENT G4 CLOSURE (not VERIFIED) | $0
+- Report: preview/M63_G4_SURGICAL_CORRECTION_REPORT.md. Root cause: `import_dependence` (and `supply`) matched the bare phrase 'domestic alternatives' and its reading asserted foreign dependence; unmatched wording was shown with a filler. Fix: explicit dependence premise required; supply regex tightened; risks with no supported channel are not shown. Data Patterns shows four risks (no refill; p.23 sourcing disclosure not substituted).
+- Tests: 2 of 3 new tests red before; G4+G4.1 files pass (76+14, 2 skips), G1 41, G2 43+50, G3 56, pin 5, app vitest 300 + 3 pre-existing failures. Candidate G0 12/25, controls 5/5, unchanged files. Only the DP Risks candidate changed (15 others identical).
+- Preservation: registry/91 approvals, four answer hashes, fact_pack_v2, 70 protected files, 3,363 manifest, backup 5/5 intact; holdout untouched; nothing promoted; no Git operation. API $0.
+
+## 2026-10-13 — M63/G4 single-defect independent closure — VERIFIED, FOUR-COMPANY CANDIDATE SCOPE
+
+- Read surgical report, focused assessment/final packet, actual g42/g43 answers, shared classifier/selector and original DP FY26 PDF pp8/23. Removed unsupported foreign-technology delivery premise; indigenous opportunity no longer treated as risk; no replacement import/export/customer-concentration premise. Four channels govt policy/working capital/technology obsolescence/talent preserved. FY23–26 receivable/inventory arithmetic recomputes correctly on standalone definitions.
+- Exactly one full answer object changed (DP Risks); other15 identical. Prior SunFX/TanlaCritical service/waste achievement/Ujjivan elapsed deadline and audited profit comparative preserved. Restored DP financial context; no material new omission in the four-company scope. Reviewed reported regressions; only3 focused surgical tests independently rerun against explicitg43output =>3pass. No16-answer rescoring; prior area means7.4/7.4/7.5/7.9 retained.
+- Evidence preview/M63_G4_FINAL_CLOSURE_VERDICT.md and /private/tmp/m63-g43-audit.3384 hashes unchanged;91 approvals25/22/21/23 intact;registry/four served artifacts match immutable backup;5/5SHA256 and byte comparisons pass. G0baseline/results unchanged across assessment, original recorded runhash2f7b5df471adb07b9c6243799ad595e6d0844478d9ab36b5bfc1c4b569cdcc64 retained. fact_pack_v2 unchanged.
+- G4 investor-value verified ONLY for Sun/Tanla/Ujjivan/DP candidates. G3 blind unfamiliar-filing generalisation remains BLOCKED; G5/G6/G7 and production approval remain separate.91 approved answers untouched, no service/promotion permitted by this verdict, investor-visible fixes stay FIX-APPLIED until G7. Suppression observability and unfamiliar wording limitations remain nonblocking here; no new mission. ChatGPT comparison NOT TESTED.
+- Only verdict/BACKLOG/SESSION_LOG written;ATLAS unchanged. No code changes/generation/sealed holdout access/G1-G3 reopening/later-gate implementation/API calls/deployment/destructiveGit. Stopped after verification.
+
+## 2026-10-13 — M63/G5: Uncertainty & Judgment Integrity — READY FOR INDEPENDENT G5 JUDGMENT AUDIT (not self-certified) | $0
+- Report: preview/M63_G5_UNCERTAINTY_INTEGRITY_REPORT.md. Contract read from preview/M63_EXECUTION_CONTRACT.md §G5 (absence semantics, R7/R8); ambiguities reported (three contract states v seven mission classes; NC exit spans 91 frozen answers; UI strings are code).
+- Reproduced: false absence on customer concentration (DP p.171, Ujjivan p.299; Sun p.303 and Tanla p.368 evidence hidden), silent NIM source conflict (p.18 v p.307), sector item listed as company exposure, opportunity wording matching a risk channel, 'by March 2026' parsed as December, disclaimer repetition, silent fail-closed risks, no absence state on answers, UI strings asserting silence.
+- Fixes: broadened/bank-specific concentration search with verbatim quotes; statutory-ratio conflict note; opportunity guard; industry-context line; month-year deadlines and unreadable-deadline wording; single-statement caveats; withheld_no_mechanism log; g5_absence + audit_absence; UI wording in build-panel.ts, story-events.ts, discoveries.ts, connections.ts (one assertion in story-intelligence.test.ts widened).
+- Verification: 32/45 new tests red before, 55 pass; G4 files 90 pass (+2 skips; one G4.1 assertion changed to once-in-explanation), G1 41, G2 43+50, G3 56, pin 5; app vitest 303 pass, 5 fail (3 pre-existing ask-v2 + SP-09/DP-01 deliberate baseline moves; baseline.json not rewritten). Candidate G0 13/25, controls 5/5. NC sweep candidate scope 164, 0 untagged/contradicted; 178 frozen approved NC statements left for G7.
+- Preservation: registry/91 approvals, four answer hashes, fact_pack_v2, 70 protected files, 3,363 manifest, backup 5/5 intact; holdout untouched; nothing promoted; no Git operation. API $0.
+
+## 2026-10-13 — M63/G5 independent uncertainty/judgment audit — BLOCKED
+
+- Original contract retained:100% applicable NC provenance and zero anchor contradiction across repository surfaces. Final reported inventory342=164candidate/surface+178further frozen; preliminary g0_nc354 not used as final. Candidate metadata26entries(15NOT_EXTRACTED,2searched NOT_DISCLOSED aliases,9NOT_APPLICABLE) not36validated occurrence links. Exact exhaustive semantic denominators NOT TESTED, not zero; actual3capex/3guidance provenance misses establish incomplete coverage.
+- Fresh adversarial production auditor probes accept untagged “annual report provides no major-customer figures”, “concentration data unavailable”, omission/deposit variants and maintenance/growth capex wording; template control rejected. Ujjivan Management evidence_gaps no transaction found/NOT_DISCLOSED is contradicted by FY25PDF327–328Note18(30)UFSL amalgamation/effective30Apr2024; completed event does not by itself contradict pending-only wording. Generic source-search coverage issue, no G3reopening.
+- Primary pages independently reviewed: Sun303no single customer>10%; Tanla368two customers>10%/aggregate>86%FY26,3/89%FY25 on STANDALONE₹744.3358cr basis versusconsolidated₹4417.7064cr; candidate scope/period excerpts inadequate. DP171three majorcustomers₹509.12revenue(~55.05%)/₹414.17receivables(~56.91%). Ujjivan299top20depositors₹6456/17.16%ofdeposits, separateborrower credit denominator. NIM3078.67/9.06 versushighlights8.8/9.1preserved; reason not proven. G4safeguards intact, no rescoring/reopening.
+- Python55pass. FocusedUI/challenge31pass/2fail:onlySP-09/DP-01 actualPASS versusfrozenFAIL;5controlsPASS. Full303/5 app run not rerun,3legacyask-v2 failures reported separately. Real loaders:served372NCmatches(question219/story59/panel82/explorer12);candidate-root340matches(question206/story47/panel75/explorer12), with134Story/Panel/Explorer. These censuses are not exhaustive semantic certifications. Snapshot after correcting temporary invalidDPslug;no falseDPcontrol failure counted.
+- Report preview/M63_G5_INDEPENDENT_JUDGMENT_AUDIT.md; evidence /private/tmp/m63-g5-audit.3387protected/code/baseline/candidate hashes unchanged;91approvals25/22/21/23;backup5/5SHA256+bytecomparisons. Only report/BACKLOG/SESSION_LOG written. Baseline/cases/approved artifacts/G4verdict/ATLAS/fact_pack_v2 untouched;no holdout access/code repair/generation/G6-G7implementation/API/promotion/deployment/destructiveGit.
+- Governance: G5implementation useful but candidate scoped pass not earned; repository contract remains open, freeze not exemption. CTO must explicitly resolve protected-answer review/projection and dependency scheduling without changing100%/zero. G4four-company scoped verification retained, G3generalisation BLOCKED. Stop after audit.
+
+## 2026-10-13 — M63/G5 Bounded Repair: Absence Integrity & Provenance Coverage — READY FOR INDEPENDENT G5 REASSESSMENT — FULL CONTRACT OPEN (not self-certified) | $0
+- Reports: preview/M63_G5_BOUNDED_REPAIR_REPORT.md, preview/M63_G5_FULL_SCOPE_ABSENCE_INVENTORY.md/.json (tools/g5_absence_inventory.py, read-only), preview/M63_G5_G7_APPROVAL_SEQUENCING_PROPOSAL.md (CTO decisions D1–D6, nothing executed).
+- Fixed in shared code (pipelines/g4_investor_answers.py): transaction recognition (amalgamation/scheme/merger/effective date) with completed v pending; structural claim classifier; claim-specific, topic-bound provenance and contradicted/unsupported rejection; capex/guidance/transaction entries kept across budget rebuilds; concentration facts with entity/FY/numerator/denominator. UI: build-panel.ts 'Customer concentration is not known' replaced by a record-level wording (red test first).
+- Verification: tests/intelligence/test_g5_bounded_repair.py 62 pass (old auditor flagged nothing on the adversarial paraphrases/capex candidates); G5 55, G4.1 76 (+2 skips), G4 14, G1/G3 97, G2 50+43, mgmt-quality 5; app vitest 304 pass, 5 fail (3 ask-v2 pre-existing + SP-09/DP-01 deliberate baseline moves); candidate G0 13/25, controls 5/5. Four older G5 assertions updated to the new wording of the same disclosures.
+- Inventory: 16 candidates 28/28 state-linked, 0 contradicted; frozen 91 answers 75 applicable claims without state; candidate/served Story-Panel-Explorer 160/176 and 181/198 UNRESOLVED (no anchor family). Scopes overlap; not added.
+- Preservation: registry 4f6a71f2…/91, four answer hashes, fact_pack_v2 889581c7…, no companies/ or governance/ file modified except BACKLOG/SESSION_LOG; temp vitest harnesses removed; holdout untouched; no promotion; no Git operation; API $0. Stopped after mission.
+
+## 2026-10-13 — M63/G5 Full-Scope Provenance Preparation & Replacement Bundle — G5 FULL-SCOPE PREPARATION BLOCKED — SPECIFIC EVIDENCE OR GOVERNANCE DECISIONS REQUIRED (not self-certified) | $0
+- Reports: preview/M63_G5_CLEAN_PROVENANCE_INVENTORY.md, M63_G5_REPLACEMENT_BUNDLE_REPORT.md, M63_G5_REMAINING_REVIEW_QUEUE.md; manifest preview/m63_g5_bundle_manifest.json; bundle copy preview/m63_g5_bundle/; scratch /private/tmp/claude-501/g5b (reproduce: tools/g5_prepare_bundle.sh).
+- Built: pipelines/g5_provenance.py (classifier, 24 evidence profiles, resolve/judge/annotate/audit); tools g5_clean_inventory, g5_build_bundle, g5_build_sandbox, g5_build_sidecar, g5_review_queue, g5_write_reports, g5_protected_snapshot; app src/lib/provenance/absence.ts wired into the Story, Panel and Explorer loaders (ledger only present in the sandbox root). UI wording fixes: Panel book value/R&D/ROCE for banks, lens descriptions; composer: Sun management no longer says 'regulatory validation' (customer-text rule would have hidden the answer); bundle builder normalises integral floats (Python/JS digest parity).
+- Result: 91/91 slots prepared and served in sandbox; 0 contradicted; unresolved 49 (answers) / 45 (projections) = 35 distinct reviews. No activation rehearsal (bundle not ready).
+- Tests: provenance 48, bounded repair 62, G5 55, G4.1 76 (+2 skips), G4 14, G1/G3 97, G2 93, mgmt-quality 5; app vitest 308 pass / 5 fail (3 ask-v2 + SP-09/DP-01 improvements); candidate G0 13/25, controls 5/5, baseline untouched.
+- Preservation: protected snapshot (3,343 files + registry, hybrid files, fact_pack_v2, challenge files) identical before/after; no holdout, no API, no Git operation. Stopped after mission.
+
+
+## 2026-10-13 — M63/G5 independent evidence adjudication — INCOMPLETE, SPECIFIC SOURCE REVIEWS REMAIN
+
+- Read queue/inventory/bundle/manifest/execution contract and relevant governance; original Sun/Tanla/DP FY26 and Ujjivan FY25 PDF passages/tables/footnotes, plus source-dependent Sun FY25 pp10/11/35 and DP FY25 p8. Existing machine excerpts used only as leads. All35 exact IDs/claims/mapped occurrences retained in ledger; priority order unchanged.5/35 resolved,30 UNRESOLVED; no guessed NOT_DISCLOSED or human sign-off. Two Nidlegy original-date reviews share one task;29 remaining groups after this deduplication, atomic count still unknown because compound groups need splitting.
+- Clear positives: Sun BVPS p35₹348.3/₹301.0, null named per-share trend; standalone ROCE p2207.89%/12.88%, null trend, cannot substitute for consolidated EBIT-based ratio. Ujjivan FY25p10 containsFY23 metrics and originalFY23PDF exists; merger-p327dates do not establish a causal missing-ledger explanation. Tanla p436 consolidated geography is disclosed but margins remain separate. Employee engagement p97/111 differs from customerCSATp155/156 and target satisfaction definition. Nidlegy conflicting validation dates preserved; filing timestamp/approval not invented. CompanyROCE never resolves project-return attribution.
+- Stratified24 machine-supported occurrences (6/company, S5answers and S2projections):3 supported with scope,19 false-positive verification assertions,2 incomplete record bases. Failure counts refer to claimed evidence relationship, not19 proved false underlying absences. SunFY26geography already in4economic engines; DPworking-capital response citesEHS p93; other repeated actor/event/metric mismatch. Source-detection false negatives reported separately. Read-only actual resolve(DP,roce) returnsCONTRADICTED_BY_RECORDS fromFY22value whileFY26isnull, reproducing period-insensitive probe.24profiles inspected structurally, no repairs.
+- Commands: python3 /private/tmp/m63-adjudication-integrity.py; PYTHONDONTWRITEBYTECODE=1 python3 /private/tmp/m63-adjudication-records.py.3486 pre/post hashes unchanged;protected tree no additions/deletions.91proposed answer full digests/content fingerprints match,4projection-ledger/surface/inventory/queue/code hashes match;H881b59bb50786cbdc6597d22bcb83fbf7f4c7c24b29f09539fb73c6045fcc9ed recomputed.91approvals25Sun/22Tanla/21Ujjivan/23DP, registry/four served artifacts and backup5/5checksums+bytecomparisons intact. CurrentH identifies inspected bytes only;latercorrection requiresnewH. No G0 baseline change or unrelated test-suite run.
+- Deliverables: preview/M63_G5_INDEPENDENT_EVIDENCE_ADJUDICATION.md and preview/M63_G5_EVIDENCE_DECISIONS.json; scratch evidence /private/tmp/m63-g5-adjudication. Only deliverables/BACKLOG/SESSION_LOG written. ATLAS unchanged;G3BLOCKED;G4VERIFIED four-company candidates only;G5OPEN;G6/G7/production approval separate. No code/test/source/answer/projection/inventory/registry edits, generator, sealedholdout access, API cost, promotion, deployment or Git cleanup. Stop after this independent assessment.

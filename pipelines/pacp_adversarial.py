@@ -1258,26 +1258,49 @@ def check_mq_no_rating_leakage(answer: dict, **_kw) -> CheckResult:
     return "PASS", "no management evaluative judgment in investor-facing fields"
 
 
+_MQ_BEHAVIORAL_DESCRIPTORS = (
+    "FOLLOW_THROUGH_LARGELY_UNVERIFIED",
+    "PARTIAL_DELIVERY_WITH_MATERIAL_OUTCOME_GAPS",
+    "MULTIPLE_DELIVERIES_WITH_ECONOMIC_ATTRIBUTION_GAPS",
+    "HIGH_DELIVERY_COUNT_WITH_CAPITAL_OUTCOMES_UNATTRIBUTED",
+)
+
+
 @_mq_only
 def check_mq_behavioral_descriptor_present(answer: dict, **_kw) -> CheckResult:
-    """MQ-R2 — simple_answer must contain a behavioral delivery descriptor (M37.1 invariant)."""
+    """MQ-R2 — the answer must carry a valid behavioral delivery classification (M37.1 invariant; revised M54.12).
+
+    The classification lives in the technical metadata field ``behavioral_descriptor``. Investor-facing prose is
+    never required to contain an internal identifier. For answers approved before M54.12 the identifier appears in
+    ``simple_answer`` instead; that original format is still accepted.
+
+      FAIL  no classification anywhere (metadata missing and no identifier in prose)
+      FAIL  metadata present but not one of the known descriptors
+      FAIL  prose and metadata both express a classification and they differ
+      PASS  valid metadata (prose either absent or the same) / legacy prose identifier with no metadata
+    """
     simple = str(answer.get("simple_answer") or "")
-    DESCRIPTORS = [
-        "FOLLOW_THROUGH_LARGELY_UNVERIFIED",
-        "PARTIAL_DELIVERY_WITH_MATERIAL_OUTCOME_GAPS",
-        "MULTIPLE_DELIVERIES_WITH_ECONOMIC_ATTRIBUTION_GAPS",
-        "HIGH_DELIVERY_COUNT_WITH_CAPITAL_OUTCOMES_UNATTRIBUTED",
-    ]
-    has_descriptor = any(d in simple for d in DESCRIPTORS)
-    if not has_descriptor:
-        return "FAIL", (
-            "simple_answer missing behavioral delivery descriptor — "
-            "must contain one of: FOLLOW_THROUGH_LARGELY_UNVERIFIED, "
-            "PARTIAL_DELIVERY_WITH_MATERIAL_OUTCOME_GAPS, "
-            "MULTIPLE_DELIVERIES_WITH_ECONOMIC_ATTRIBUTION_GAPS, "
-            "HIGH_DELIVERY_COUNT_WITH_CAPITAL_OUTCOMES_UNATTRIBUTED (MQ-R2)"
-        )
-    return "PASS", f"behavioral delivery descriptor present in simple_answer"
+    in_prose = [d for d in _MQ_BEHAVIORAL_DESCRIPTORS if d in simple]
+    meta = answer.get("behavioral_descriptor")
+    if meta is not None:
+        if not isinstance(meta, str) or meta not in _MQ_BEHAVIORAL_DESCRIPTORS:
+            return "FAIL", (
+                f"behavioral_descriptor metadata invalid: {meta!r} — must be one of "
+                f"{', '.join(_MQ_BEHAVIORAL_DESCRIPTORS)} (MQ-R2)"
+            )
+        conflicting = [d for d in in_prose if d != meta]
+        if conflicting:
+            return "FAIL", (
+                f"behavioral_descriptor metadata {meta!r} contradicts the classification in simple_answer "
+                f"({', '.join(conflicting)}) (MQ-R2)"
+            )
+        return "PASS", f"valid behavioral_descriptor metadata ({meta})"
+    if in_prose:
+        return "PASS", "behavioral delivery descriptor present in simple_answer (legacy format)"
+    return "FAIL", (
+        "no behavioral delivery classification — the metadata field behavioral_descriptor is missing and "
+        "simple_answer carries no descriptor; must be one of: " + ", ".join(_MQ_BEHAVIORAL_DESCRIPTORS) + " (MQ-R2)"
+    )
 
 
 @_mq_only

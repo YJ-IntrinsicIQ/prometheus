@@ -1506,6 +1506,58 @@ def _apply_derived_fallbacks(preferred_sections: Dict[str, Any]) -> None:
             ),
         )
 
+    # "Cash and bank balances" is the cash-equivalents line PLUS bank balances held outside it. Keep the value, but say what it is,
+    # so no consumer presents it as the statement's own "cash and cash equivalents".
+    cash_entry = balance_sheet["cash_and_equivalents"]
+    if _normalize_label(str(cash_entry.get("source_line_item") or "")) == "cash and bank balances":
+        note = "definition:cash_and_bank_balances - includes bank balances other than cash equivalents; the cash-and-cash-equivalents line itself was not extracted"
+        if note not in (cash_entry.get("warnings") or []):
+            cash_entry["warnings"] = [*(cash_entry.get("warnings") or []), note]
+
+    # total_debt = current + non-current borrowings when the statement only gives the two section lines (never one of them alone).
+    total_debt_entry = balance_sheet["total_debt"]
+    short_debt_entry = balance_sheet["short_term_debt"]
+    long_debt_entry = balance_sheet["long_term_debt"]
+    primary_components = [e for e in (short_debt_entry, long_debt_entry) if e.get("is_primary_statement") and isinstance(e.get("value_crore"), (int, float))]
+    if len(primary_components) == 1 and not total_debt_entry.get("is_primary_statement"):
+        # Only one section line was found: keep it (never a note row) and say the other component is missing, instead of guessing.
+        only = primary_components[0]
+        which = "short_term_debt" if only is short_debt_entry else "long_term_debt"
+        missing = "long_term_debt" if which == "short_term_debt" else "short_term_debt"
+        balance_sheet["total_debt"] = _derived_entry(
+            field_name="total_debt",
+            current_value=float(only["value_crore"]),
+            period=str(only.get("period") or ""),
+            basis=str(only.get("basis") or "unknown"),
+            source_page=only.get("source_page"),
+            source_artifact=str(only.get("source_artifact") or ""),
+            formula=f"{which} only; {missing} not found in the primary statement",
+            inputs_used={which: only.get("value_crore")},
+            comparatives=[],
+            warnings=[f"total_debt is incomplete: {missing} was not found, so this is {which.replace('_', ' ')} only"],
+            derivation_state="PARTIAL_COMPONENT_ONLY",
+        )
+        total_debt_entry = balance_sheet["total_debt"]
+    if (
+        (total_debt_entry.get("value_crore") is None or not total_debt_entry.get("is_primary_statement"))  # a note row never outranks the statement's own components
+        and short_debt_entry.get("is_primary_statement")
+        and long_debt_entry.get("is_primary_statement")
+        and isinstance(short_debt_entry.get("value_crore"), (int, float))
+        and isinstance(long_debt_entry.get("value_crore"), (int, float))
+        and short_debt_entry.get("period") == long_debt_entry.get("period")
+    ):
+        balance_sheet["total_debt"] = _derived_entry(
+            field_name="total_debt",
+            current_value=float(short_debt_entry["value_crore"]) + float(long_debt_entry["value_crore"]),
+            period=str(short_debt_entry.get("period") or ""),
+            basis=str(short_debt_entry.get("basis") or long_debt_entry.get("basis") or "unknown"),
+            source_page=short_debt_entry.get("source_page") or long_debt_entry.get("source_page"),
+            source_artifact=str(short_debt_entry.get("source_artifact") or long_debt_entry.get("source_artifact") or ""),
+            formula="short_term_debt + long_term_debt",
+            inputs_used={"short_term_debt": short_debt_entry.get("value_crore"), "long_term_debt": long_debt_entry.get("value_crore")},
+            comparatives=_build_derived_comparatives(left_entry=short_debt_entry, right_entry=long_debt_entry, operator="+"),
+        )
+
     if (
         fcf_entry.get("value_crore") is None
         and isinstance(cfo_entry.get("value_crore"), (int, float))

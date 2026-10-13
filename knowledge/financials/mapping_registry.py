@@ -32,6 +32,7 @@ CANONICAL_SECTION_FIELDS: Dict[str, List[str]] = {
         "short_term_debt",
         "long_term_debt",
         "cash_and_equivalents",
+        "other_bank_balances",
         "investments",
         "inventories",
         "receivables",
@@ -49,6 +50,7 @@ CANONICAL_SECTION_FIELDS: Dict[str, List[str]] = {
         "capex",
         "fcf",
         "dividends_paid",
+        "buyback_paid",
         "interest_paid",
         "tax_paid",
     ],
@@ -284,7 +286,11 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
         },
         "cash_and_equivalents": {
             "table_types": ["balance_sheet", "cash_flow"],
-            "aliases": ["cash and cash equivalents", "cash equivalents", "cash and bank balances"],
+            "aliases": ["cash and cash equivalents", "cash and cash equivalent", "cash equivalents", "cash and bank balances"],
+        },
+        "other_bank_balances": {
+            "table_types": ["balance_sheet"],
+            "aliases": ["bank balances other than cash and cash equivalents", "bank balances other than above", "bank balances other than", "other bank balances"],
         },
         "investments": {
             "table_types": ["balance_sheet", "cash_flow"],
@@ -414,6 +420,10 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
         "fcf": {
             "table_types": ["cash_flow"],
             "aliases": ["free cash flow", "fcf"],
+        },
+        "buyback_paid": {
+            "table_types": ["cash_flow"],
+            "aliases": ["shares bought back", "buy back of shares", "buyback of shares", "buyback of equity shares", "payment for buy back", "repurchase of shares", "purchase of own shares"],
         },
         "dividends_paid": {
             "table_types": ["cash_flow", "dividend", "corporate_actions"],

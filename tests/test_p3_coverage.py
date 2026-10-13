@@ -13,6 +13,10 @@ All tests use generic fixtures or live generated output (no company-specific rul
 """
 from __future__ import annotations
 
+import hashlib
+import os
+import shutil
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -296,8 +300,50 @@ def _live_answers() -> Dict[str, Any]:
     return {a["question_id"]: a for a in result["answer_cards"].get("answers", [])}
 
 
+def _protected_snapshot(repo: Path) -> dict:
+    """{relative path: sha256} of the protected real files, RE-ENUMERATED on every call: every file anywhere under
+    companies/*/company_memory/ask_intrinsiciq/ plus the approval registry (recorded as "<MISSING>" if absent, never skipped)."""
+    snapshot = {str(p.relative_to(repo)): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(repo.glob("companies/*/company_memory/ask_intrinsiciq/**/*")) if p.is_file()}
+    registry = repo / "governance" / "approval_registry.json"
+    snapshot[str(registry.relative_to(repo))] = hashlib.sha256(registry.read_bytes()).hexdigest() if registry.is_file() else "<MISSING>"
+    return snapshot
+
+
+def _assert_protected_unchanged(before: dict, after: dict) -> None:
+    added, removed = sorted(set(after) - set(before)), sorted(set(before) - set(after))
+    modified = sorted(k for k in set(before) & set(after) if before[k] != after[k])
+    assert not (added or removed or modified), f"protected real files changed while the sandbox was active: added={added} removed={removed} modified={modified}"
+
+
+def _sandbox(repo: Path, root: Path):
+    """The ask_intrinsiciq generator writes cwd-relative files under companies/<slug>/company_memory/ask_intrinsiciq/.
+    Run it in a temporary working directory holding real COPIES of every company's company_memory (no symlinks into the repository, so
+    os.replace, write_text, open("w"), shutil and nested creates/deletes are all contained). A tripwire compares a freshly enumerated
+    snapshot of the protected real files before and after and fails on any added, removed or modified path."""
+    before = _protected_snapshot(repo)
+    assert repo not in root.resolve().parents and root.resolve() != repo, "sandbox must live outside the repository"
+    for memory in repo.glob("companies/*/company_memory"):
+        shutil.copytree(memory, root / "companies" / memory.parent.name / "company_memory")
+    for path in root.rglob("*"):  # fail rather than fall back to real files: nothing may resolve into the repository
+        assert repo not in Path(os.path.realpath(path)).parents, f"{path} resolves into the repository"
+    previous = Path.cwd()
+    os.chdir(root)
+    try:
+        yield root
+    finally:
+        os.chdir(previous)
+        _assert_protected_unchanged(before, _protected_snapshot(repo))
+
+
 @pytest.fixture(scope="module")
-def live_answers():
+def ask_intrinsiciq_sandbox(tmp_path_factory):
+    repo = Path(__file__).resolve().parents[1]
+    yield from _sandbox(repo, tmp_path_factory.mktemp("ask_intrinsiciq_sandbox"))
+
+
+@pytest.fixture(scope="module")
+def live_answers(ask_intrinsiciq_sandbox):  # the generator writes files: run it in the sandbox, never against companies/
     return _live_answers()
 
 
@@ -404,3 +450,48 @@ def test_live_break_thesis_no_internal_phrases(live_answers):
 
 def test_live_answer_count_at_least_34(live_answers):
     assert len(live_answers) >= 34, f"Expected ≥34 answers, got {len(live_answers)}"
+
+
+# ── the tripwire itself, driven against disposable fake repositories (never the real one) ──
+def _drive_sandbox(tmp_path, mutate):
+    """Set up the sandbox on a fake repository, apply `mutate(repo, ask_dir)` while it is active, return the teardown failure (or None)."""
+    repo = tmp_path / "repo"
+    ask = repo / "companies/fake/company_memory/ask_intrinsiciq"
+    (ask / "nested/deep").mkdir(parents=True)
+    (ask / "existing.json").write_text("{}")
+    (ask / "nested/deep/n.json").write_text("{}")
+    (repo / "governance").mkdir()
+    (repo / "governance/approval_registry.json").write_text("{}")
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    generator = _sandbox(repo, sandbox)
+    next(generator)
+    mutate(repo, ask)
+    try:
+        next(generator)
+    except StopIteration:
+        return None
+    except AssertionError as exc:
+        return str(exc)
+    raise AssertionError("sandbox generator did not finish")
+
+
+_ASK = "companies/fake/company_memory/ask_intrinsiciq"
+
+
+@pytest.mark.parametrize("name, mutate, expected", [
+    ("new file", lambda repo, ask: (ask / "unauthorized-new.json").write_text("x"), f"added=['{_ASK}/unauthorized-new.json']"),
+    ("new nested file", lambda repo, ask: (ask / "nested/deep/another.json").write_text("x"), f"added=['{_ASK}/nested/deep/another.json']"),
+    ("modified file", lambda repo, ask: (ask / "existing.json").write_text("changed"), f"modified=['{_ASK}/existing.json']"),
+    ("deleted file", lambda repo, ask: (ask / "existing.json").unlink(), f"removed=['{_ASK}/existing.json']"),
+    ("deleted nested file", lambda repo, ask: (ask / "nested/deep/n.json").unlink(), f"removed=['{_ASK}/nested/deep/n.json']"),
+    ("modified registry", lambda repo, ask: (repo / "governance/approval_registry.json").write_text("tampered"), "modified=['governance/approval_registry.json']"),
+    ("deleted registry", lambda repo, ask: (repo / "governance/approval_registry.json").unlink(), "modified=['governance/approval_registry.json']"),
+])
+def test_tripwire_detects_any_change_to_protected_real_files(name, mutate, expected, tmp_path):
+    failure = _drive_sandbox(tmp_path, mutate)
+    assert failure is not None and expected in failure, (name, failure)
+
+
+def test_tripwire_is_silent_when_nothing_changes(tmp_path):
+    assert _drive_sandbox(tmp_path, lambda repo, ask: None) is None

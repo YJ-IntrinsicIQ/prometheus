@@ -454,24 +454,35 @@ def _build_measurable_commitments(
         for iid in chain["linked_item_ids"]:
             item_to_chain_items[iid] = chain_items
 
+    from knowledge.company_memory.management_commitments import classify_commitment  # the ONE commitment classifier (G2); lazy: avoids an import cycle
+
     commitments: List[Dict[str, Any]] = []
     seen_target_keys: set = set()
 
     for item in items:
         item_id = item.get("item_id", "")
         for ev in item.get("events") or []:
-            if ev.get("role") not in ("commitment", "statement"):
+            # Only a COMMITMENT event can be a measurable commitment. A "statement" is management commentary: the numbers in it
+            # (e.g. "went live across all 568 branches", "a 7.0% increase in attrition") are observations, not promises.
+            if ev.get("role") != "commitment":
                 continue
             text = ev.get("statement_text") or ev.get("action_taken") or ""
-            target = _extract_measurable_target(text)
-            if not target:
+            source_period = ev.get("source_period") or ev.get("event_period", "")
+            verdict = classify_commitment({"original_statement": text, "expected_timeframe": ev.get("target_period") or "", "announcement_period": source_period})
+            if ev.get("commitment_class"):  # stamped by the register (same identity): its verdict is used as is, never recomputed
+                verdict = {**verdict, "commitment_class": ev["commitment_class"], "hard": bool(ev.get("hard_commitment"))}
+            if verdict["commitment_class"] not in ("HARD_COMMITMENT", "VERIFIABLE_UNDATED"):
                 continue
-            dedup_key = " ".join(target["target_text"].lower().split())
+            target = _extract_measurable_target(text) or {"target_text": " ".join(text.split())[:80], "target_period": None, "full_statement": text[:250]}
+            if verdict["deadline_year"]:
+                target["target_period"] = f"fy{verdict['deadline_year'] % 100:02d}"  # one deadline interpretation: the canonical one
+            # identity first: two different register commitments with the same target text are two commitments, not one
+            fingerprint = ev.get("event_id") if re.fullmatch(r"[0-9a-f]{20}", str(ev.get("event_id") or "")) else None
+            dedup_key = (fingerprint or "", " ".join(target["target_text"].lower().split()))
             if dedup_key in seen_target_keys:
                 continue
             seen_target_keys.add(dedup_key)
 
-            source_period = ev.get("source_period") or ev.get("event_period", "")
             # Check within the item itself + any linked thesis chain items
             scope = item_to_chain_items.get(item_id, [item])
             if item not in scope:
@@ -488,6 +499,9 @@ def _build_measurable_commitments(
                     "target_period": target.get("target_period"),
                     "source_period": source_period,
                     "delivery_status": delivery,
+                    "commitment_fingerprint": ev.get("event_id") if re.fullmatch(r"[0-9a-f]{20}", str(ev.get("event_id") or "")) else None,  # register identity, when the event is a register commitment
+                    "commitment_class": verdict["commitment_class"],
+                    "hard_commitment": bool(verdict["hard"]),
                 }
             )
 

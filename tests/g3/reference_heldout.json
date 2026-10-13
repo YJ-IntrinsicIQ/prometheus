@@ -1,0 +1,107 @@
+[
+ {
+  "id": "LT-01",
+  "co": "ltts",
+  "fy": "fy26",
+  "cat": "income",
+  "kind": "FIN",
+  "metric": "revenue",
+  "value": 10995.9,
+  "basis": "consolidated",
+  "page": 354,
+  "quote": "Revenue from operations 23 109,959 96,422"
+ },
+ {
+  "id": "LT-02",
+  "co": "ltts",
+  "fy": "fy26",
+  "cat": "income",
+  "kind": "FIN",
+  "metric": "pat",
+  "value": 1279.2,
+  "alt": [
+   1281.1
+  ],
+  "basis": "consolidated",
+  "page": 354,
+  "quote": "Equity shareholders of the Company 12,792 12,667",
+  "note": "profit attributable to equity holders 12,792 mn (profit for the year 12,811 mn)"
+ },
+ {
+  "id": "LT-03",
+  "co": "ltts",
+  "fy": "fy26",
+  "cat": "income",
+  "kind": "FIN",
+  "metric": "eps_basic",
+  "value": 120.71,
+  "alt": [
+   115.89
+  ],
+  "basis": "consolidated",
+  "page": 354,
+  "quote": "Basic (I) 115.89 112.75",
+  "note": "continuing 115.89 / continuing+discontinued 120.71"
+ },
+ {
+  "id": "LT-04",
+  "co": "ltts",
+  "fy": "fy26",
+  "cat": "cashflow",
+  "kind": "FIN",
+  "metric": "cfo",
+  "value": 1455.1,
+  "basis": "consolidated",
+  "page": 355,
+  "quote": "Net cash (used in)/from operating activities 14,551 14,811"
+ },
+ {
+  "id": "LT-05",
+  "co": "ltts",
+  "fy": "fy26",
+  "cat": "capital_allocation",
+  "kind": "FIN",
+  "metric": "capex",
+  "value": 185.1,
+  "basis": "consolidated",
+  "page": 355,
+  "quote": "Purchase of property, plant and equipment and intangibles (1,851) (1,116)"
+ },
+ {
+  "id": "LT-06",
+  "co": "ltts",
+  "fy": "fy26",
+  "cat": "capital",
+  "kind": "FIN",
+  "metric": "cash_and_equivalents",
+  "value": 1649.7,
+  "basis": "consolidated",
+  "page": 353,
+  "quote": "Cash and cash equivalent 12 16,497 13,831"
+ },
+ {
+  "id": "LT-07",
+  "co": "ltts",
+  "fy": "fy26",
+  "cat": "capital",
+  "kind": "FIN",
+  "metric": "other_bank_balances",
+  "value": 0.8,
+  "basis": "consolidated",
+  "page": 353,
+  "quote": "Other bank balances 13 8 1,827"
+ },
+ {
+  "id": "LT-08",
+  "co": "ltts",
+  "fy": "fy26",
+  "cat": "income",
+  "kind": "FIN",
+  "metric": "revenue",
+  "value": 9207.1,
+  "basis": "standalone",
+  "page": 280,
+  "quote": "Revenue from operations 23 92,071 85,051",
+  "note": "the same filing also prints standalone statements; a registry with both bases must keep them apart"
+ }
+]

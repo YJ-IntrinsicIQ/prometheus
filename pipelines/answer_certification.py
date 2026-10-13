@@ -228,6 +228,8 @@ def _is_approved(company: str, question: str, fingerprint: str) -> tuple[bool, s
         return False, "approval is PENDING_INDEPENDENT_REVIEW — machine-generated, requires human review"
     if status == "PENDING_MIGRATION_REVIEW":
         return False, "approval is PENDING_MIGRATION_REVIEW — content edited after original approval, requires independent re-review"
+    if status == "REVOKED":
+        return False, "approval is REVOKED — hard-blocked (registry taxonomy)"
     return True, f"approved by {record.get('approved_by', 'unknown')} at {record.get('approved_at', 'unknown')}"
 
 
@@ -818,6 +820,43 @@ def mode_approve(batch_arg: str | None, note: str | None) -> None:
 # ── Mode: Test-Trust ──────────────────────────────────────────────────────────
 
 def mode_test_trust() -> None:
+    """Run the trust fixture suite against an ISOLATED copy of the approval registry.
+
+    The fixtures temporarily inject approval records and save the registry; run directly they
+    rewrote governance/approval_registry.json (found in ENG-MISSION52.2b). The suite now always
+    operates on a temp copy, and aborts non-zero if the real registry's bytes ever change.
+    """
+    import hashlib
+    import shutil
+    import tempfile
+
+    global APPROVAL_REGISTRY_PATH
+    real = APPROVAL_REGISTRY_PATH
+    before = hashlib.sha256(real.read_bytes()).hexdigest() if real.exists() else None
+    iso = Path(tempfile.mkdtemp(prefix="pacp_trust_")) / "approval_registry.json"
+    if real.exists():
+        shutil.copy2(real, iso)
+    try:
+        import pipelines.pacp_adversarial as _pa  # noqa: PLC0415
+    except ImportError:
+        _pa = None
+    pa_real = getattr(_pa, "_APPROVAL_REGISTRY_PATH", None)
+    APPROVAL_REGISTRY_PATH = iso
+    if _pa is not None:
+        _pa._APPROVAL_REGISTRY_PATH = iso
+    try:
+        _mode_test_trust_isolated()
+    finally:
+        APPROVAL_REGISTRY_PATH = real
+        if _pa is not None:
+            _pa._APPROVAL_REGISTRY_PATH = pa_real
+        after = hashlib.sha256(real.read_bytes()).hexdigest() if real.exists() else None
+        if after != before:
+            print("[TEST-TRUST] FATAL — the real approval registry changed during the trust run")
+            sys.exit(2)
+
+
+def _mode_test_trust_isolated() -> None:
     """
     Run negative and positive fixture tests:
     - Negative fixtures must trigger their expected_fail check.

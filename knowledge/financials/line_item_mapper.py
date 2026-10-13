@@ -7,7 +7,27 @@ from typing import Dict, List, Optional, Tuple
 from .mapping_registry import CANONICAL_SECTION_FIELDS, FIELD_MAPPINGS, SPECIAL_MULTI_FIELD_ALIASES
 
 
+# A stock (balance-sheet) field must never be read from a row that states an OPENING balance: in a cash-flow statement the
+# "beginning of the year" row sits under the CURRENT-year column but holds the PRIOR year-end balance.
+_OPENING_BALANCE_TOKENS = ("beginning of the", "at the beginning", "opening balance", "balance at the beginning", "at the start of the")
+# Liquidity lines that are not "cash and cash equivalents" (they are separate balance-sheet lines or components/movements).
+_NOT_CASH_EQUIVALENTS_TOKENS = ("bank balances other than", "other bank balances", "earmarked", "comprises", "comprising", "effect of exchange", "net increase", "net decrease", "net decrease increase", "net increase decrease")
+_DEBT_FIELDS = ("total_debt", "short_term_debt", "long_term_debt")
+_DEBT_LABEL_TOKENS = ("borrowing", "debt", "debenture", "loan")
+# A repayment / proceeds / cost / interest line describes a FLOW through the debt account, never the balance.
+# Phrases, not bare words: "Interest bearing borrowings" and "Borrowings at amortised cost" are debt BALANCES; "interest on", "finance cost" etc. are expenses.
+_DEBT_FLOW_TOKENS = ("repayment", "prepayment", "repaid", "proceeds", "interest on", "interest expense", "interest cost", "interest paid", "interest from", "accrued interest",
+                     "finance cost", "borrowing cost", "cost of borrowing", "cost of debt", "utilisation", "utilization", "lease liabilit")  # lease liabilities are not borrowings
+# "Non-current liabilities (i) Borrowings" / "Current liabilities (i) Borrowings": a section-prefixed component, not the total.
+_SECTION_BORROWINGS = re.compile(r"^(?:liabilities )?(non current liabilities|current liabilities)( [ivx]+| [a-z])?(?: financial liabilities)? borrowings$")
+
 _FORBIDDEN_BY_FIELD = {
+    "cash_and_equivalents": (*_NOT_CASH_EQUIVALENTS_TOKENS, "interest on", "interest income", "income on", "interest from"),
+    "other_bank_balances": ("interest on", "interest income", "income on", "interest from"),
+    # G3: a dividend RECEIVED is income and an UNCLAIMED/payable dividend is a liability - neither is the dividend the company paid or declared
+    "dividend": ("received", "income", "unclaimed", "unpaid", "payable", "distribution tax"),
+    "dividends_paid": ("received", "income", "unclaimed", "unpaid", "payable"),
+    "buyback_paid": ("treasury", "esop", "employee", "trust", "dividend"),    # shares an ESOP trust buys are not a buyback
     "ebit": (
         "surplus",
         "opening balance",
@@ -476,6 +496,16 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
     if forbidden and _contains_any(normalized_label, forbidden):
         return False
 
+    if canonical_section == "balance_sheet" and _contains_any(normalized_label, _OPENING_BALANCE_TOKENS):
+        return False
+
+    if canonical_field in _DEBT_FIELDS and (
+        not _contains_any(normalized_label, _DEBT_LABEL_TOKENS)  # e.g. "Total non-current assets" is not debt, however its tokens overlap an alias
+        or _contains_any(normalized_label, ("in million", "in crore", "in lakhs", "as at march"))  # a table title, not a line item
+        or _contains_any(normalized_label, _DEBT_FLOW_TOKENS)
+    ):
+        return False
+
     if canonical_field == "total_assets":
         if "total assets" not in normalized_label and "total equity and liabilities" not in normalized_label:
             return False
@@ -526,6 +556,9 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
 
     if canonical_section == "profit_and_loss" and canonical_field in {"eps_basic", "eps_diluted"}:
         if _contains_any(normalized_label, _SHARE_DENOMINATOR_LABEL_TOKENS):
+            return False
+        # G3: the numerator row of the EPS note ("Basic EPS Profit after tax from Continuing Operations 12,281" - INR million) is not a per-share figure
+        if _contains_any(normalized_label, ("profit after tax", "profit for the year", "net profit", "attributable to", "profit from continuing", "profit from discontinued")) and not _contains_any(normalized_label, ("per share", "per equity share", "earnings per")):
             return False
 
     if canonical_section == "profit_and_loss" and canonical_field == "total_income":
@@ -909,6 +942,21 @@ def map_line_item(*, table_type: str, line_item_raw: str) -> List[MappingMatch]:
                 reason="combined_basic_diluted_share_denominator",
             ),
         ]
+
+    # G3: per-share rows whose label is only the variant (+ currency) - "1. Basic (INR)", "Diluted (in `)" - or a combined "Earnings per equity share Basic and
+    # diluted (in INR)" row. Without these the EPS of two of the four companies (and the combined-row ambiguity drop) never reached the registry.
+    if table_type in {"profit_and_loss", "eps"}:
+        bare = re.match(r"^(?:\d+\s+)?(basic|diluted)(?:\s+(?:in|inr|rs|rupees))*$", normalized_label)
+        combined = re.search(r"\bbasic and diluted\b", normalized_label) and re.search(r"earnings per|\beps\b|per equity share|per share", normalized_label)
+        if combined and not _contains_any(normalized_label, _SHARE_DENOMINATOR_LABEL_TOKENS) and "weighted average" not in normalized_label and "number of" not in normalized_label:
+            return [MappingMatch(canonical_section="profit_and_loss", canonical_field=f, score=95, confidence="high", reason="combined_basic_diluted_eps_label") for f in ("eps_basic", "eps_diluted")]
+        if bare:
+            return [MappingMatch(canonical_section="profit_and_loss", canonical_field=f"eps_{bare.group(1)}", score=90, confidence="high", reason="bare_eps_variant_label")]
+
+    section_borrowings = _SECTION_BORROWINGS.match(normalized_label)
+    if section_borrowings and table_type == "balance_sheet":
+        component = "long_term_debt" if section_borrowings.group(1).startswith("non") else "short_term_debt"
+        return [MappingMatch(canonical_section="balance_sheet", canonical_field=component, score=100, confidence="high", reason="section_prefixed_borrowings")]
 
     special_fields = SPECIAL_MULTI_FIELD_ALIASES.get(normalized_label)
     if special_fields:

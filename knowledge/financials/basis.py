@@ -129,8 +129,8 @@ def choose_preferred_basis(basis_views: Dict[str, Dict[str, Dict[str, Dict[str, 
             explicit_bases,
             key=lambda basis: (
                 summary[basis]["critical_count"],
-                summary[basis]["field_count"],
                 1 if basis == "consolidated" else 0,
+                summary[basis]["field_count"],
             ),
         )
         confidence = "high" if summary[preferred_explicit]["critical_count"] >= 4 else "medium"

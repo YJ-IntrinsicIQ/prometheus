@@ -513,6 +513,27 @@ _LEDGER_CRORE_FIELDS = (
 )
 
 
+_RE_AMOUNT_FOR_SHARES = re.compile(r"^(?P<amt>.*?)\s+for\s+(?P<n>[\d,]+)\s+(?:equity\s+)?shares\b", re.IGNORECASE)
+_BUYBACK_CATEGORIES = {"buyback", "share_buyback", "buy_back"}
+_FACE_VALUE_CEILING_PER_SHARE = 10.0  # INR: a buyback pays at least market price; at or below this the figure is the shares' nominal (share-capital) value
+
+
+def _is_face_value_statement(item: Dict[str, Any]) -> bool:
+    """True when a buyback 'INR X for N shares' string implies a per-share figure at nominal-value scale.
+
+    Such a figure (e.g. INR 20.00 lakhs for 20,00,000 shares = INR 1/share) is the share-capital effect of the buyback,
+    not the consideration paid, and must not be reported as the buyback amount.
+    """
+    category = str(item.get("allocation_category") or item.get("category") or "").lower().replace(" ", "_")
+    raw = item.get("amount")
+    if category not in _BUYBACK_CATEGORIES or not isinstance(raw, str):
+        return False
+    m = _RE_AMOUNT_FOR_SHARES.match(raw.strip())
+    amount_crore = _parse_amount_to_crore(m.group("amt")) if m else None
+    shares = float(m.group("n").replace(",", "")) if m else 0.0
+    return bool(amount_crore and shares and amount_crore * 1e7 / shares <= _FACE_VALUE_CEILING_PER_SHARE)
+
+
 def _candidate_amount(item: Dict[str, Any], ledger_entry: Dict[str, Any]) -> Optional[float]:
     """Return confirmed crore amount using deterministic unit authority.
 
@@ -533,6 +554,8 @@ def _candidate_amount(item: Dict[str, Any], ledger_entry: Dict[str, Any]) -> Opt
     # or string from PCIM items (must parse with unit authority).
     amount_raw = item.get("amount")
     if amount_raw not in (None, "", [], {}):
+        if _is_face_value_statement(item):
+            return None  # nominal value of the shares, not the consideration; do not fall through to a ledger estimate
         if isinstance(amount_raw, (int, float)):
             v = float(amount_raw)
             return abs(v) if v != 0 else None
@@ -552,6 +575,10 @@ def _candidate_amount(item: Dict[str, Any], ledger_entry: Dict[str, Any]) -> Opt
     category = str(item.get("allocation_category") or item.get("category") or "").lower()
     if category in {"acquisition", "acquisition_integration", "strategic_investment", "joint_venture", "subsidiary_investment"}:
         return None
+    # Same for a buyback: the consideration is the transaction's own figure; a ledger aggregate is not (it has shown a different year's
+    # total against the record). Without its own parseable amount the buyback is "not stated", not an estimate.
+    if category.replace(" ", "_") in _BUYBACK_CATEGORIES:
+        return None
 
     # Ledger numeric crore fields — typed in producer, safe to trust
     for field in _LEDGER_CRORE_FIELDS:
@@ -563,6 +590,8 @@ def _candidate_amount(item: Dict[str, Any], ledger_entry: Dict[str, Any]) -> Opt
 
 def _amount_basis(item: Dict[str, Any], ledger_entry: Dict[str, Any], amount: Optional[float]) -> str:
     if amount is None:
+        if _is_face_value_statement(item):
+            return "face_value_not_consideration"
         # Check if a string amount was present but ambiguous
         amount_raw = item.get("amount")
         if amount_raw not in (None, "", [], {}):
@@ -1466,6 +1495,53 @@ def _load_pcim_allocation_items(company_root: Path) -> List[Tuple[str, str, Dict
     return results
 
 
+def _enrich_buyback_amounts(company_root: Path, candidates: List[Dict[str, Any]]) -> None:
+    """G3: a buyback carries the consideration the filing itself states (financials/corporate_actions.json, value_type_used=consideration_reported, i.e.
+    shares x price reproduces the stated total). A candidate with no amount of its own gets that figure, labelled amount_basis='filing_disclosure' and stamped
+    with the page it came from; nothing is estimated and a ledger aggregate is still never used."""
+    cache: Dict[str, List[Dict[str, Any]]] = {}
+    for candidate in candidates:
+        if candidate.get("allocation_category") not in _BUYBACK_CATEGORIES or candidate.get("amount") is not None:
+            continue
+        year = str(candidate.get("source_year") or "").lower()
+        if year not in cache:
+            try:
+                payload = json.loads((company_root / year / "financials" / "corporate_actions.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                payload = {}
+            cache[year] = [a for a in payload.get("actions", []) if isinstance(a, dict) and a.get("action_type") == "buyback" and a.get("value_type_used") == "consideration_reported" and isinstance(a.get("amount_crore"), (int, float))]
+        if len(cache[year]) == 1:
+            action = cache[year][0]
+            candidate["amount"], candidate["amount_basis"] = abs(float(action["amount_crore"])), "filing_disclosure"
+            candidate["amount_source_page"] = action.get("source_page")
+            candidate.setdefault("source_reference", {})["disclosure_page"] = action.get("source_page")
+
+
+def _transaction_candidates(company_root: Path) -> List[Dict[str, Any]]:
+    """G3: acquisitions the filing announces but has not completed. Read from financials/financial_transaction_disclosures.json (the filing's own status sentence and
+    terms, in the stated currency). The record states SIGNED, NOT COMPLETED; nothing is converted, estimated or inferred as done."""
+    out: List[Dict[str, Any]] = []
+    for year_dir in sorted(p for p in company_root.glob("fy*") if (p / "financials" / "financial_transaction_disclosures.json").exists()):
+        try:
+            payload = json.loads((year_dir / "financials" / "financial_transaction_disclosures.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for index, tx in enumerate(payload.get("transactions", [])):
+            if tx.get("status") not in {"signed_pending_completion", "announced"} or not tx.get("target"):
+                continue
+            item = {
+                "source_item_id": f"txn_{year_dir.name}_{index}", "source_page": tx.get("source_page"), "canonical_category": "acquisition", "value": f"Proposed acquisition of {tx['target']} (signed; closing pending)",
+                "reasoning": f"{tx.get('source_line_item', '')} {tx.get('status_basis', '')}".strip(), "status": "announced", "source_artifact": "financial_transaction_disclosures.json",
+            }
+            candidate = _candidate_from_item(year_dir.name, item, "true_capital_deployment", {})
+            if candidate is None:
+                continue
+            candidate.update({"transaction_status": tx["status"], "transaction_terms": tx.get("terms_as_stated"), "transaction_status_basis": tx.get("status_basis"), "disclosure_page": tx.get("source_page"),
+                              "amount": None, "amount_basis": "foreign_currency_terms_not_converted" if tx.get("terms_as_stated") else "unknown"})
+            out.append(candidate)
+    return out
+
+
 def _build_candidates(company_root: Path) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     artifacts = _load_financial_artifacts(company_root)
     capital_timeline = artifacts.get("capital_allocation_financial_timeline") or {}
@@ -1585,6 +1661,8 @@ def _build_candidates(company_root: Path) -> Tuple[List[Dict[str, Any]], Dict[st
         if candidate is not None:
             candidates.append(candidate)
 
+    _enrich_buyback_amounts(company_root, candidates)
+    candidates.extend(_transaction_candidates(company_root))
     return candidates, artifacts
 
 
@@ -1600,13 +1678,21 @@ def _finalize_allocation_record(
     first_observed_period = deployment_periods[0] if deployment_periods else ""
     latest_period = deployment_periods[-1] if deployment_periods else ""
     latest_candidate = candidates[-1]
-    amount = next((candidate["amount"] for candidate in reversed(candidates) if candidate.get("amount") is not None), None)
+    amount_source = next((candidate for candidate in reversed(candidates) if candidate.get("amount") is not None), None)
+    if group["allocation_category"] == "organic_capex":
+        canonical = next((candidate for candidate in reversed(candidates) if candidate.get("amount") is not None
+                          and candidate.get("source_year") == latest_period and candidate.get("source_artifact") == "financial_fact_registry.json"
+                          and str(candidate.get("source_item_id", "")).startswith("capex_")), None)
+        amount_source = canonical or amount_source  # source authority beats arbitrary source-item alphabetic order
+    amount = amount_source["amount"] if amount_source else None
     # Conflicting dividend totals across source representations are not safely
     # resolvable by recency; retain the event but remove it from weighted totals.
     if group["allocation_category"] in {"dividend", "special_dividend"}:
         dividend_amounts = {round(float(c["amount"]), 6) for c in candidates if c.get("amount") is not None}
         if len(dividend_amounts) > 1:
             amount = None
+    # An amount is the figure of ONE source item, so it is stamped with that item's own period; it is not the total of deployment_periods.
+    amount_period = amount_source["source_year"] if (amount is not None and amount_source) else None
     if amount is not None:
         amount_basis = "semantic_amount_ambiguous" if group["allocation_category"] in {"dividend", "special_dividend"} and len({round(float(c["amount"]), 6) for c in candidates if c.get("amount") is not None}) > 1 else next(
             (candidate["amount_basis"] for candidate in reversed(candidates) if candidate.get("amount") is not None),
@@ -1619,6 +1705,8 @@ def _finalize_allocation_record(
             "unknown",
         )
     current_status = _current_status_from_candidate(latest_candidate)
+    if latest_candidate.get("transaction_status") in {"signed_pending_completion", "announced"}:
+        current_status = "announced"       # signed is not completed: the filing's status sentence outranks keyword matching on its own wording
 
     project_lookup = linked["projects"]
     capacity_lookup = linked["capacity"]
@@ -1628,12 +1716,18 @@ def _finalize_allocation_record(
     record = {
         "allocation_id": allocation_id,
         "allocation_category": group["allocation_category"],
-        "allocation_name": group["allocation_name"],
+        # A canonical annual total must not inherit a component-only/PPE/project name from an older merged source.
+        "allocation_name": "Reported annual capital expenditure" if (amount_source and amount_source.get("source_artifact") == "financial_fact_registry.json"
+                                                                   and str(amount_source.get("source_item_id", "")).startswith("capex_")) else group["allocation_name"],
         "normalized_name": group["normalized_name"],
         "first_observed_period": first_observed_period,
         "deployment_periods": deployment_periods,
         "amount": amount,
+        "amount_period": amount_period,
         "amount_basis": amount_basis,
+        "transaction_status": next((c.get("transaction_status") for c in reversed(candidates) if c.get("transaction_status")), None),
+        "transaction_terms": next((c.get("transaction_terms") for c in reversed(candidates) if c.get("transaction_terms")), None),
+        "transaction_status_basis": next((c.get("transaction_status_basis") for c in reversed(candidates) if c.get("transaction_status_basis")), None),
         "economic_role": latest_candidate.get("economic_role", "ECONOMIC_ROLE_AMBIGUOUS"),
         "deployment_eligibility": latest_candidate.get("deployment_eligibility", "ELIGIBILITY_AMBIGUOUS"),
         "economic_flow_relation": latest_candidate.get("economic_flow_relation", "DISTINCT_FLOW"),

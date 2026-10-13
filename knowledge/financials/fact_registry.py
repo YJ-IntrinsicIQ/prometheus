@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import dataclasses
+import re
+
 import json
 import time
 from pathlib import Path
@@ -26,6 +29,7 @@ ARTIFACT_FILENAMES = (
     "financial_quality_summary.json",
     "corporate_actions.json",
     "shareholding_pattern.json",
+    "financial_headline_metrics.json",
 )
 
 CAPEX_PPE_PATTERNS = (
@@ -549,11 +553,17 @@ def _add_raw_capex_classification_facts(
             facts_by_metric.setdefault("capitalized_product_development", []).append(
                 FinancialFact(metric_id="capitalized_product_development", metric_name=_canonical_metric_name("capitalized_product_development"), value=float(value), unit="INR crore", **base_kwargs)
             )
-        if _contains_pattern(normalized, CAPEX_INTANGIBLE_PATTERNS):
+        # G3: a capex OUTFLOW is a purchase/payment line of the cash-flow statement - never a balance-sheet asset line, a disposal, a gain/loss or a depreciation add-back
+        is_cash_flow_row = (
+            str(row.get("table_type") or row.get("statement_type") or "") == "cash_flow"
+            and bool(re.search(r"\b(?:purchase|purchases|payment|payments|acquisition|acquisitions|additions?|expenditure)\b", normalized))
+            and not re.search(r"\b(?:disposal|sale|sold|proceeds|gain|loss|depreciation|amorti[sz]ation|written|impairment)\b", normalized)
+        )
+        if is_cash_flow_row and _contains_pattern(normalized, CAPEX_INTANGIBLE_PATTERNS):
             facts_by_metric.setdefault("capex_intangible_cash_outflow", []).append(
                 FinancialFact(metric_id="capex_intangible_cash_outflow", metric_name=_canonical_metric_name("capex_intangible_cash_outflow"), value=float(value), unit="INR crore", **base_kwargs)
             )
-        if _contains_pattern(normalized, CAPEX_PPE_PATTERNS):
+        if is_cash_flow_row and _contains_pattern(normalized, CAPEX_PPE_PATTERNS):
             facts_by_metric.setdefault("capex_ppe_cwip_cash_outflow", []).append(
                 FinancialFact(metric_id="capex_ppe_cwip_cash_outflow", metric_name=_canonical_metric_name("capex_ppe_cwip_cash_outflow"), value=float(value), unit="INR crore", **base_kwargs)
             )
@@ -699,12 +709,74 @@ def _derive_fcf_variants(facts_by_metric: Dict[str, List[FinancialFact]], fiscal
     return variants
 
 
+def _add_headline_metric_facts(facts_by_metric: Dict[str, List[FinancialFact]], payload: Dict[str, Any] | None, fiscal_year: str, basis: str) -> None:
+    """G3: management-reported headline figures. They fill a metric only when no statement-derived fact exists for it (a statement value always outranks a highlight)."""
+    for item in (payload or {}).get("metrics", []):
+        metric_id = str(item.get("metric_id") or "")
+        if not metric_id or any(f.value is not None for f in facts_by_metric.get(metric_id, [])):
+            continue
+        facts_by_metric.setdefault(metric_id, []).append(
+            FinancialFact(
+                metric_id=metric_id, metric_name=metric_id.replace("_", " ").title(), fiscal_year=fiscal_year, period=fiscal_year, value=float(item["value"]), unit=str(item.get("unit") or ""),
+                basis=basis, source_statement=str(item.get("source_statement") or "management_highlights"), source_artifact="financial_headline_metrics.json", source_line_item=str(item.get("source_line_item") or ""),
+                source_page=item.get("source_page"), confidence=str(item.get("confidence") or "medium"), availability_status="present_direct", derived=False, formula="", inputs_used=[],
+                warnings=["filing disclosure; preserve its reported definition and source statement" if item.get("source_statement") else "management-reported headline figure; not read from an audited financial statement"], reconciliation_status="unknown", usable_downstream=True,
+                notes=[f"matched {item.get('occurrences', 1)} time(s) in the selected disclosure patterns; this is not an exhaustive absence or consistency proof"],
+            )
+        )
+
+
+def _repair_capex_for_separate_intangibles(facts_by_metric: Dict[str, List[FinancialFact]], fiscal_year: str) -> None:
+    """G3: normalized capex can be just the PPE/CWIP line while the cash-flow statement reports intangible purchases on a separate line (e.g. a FY26 consolidated filing:
+    PPE 10.9 Cr + intangibles 86.8 Cr = 97.7 Cr). FCF then overstated by the intangible spend (563 Cr instead of the 477 Cr the company reports). When both
+    cash-flow components are present and capex equals only the PPE component, capex becomes their sum and an FCF built on the old capex is rebuilt on it."""
+    capex_items = facts_by_metric.get("capex", [])
+    ppe_items, intangible_items = facts_by_metric.get("capex_ppe_cwip_cash_outflow", []), facts_by_metric.get("capex_intangible_cash_outflow", [])
+    cfo_items = facts_by_metric.get("cfo", [])
+    if not (capex_items and ppe_items and intangible_items):
+        return
+    capex, ppe, intangible = _pick_best_fact(capex_items), _pick_best_fact(ppe_items), _pick_best_fact(intangible_items)
+    if None in (capex.value, ppe.value, intangible.value) or abs(capex.value - ppe.value) > 1e-6 or abs(intangible.value) < 1e-6 or ppe.basis != intangible.basis or ppe.source_line_item == intangible.source_line_item:   # one combined line ('PPE and intangibles') matches both component patterns
+        return
+    total = capex.value + intangible.value
+    repaired = dataclasses.replace(
+        capex, value=total, availability_status="present_derived", derived=True, source_line_item=f"derived: {capex.source_line_item[:60]} + {intangible.source_line_item[:60]}",
+        formula="capex = PPE/CWIP purchases + intangible purchases (separate cash-flow lines)", inputs_used=["capex_ppe_cwip_cash_outflow", "capex_intangible_cash_outflow"],
+        warnings=[*capex.warnings, "capex includes intangible purchases reported on a separate cash-flow line"],
+        notes=[*capex.notes, f"PPE/CWIP {ppe.value} + intangibles {intangible.value}; page {ppe.source_page} / {intangible.source_page}"],
+    )
+    facts_by_metric["capex"] = [repaired]
+    if cfo_items:
+        cfo = _pick_best_fact(cfo_items)
+        if cfo.value is not None:
+            old = capex.value
+            for metric in ("fcf",):
+                kept = []
+                for fact in facts_by_metric.get(metric, []):
+                    if fact.value is not None and abs(fact.value - (cfo.value + old if old < 0 else cfo.value - old)) < 0.01:
+                        continue            # built on the PPE-only capex: replaced below
+                    kept.append(fact)
+                rebuilt = dataclasses.replace(
+                    _pick_best_fact(facts_by_metric.get(metric) or cfo_items), metric_id=metric, metric_name=_canonical_metric_name(metric), value=(cfo.value + total) if total < 0 else (cfo.value - total),
+                    availability_status="present_derived", derived=True, source_line_item="derived:fcf", formula="cfo + capex (capex = PPE/CWIP + intangible purchases)",
+                    inputs_used=["cfo", "capex"], basis=cfo.basis, source_page=cfo.source_page, warnings=[], notes=["rebuilt after capex was corrected to include separately reported intangible purchases"],
+                )
+                facts_by_metric[metric] = [*kept, rebuilt] if len(kept) != len(facts_by_metric.get(metric, [])) or not kept else kept
+
+
 def _derive_total_capex_for_fcf(facts_by_metric: Dict[str, List[FinancialFact]], fiscal_year: str) -> FinancialFact | None:
     if facts_by_metric.get("total_capex_for_fcf"):
         best = _pick_best_fact(facts_by_metric["total_capex_for_fcf"])
         if best.availability_status in {"present_direct", "present_derived"}:
             return None
     preferred = facts_by_metric.get("capex", [])
+    # G3: when the cash-flow statement reports PPE/CWIP and intangibles on SEPARATE lines and normalized capex is only the PPE line, the intangible spend was
+    # silently left out of FCF (a FY26 filer: capex 10.9 Cr instead of 97.7 Cr; FCF 563 Cr instead of 477 Cr, which the filing itself states).
+    ppe_items, intangible_items = facts_by_metric.get("capex_ppe_cwip_cash_outflow", []), facts_by_metric.get("capex_intangible_cash_outflow", [])
+    if preferred and ppe_items and intangible_items:
+        capex_best, ppe_best, intangible_best = _pick_best_fact(preferred), _pick_best_fact(ppe_items), _pick_best_fact(intangible_items)
+        if None not in (capex_best.value, ppe_best.value, intangible_best.value) and abs(capex_best.value - ppe_best.value) < 1e-6 and abs(intangible_best.value) > 1e-6 and ppe_best.source_line_item != intangible_best.source_line_item:
+            preferred = []
     if preferred:
         best = _pick_best_fact(preferred)
         if best.value is not None:
@@ -797,41 +869,6 @@ def _derive_total_growth_or_expansion_capex(facts_by_metric: Dict[str, List[Fina
         reconciliation_status="warning",
         usable_downstream=all(item.usable_downstream for item in components),
         notes=["Capital commitments are future obligations, not current-period cash capex."],
-    )
-
-
-def _derive_net_debt(facts_by_metric: Dict[str, List[FinancialFact]], fiscal_year: str) -> FinancialFact | None:
-    debt_items = facts_by_metric.get("total_debt") or facts_by_metric.get("gross_debt") or []
-    cash_items = facts_by_metric.get("cash_and_equivalents", [])
-    if not debt_items or not cash_items:
-        return None
-    debt = _pick_best_fact(debt_items)
-    cash = _pick_best_fact(cash_items)
-    if debt.value is None or cash.value is None:
-        return None
-    confidence = "medium" if debt.usable_downstream and cash.usable_downstream else "unreliable"
-    availability = "present_derived" if confidence != "unreliable" else "unreliable"
-    return FinancialFact(
-        metric_id="net_debt",
-        metric_name=_canonical_metric_name("net_debt"),
-        fiscal_year=fiscal_year,
-        period=fiscal_year,
-        value=debt.value - cash.value,
-        unit="INR crore",
-        basis=debt.basis if debt.basis == cash.basis else "unknown",
-        source_statement="derived_from_financial_truth_registry",
-        source_artifact="financial_truth_registry.json",
-        source_line_item="derived:net_debt",
-        source_page=None,
-        confidence=confidence,
-        availability_status=availability,
-        derived=True,
-        formula="gross debt - cash and equivalents",
-        inputs_used=[debt.metric_id, "cash_and_equivalents"],
-        warnings=[] if confidence != "unreliable" else ["Net debt derived from debt/cash inputs that are not fully reliable downstream."],
-        reconciliation_status="warning" if confidence == "unreliable" else "pass",
-        usable_downstream=confidence != "unreliable",
-        notes=[],
     )
 
 
@@ -980,7 +1017,13 @@ def _parse_ratio_facts(payload: Dict[str, Any], year: str) -> Dict[str, List[Fin
             warnings=[str(w) for w in item.get("warnings", []) if str(w).strip()],
             reconciliation_status="unknown",
             usable_downstream=isinstance(value, (int, float)),
-            notes=[],
+            # what was actually combined: each input's period, basis, source line and definition travel with the fact
+            notes=[
+                f"input {part.get('name')}: {part.get('value')} {part.get('unit', '')}; period {part.get('period')}; basis {part.get('basis')}; line '{part.get('source_line_item')}'"
+                + (f"; definition {part['definition']}" if part.get("definition") else "")
+                for part in item.get("inputs_used", [])
+                if isinstance(part, dict) and part.get("period")
+            ],
         )
         facts.setdefault(metric_id, []).append(fact)
         if metric_id == "shares_outstanding":
@@ -1544,6 +1587,10 @@ def build_financial_fact_registry(
             facts_by_metric.setdefault(metric_id, []).extend(items)
 
     _add_raw_capex_classification_facts(facts_by_metric, artifacts.get("raw_financial_tables.json"), year)
+    _headline = artifacts.get("financial_headline_metrics.json") or {}
+    _add_headline_metric_facts(facts_by_metric, _headline, year, str(_headline.get("basis") or "unknown"))     # basis = the document-level signal only; never a default
+
+    _repair_capex_for_separate_intangibles(facts_by_metric, year)
 
     for derivation in (
         _derive_fcf_if_possible,
@@ -1554,7 +1601,7 @@ def build_financial_fact_registry(
         _derive_cash_conversion_cycle,
         _derive_total_capex_for_fcf,
         _derive_total_growth_or_expansion_capex,
-        _derive_net_debt,
+        # net debt is NOT derived here: knowledge.financials.ratio_calculator.net_debt_measure is its single owner (M63/G2)
     ):
         derived_fact = derivation(facts_by_metric, year)
         if derived_fact is not None:
@@ -1943,6 +1990,20 @@ def build_financial_fact_registry(
         ),
         warnings=registry_warnings,
     )
+    # Preserve explicit alternate PRIMARY statement bases in this same registry; do not replace the preferred headline or mix bases in ratios.
+    normalized = artifacts.get("normalized_fundamentals.json") or {}
+    for basis, sections in normalized.get("basis_views", {}).items():
+        if basis not in {"standalone", "consolidated"}:
+            continue
+        for section_name in ("profit_and_loss", "balance_sheet", "cash_flow"):
+            for metric_id, entry in sections.get(section_name, {}).items():
+                preferred = best_facts.get(metric_id)
+                if not preferred or preferred.basis == basis or not entry.get("is_primary_statement") or entry.get("derived"):
+                    continue
+                fact = _build_fact_from_normalized(metric_id=metric_id, fiscal_year=year, section_name=section_name, entry=entry, reconciliation=None)
+                if fact.value is not None and fact.usable_downstream and fact.basis == basis:
+                    fact.notes.append("Alternate reporting basis; select explicitly, never substitute for the preferred-basis headline.")
+                    registry.basis_variants.append(fact)
     registry_errors = validate_financial_fact_registry_payload(registry.to_dict())
     if registry_errors:
         raise ValueError("; ".join(registry_errors))

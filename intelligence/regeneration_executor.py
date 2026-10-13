@@ -213,18 +213,54 @@ def _compute_contract_fingerprint(
 def _compute_evidence_fingerprint(
     company: str,
     companies_root: Path,
+    registry: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Upstream evidence fingerprint for UNIT_TARGET."""
+    """Upstream evidence fingerprint for UNIT_TARGET under the (effective) dependency contract."""
     from intelligence.regeneration_planner import (
         _load_dependency_registry,
         _upstream_combined_digest,
     )
     from intelligence.evidence_fingerprints import compute_company_fingerprints
 
-    registry = _load_dependency_registry()
+    registry = registry if registry is not None else _load_dependency_registry()
     current = compute_company_fingerprints(company, companies_root)
     current_modules = current.get("modules", {})
     return _upstream_combined_digest(UNIT_TARGET, current_modules, registry)
+
+
+def verify_candidate_freshness(
+    candidate: Dict[str, Any],
+    companies_root: Path,
+    registry: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Official freshness: CURRENT only if the candidate was produced under the SAME effective
+    dependency contract and its evidence fingerprint equals the official recomputation now.
+    Never inspects timestamps. An older artifact is not CURRENT merely because its (incomplete
+    contract) fingerprint could be reproduced."""
+    from intelligence.regeneration_planner import _load_dependency_registry
+    from intelligence.shadow_change_detector import effective_contract_digest, get_effective_contract
+
+    registry = registry if registry is not None else _load_dependency_registry()
+    contract = get_effective_contract(UNIT_TARGET, registry)
+    reasons = []
+    if contract is None:
+        reasons.append("NO_EFFECTIVE_V5_CONTRACT_IN_REGISTRY")
+        contract_digest = None
+    else:
+        contract_digest = effective_contract_digest(contract)
+        if candidate.get("dependency_contract_digest") != contract_digest:
+            reasons.append("CANDIDATE_PRODUCED_UNDER_DIFFERENT_DEPENDENCY_CONTRACT")
+    current_fp = _compute_evidence_fingerprint(candidate.get("company", ""), companies_root, registry)
+    if candidate.get("evidence_fingerprint") != current_fp:
+        reasons.append("EVIDENCE_FINGERPRINT_DIFFERS")
+    return {
+        "freshness": "CURRENT" if not reasons else "DIRTY",
+        "reasons": reasons,
+        "current_evidence_fingerprint": current_fp,
+        "candidate_evidence_fingerprint": candidate.get("evidence_fingerprint"),
+        "effective_contract_digest": contract_digest,
+        "candidate_contract_digest": candidate.get("dependency_contract_digest"),
+    }
 
 
 def compute_execution_id(

@@ -154,6 +154,10 @@ def is_material_commitment_promise(commitment: Dict[str, Any]) -> bool:
     fingerprint = str(commitment.get("commitment_fingerprint") or "").strip()
     if not fingerprint:
         return False
+    # A commitment the register's canonical classifier stamped verifiable/hard is material by definition: the keyword filters below must
+    # not drop it (they dropped Sun's hazardous-waste and carbon-emission hard commitments, so the tracker disagreed with the register).
+    if commitment.get("commitment_class") in ("HARD_COMMITMENT", "VERIFIABLE_UNDATED"):
+        return True
     text = " ".join(
         str(commitment.get(key) or "")
         for key in ("topic", "category", "original_statement", "normalized_commitment")

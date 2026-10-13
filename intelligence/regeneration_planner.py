@@ -39,6 +39,7 @@ from intelligence.shadow_change_detector import (
     _load_dependency_registry,
     _resolve_upstream_modules,
     evaluate_answer_freshness,
+    get_effective_contract,
 )
 
 # ---------------------------------------------------------------------------
@@ -330,6 +331,37 @@ def _compute_unit_plan_id(
     return "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
 
 
+def _planned_ai_calls(unit: str, registry: Optional[Dict[str, Any]] = None) -> int:
+    """AI calls a (re)generation of `unit` would make.
+
+    Order of authority: (1) the registry's versioned generation-contract override
+    (ENG-MISSION52.2c); (2) token telemetry declaring planned_ai_calls == 0 (Contract V5
+    code-level declaration); (3) the historical one-call AI default.
+    """
+    override = get_effective_contract(unit, registry or {})
+    if override is not None:
+        return int(override["ai_call_count"])
+    declared = TOKEN_TELEMETRY.get(unit, {}).get("planned_ai_calls")
+    return declared if isinstance(declared, int) and declared == 0 else 1
+
+
+def _effective_fields(unit: str, registry: Dict[str, Any]) -> Dict[str, Any]:
+    """Effective generation contract reported on every unit plan."""
+    override = get_effective_contract(unit, registry)
+    if override is not None:
+        return {
+            "effective_generation_mode": override["generation_mode"],
+            "ai_regeneration_required": bool(override["ai_regeneration_required"]),
+            "effective_contract_id": override["override_id"],
+        }
+    unit_spec = registry.get("generation_units", {}).get(unit, {})
+    return {
+        "effective_generation_mode": unit_spec.get("type", "AI_PRECOMPUTED"),
+        "ai_regeneration_required": True,
+        "effective_contract_id": "HISTORICAL_M39_M44",
+    }
+
+
 def _upstream_combined_digest(unit: str, current_modules: Dict[str, Any], registry: Dict[str, Any]) -> str:
     upstream = _resolve_upstream_modules(unit, registry)
     parts = []
@@ -377,9 +409,16 @@ def _plan_unit(
     unchanged: List[str] = []
     missing: List[str] = []
 
+    effective = get_effective_contract(unit, registry)
+    optional = set((effective or {}).get("optional_modules", []))
     for mod in upstream:
         if mod not in current_modules:
-            missing.append(mod)
+            if effective is not None and mod in baseline_modules:
+                changed.append(mod)      # an input the last baseline contained has disappeared
+            elif mod in optional:
+                continue                 # absent for this company, as at baseline: a valid fingerprinted state
+            else:
+                missing.append(mod)
             continue
         if mod not in baseline_modules:
             changed.append(mod)
@@ -470,7 +509,7 @@ def _plan_unit(
         }
 
     # Contract V5: management quality synthesis is fully deterministic — 0 AI calls always
-    ai_calls = 0 if unit == "how_good_is_management_synthesis" else 1
+    ai_calls = _planned_ai_calls(unit, registry)
 
     return {
         "generation_unit": unit,
@@ -577,7 +616,7 @@ def plan_regeneration(
                 "generation_unit": unit,
                 "decision": INITIAL_GENERATION_REQUIRED,
                 "plan_unit_id": plan_unit_id,
-                "planned_ai_calls": 1,
+                "planned_ai_calls": _planned_ai_calls(unit, registry),
                 "dirty_dependencies": list(_resolve_upstream_modules(unit, registry)),
                 "changed_modules": [],
                 "unchanged_modules": [],
@@ -593,6 +632,7 @@ def plan_regeneration(
                     "cost_estimate": "COST_ESTIMATE_UNAVAILABLE_FROM_REPOSITORY",
                 },
                 "reason": "no baseline exists; initial generation required",
+                **_effective_fields(unit, registry),
             })
         total_planned = sum(u["planned_ai_calls"] for u in unit_plans)
         company_plan_id = _make_company_plan_id(company_slug, unit_plans)
@@ -629,7 +669,7 @@ def plan_regeneration(
                 result = {
                     **result,
                     "decision": WOULD_REGENERATE,
-                    "planned_ai_calls": 1,
+                    "planned_ai_calls": _planned_ai_calls(unit, registry),
                     "regeneration_reason": result.get("regeneration_reason", []) + extra,
                     "reason": f"regeneration required: {result.get('regeneration_reason', []) + extra}",
                     "token_estimate": result.get("token_estimate") or {
@@ -644,6 +684,7 @@ def plan_regeneration(
             else:
                 result["regeneration_reason"] = list(set(result.get("regeneration_reason", []) + extra))
 
+        result = {**result, **_effective_fields(unit, registry)}
         if result.get("planned_ai_calls", 0) > 0:
             planned_count += 1
             in_flight.add(result["plan_unit_id"])

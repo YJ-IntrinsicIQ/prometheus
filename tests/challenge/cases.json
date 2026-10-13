@@ -1,0 +1,751 @@
+{
+  "_doc": "M63/G0 challenge cases. Generic engine: apps/ask-intrinsiciq/src/lib/challenge/engine.ts. Company data below is fixture only. `baseline` is the status recorded on the unchanged repository (G0); the default test run asserts it, CHALLENGE_STRICT=1 asserts every case PASSES (the real acceptance gate). Source pages are 1-based PDF pages; tools/challenge_source_check.py verifies each quote on its page.",
+  "cases": [
+    {
+      "id": "SP-01",
+      "pri": "P0",
+      "company": "sun-pharma",
+      "class": "RC1",
+      "predicted": "FAIL",
+      "expected": "FY26 cash and equivalents is ₹9,771 cr (FY25 ₹10,269 cr); the FY25 figure is never presented as FY26.",
+      "source": [
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 241,
+          "quote": "97,705\\.1"
+        },
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 241,
+          "quote": "102,687\\.7"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "9,771",
+          "note": "FY26 cash appears"
+        },
+        {
+          "type": "absent_near",
+          "a": "10,269",
+          "b": "FY26",
+          "window": 120,
+          "note": "FY25 cash labelled FY26"
+        }
+      ]
+    },
+    {
+      "id": "SP-02",
+      "pri": "P0",
+      "company": "sun-pharma",
+      "class": "RC3",
+      "predicted": "FAIL",
+      "expected": "FY26 capex ₹3,609 cr is never labelled with a multi-year span (the FY20–FY26 sum is ₹14,232 cr).",
+      "source": [
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 246,
+          "quote": "36,093\\.7"
+        }
+      ],
+      "checks": [
+        {
+          "type": "absent_near",
+          "a": "3,609",
+          "b": "FY20[–-]FY26",
+          "window": 70,
+          "note": "single-year amount under multi-year label"
+        }
+      ]
+    },
+    {
+      "id": "SP-03",
+      "pri": "P0",
+      "company": "sun-pharma",
+      "class": "RC7",
+      "predicted": "FAIL",
+      "expected": "The financial surfaces show the FY25 comparison for operating cash flow (₹14,072 cr, FY26 −11.7%) and owner earnings (₹11,943 cr → ₹8,810 cr).",
+      "source": [
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 246,
+          "quote": "124,191\\.8"
+        },
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 246,
+          "quote": "140,720\\.9"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "14,072|11\\.7%",
+          "note": "OCF prior year or change"
+        },
+        {
+          "type": "present",
+          "pattern": "11,943",
+          "note": "owner earnings prior year"
+        }
+      ]
+    },
+    {
+      "id": "SP-04",
+      "pri": "P0",
+      "company": "sun-pharma",
+      "class": "RC4",
+      "predicted": "FAIL",
+      "expected": "Risk/regulatory surfaces name the US FDA facilities Halol, Mohali and Baska and their status.",
+      "source": [
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 144,
+          "quote": "Halol"
+        },
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 218,
+          "quote": "Import Alert"
+        },
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 218,
+          "quote": "Mohali"
+        },
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 144,
+          "quote": "Baska"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "Halol"
+        },
+        {
+          "type": "present",
+          "pattern": "Mohali"
+        },
+        {
+          "type": "present",
+          "pattern": "Baska"
+        }
+      ]
+    },
+    {
+      "id": "SP-05",
+      "pri": "P0",
+      "company": "sun-pharma",
+      "class": "RC5",
+      "predicted": "FAIL",
+      "expected": "The Organon transaction is stated as signed (27 Apr 2026, US$14.00/share, EV US$11.75 bn) and not completed.",
+      "source": [
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 38,
+          "quote": "14\\.00"
+        },
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 311,
+          "quote": "Organon"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present_near",
+          "a": "Organon",
+          "b": "14\\.00|11\\.75|27 April|April 2026",
+          "window": 400,
+          "note": "price/EV/date stated"
+        },
+        {
+          "type": "present_near",
+          "a": "Organon",
+          "b": "pending|not (yet )?(complete|closed)|subject to|regulatory approvals|yet to",
+          "window": 400,
+          "note": "status stated"
+        }
+      ]
+    },
+    {
+      "id": "SP-06",
+      "pri": "P0",
+      "company": "sun-pharma",
+      "class": "RC6",
+      "predicted": "FAIL",
+      "expected": "The Understand-the-business answers state the FY26 revenue split by geography (India 33.8%, US 30.3%, Emerging 20.1%, RoW 15.8%).",
+      "source": [
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 303,
+          "quote": "116,8\\d\\d"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "India[^\\n]{0,80}33\\.8%|33\\.8%[^\\n]{0,40}India|196,9|19,69",
+          "scope": [
+            "question:what-does-company-do",
+            "question:who-are-the-customers",
+            "question:how-does-it-make-money"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "SP-07",
+      "pri": "P1",
+      "company": "sun-pharma",
+      "class": "RC6",
+      "predicted": "FAIL",
+      "expected": "R&D expense ₹3,554 cr (6.1% of sales) is available on the financial/growth-quality surfaces.",
+      "source": [
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 8,
+          "quote": "35,540"
+        },
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 10,
+          "quote": "6\\.1%"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "3,554",
+          "note": "annual R&D amount"
+        }
+      ]
+    },
+    {
+      "id": "SP-08",
+      "pri": "P0",
+      "company": "sun-pharma",
+      "class": "RC8",
+      "predicted": "FAIL",
+      "expected": "No surface says Sun's revenue split is missing from the records while the geography split is disclosed (p.303).",
+      "source": [
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 303,
+          "quote": "116,8\\d\\d"
+        }
+      ],
+      "checks": [
+        {
+          "type": "absent",
+          "pattern": "revenue splits across|revenue mix[^\\n]{0,60}not in the records|split[^\\n]{0,40}not in the records"
+        }
+      ]
+    },
+    {
+      "id": "SP-09",
+      "pri": "P0",
+      "company": "sun-pharma",
+      "class": "RC8",
+      "predicted": "FAIL",
+      "expected": "No surface claims that only 1 of 13 active risks has a management response / that records are silent on responses (the AR describes a risk-management framework).",
+      "source": [
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 48,
+          "quote": "(?i)risk management framework"
+        }
+      ],
+      "checks": [
+        {
+          "type": "absent",
+          "pattern": "with a recorded management response|has a recorded management response|records are silent"
+        }
+      ]
+    },
+    {
+      "id": "SP-10",
+      "pri": "P0",
+      "company": "sun-pharma",
+      "class": "RC9",
+      "predicted": "FAIL",
+      "expected": "The same fact carries one period label on every surface, and no surface both shows a data point and claims it is missing.",
+      "source": [
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 246,
+          "quote": "36,093\\.7"
+        },
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 303,
+          "quote": "116,8\\d\\d"
+        }
+      ],
+      "checks": [
+        {
+          "type": "label_conflict",
+          "figure": "3,609",
+          "label": "FY\\d\\d(?:[–-]FY\\d\\d)?",
+          "window": 60,
+          "note": "capex period label"
+        },
+        {
+          "type": "not_both",
+          "a": "revenue by geography",
+          "b": "revenue splits across",
+          "note": "geography shown and claimed missing"
+        }
+      ]
+    },
+    {
+      "id": "SP-11",
+      "pri": "P1",
+      "company": "sun-pharma",
+      "companies": [
+        "sun-pharma",
+        "tanla",
+        "ujjivan",
+        "datapatterns"
+      ],
+      "class": "RC9",
+      "predicted": "FAIL",
+      "expected": "Within one company, the count of hard/verifiable/measurable/checkable commitments is the same on every surface (one definition).",
+      "source": [
+        {
+          "kind": "internal",
+          "note": "internal consistency across surfaces; underlying statements are in each company's annual reports"
+        }
+      ],
+      "checks": [
+        {
+          "type": "single_valued",
+          "pattern": "(?<!other )(?<!— )(?<!cluster )\\b(\\d+) (?:hard|verifiable|measurable|checkable) commitments?\\b",
+          "note": "headline commitment count, hard/verifiable/measurable/checkable (partitions excluded)"
+        }
+      ]
+    },
+    {
+      "id": "SP-12",
+      "pri": "P2",
+      "company": "sun-pharma",
+      "class": "RC7",
+      "predicted": "FAIL",
+      "expected": "A multi-year profit growth rate carries the base-year context (FY20 profit was a depressed base).",
+      "source": [
+        {
+          "company": "sun_pharma",
+          "fy": "fy26",
+          "page": 297,
+          "quote": "6,964|3,765"
+        }
+      ],
+      "checks": [
+        {
+          "type": "requires_when",
+          "when": "profit grew about [\\d.]+% a year",
+          "then": "base|depressed|trough|low starting|one-off|exceptional",
+          "window": 300
+        }
+      ]
+    },
+    {
+      "id": "TN-01",
+      "pri": "P0",
+      "company": "tanla",
+      "class": "RC7",
+      "predicted": "FAIL",
+      "expected": "Company-reported FY26 ROCE of 24.2% is available on the financial surfaces.",
+      "source": [
+        {
+          "company": "tanla",
+          "fy": "fy26",
+          "page": 73,
+          "quote": "ROCE\\) stood at 24\\.2%"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "ROCE[^\\n]{0,80}24\\.2|24\\.2%[^\\n]{0,60}(ROCE|capital employed)"
+        }
+      ]
+    },
+    {
+      "id": "TN-02",
+      "pri": "P1",
+      "company": "tanla",
+      "class": "RC3",
+      "predicted": "FAIL",
+      "expected": "The FY26 buyback (2 m shares at ₹875, ₹175 cr) is stated with its amount in capital allocation; no surface shows buybacks as ₹0.",
+      "source": [
+        {
+          "company": "tanla",
+          "fy": "fy26",
+          "page": 73,
+          "quote": "INR 175 Cr"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present_near",
+          "a": "buy-?back",
+          "b": "175|875",
+          "window": 200,
+          "note": "amount stated"
+        },
+        {
+          "type": "absent",
+          "pattern": "Share buybacks[\\s\\S]{0,40}₹0 cr",
+          "note": "buyback shown as zero"
+        }
+      ]
+    },
+    {
+      "id": "TN-03",
+      "pri": "control",
+      "company": "tanla",
+      "class": "control",
+      "predicted": "PASS",
+      "control": true,
+      "expected": "Tanla FY26 operating cash flow stays ₹574 cr (consolidated cash-flow statement) on every surface that shows it.",
+      "source": [
+        {
+          "company": "tanla",
+          "fy": "fy26",
+          "page": 177,
+          "quote": "operating activities\\s*\\n\\s*574"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "CFO ₹574 cr|operating cash flow (was |of )?₹574"
+        },
+        {
+          "type": "absent",
+          "pattern": "FY26 CFO ₹(?!574)[\\d,]+|operating cash flow (was |of )?₹(?!574)[\\d,]+ ?cr[^\\n]{0,20}FY26",
+          "note": "another FY26 CFO value"
+        }
+      ]
+    },
+    {
+      "id": "TN-04",
+      "pri": "P1",
+      "company": "tanla",
+      "class": "RC6",
+      "predicted": "FAIL",
+      "expected": "Tanla's FY26 revenue by geography (India ₹3,249 cr, rest of world ₹1,169 cr; single reportable segment CPaaS) is available.",
+      "source": [
+        {
+          "company": "tanla",
+          "fy": "fy26",
+          "page": 436,
+          "quote": "3,24,850\\.49"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "India[^\\n]{0,80}(73\\.5%|3,249|3,248)|(73\\.5%|3,249|3,248)[^\\n]{0,40}India"
+        }
+      ]
+    },
+    {
+      "id": "UJ-01",
+      "pri": "control",
+      "company": "ujjivan",
+      "class": "control",
+      "predicted": "PASS",
+      "control": true,
+      "expected": "Retail asset centre counts carry their basis (16 for housing, 23 for the whole bank).",
+      "source": [
+        {
+          "company": "ujjivan",
+          "fy": "fy25",
+          "page": 18,
+          "quote": "(?i)retail asset cent"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "16[^\\n]{0,60}housing"
+        },
+        {
+          "type": "present",
+          "pattern": "23[^\\n]{0,60}whole bank"
+        }
+      ]
+    },
+    {
+      "id": "UJ-02",
+      "pri": "P1",
+      "company": "ujjivan",
+      "class": "RC6",
+      "predicted": "FAIL",
+      "expected": "Banking measures appear: FY25 net interest income ₹3,636 cr and NIM 8.8%.",
+      "source": [
+        {
+          "company": "ujjivan",
+          "fy": "fy25",
+          "page": 18,
+          "quote": "3,636"
+        },
+        {
+          "company": "ujjivan",
+          "fy": "fy25",
+          "page": 18,
+          "quote": "8\\.8\\s*%"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "3,636"
+        },
+        {
+          "type": "present",
+          "pattern": "(NIM|net interest margin)[^\\n]{0,40}8\\.8"
+        }
+      ]
+    },
+    {
+      "id": "UJ-03",
+      "pri": "control",
+      "company": "ujjivan",
+      "class": "control",
+      "predicted": "PASS",
+      "control": true,
+      "expected": "Computed industrial working-capital / cash-conversion analytics (receivable or inventory days, cash-conversion ratios) are not applied to the bank.",
+      "source": [
+        {
+          "kind": "internal",
+          "note": "sector logic: a bank has no inventory/receivable cycle; checked on rendered output"
+        }
+      ],
+      "checks": [
+        {
+          "type": "absent",
+          "pattern": "\\d[\\d,.]* ?(receivable|inventory) days|(receivable|inventory) days[^\\n]{0,20}\\d|cash conversion[^\\n]{0,40}\\d+(\\.\\d+)?\\s?(×|x|%)",
+          "note": "computed industrial metric on a bank"
+        }
+      ]
+    },
+    {
+      "id": "UJ-04",
+      "pri": "control",
+      "company": "ujjivan",
+      "class": "control",
+      "predicted": "PASS",
+      "control": true,
+      "expected": "No surface presents FY26 as a filed period for Ujjivan (the latest annual report held is FY25).",
+      "source": [
+        {
+          "kind": "internal",
+          "note": "no data/Processed/ujjivan/fy26 filing exists"
+        }
+      ],
+      "checks": [
+        {
+          "type": "absent",
+          "pattern": "\\bFY26\\b[^\\n]{0,60}(₹[\\d,.]+|\\d[\\d.,]*%)"
+        }
+      ]
+    },
+    {
+      "id": "UJ-05",
+      "pri": "P1",
+      "company": "ujjivan",
+      "class": "RC6",
+      "predicted": "FAIL",
+      "expected": "The bank's reported segments (Treasury, Retail Banking, Corporate/Wholesale, Other) are available on the business/financial surfaces.",
+      "source": [
+        {
+          "company": "ujjivan",
+          "fy": "fy25",
+          "page": 313,
+          "quote": "Retail Banking"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "(Retail Banking|Wholesale Banking|Corporate/ ?Wholesale|Treasury) segment|segment[^\\n]{0,40}(Retail Banking|Wholesale|Treasury)"
+        }
+      ]
+    },
+    {
+      "id": "DP-01",
+      "pri": "P0",
+      "company": "datapatterns",
+      "class": "RC9",
+      "predicted": "FAIL",
+      "expected": "Data Patterns has no subsidiaries and reports standalone only; no surface says the reporting basis is not stated.",
+      "source": [
+        {
+          "company": "datapatterns",
+          "fy": "fy26",
+          "page": 29,
+          "quote": "(?i)no subsidiar|no consolidated"
+        }
+      ],
+      "checks": [
+        {
+          "type": "absent",
+          "pattern": "reporting basis not stated|basis not stated"
+        }
+      ]
+    },
+    {
+      "id": "DP-02",
+      "pri": "P1",
+      "company": "datapatterns",
+      "class": "RC7",
+      "predicted": "FAIL",
+      "expected": "FY26 returns (ROCE 23%, ROE 17%) are available.",
+      "source": [
+        {
+          "company": "datapatterns",
+          "fy": "fy26",
+          "page": 6,
+          "quote": "23% ROCE"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "ROCE[^\\n]{0,80}\\b23(\\.\\d)?%|\\b23(\\.\\d)?%[^\\n]{0,60}ROCE"
+        }
+      ]
+    },
+    {
+      "id": "DP-03",
+      "pri": "P1",
+      "company": "datapatterns",
+      "class": "RC6",
+      "predicted": "FAIL",
+      "expected": "The order book of ₹926 cr at 31 March 2026 is stated in the business answers.",
+      "source": [
+        {
+          "company": "datapatterns",
+          "fy": "fy26",
+          "page": 6,
+          "quote": "926 Cr Order Book"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "\\b926\\b"
+        }
+      ]
+    },
+    {
+      "id": "DP-04",
+      "pri": "control",
+      "company": "datapatterns",
+      "class": "control",
+      "predicted": "PASS",
+      "control": true,
+      "expected": "Dividends actually paid in FY26 (₹44 cr, cash-flow statement) are stated, and the proposed FY26 final dividend (about ₹55.98 cr, an event after the reporting period) is never described as paid in FY26.",
+      "source": [
+        {
+          "company": "datapatterns",
+          "fy": "fy26",
+          "page": 134,
+          "quote": "Dividend paid\\s*\\n\\s*\\(44\\.23\\)"
+        },
+        {
+          "company": "datapatterns",
+          "fy": "fy26",
+          "page": 185,
+          "quote": "55\\.9"
+        }
+      ],
+      "checks": [
+        {
+          "type": "present",
+          "pattern": "[Dd]ividends? (paid )?(were )?₹44 cr|dividends ₹44 cr",
+          "note": "paid dividend ties to filing p.134"
+        },
+        {
+          "type": "absent",
+          "pattern": "(final dividend|dividend)[^\\n]{0,60}(was paid|paid out|paid in FY26)[^\\n]{0,40}(55\\.9|FY26)"
+        }
+      ]
+    }
+  ],
+  "observations": [
+    {
+      "id": "OB-01",
+      "pri": "P2",
+      "company": "tanla",
+      "class": "RC2",
+      "predicted": "FAIL",
+      "expected": "A figure labelled 'cash and equivalents' equals the filing's cash-and-cash-equivalents line (₹748 cr FY26), not cash plus other bank balances (₹1,064 cr).",
+      "source": [
+        {
+          "company": "tanla",
+          "fy": "fy26",
+          "page": 383,
+          "quote": "74,801\\.21"
+        },
+        {
+          "company": "tanla",
+          "fy": "fy26",
+          "page": 383,
+          "quote": "31,561\\.84"
+        }
+      ],
+      "checks": [
+        {
+          "type": "absent",
+          "pattern": "cash and equivalents ₹1,064",
+          "note": "label/definition mismatch"
+        }
+      ]
+    },
+    {
+      "id": "OB-02",
+      "pri": "P3",
+      "company": "ujjivan",
+      "class": "RC9",
+      "predicted": "FAIL",
+      "expected": "Static Panel text does not tell a bank that receivables / working-capital records are checkable.",
+      "source": [
+        {
+          "kind": "internal",
+          "note": "specialists.ts proposed-question text is company-agnostic; the bank has no receivable cycle"
+        }
+      ],
+      "checks": [
+        {
+          "type": "absent",
+          "pattern": "Cash conversion, receivables|working-capital records"
+        }
+      ]
+    }
+  ]
+}

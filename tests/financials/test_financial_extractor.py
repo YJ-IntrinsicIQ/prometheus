@@ -1646,7 +1646,7 @@ def test_period_labeled_candidate_preferred_over_unlabeled(tmp_path):
     assert revenue.values[0].period == "March 31, 2023"
 
 
-def test_standalone_candidate_not_used_when_consolidated_present(tmp_path):
+def test_both_bases_retained_and_consolidated_remains_first(tmp_path):
     """When both standalone and consolidated P&Ls are discovered, consolidated values are used."""
     chunk_path = tmp_path / "clean_chunks.json"
     discovery_path = tmp_path / "financial_discovery.json"
@@ -1689,9 +1689,10 @@ def test_standalone_candidate_not_used_when_consolidated_present(tmp_path):
     )
 
     pl_rows = [r for r in result.tables["profit_and_loss"] if r.is_primary_statement]
-    assert all(r.basis == "consolidated" for r in pl_rows), (
-        "All primary P&L rows must be consolidated when consolidated candidate is available"
-    )
+    assert {r.basis for r in pl_rows} == {"consolidated", "standalone"}
+    assert pl_rows[0].basis == "consolidated"  # default preference is unchanged; alternate evidence is not discarded
+    standalone = next(r for r in pl_rows if r.basis == "standalone" and "Revenue from operations" in r.line_item_raw)
+    assert standalone.values[0].value_crore == pytest.approx(10000.0)
     revenue = next(r for r in pl_rows if "Revenue from operations" in r.line_item_raw)
     # Consolidated revenue is 50000, standalone is 10000
     assert revenue.values[0].value_crore == pytest.approx(50000.0)

@@ -35,6 +35,21 @@ _M37_8_DIGEST = "sha256:830679d1b44356ac2b29e9001d9f2408830ea4da260d9b0343242d43
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
+import json as _json_h
+from pathlib import Path as _Path_h
+
+import pytest as _pytest_h
+
+
+@_pytest_h.fixture(autouse=True)
+def _historical_dependency_contract_v3(monkeypatch):
+    """The M49-M51 executions and their evidence fingerprints were produced under dependency
+    contract v3. Since ENG-MISSION52.2c the live registry is v4 (complete V5 coverage), so these
+    historical assertions evaluate against the preserved v3 registry. The invariants are unchanged."""
+    v3 = _json_h.loads((_Path_h(__file__).resolve().parents[2] / "governance" / "answer_dependency_registry.v3_pre_m52.json").read_text())
+    monkeypatch.setattr("intelligence.regeneration_planner._load_dependency_registry", lambda: v3)
+
+
 @pytest.fixture(scope="module")
 def fact_pack():
     import sys; sys.path.insert(0, str(REPO))

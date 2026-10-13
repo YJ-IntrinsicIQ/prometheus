@@ -35,6 +35,13 @@ def looks_like_table_row(text: str) -> bool:
     numeric_tokens = re.findall(r"\(?\d[\d,]*(?:\.\d+)?\)?%?", text)
     if len(numeric_tokens) < 2:
         return False
+    if re.search(r"\b(?:basic|diluted)\s*\(in\s+[^)]+\)", text, re.I):
+        return True
+    # G3: a short line "(iv) Other bank balances 13 8 1,827" (label, note reference, two amounts) was dropped because 'bank' is not in the keyword list below.
+    # Two or more amounts, at least one formatted as an amount (comma/decimal/brackets), and a label of two or more words is a statement row.
+    label_words = re.findall(r"[A-Za-z]{3,}", text)
+    if len(label_words) >= 2 and len(text) < 150 and any(("," in tok or tok.startswith("(") or re.fullmatch(r"\d+\.\d{2}", tok)) for tok in numeric_tokens):
+        return True
     return bool(
         re.search(
             r"\b(total|assets?|liabilities|equity|revenue|income|profit|tax|cash|"

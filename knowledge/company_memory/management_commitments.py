@@ -71,31 +71,379 @@ ACCOUNTABILITY_ONTOLOGY = (
 )
 
 
-def classify_accountability_ontology(statement: str, *, commitment_eligible: bool = False) -> str:
+def _legacy():
+    """The frozen M50.1 module; imported lazily because its package __init__ is heavy. Its regexes are reused, never edited."""
+    from intelligence.management_quality import fact_pack_v2 as legacy
+
+    return legacy
+
+
+# ── Canonical commitment classification (M63/G2) ─────────────────────────────────────────────────────────────
+# ONE owner for "what is a hard commitment": the register builder, which already owns commitment identity. The register's accountability tier,
+# the progression tracker's measurable commitments, promise records and Story/Panel rows all delegate here instead of keeping their own regexes.
+# intelligence.management_quality.fact_pack_v2 (the M50.1 predicate) is FROZEN: its digest is part of the V3/V4/V5 contract identities, so it is
+# neither edited nor imported for logic; only its three small regexes are reused (via _legacy) rather than copied.
+#
+# Owner-approved policy: a HARD commitment needs BOTH (1) an objectively verifiable outcome, target or milestone AND (2) an explicit
+# deadline or time boundary - taken from the structured timeframe OR from the management statement itself. A completed event or
+# observed outcome is not a commitment; an undated intention or aspiration is not hard.
+_YEAR_TOKEN = re.compile(
+    r"\bfy\s?(?:20)?\d{2}(?:\s?[-\u2013/]\s?(?:20)?\d{2})?\b|\bh[12]\s?(?:cy|fy)?\s?(?:20)?\d{2}\b|\bq[1-4]\s?(?:cy|fy)?\s?(?:20)?\d{2}\b|\b20\d{2}(?:\s?[-\u2013/]\s?\d{2})?\b",
+    re.IGNORECASE,
+)
+_QUANTIFIED = re.compile(
+    r"(?:\u20b9|\brs\.?|\binr\b|\busd\b|\$)\s?\d[\d,.]*"                                  # currency amount
+    r"|\d[\d,.]*\s?(?:%|per\s?cent\b|crore\b|cr\b|lakhs?\b|million\b|billion\b|bn\b|mn\b|x\b|times\b)"  # number + unit
+    r"|\b\d[\d,]*\s+(?:more|additional|new|further|other)\b"                                     # "9 more"
+    r"|\b\d[\d,]*\s+(?!and\b|or\b|of\b|in\b|to\b|by\b|for\b|the\b|per\b|from\b|with\b)[a-z][a-z-]{2,}",  # counted noun: "2 centers", "35 reduction"
+    re.IGNORECASE,
+)
+_ACTION_NUMBER = re.compile(  # forward action + a non-year number (also covers normalized text whose "%" was stripped: "co process 30 of ...")
+    r"\b(?:co[\s-]?process|achieve|reach|attain|reduce|cut|increase|raise|grow|double|triple|build|establish|open|add|install|train|hire|generate|deliver)\b[^.]{0,80}?\b\d{1,4}\b",
+    re.IGNORECASE,
+)
+_LABEL_NUMBER = re.compile(r"\b(?:tier|scope|phase|level|class|grade|type|stage|series|part|section|version|category|segment|zone)s?\s*[-\u2013]?\s*\d+(?:\s*(?:and|&|,|or|/|to)\s*\d+)*", re.IGNORECASE)
+_DELIVERABLE_VERB = re.compile(r"\b(?:file|submit|launch|commission|obtain|inaugurate|operationali[sz]e)\b", re.IGNORECASE)
+_MILESTONE_VERB = re.compile(r"\b(?:file|submit|launch|commission|complete|acquire|obtain|enter|inaugurate|establish|open|operationali[sz]e)\b", re.IGNORECASE)
+_REGULATORY_FILING = re.compile(r"\b(?:file|submit)\b.{0,120}\b(?:ema|fda|usfda|regulator|authority|agency|sebi|rbi|dcgi|approval)\b", re.IGNORECASE)
+_NAMED_OBJECT = re.compile(r"[\u2122\u00ae]|(?<![.!?]\s)(?<!^)\b[A-Z][a-z]{3,}\b|\b[A-Z]{4,}\b")
+_VAGUE_MODIFIER = re.compile(r"\b(?:more relevant|relevant|better|improved?|enhanced?|stronger|strong|robust|greater|deeper|next level|more)\b(?!\s+than)", re.IGNORECASE)
+_FORWARD_EXPLICIT = re.compile(  # modal / target language: a statement that says what WILL be done
+    r"\b(?:will|shall|plans?\s+to|planned|aims?\s+to|aiming|intends?\s+to|expects?\s+to|targeting|targets?|proposes?\s+to|looking\s+to|seeks?\s+to|commit(?:s|ted)?\s+to)\b"
+    r"|\bto\s+(?:achieve|reach|reduce|increase|launch|file|build|open|establish|expand|co[\s-]?process|deliver|complete|commission|enter|acquire|grow|double|add|install)\b",
+    re.IGNORECASE,
+)
+_OBSERVED_MARKER = re.compile(
+    r"\b(?:has|have|had)\s+(?:\w+\s+){0,2}(?:driven|achieved|delivered|reduced|increased|launched|completed|doubled|grown|saved|automated|implemented|formed|gone)\b"
+    r"|\bwent\s+live\b|\bevidenced\s+by\b|\battributed\s+to\b|\bnearly\s+doubled\b|\bstood\s+at\b|\balready\b|\bis\s+(?:increasing|growing|enhancing|expanding)\b"
+    r"|^\s*(?:evolved|formed|implemented|automated|achieved|completed|launched|commissioned|delivered|reduced|increased|saved|reported|recorded|generated|received|signed|evaluating|positioning)\b"
+    r"|\b(?:automated|saved|achieved|completed|launched|added|opened|processed)\b(?=[^.]{0,100}\d)|\bsaving\s+of\b|\bman-hours\s+saved\b",
+    re.IGNORECASE,
+)
+_ANY_DEADLINE = re.compile(
+    r"\b(?:by|before|until|till|within|during|through|in)\s+(?:the\s+end\s+of\s+)?(?:fy\s?(?:20)?\d{2}(?:\s?[-\u2013/]\s?(?:20)?\d{2})?|20\d{2}(?:\s?[-\u2013/]\s?\d{2})?|cy\s?(?:20)?\d{2})\b"
+    r"|\bfy\s?(?:20)?\d{2}\s?[-\u2013/]\s?(?:20)?\d{2}\b|\bh[12]\s?(?:cy|fy)?\s?(?:20)?\d{2}\b|\bq[1-4]\s?(?:cy|fy)?\s?(?:20)?\d{2}\b"
+    r"|\b(?:within|over|in)\s+the\s+next\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|couple\s+of)\s+(?:years?|months?|quarters?)\b"
+    r"|\bwithin\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:years?|months?|quarters?)\b"
+    r"|\b(?:by|in|during)\s+(?:the\s+)?(?:next|coming|current)\s+(?:fiscal\s+)?(?:year|quarter)\b|\b(?:next|this)\s+(?:fiscal\s+)?year\b",
+    re.IGNORECASE,
+)
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "couple of": 2}
+
+
+def _text_of(item: Dict) -> str:
+    return " ".join(str(item.get("original_statement") or item.get("normalized_commitment") or "").split())
+
+
+def _is_observed_outcome(text: str) -> bool:
+    """A statement that reports something already done or already true is an observation, not a promise ("went live across 568 branches")."""
+    return bool(_OBSERVED_MARKER.search(text)) and not _FORWARD_EXPLICIT.search(text)
+
+
+# ── Temporal orientation (M63/G2.1, B2) ──────────────────────────────────────────────────────────────────────
+# A statement is split into clauses and each clause is read for the event it describes: FORWARD (something management says it will do:
+# modal / intent verb / extractor-style imperative), HISTORICAL (a finite past-tense or perfect verb: "grew", "reached", "has driven") or
+# STATIVE (a present state: "operates 568 branches"). Only FORWARD clauses can carry the promised outcome and the deadline, so
+# "Revenue grew 18% in FY24 and we will open 100 branches by FY27" is promised-by-FY27, never promised-by-FY24, and a purely historical or
+# stative statement is an observation however many numbers and fiscal years it holds. No phrase list of results: the test is verb tense.
+_FORWARD_EXTRA = re.compile(r"\b(?:expected|slated|scheduled|poised|due|set|on\s+track)\s+to\b|\bto\s+be\b|\b(?:is|are|will\s+be)\s+(?:expected|projected|anticipated|estimated|forecast(?:ed)?)\b", re.IGNORECASE)
+_PAST_IRREGULAR = frozenset("grew rose fell went began ran built made took saw got came won held led became brought stood bought sold paid drew kept left gave found told thought".split())
+_NOT_PAST = frozenset("hundred kindred sacred naked limited unlimited united red bred".split())
+_DETERMINER = frozenset("a an the its our their his her this that these those new such any all each every no key major other another same".split())
+_SUBJECT_HEAD = frozenset("we it they company bank group management business board".split())
+_STATIVE_BARE = re.compile(r"^\W*(?:operates|employs|serves|maintains|manages|comprises|includes|owns|holds|stands|has|had|is|are|was|were)\b", re.IGNORECASE)
+_STATIVE_WITH_SUBJECT = re.compile(r"^\W*(?:we|it|they|the\s+(?:company|bank|group|business))\s+(?:operate|employ|serve|maintain|manage|comprise|include|own|hold|stand|have|has|had|are|is|was|were)\b", re.IGNORECASE)
+_FORWARD_BASE_VERB = re.compile(r"^(?:co[\s-]?process|achieve|reach|attain|reduce|cut|increase|raise|grow|double|triple|build|establish|open|add|install|train|hire|generate|deliver|file|submit|launch|commission|complete|acquire|obtain|enter|inaugurate|operationali[sz]e|exceed|meet|maintain|improve|expand|sustain|secure|develop|ensure|provide|continue|evaluate|focus|enable|ramp|deploy|invest|strengthen|drive|leverage|scale|pursue|target|create|offer|introduce|implement|upgrade|enhance|support|accelerate|capture|deepen|diversify|optimi[sz]e|monitor|report|operate|retain|strive|aim|seek|plan|prepare|commence|begin|start|finali[sz]e|conclude|identify|explore|pilot)$", re.IGNORECASE)
+_CLAUSE_BREAK = re.compile(r"[;,]|\b(?:and|while|but|whereas|with)\b", re.IGNORECASE)
+
+
+def _clause_spans(text: str) -> List[Tuple[int, int]]:
+    """Clause boundaries at the top level only - a parenthetical stays inside the clause that hosts it."""
+    breaks, depth, i = [], 0, 0
+    for m in re.finditer(r"[()]|;|(?<!\d),|,(?!\d)|\b(?:and|while|but|whereas|with)\b", text, re.IGNORECASE):
+        ch = m.group(0)
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            breaks.append((m.start(), m.end()))
+    spans, start = [], 0
+    for b0, b1 in breaks:
+        spans.append((start, b0))
+        start = b1
+    spans.append((start, len(text)))
+    return spans
+
+
+def _has_past_verb(clause: str) -> bool:
+    """A FINITE past-tense verb in the clause. A past participle used as a modifier ("specialised products", "targeted ROE", "application based on
+    ...") is not one. A past-tense word counts when (a) it opens the clause (elided subject: "Reached 568 branches"), or (b) it follows a subject and
+    either the subject is first-party ("the company opened ...") or a figure follows it ("Deposits grew 24%"). A clause that opens with an imperative
+    base verb never reads as historical from a later participle."""
+    toks = re.findall(r"[A-Za-z][A-Za-z'-]*", clause)
+    imperative = bool(toks) and bool(_FORWARD_BASE_VERB.match(toks[0]))
+    for i, tok in enumerate(toks):
+        w = tok.lower()
+        if not (w in _PAST_IRREGULAR or (len(w) >= 5 and w.endswith("ed") and not w.endswith("eed") and w not in _NOT_PAST)):
+            continue
+        if i == 0:
+            return True
+        prev = toks[i - 1].lower()
+        if imperative or prev in _DETERMINER or _FORWARD_BASE_VERB.match(prev):
+            continue
+        if prev in _SUBJECT_HEAD or re.search(r"\d", clause[clause.lower().find(w) + len(w):]):
+            return True
+    return False
+
+
+def _clause_orientation(clause: str) -> str:
+    core = re.sub(r"\([^)]*\)", " ", clause).strip()                         # the parenthetical is read with its own words below
+    for part in (core, *re.findall(r"\(([^)]*)\)", clause)):
+        if part and (_FORWARD_EXPLICIT.search(part) or _FORWARD_EXTRA.search(part)):
+            return "FORWARD"
+    if not core:
+        return "FORWARD"
+    if _OBSERVED_MARKER.search(core) or _STATIVE_BARE.match(core) or _STATIVE_WITH_SUBJECT.match(core) or _has_past_verb(core):
+        return "HISTORICAL"
+    return "FORWARD"                                                          # extractor-style imperative ("Open 100 branches by FY27") or ongoing wording
+
+
+_PARTICIPLE_OPEN = re.compile(r"^\W*[a-z]{3,}ing\b", re.IGNORECASE)
+
+
+def _states_own_intent(clause: str, announced: Optional[int]) -> bool:
+    """A dependent clause states its own forward intent only through an explicit intent cue or a time boundary after the announcement year."""
+    if _FORWARD_EXPLICIT.search(clause) or _FORWARD_EXTRA.search(clause):
+        return True
+    m = _ANY_DEADLINE.search(clause)
+    year = _deadline_year(m.group(0), announced) if m else None
+    return bool(year and announced and year > announced)
+
+
+def _forward_text(text: str, announced: Optional[int] = None) -> Tuple[str, bool]:
+    """The statement with its historical/stative clauses removed, and whether anything was removed. Everything kept is verbatim.
+    A participial continuation ("..., taking the deposit base to Rs 9,000 crore") is a consequence of its parent clause: it inherits the
+    parent's orientation unless it independently states forward intent."""
+    spans, kept, dropped, last, prev = _clause_spans(text), [], False, 0, None
+    for s0, s1 in spans:
+        clause = text[s0:s1]
+        orientation = _clause_orientation(clause)
+        if orientation == "FORWARD" and prev == "HISTORICAL" and _PARTICIPLE_OPEN.match(clause) and not _states_own_intent(clause, announced):
+            orientation = "HISTORICAL"
+        if orientation == "FORWARD":
+            kept.append(text[last:s1])
+        else:
+            dropped = True
+        last, prev = s1, orientation
+    return (" ".join(kept) if dropped else text), dropped
+
+
+def _verifiable_outcome(text: str) -> Optional[str]:
+    """The basis on which the statement's outcome can be checked objectively, or None (aspiration / undated intention / vague)."""
+    if not text or _legacy()._ASPIRATIONAL_LANGUAGE.match(text.strip()):
+        return None
+    masked = _YEAR_TOKEN.sub(" ", text)
+    masked = _LABEL_NUMBER.sub(" ", masked)                                  # "Tier 2 and 3", "Scope 1", "Phase 2" are labels, not targets
+    masked = re.sub(r"\(([^)]*)\)", lambda m: m.group(0) if _FORWARD_EXPLICIT.search(m.group(1)) else " ", masked)   # supporting figures in parentheses are not targets - unless the parenthesis states what will be done
+    masked = re.split(r"\b(?:supported|evidenced|backed)\s+by\b|\breflected\s+in\b", masked, maxsplit=1, flags=re.I)[0]
+    if _QUANTIFIED.search(masked) or _ACTION_NUMBER.search(masked):
+        return "quantified_target"
+    if _REGULATORY_FILING.search(text):
+        return "regulatory_filing"
+    if _VAGUE_MODIFIER.search(text):
+        return None
+    if _DELIVERABLE_VERB.search(text):                                       # launching / filing / commissioning something is a yes-or-no event
+        return "named_milestone"
+    if _MILESTONE_VERB.search(text) and _NAMED_OBJECT.search(text):          # opening / acquiring / entering needs a named object
+        return "named_milestone"
+    return None
+
+
+# ── Attribution (M63/G2.1, B1) ───────────────────────────────────────────────────────────────────────────────
+# Appearing in a company's annual report does not make a statement the company's promise: an industry-overview paragraph reports what the
+# government, regulator or analysts aim for or expect. The paraphrased promise has lost its speaker, so attribution is read from the SOURCE
+# SENTENCE: find the sentence that carries the statement, find the forward verb nearest the statement's figures, and read WHO that verb belongs to
+# (the words between the clause boundary and the verb). First-party subject -> MANAGEMENT; external institution -> THIRD_PARTY; an external
+# party is present but nobody owns the verb -> UNCLEAR (never assigned to management); no external party in the sentence -> the report's own voice.
+_CUE = re.compile(
+    r"\b(?:aims?|aiming|plans?|planned|intends?|expects?|expected|anticipates?|anticipated|projects?|projected|forecasts?|estimates?|targets?|targeting|will|shall|seeks?|looking|proposes?|commits?|committed|set|(?:is|are)\s+(?:expected|projected|anticipated|estimated))\b",
+    re.IGNORECASE,
+)
+_FIRST_PARTY = re.compile(r"\b(?:we|our|us|the\s+company|company|management|the\s+board|board|the\s+bank|the\s+group|the\s+business)\b", re.IGNORECASE)
+_NOMINATIVE_FIRST_PARTY = re.compile(r"\b(?:we|the\s+company|company|management|the\s+board|board|the\s+bank|the\s+group|the\s+business)\b", re.IGNORECASE)
+_EXTERNAL_PARTY = {
+    "government": re.compile(r"\b(?:government|governments|ministry|ministries|minister|ministers|department|parliament|nation|country|authorities|authority|armed\s+forces|union\s+budget)\b", re.IGNORECASE),
+    "regulator": re.compile(r"\b(?:regulator|regulators|sebi|rbi|dgca|fda|usfda)\b", re.IGNORECASE),
+    "analyst": re.compile(r"\b(?:analysts?|economists?|brokerages?|researchers?|forecasters?)\b", re.IGNORECASE),
+    "industry": re.compile(r"\b(?:industry|industries|sector|sectors|market|markets|segment|peers|competitors?)\b", re.IGNORECASE),
+    "customer": re.compile(r"\b(?:customers?|clients?|consumers?)\b", re.IGNORECASE),
+    "supplier": re.compile(r"\b(?:suppliers?|vendors?)\b", re.IGNORECASE),
+}
+_INTENT_HEADING = re.compile(r"\b(?:roadmap|priorit(?:y|ies)|strategic\s+objectives?|goals?|commitments?)\b", re.IGNORECASE)   # a list heading that makes bare bullets statements of intent
+_STOP = frozenset("the and for with that this from will shall into over under their its our are was were has have had been being also which such more than then they them these those".split())
+
+
+def _content_tokens(text: str) -> set:
+    return {w for w in re.findall(r"\d[\d.]*|[a-z][a-z-]{3,}", text.lower().replace(",", "")) if w not in _STOP}
+
+
+def _best_sentence(statement: str, chunk: str) -> Optional[str]:
+    want = _content_tokens(statement)
+    if not want or not chunk:
+        return None
+    best, best_score = None, 0.0
+    for sent in re.split(r"(?<=[.!?])\s+(?=[A-Z(‘“\"'])", " ".join(chunk.split())):
+        have = _content_tokens(sent)
+        score = len(want & have) / len(want)
+        if score > best_score:
+            best, best_score = sent, score
+    return best if best_score >= (1.0 if len(want) <= 2 else 0.6) else None
+
+
+def attribute_statement(statement: str, source_chunk: str) -> Dict[str, Any]:
+    """Whose statement is this? Read from the source sentence, not from the (speaker-less) paraphrase. Returns MANAGEMENT / THIRD_PARTY / UNCLEAR,
+    the actor type for a third party, and a short basis. UNCLEAR with basis 'no_source_sentence' means there was nothing to read - callers keep the
+    upstream actor in that case rather than inventing certainty."""
+    sentence = _best_sentence(statement, source_chunk or "")
+    if not sentence:
+        return {"attribution": "UNCLEAR", "actor_type": None, "basis": "no_source_sentence", "sentence": None}
+    figures = [m.start() for m in re.finditer(r"\d", sentence)]
+    anchor = figures[0] if figures else len(sentence)
+    cues = list(_CUE.finditer(sentence))
+    cue = next((c for c in reversed(cues) if c.start() <= anchor), cues[0] if cues else None)    # the forward verb that governs the figures
+    if cue is None:                                                                              # nothing to attribute (a bullet / chart fragment)
+        return {"attribution": "UNCLEAR", "actor_type": None, "basis": "no_forward_verb_in_sentence", "sentence": sentence, "intent_in_source": bool(_INTENT_HEADING.search(sentence))}
+    head = sentence[:cue.start()]
+    marks = [m for m in re.finditer(r"[.;,:]|\b(?:that|which|and|but|while|whereas)\b", head, re.IGNORECASE)]
+    boundary = 0
+    for m in marks:                                                                              # "the company and the Ministry aim": a bare noun phrase before "and" is a co-subject, not a clause
+        if m.group(0).lower() == "and" and len(head[boundary:m.start()].split()) <= 4:
+            continue
+        boundary = m.end()
+    subject = head[boundary:]
+    named = [actor for actor, rx in _EXTERNAL_PARTY.items() if rx.search(subject)] if len(subject.split()) <= 10 else []   # a long span is running text, not a named speaker
+    if named:
+        # a possessive ("our government") says whose government, not who commits: only a nominative first-party subject ("we", "the company") can share the verb
+        if _NOMINATIVE_FIRST_PARTY.search(subject):
+            return {"attribution": "UNCLEAR", "actor_type": None, "basis": "co_actor_subject", "sentence": sentence}
+        return {"attribution": "THIRD_PARTY", "actor_type": named[0], "basis": f"subject_is_{named[0]}", "sentence": sentence}
+    if _FIRST_PARTY.search(subject):
+        return {"attribution": "MANAGEMENT", "actor_type": "company_management", "basis": "first_party_subject", "sentence": sentence}
+    if any(_EXTERNAL_PARTY[k].search(head) for k in ("government", "regulator", "analyst")) and not _FIRST_PARTY.search(sentence):
+        return {"attribution": "UNCLEAR", "actor_type": None, "basis": "institution_present_no_owner", "sentence": sentence}
+    return {"attribution": "MANAGEMENT", "actor_type": "company_management", "basis": "no_external_speaker", "sentence": sentence}
+
+
+def _announcement_year(item: Dict) -> Optional[int]:
+    m = re.search(r"(\d{2})", str(item.get("announcement_period") or item.get("first_seen_period") or ""))
+    return 2000 + int(m.group(1)) if m else None
+
+
+def _deadline_year(text: str, announced: Optional[int]) -> Optional[int]:
+    t = text.lower()
+    m = re.search(r"fy\s?(?:20)?(\d{2})\s?[-\u2013/]\s?(?:20)?(\d{2})", t) or re.search(r"fy\s?(?:20)?(\d{2})\b", t)
+    if m:
+        return 2000 + int(m.group(m.lastindex))
+    m = re.search(r"(?:cy|h[12]\s?(?:cy|fy)?|q[1-4]\s?(?:cy|fy)?)\s?(?:20)?(\d{2})\b", t)
+    if m:
+        return 2000 + int(m.group(1))
+    m = re.search(r"\b(20\d{2})\b", t)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|couple\s+of)\s+(year|month|quarter)", t)
+    if m and announced:
+        n = int(m.group(1)) if m.group(1).isdigit() else _NUMBER_WORDS.get(re.sub(r"\s+", " ", m.group(1)), 0)
+        years = n if m.group(2) == "year" else -(-n * (1 if m.group(2) == "month" else 3) // 12)
+        return announced + years if n else None
+    if re.search(r"next\s+(?:fiscal\s+)?year", t) and announced:
+        return announced + 1
+    return None
+
+
+def _explicit_deadline(item: Dict, text: str) -> Optional[Dict[str, Any]]:
+    """The deadline/time boundary the commitment states: the structured timeframe first, otherwise the statement text itself."""
+    timeframe = str(item.get("expected_timeframe") or "").strip()
+    announced = _announcement_year(item)
+    if re.search(r"ongoing|continu|indefinite", timeframe, re.I):
+        timeframe = ""                                                       # "FY26 and ongoing" is not a deadline
+    if timeframe and not _legacy()._GENERIC_TIMEFRAMES.match(timeframe) and (_legacy()._SPECIFIC_DATE_PATTERN.search(timeframe) or _ANY_DEADLINE.search(timeframe) or re.search(r"\bnext\s+(?:couple\s+of|\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:years?|months?|quarters?)\b", timeframe, re.I)):
+        return {"deadline_text": timeframe, "deadline_year": _deadline_year(timeframe, announced) or _deadline_year(text, announced), "deadline_source": "expected_timeframe"}
+    m = _ANY_DEADLINE.search(text)
+    if m:
+        return {"deadline_text": m.group(0).strip(), "deadline_year": _deadline_year(m.group(0), announced), "deadline_source": "statement"}
+    return None
+
+
+def classify_commitment(item: Dict) -> Dict[str, Any]:
+    """The one classification every consumer reuses. Returns the class and the evidence for it (basis, deadline and where it came from).
+
+    HARD_COMMITMENT     verifiable outcome AND explicit deadline
+    VERIFIABLE_UNDATED  verifiable outcome, no stated deadline
+    DATED_UNVERIFIABLE  explicit deadline, but no objectively verifiable outcome ("improve a score by 2025")
+    OBSERVATION         reports something already done / already true - never a commitment, however many numbers it contains
+    OUTLOOK_NOT_COMMITMENT  a checkable figure the source states as an outlook/forecast with no verb of intent (G2.1): kept visible, never hard
+    NOT_TRACKABLE       an intention or aspiration with neither
+    """
+    full = _text_of(item)
+    text, _ = _forward_text(full, _announcement_year(item))                    # B2: only forward clauses carry the promised outcome and deadline
+    if _is_observed_outcome(full) or not text.strip(" ,;.") or not re.search(r"[A-Za-z]", text):
+        return {"commitment_class": "OBSERVATION", "hard": False, "verifiable_outcome": None, "deadline_text": None, "deadline_year": None, "deadline_source": None}
+    outcome = _verifiable_outcome(text)
+    deadline = _explicit_deadline(item, text) if not _legacy()._ASPIRATIONAL_LANGUAGE.match(text.strip()) else None
+    if item.get("source_intent") is False and outcome:      # the source sentence states an outlook, not an intent: never strengthen it into a promise
+        return {"commitment_class": "OUTLOOK_NOT_COMMITMENT", "hard": False, "verifiable_outcome": outcome, "deadline_text": (deadline or {}).get("deadline_text"), "deadline_year": (deadline or {}).get("deadline_year"), "deadline_source": (deadline or {}).get("deadline_source")}
+    cls = "HARD_COMMITMENT" if outcome and deadline else "VERIFIABLE_UNDATED" if outcome else "DATED_UNVERIFIABLE" if deadline else "NOT_TRACKABLE"
+    return {"commitment_class": cls, "hard": cls == "HARD_COMMITMENT", "verifiable_outcome": outcome,
+            "deadline_text": (deadline or {}).get("deadline_text"), "deadline_year": (deadline or {}).get("deadline_year"), "deadline_source": (deadline or {}).get("deadline_source")}
+
+
+def is_verifiable_commitment(item: Dict) -> bool:
+    """The register's accountability tier (VERIFIABLE_COMMITMENT / verification APPLICABLE): a checkable outcome, dated or not."""
+    return classify_commitment(item)["commitment_class"] in ("HARD_COMMITMENT", "VERIFIABLE_UNDATED")
+
+
+def is_hard_commitment(item: Dict) -> bool:
+    """CANONICAL hard-commitment predicate (owner policy, G2). See `classify_commitment` for the evidence behind the answer."""
+    return bool(classify_commitment(item)["hard"])
+
+
+
+
+def _canonical_classification(item: Dict[str, Any]) -> Dict[str, Any]:
+    return classify_commitment(item)
+
+
+def classify_accountability_ontology(statement: str, *, commitment_eligible: bool = False, source_intent: Optional[bool] = None) -> str:
     """Classify the accountability meaning without changing commitment identity.
 
-    Verification requires an observable success condition: a named subject,
-    measurable target, explicit milestone/deadline, or specific market/deal.
-    Directional verbs alone remain strategy/aspiration and are never routed to
-    the delivery tracker.
+    VERIFIABLE_COMMITMENT is decided by the canonical classifier (an objectively verifiable outcome, target or milestone on a
+    forward-looking statement); this module no longer keeps its own regexes for it. Policy/aspiration wording is still recognised
+    here; everything else is a strategic intent. Whether a commitment is HARD (verifiable AND dated) is stamped on the record by
+    `canonical_commitment_fields`, from the same owner.
     """
     text = " ".join(str(statement or "").split())
     lower = text.lower()
-    target_language = bool(re.search(r"\b(?:target|achieve|reduce|increase|by|within)\b", lower))
-    measurable = target_language and bool(re.search(r"\b(?:fy\d{2,4}|20\d{2}|\d+(?:\.\d+)?\s*%|\d+\s*(?:crore|million|billion|units?))\b", lower))
-    specific_action = bool(re.search(r"\b(?:launch|commission|acquire|enter|file|complete|install|ramp[- ]?up)\b", lower))
-    named_tokens = re.findall(r"\b[A-Z][A-Za-z0-9™-]{2,}\b", text)
-    named_subject = any(token.lower() not in {"the", "we", "company", "management", "india"} for token in named_tokens)
-    geographic_entry = bool(re.search(r"\b(?:enter|entry|launch|targeting new markets?)\b", lower)) and bool(
-        re.search(r"\b(?:japan|china|europe|australia|canada|mena|asia|africa|latin america|new geograph(?:y|ies)|new markets?)\b", lower)
-    )
-    if commitment_eligible and (measurable or (specific_action and named_subject) or geographic_entry):
+    if commitment_eligible and _canonical_classification({"original_statement": text, "source_intent": source_intent})["commitment_class"] in ("HARD_COMMITMENT", "VERIFIABLE_UNDATED"):
         return "VERIFIABLE_COMMITMENT"
     if any(token in lower for token in ("policy", "maintain quality", "disciplined", "principle", "code of conduct")):
         return "POLICY_OR_PRINCIPLE"
     if any(token in lower for token in ("become market leader", "become the market leader", "world-class", "vision", "aspire", "unmet patient needs")):
         return "ASPIRATION"
     return "STRATEGIC_INTENT"
+
+
+def canonical_commitment_fields(*, original_statement: str, normalized_commitment: str, expected_timeframe: str, announcement_period: str, ontology: str, source_intent: Optional[bool] = None) -> Dict[str, Any]:
+    """Fields stamped on every register record so no consumer re-derives them: the canonical class, whether it is HARD, and the basis
+    (verifiable outcome, deadline text/year and whether the deadline came from the structured timeframe or from the statement)."""
+    result = _canonical_classification(
+        {"original_statement": original_statement, "normalized_commitment": normalized_commitment, "expected_timeframe": expected_timeframe, "announcement_period": announcement_period, "source_intent": source_intent}
+    )
+    return {
+        "commitment_class": result["commitment_class"],
+        "hard_commitment": bool(result["hard"] and ontology == "VERIFIABLE_COMMITMENT"),
+        "commitment_basis": {k: result[k] for k in ("verifiable_outcome", "deadline_text", "deadline_year", "deadline_source")},
+    }
 
 SOURCE_TEXT_FIELDS = ("promise", "commitment", "statement", "value", "text", "summary")
 TEXT_CLEANUP_PREFIXES = (
@@ -728,6 +1076,11 @@ def _extract_source_item_years(year_record: Dict[str, Any]) -> List[Dict[str, An
                 category_hint=category_hint,
                 status_hint=status_hint,
             )
+            attribution = attribute_statement(original_statement, (year_record.get("promise_context") or {}).get((_normalize_text(original_statement), item_payload.get("page")), ""))
+            if attribution["attribution"] == "THIRD_PARTY":          # G2.1/B1: the source sentence gives the target to someone else
+                actor = {"actor_type": attribution["actor_type"], "basis": [f"source sentence attributes it to {attribution['actor_type']}"], "confidence": "high"}
+            elif attribution["attribution"] == "UNCLEAR" and not attribution["basis"].startswith("no_"):
+                actor = {"actor_type": "unknown", "basis": ["source sentence does not show that management made this statement"], "confidence": "low"}
             actor_type = actor["actor_type"]
             statement_type = statement_semantics["statement_type"]
             lifecycle_update = any(
@@ -751,8 +1104,9 @@ def _extract_source_item_years(year_record: Dict[str, Any]) -> List[Dict[str, An
             if historical_accomplishment:
                 can_initiate_commitment = False
             commitment_eligible = can_initiate_commitment or (actor_type in COMPANY_ACTORS and lifecycle_update)
+            source_intent = False if (attribution["basis"] == "no_forward_verb_in_sentence" and not attribution.get("intent_in_source")) else None
             accountability_ontology = classify_accountability_ontology(
-                original_statement, commitment_eligible=commitment_eligible
+                original_statement, commitment_eligible=commitment_eligible, source_intent=source_intent
             )
             relevance = classify_business_relevance(
                 original_statement,
@@ -773,6 +1127,9 @@ def _extract_source_item_years(year_record: Dict[str, Any]) -> List[Dict[str, An
             if actor_type not in COMPANY_ACTORS:
                 exclusion_reason = f"statement belongs to {actor_type}, not the company"
                 quarantine_reason = "EXTERNAL_ACTOR"
+                if attribution["attribution"] == "UNCLEAR":
+                    exclusion_reason = "attribution to company management is unclear in the source sentence"
+                    quarantine_reason = "UNCLASSIFIED_STATEMENT"
             elif broad_employee_welfare:
                 exclusion_reason = "broad employee-welfare statement is not a bounded investor commitment"
                 quarantine_reason = "NON_INVESTOR_MATERIAL"
@@ -861,6 +1218,7 @@ def _extract_source_item_years(year_record: Dict[str, Any]) -> List[Dict[str, An
                     "quarantine_reason": quarantine_reason,
                     "commitment_role": "announcement" if can_initiate_commitment else "follow_up",
                     "accountability_ontology": accountability_ontology,
+                    "source_intent": source_intent,
                     "verification_applicability": (
                         "APPLICABLE" if accountability_ontology == "VERIFIABLE_COMMITMENT" else "NOT_APPLICABLE"
                     ),
@@ -928,6 +1286,7 @@ def _build_group_from_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
         "statement_type": candidate.get("statement_type"),
         "semantic_quality": candidate.get("semantic_quality") or {},
         "accountability_ontology": candidate.get("accountability_ontology") or "STRATEGIC_INTENT",
+        "source_intent": candidate.get("source_intent"),
         "verification_applicability": candidate.get("verification_applicability") or "NOT_APPLICABLE",
     }
 
@@ -1357,6 +1716,14 @@ def _build_commitment_record(company: str, group: Dict[str, Any], commitment_id:
         "semantic_quality": group.get("semantic_quality") or {},
         "accountability_ontology": group.get("accountability_ontology") or "STRATEGIC_INTENT",
         "verification_applicability": group.get("verification_applicability") or "NOT_APPLICABLE",
+        **canonical_commitment_fields(
+            original_statement=original_statement,
+            normalized_commitment=group["normalized_commitment"],
+            expected_timeframe=group["expected_timeframe"],
+            announcement_period=group["announcement_period"],
+            ontology=group.get("accountability_ontology") or "STRATEGIC_INTENT",
+            source_intent=group.get("source_intent"),
+        ),
         "commitment_identity": commitment_identity,
         "specificity_warnings": specificity_warnings,
     }
@@ -1698,7 +2065,19 @@ class ManagementCommitmentsBuilder:
             "available_artifacts": available_artifacts,
             "company_intelligence": cim,
             "management_summary": summary,
+            "promise_context": self._load_promise_context(year_dir),
         }
+
+    @staticmethod
+    def _load_promise_context(year_dir: Path) -> Dict[Tuple[str, Any], str]:
+        """Source sentence context for attribution (G2.1): (normalised promise text, page) -> the extracted source chunk. Read-only; absent file = no context."""
+        payload = _load_json(year_dir / "extracted" / "extracted_promises.json")
+        items = payload if isinstance(payload, list) else next((v for v in (payload or {}).values() if isinstance(v, list)), [])
+        context: Dict[Tuple[str, Any], str] = {}
+        for entry in items:
+            if isinstance(entry, dict) and entry.get("source_chunk"):
+                context.setdefault((_normalize_text(" ".join(str(entry.get("promise") or entry.get("value") or "").split())), entry.get("page")), str(entry["source_chunk"]))
+        return context
 
     def _extract_candidates(self, year_record: Dict[str, Any]) -> List[Dict[str, Any]]:
         return _extract_source_item_years(year_record)

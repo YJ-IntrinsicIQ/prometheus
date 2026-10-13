@@ -15,14 +15,12 @@ type CompanySearchProps = {
     primaryIndustry: string;
     summary: string;
   }>;
-  showDevelopmentNote?: boolean;
 };
 
 export function CompanySearch({
   searchLabel,
   helperText,
   companies,
-  showDevelopmentNote = false,
 }: CompanySearchProps) {
   const [selectedCompany, setSelectedCompany] = useState(
     companies[0]?.slug ?? "",
@@ -72,16 +70,11 @@ export function CompanySearch({
           </div>
         ) : null}
       </div>
-      {showDevelopmentNote ? (
-        <p className="mt-3 text-xs uppercase tracking-[0.18em] text-muted">
-          Development fixture
-        </p>
-      ) : null}
       <Link
         href={companyRoute(selectedCompany)}
         className="mt-8 inline-flex items-center rounded-full bg-accent px-5 py-3 text-sm font-medium text-[var(--surface)] transition hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       >
-        Open company questions
+        Explore intelligence
       </Link>
     </div>
   );

@@ -157,6 +157,7 @@ def _build_cao_cases(cao_data: Dict[str, Any], latest_revenue: Optional[float]) 
             "action_description": name,
             "deployment_periods": periods,
             "amount_inr_cr": amount,
+            "amount_period": alloc.get("amount_period"),  # the ONE period the amount belongs to (not deployment_periods)
             "execution_state": exec_state,
             "deployment_state": depl_state,
             "operating_outcome": operating_outcome,
@@ -170,6 +171,7 @@ def _build_cao_cases(cao_data: Dict[str, Any], latest_revenue: Optional[float]) 
             "unresolved_gap": chain_stop,
             "economic_materiality": materiality,
             "investor_interpretation": _investor_interpretation(attribution, category, name, amount, per_share),
+            **_pending_transaction_fields(alloc),
         })
     return cases
 
@@ -309,6 +311,21 @@ def _classify_initiative_type(identity: str) -> str:
     if any(w in text for w in ["market", "geograph", "japan", "china", "india", "us", "emerg"]):
         return "product_initiative"
     return "strategic_initiative"
+
+
+def _pending_transaction_fields(alloc: Dict[str, Any]) -> Dict[str, Any]:
+    """G3: a signed-but-not-completed transaction is stated as that. Nothing has been deployed, so the generic 'capital deployed' reading does not apply; the filing's
+    own terms and status sentence are carried through unchanged (stated currency, no conversion)."""
+    status = alloc.get("transaction_status")
+    if status not in {"signed_pending_completion", "announced"}:
+        return {}
+    terms, basis = alloc.get("transaction_terms"), alloc.get("transaction_status_basis")
+    text = "Signed, not completed: no capital has been deployed yet and no operating outcome can exist."
+    if terms:
+        text += f" Stated terms: {terms}."
+    if basis:
+        text += f" The filing states the transaction {basis}."
+    return {"transaction_status": status, "transaction_terms": terms, "transaction_status_basis": basis, "investor_interpretation": text}
 
 
 def _investor_interpretation(attribution: str, category: str, name: str, amount: Optional[float], per_share: Optional[str]) -> str:

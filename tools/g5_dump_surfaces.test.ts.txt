@@ -1,0 +1,33 @@
+// Read-only. Copy to apps/ask-intrinsiciq/src/lib/challenge/g5dump.test.ts, run
+//   G5_DUMP=/path/out.json ASK_INTRINSICIQ_REPO_ROOT=<root> npx vitest run src/lib/challenge/g5dump.test.ts
+// then delete the copy. Writes {company: [{name, text, items:[{path, text}]}]}: every surface (question views, story, panel specialists, explorer) both flattened
+// and with the structural path of each rendered string, so a label can be judged together with the sibling fields it labels.
+import { writeFileSync } from "node:fs";
+import { describe, it } from "vitest";
+import { COMPANIES } from "@/src/lib/story/companies";
+import { loadApprovedAnswers } from "@/src/lib/story/approved-answers";
+import { loadExplorer } from "@/src/lib/catalog/load-explorer";
+import { loadPanel } from "@/src/lib/panel/load-panel";
+import { loadQuestionView } from "@/src/lib/story/load-question";
+import { loadStory } from "@/src/lib/story/load-story";
+
+type Item = { path: string; text: string };
+function walk(v: unknown, path: string, out: Item[]) {
+  if (typeof v === "string") { if (v.length >= 2 && !v.startsWith("/")) out.push({ path, text: v }); }
+  else if (Array.isArray(v)) v.forEach((x, i) => walk(x, `${path}[${i}]`, out));
+  else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) walk(x, `${path}.${k}`, out);
+}
+describe("g5 surface dump", async () => {
+  const out: Record<string, { name: string; text: string; items: Item[] }[]> = {};
+  const add = (list: { name: string; text: string; items: Item[] }[], name: string, v: unknown) => { if (!v) return; const items: Item[] = []; walk(v, "", items); list.push({ name, text: items.map((i) => i.text).join("\n"), items }); };
+  for (const [slug, c] of Object.entries(COMPANIES)) {
+    const list: { name: string; text: string; items: Item[] }[] = [];
+    for (const q of Object.keys(await loadApprovedAnswers(slug))) add(list, `question:${q}`, await loadQuestionView(slug, q));
+    add(list, "story", await loadStory(slug));
+    const panel = await loadPanel(slug);
+    for (const s of panel?.specialists ?? []) add(list, `panel:${(s as { id: string }).id}`, s);
+    add(list, "explorer", await loadExplorer(slug));
+    out[c.key] = list;
+  }
+  it("writes", () => { writeFileSync(process.env.G5_DUMP as string, JSON.stringify(out)); });
+});

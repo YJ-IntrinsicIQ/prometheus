@@ -20,8 +20,7 @@ import {
   getCompanySlugs,
   getLandingCompanies,
   getCompanyResearchView,
-  getResearchAnswerCard,
-  getResearchQuestionParams,
+  getApprovedHybridCard,
 } from "@/src/lib/ask-intrinsiciq";
 
 // ── SC1: slug derivation rule ─────────────────────────────────────────────────
@@ -102,34 +101,14 @@ describe("SC4 – research views use public slug", () => {
   });
 });
 
-// ── SC5: answer cards load via public slug ────────────────────────────────────
-describe("SC5 – answer cards use public slug", () => {
-  it("getResearchAnswerCard('sun-pharma', ...) returns a non-null card", async () => {
-    const card = await getResearchAnswerCard("sun-pharma", "what-does-company-do");
-    expect(card).not.toBeNull();
+// ── SC5: approved answers load via public slug ───────────────────────────────
+describe("SC5 – approved answers use public slug", () => {
+  it("getApprovedHybridCard('sun-pharma', ...) returns the approved card", async () => {
+    expect(await getApprovedHybridCard("sun-pharma", "how-good-is-management")).not.toBeNull();
   });
 
-  it("getResearchAnswerCard with internal key 'sun_pharma' returns null (invalid route)", async () => {
-    const card = await getResearchAnswerCard("sun_pharma", "what-does-company-do");
-    expect(card).toBeNull();
-  });
-});
-
-// ── SC6: generateStaticParams emits public slugs ──────────────────────────────
-describe("SC6 – generateStaticParams emits public slugs", () => {
-  it("getResearchQuestionParams includes sun-pharma (not sun_pharma) as companySlug", async () => {
-    const params = await getResearchQuestionParams();
-    const sunPharmaParams = params.filter((p) => p.companySlug === "sun-pharma");
-    const rawKeyParams = params.filter((p) => p.companySlug === "sun_pharma");
-    expect(sunPharmaParams.length).toBeGreaterThan(0);
-    expect(rawKeyParams).toHaveLength(0);
-  });
-
-  it("all companySlug values in getResearchQuestionParams are URL-safe", async () => {
-    const params = await getResearchQuestionParams();
-    for (const { companySlug } of params) {
-      expect(companySlug).toMatch(/^[a-z0-9-]+$/);
-    }
+  it("getApprovedHybridCard with internal key 'sun_pharma' returns null (invalid route)", async () => {
+    expect(await getApprovedHybridCard("sun_pharma", "how-good-is-management")).toBeNull();
   });
 });
 

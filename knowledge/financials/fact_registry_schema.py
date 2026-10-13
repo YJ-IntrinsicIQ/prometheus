@@ -132,6 +132,7 @@ class FinancialFactRegistry:
     quarantined_facts: List[FinancialFact] = field(default_factory=list)
     contradiction_summary: Dict[str, Any] = field(default_factory=dict)
     downstream_readiness: Dict[str, Any] = field(default_factory=dict)
+    basis_variants: List[FinancialFact] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -150,6 +151,7 @@ class FinancialFactRegistry:
             "quarantined_facts": [fact.to_dict() for fact in self.quarantined_facts],
             "contradiction_summary": dict(self.contradiction_summary),
             "downstream_readiness": dict(self.downstream_readiness),
+            "basis_variants": [fact.to_dict() for fact in self.basis_variants],
         }
 
 

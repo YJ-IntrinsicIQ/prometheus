@@ -316,13 +316,32 @@ class TestActivationSafety:
             assert pair in proposed, f"Existing pair {pair!r} dropped from proposed matrix"
 
 
+class TestApprovalFixturesViaTrustHarness:
+    """approval_check / full_artifact_digest_check fixtures are evaluated by the certification
+    pipeline's own trust harness (they are not run_adversarial_suite checks). The harness is
+    self-isolating since ENG-MISSION52.2c, so it cannot rewrite the real approval registry."""
+
+    def test_t13c_approval_fixtures_block_and_registry_untouched(self, capsys):
+        import hashlib
+        import pipelines.answer_certification as ac
+        real = ac.APPROVAL_REGISTRY_PATH
+        before = hashlib.sha256(real.read_bytes()).hexdigest()
+        ac.mode_test_trust()
+        out = capsys.readouterr().out
+        assert "[TEST-TRUST] PASSED" in out
+        for fid in ("NF-22", "NF-23", "NF-24", "NF-25", "NF-27"):
+            assert f"[{fid}] PASS" in out, fid
+        assert hashlib.sha256(real.read_bytes()).hexdigest() == before
+
+
 class TestNegativeFixtureCompleteness:
     """T13: All non-fingerprint negative fixtures trigger their expected checks.
        T13b: All positive controls produce no FAIL results."""
 
     @pytest.mark.parametrize("fixture", [
         f for f in NEGATIVE_FIXTURES
-        if f.get("expected_fail") is not None and f["expected_fail"] != "fingerprint_check"
+        if f.get("expected_fail") is not None
+        and f["expected_fail"] not in ("fingerprint_check", "approval_check", "full_artifact_digest_check")
     ])
     def test_t13_negative_fixture_triggers(self, fixture):
         """T13: Each negative fixture must trigger its expected_fail check."""

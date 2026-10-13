@@ -245,6 +245,30 @@ def _reasoning(category: str, signals: List[str]) -> str:
     return f"Detected weak {category.replace('_', ' ')} signal."
 
 
+_SIGNOFF = re.compile(r"accompanying notes|integral part of|in terms of our report|of even date|for and on behalf of|chartered accountants")
+
+
+def _heading_after_signoff(lowered: str, hit: str) -> bool:
+    """G3.1: the previous page's sign-off block (auditor, directors, place/date) is extracted before the next statement's title, which pushes the title past the
+    start-of-chunk window. A title that follows ONLY sign-off text (no figure rows) is still the statement's own title."""
+    idx = lowered.find(hit.lower())
+    if idx < 0 or idx > 1800:
+        return False
+    before = lowered[:idx]
+    return bool(_SIGNOFF.search(before)) and len(re.findall(r"\b\d[\d,]*\.\d{2}\b", before)) <= 2
+
+
+def _heading_at_page_tail(lowered: str, hit: str) -> bool:
+    """G3: PDF text order can print a page's statement title AFTER its rows (right after the 'referred to in our report' sign-off line).
+    Such a tail heading names the statement the rows above belong to; a heading that merely starts the next page is not preceded by the sign-off."""
+    idx = lowered.rfind(hit.lower())
+    if idx < 0 or idx < len(lowered) - 450:
+        return False
+    after = lowered[idx + len(hit): idx + len(hit) + 60]
+    before = lowered[max(0, idx - 160): idx]                    # the sign-off line sits immediately before a tail title; a phrase pages earlier proves nothing
+    return bool(re.search(r"integral part of the (?:financial )?statements|referred to in our report|of even date|even date", before)) or bool(re.match(r"\s*(?:as\s+)?referred\s+to\s+in\s+our\s+report", after))   # "This is the Statement of Profit and Loss referred to in our report"
+
+
 def _category_candidates(text: str) -> List[Tuple[str, List[str], int]]:
     lowered = text.lower()
     common_signals = _table_like_signals(text) + _statement_scope_signals(text)
@@ -253,7 +277,7 @@ def _category_candidates(text: str) -> List[Tuple[str, List[str], int]]:
     def add(category: str, patterns: Iterable[str], base_score: int) -> None:
         hits = _contains_any(text, patterns)
         if category in PRIMARY_SECTION_KEYS:
-            hits = [hit for hit in hits if lowered.find(hit.lower()) <= 200]
+            hits = [hit for hit in hits if lowered.find(hit.lower()) <= 200 or _heading_at_page_tail(lowered, hit) or _heading_after_signoff(lowered, hit)]
         if not hits:
             return
         signals = [f"heading:{hit}" for hit in hits] + [signal for signal in common_signals if signal not in hits]
@@ -295,15 +319,31 @@ def _category_candidates(text: str) -> List[Tuple[str, List[str], int]]:
     # ponytail: heading guard prevents shared P&L items (profit before tax,
     # depreciation) from triggering CF continuation on a P&L page.
     pl_heading_present = any(
-        p in lowered[:200] for p in PRIMARY_PATTERNS["primary_profit_and_loss_statement"]
+        p in lowered[:200] or _heading_at_page_tail(lowered, p) or _heading_after_signoff(lowered, p) for p in PRIMARY_PATTERNS["primary_profit_and_loss_statement"]
     )
+    # G3: a statement page whose title was lost in text extraction is still a profit-and-loss statement when it carries the income -> expenses -> profit -> EPS
+    # structure and none of the cash-flow activity sections; the shared lines (profit before tax, depreciation) must not make it a cash-flow page.
+    pl_structure_present = (
+        any(token in lowered for token in ("total income", "total revenue", "revenue from operations", "revenue from contract"))
+        and "profit before tax" in lowered
+        and "other income" in lowered
+        and any(token in lowered for token in ("total expenses", "tax expense"))                    # a highlights table has income and EBITDA but not the expense and tax lines
+        and any(token in lowered for token in ("earnings per", "profit for the year", "profit after tax"))
+        and not any(token in lowered for token in ("operating activities", "investing activities", "financing activities"))
+        and "particulars" in lowered
+        and "period_columns" in common_signals
+        and len(re.findall(r"\b\d[\d,]*(?:\.\d+)?\b", text)) >= 12
+    )
+    if pl_structure_present and not pl_heading_present:
+        candidates.append(("primary_profit_and_loss_statement", ["structural:income_expenses_profit", *common_signals], 131))
     if (
         (
             cash_flow_structure_present
             and ("particulars" in lowered or "note" in lowered)
             and "period_columns" in common_signals
+            and not pl_structure_present
         )
-        or (cash_flow_continuation_present and not pl_heading_present)
+        or (cash_flow_continuation_present and not pl_heading_present and not pl_structure_present)
     ):
         if not any(pattern in lowered for pattern in AUDITOR_PATTERNS + ACCOUNTING_POLICY_PATTERNS):
             candidates.append(
@@ -1044,6 +1084,34 @@ def _add_primary_statement_continuations(
             seen[section_name].add(chunk_id)
 
 
+_DOC_CONSOLIDATED_STATEMENT = re.compile(r"consolidated\s+(?:balance\s+sheet|statement\s+of\s+(?:profit|cash\s+flow|financial\s+position))\s+(?:as\s+at|for\s+the\s+year)", re.IGNORECASE)
+_DOC_STANDALONE_ONLY = re.compile(
+    r"(?:company|bank)\s+(?:has|have)\s+no\s+(?:subsidiar|associate)|no\s+(?:requirement|need)\s+to\s+prepare\s+(?:the\s+)?consolidated|does\s+not\s+have\s+any\s+subsidiar",
+    re.IGNORECASE,
+)
+
+
+def _document_basis(chunks: Sequence[Dict[str, Any]]) -> Tuple[str, str]:
+    """Document-level reporting basis, used ONLY for primary-statement tables whose own header is silent (G3).
+    'standalone' when the filing says it has no subsidiaries / needs no consolidated statements AND presents no consolidated statement;
+    'consolidated' when it presents consolidated statements and no standalone-only statement; otherwise unknown (both present, or no signal)."""
+    consolidated = standalone_only = False
+    standalone_statement = False
+    for chunk in chunks:
+        text = _clean_text(chunk.get("text", ""))
+        if _DOC_CONSOLIDATED_STATEMENT.search(text):
+            consolidated = True
+        if _DOC_STANDALONE_ONLY.search(text):
+            standalone_only = True
+        if re.search(r"standalone\s+(?:balance\s+sheet|statement\s+of\s+(?:profit|cash\s+flow))", text, re.IGNORECASE) or re.search(r"(?<!consolidated )(?<!consolidated\s\s)\bbalance\s+sheet\s+as\s+at", text, re.IGNORECASE):
+            standalone_statement = True                       # a plain "Balance Sheet as at" next to consolidated ones is the standalone statement
+    if standalone_only and not consolidated:
+        return "standalone", "document states it has no subsidiaries / no consolidated statements are prepared, and presents no consolidated statement"
+    if consolidated and not standalone_statement and not standalone_only:
+        return "consolidated", "document presents consolidated statements and no standalone statement"
+    return "unknown", ""
+
+
 def discover_financial_sections(*, company: str, year: str, chunk_path: Path) -> FinancialDiscoveryResult:
     chunks = _load_chunk_payload(chunk_path)
     if not chunks:
@@ -1134,6 +1202,25 @@ def discover_financial_sections(*, company: str, year: str, chunk_path: Path) ->
         chunk_path=chunk_path,
         seen=seen,
     )
+
+    # A header can be split across chunks/pages: use an unambiguous adjacent PRIMARY statement basis,
+    # never a document-wide consolidated hint in a filing that also contains standalone statements.
+    primary_items = [item for name in PRIMARY_SECTION_KEYS for item in result.sections.get(name, [])]
+    for item in primary_items:
+        if item.basis != "unknown" or not isinstance(item.page, int) or "period_columns" not in item.signals:
+            continue
+        nearby = {other.basis for other in primary_items if other.basis in {"standalone", "consolidated"}
+                  and isinstance(other.page, int) and item.page - 1 <= other.page <= item.page + 1}
+        if len(nearby) == 1:
+            item.basis, item.basis_confidence = next(iter(nearby)), "medium"
+            item.signals = list(dict.fromkeys([*item.signals, "basis inherited from adjacent primary-statement header"]))
+    doc_basis, doc_reason = _document_basis(chunks)
+    if doc_basis != "unknown":
+        for section_name in PRIMARY_SECTION_KEYS:
+            for item in result.sections[section_name]:
+                if item.basis == "unknown":
+                    item.basis, item.basis_confidence = doc_basis, "medium"
+                    item.signals = list(dict.fromkeys([*item.signals, f"document_basis:{doc_basis}", doc_reason]))
 
     discovered_count = sum(len(items) for items in result.sections.values())
     if discovered_count <= 0:

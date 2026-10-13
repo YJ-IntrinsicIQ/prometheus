@@ -1,0 +1,29 @@
+// Read-only harness. Copy to apps/ask-intrinsiciq/src/lib/challenge/g5g0.test.ts and run
+//   G5_G0_OUT=/path/res.json G5_CAND=<dir of candidate answers or ""> ASK_INTRINSICIQ_REPO_ROOT=<root> npx vitest run src/lib/challenge/g5g0.test.ts
+// then delete the copy. Runs the 25 fixed challenge cases on the rendered surfaces of <root>; with G5_CAND set, the four question answers per company are replaced by the candidates (as the earlier G4/G5 runs did).
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { describe, it } from "vitest";
+import { getRepoRoot } from "@/src/lib/ask-intrinsiciq/paths";
+import { COMPANIES } from "@/src/lib/story/companies";
+import { runCase, type Case } from "./engine";
+import { renderSurfaces, strings, type Surface } from "./surfaces";
+const root = getRepoRoot();
+const cases: Case[] = JSON.parse(readFileSync(process.env.G5_CASES ?? (process.cwd() + "/../../tests/challenge/cases.json"), "utf8")).cases;
+const base = JSON.parse(readFileSync(process.cwd() + "/../../tests/challenge/baseline.json", "utf8")).status;
+const FIELDS = ["simple_answer","what_evidence_shows","what_may_mean_economically","what_is_not_yet_proven","what_to_monitor","deterministic_precision_facts","key_points","evidence_gaps"];
+describe("g5 candidate G0", async () => {
+  const by: Record<string, Surface[]> = {};
+  for (const [slug, c] of Object.entries(COMPANIES)) {
+    by[slug] = await renderSurfaces(slug);
+    if (!process.env.G5_CAND) continue;
+    for (const q of ["what-does-company-do","are-profits-converting-into-cash","what-could-go-wrong","what-has-management-promised"]) {
+      const f = `${process.env.G5_CAND}/${c.key}__${q}.candidate.json`;
+      if (!existsSync(f)) continue;
+      const a = JSON.parse(readFileSync(f, "utf8")).answer;
+      const text = strings(FIELDS.map((k) => a[k])).join("\n");
+      const s = by[slug].find((x) => x.name === `question:${q}`);
+      if (s) s.text = text; else by[slug].push({ name: `question:${q}`, text });
+    }
+  }
+  it("writes", () => { writeFileSync(process.env.G5_G0_OUT as string, JSON.stringify({ base, res: Object.fromEntries(cases.map((c) => [c.id, runCase(c, by).status])) })); });
+});

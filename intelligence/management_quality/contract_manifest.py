@@ -368,6 +368,26 @@ INVESTOR_SECTIONS_V5_DIGEST = _file_digest(
     _REPO_ROOT / "intelligence" / "management_quality" / "investor_sections.py"
 )
 
+# ENG-MISSION52.2a: source-backed enrichment of the V2 fact pack (kept separate so the frozen
+# V3/V4 fact_pack_v2.py digest — part of their historical identities — is not disturbed)
+FACT_PACK_ENRICHMENT_V5_DIGEST = _file_digest(
+    _REPO_ROOT / "intelligence" / "management_quality" / "fact_pack_enrichment_v5.py"
+)
+
+def _dependency_contract_v5_digest() -> str:
+    """Digest of the effective V5 dependency/generation contract from the dependency registry
+    (ENG-MISSION52.2c). It decides what 'fresh' means for V5, so it is part of V5 identity."""
+    try:
+        from intelligence.shadow_change_detector import effective_contract_digest, get_effective_contract
+        registry = json.loads((_REPO_ROOT / "governance" / "answer_dependency_registry.json").read_text(encoding="utf-8"))
+        contract = get_effective_contract("how_good_is_management_synthesis", registry)
+        return effective_contract_digest(contract) if contract else "ABSENT_HISTORICAL_V3"
+    except Exception:
+        return "UNAVAILABLE"
+
+
+DEPENDENCY_CONTRACT_V5_DIGEST = _dependency_contract_v5_digest()
+
 ASSEMBLER_POLICY_V5: Dict[str, Any] = {
     "version": ASSEMBLER_POLICY_VERSION_V5,
     "deterministic_fields": [
@@ -396,7 +416,14 @@ ASSEMBLER_POLICY_V5: Dict[str, Any] = {
         "Human reviewer (Yogesh, 2026-10-07) decision: NEEDS_CHANGES + REMOVE_AI. "
         "V5 removes all LLM authorization. Fixes: (1) consistency map INCONSISTENT-before-CONSISTENT check; "
         "(2) all canonical hard commitments represented in what_management_says; "
-        "(3) deterministic economic renderer always preserves PAT."
+        "(3) deterministic economic renderer always preserves PAT. "
+        "M52.2a: (4) commitment follow-through keeps delivery, deadline adherence and regulatory outcome separate; "
+        "(5) consistency entries carry behavioural evidence, period and uncertainty; "
+        "(6) capital-allocation and named-product context from canonical ledgers; "
+        "(7) typed unit-preserving commitment text; (8) no truncation of material commitments; "
+        "(9) section-quality gate blocks raw fields and unsupported 'compounding confirmed'. "
+        "M52.2d: (10) behaviour classifications need a complete proof, absence of verified outcome is never evidence of negative behaviour; "
+        "(11) tracker scope stated; (12) filing/deadline/approval independent; (13) absence claims bounded by searched sources; (14) claim provenance populated."
     ),
 }
 
@@ -428,8 +455,16 @@ def build_contract_v5_manifest(
             "digest": ASSEMBLER_V5_DIGEST,
         },
         "investor_sections_artifact": {
-            "version": "m52_investor_sections_v2",
+            "version": "m522d_investor_sections_v4",
             "digest": INVESTOR_SECTIONS_V5_DIGEST,
+        },
+        "fact_pack_enrichment_artifact": {
+            "version": "m522d_enrichment_v2",
+            "digest": FACT_PACK_ENRICHMENT_V5_DIGEST,
+        },
+        "dependency_contract": {
+            "version": "m52_contract_v5_override.v1",
+            "digest": DEPENDENCY_CONTRACT_V5_DIGEST,
         },
         "rating_quarantine_artifact": {
             "version": "m50_rating_quarantine_v1",

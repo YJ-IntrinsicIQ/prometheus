@@ -787,12 +787,93 @@ def _dedupe_actions(items: Iterable[CorporateActionItem]) -> List[CorporateActio
     return list(deduped.values())
 
 
+# ── G3: buyback consideration from the filing's own disclosure ────────────────────────────────────────────────────
+# Table-derived buyback "actions" carried date and share-capital fragments as amounts (FY26: amount 2025.0, face value 2000.0). A completed buyback is
+# disclosed in prose ("2 million shares repurchased at INR 875 per share for a total consideration of INR 175 Cr") or in the buyback note
+# ("Total consideration paid for buyback in lakhs 17,500"). Board approvals ("not exceeding INR 17,500 lakhs") are authorisations, not payments.
+_NUM = r"(\d[\d,]*(?:\.\d+)?)"
+_MONEY = rf"(?:INR|Rs\.?|\u20b9)\s?{_NUM}(?:/-)?"
+_UNIT_TO_CRORE = {"cr": 1.0, "crore": 1.0, "crores": 1.0, "lakh": 0.01, "lakhs": 0.01, "lac": 0.01, "lacs": 0.01, "million": 0.1, "mn": 0.1}
+_BUYBACK_PROSE = re.compile(
+    rf"{_NUM}\s*(million\s+)?(?:equity\s+)?shares?\s+(?:were\s+|was\s+|have been\s+)?(?:repurchased|bought\s+back)[^.]{{0,80}}?(?:at|@)\s+(?:a\s+price\s+of\s+)?{_MONEY}\s*(?:per\s+(?:equity\s+)?share)?[^.]{{0,80}}?"
+    rf"(?:total|aggregate)\s+consideration\s+of\s+{_MONEY}\s*(cr|crores?|lakhs?|lacs?)\b",
+    re.IGNORECASE,
+)
+_BUYBACK_NOTE = re.compile(rf"total\s+consideration\s+paid\s+for\s+(?:the\s+)?buy-?back\s+in\s+(lakhs?|crores?)[^0-9]{{0,20}}{_NUM}", re.IGNORECASE)
+
+
+def _to_crore(amount: str, unit: str) -> Optional[float]:
+    try:
+        return float(amount.replace(",", "")) * _UNIT_TO_CRORE[unit.lower()]
+    except (KeyError, ValueError):
+        return None
+
+
+def buyback_disclosures_from_chunks(chunks: Sequence[Dict[str, Any]], year: str) -> List[CorporateActionItem]:
+    """Completed-buyback consideration stated in prose or in the buyback note. A prose figure is accepted only when shares x price reproduces the stated
+    consideration (within 1%), so a misread number cannot become a 'reported' amount; the note figure is accepted as the filing's own total."""
+    found: List[CorporateActionItem] = []
+    for chunk in chunks:
+        text = " ".join(str(chunk.get("text", "")).split())
+        page = chunk.get("page") if isinstance(chunk.get("page"), int) else None
+        for m in _BUYBACK_PROSE.finditer(text):
+            shares = float(m.group(1).replace(",", "")) * (1_000_000 if m.group(2) else 1)
+            price = float(m.group(3).replace(",", ""))
+            consideration = _to_crore(m.group(4), m.group(5))
+            if not consideration or not price or abs(shares * price / 1e7 - consideration) > 0.01 * consideration:
+                continue
+            found.append(CorporateActionItem(
+                action_type="buyback", year=year, action_subtype="buyback", amount_crore=round(consideration, 4), issue_price=price, shares_before=None, shares_issued=shares,
+                source_column_context="consideration_reported: shares x price cross-checked against the stated total", value_type_used="consideration_reported",
+                impact_on_share_count="decrease", impact_on_eps_comparability="yes", source_line_item=text[max(0, m.start() - 20): m.end()][:300], source_page=page,
+                source_artifact="clean_chunks.json", confidence="high"))
+        for m in _BUYBACK_NOTE.finditer(text):
+            consideration = _to_crore(m.group(2), m.group(1))
+            if consideration:
+                found.append(CorporateActionItem(
+                    action_type="buyback", year=year, action_subtype="buyback", amount_crore=round(consideration, 4),
+                    source_column_context="consideration_reported: buyback note total", value_type_used="consideration_reported", impact_on_share_count="decrease",
+                    impact_on_eps_comparability="yes", source_line_item=text[max(0, m.start() - 10): m.end()][:300], source_page=page, source_artifact="clean_chunks.json", confidence="high"))
+    unique: Dict[float, CorporateActionItem] = {}
+    for item in found:
+        unique.setdefault(item.amount_crore or 0.0, item)
+    return list(unique.values())
+
+
+# ── G3: per-share dividends from the filing's own sentences ───────────────────────────────────────────────────────
+# "an interim dividend of INR 6 per share and a second interim dividend of INR 6 per share were declared, totalling INR 12 per share for the year" (FY26 filing);
+# "interim dividend of Rs. 11.00 ... per equity share ... final dividend of Rs. 5.00 ... per equity share" (another FY26 filing). Table rows only carried the cash paid.
+_DIV_KIND = r"(?P<kind>(?:first\s+|second\s+|third\s+)?interim|final|special)?"
+_DIVIDEND_PER_SHARE = re.compile(rf"{_DIV_KIND}\s*dividend\s+of\s+(?:INR|Rs\.?|\u20b9|`)\s?(?P<amt>\d[\d,]*(?:\.\d+)?)(?:/-)?\s*(?:\([^)]*\)\s*)?per\s+(?:equity\s+)?share", re.IGNORECASE)
+_DIVIDEND_TOTAL_PER_SHARE = re.compile(r"totall?ing\s+(?:INR|Rs\.?|\u20b9|`)\s?(?P<amt>\d[\d,]*(?:\.\d+)?)\s+per\s+(?:equity\s+)?share", re.IGNORECASE)
+
+
+def dividend_disclosures_from_chunks(chunks: Sequence[Dict[str, Any]], year: str) -> List[CorporateActionItem]:
+    """Declared per-share dividends stated in prose. Each carries its sentence and page; prior-year comparatives sit in brackets in these sentences and never match
+    the 'dividend of X per share' form. Distinct (kind, amount) pairs only."""
+    found: Dict[Tuple[str, float], CorporateActionItem] = {}
+    for chunk in chunks:
+        text = " ".join(str(chunk.get("text", "")).split())
+        page = chunk.get("page") if isinstance(chunk.get("page"), int) else None
+        for regex, default_kind in ((_DIVIDEND_PER_SHARE, "dividend"), (_DIVIDEND_TOTAL_PER_SHARE, "total_for_year")):
+            for m in regex.finditer(text):
+                amount = float(m.group("amt").replace(",", ""))
+                kind = (m.groupdict().get("kind") or default_kind).strip().lower()
+                found.setdefault((kind, amount), CorporateActionItem(
+                    action_type="dividend", year=year, action_subtype=kind, per_share_amount=amount, value_type_used="per_share_declared",
+                    source_column_context="per-share dividend stated in the filing's text", source_line_item=text[max(0, m.start() - 30): m.end() + 30][:260], source_page=page,
+                    source_artifact="clean_chunks.json", confidence="medium", impact_on_share_count="none", impact_on_eps_comparability="no",
+                    warnings=["narrative statement: confirm whether it was declared for or paid in this fiscal year"]))
+    return list(found.values())
+
+
 def extract_corporate_actions(
     *,
     company: str,
     year: str,
     normalized_path: Path,
     raw_tables_path: Optional[Path] = None,
+    chunk_path: Optional[Path] = None,
 ) -> CorporateActionsReport:
     if not normalized_path.exists():
         raise RuntimeError("corporate_actions requires normalized_fundamentals.json")
@@ -814,6 +895,18 @@ def extract_corporate_actions(
             *raw_actions,
         ]
     )
+    if chunk_path is not None and Path(chunk_path).exists():
+        try:
+            chunk_payload = json.loads(Path(chunk_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            chunk_payload = []
+        _chunks = chunk_payload if isinstance(chunk_payload, list) else chunk_payload.get("chunks", [])
+        actions.extend(dividend_disclosures_from_chunks(_chunks, year))
+        disclosures = buyback_disclosures_from_chunks(_chunks, year)
+        if disclosures:
+            # a table-derived buyback row that does not carry the disclosed consideration is a misread fragment (date / share-capital figure); the disclosure replaces it
+            actions = [a for a in actions if not (a.action_type == "buyback" and not any(a.amount_crore and abs(a.amount_crore - d.amount_crore) <= 0.01 * d.amount_crore for d in disclosures))]
+            actions.extend(disclosures)
     share_count_summary, comparability_warnings = build_share_count_summary(
         normalized_payload=normalized_payload,
         actions=actions,
@@ -857,12 +950,14 @@ def write_corporate_actions(
     normalized_path: Path,
     output_path: Path,
     raw_tables_path: Optional[Path] = None,
+    chunk_path: Optional[Path] = None,
 ) -> CorporateActionsReport:
     report = extract_corporate_actions(
         company=company,
         year=year,
         normalized_path=normalized_path,
         raw_tables_path=raw_tables_path,
+        chunk_path=chunk_path,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")

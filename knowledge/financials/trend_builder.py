@@ -211,6 +211,12 @@ def _basis_from_growth(payload: Optional[Dict[str, Any]]) -> str:
     return str(payload.get("basis_used", "unknown") or "unknown")
 
 
+def _trend_confidence(value: Any) -> str:
+    """Trend points use the closed set high/medium/low/missing; a fact the truth layer marked 'unreliable' is shown as low (never dropped)."""
+    text = str(value or "missing").strip().lower()
+    return text if text in {"high", "medium", "low", "missing"} else "low"
+
+
 def _point_confidence(value: Optional[float], warnings: Sequence[str]) -> str:
     if value is None:
         return "missing"
@@ -314,7 +320,7 @@ def _extract_ownership_series(
                 value=_round(_parse_numeric(match.get("holding_percent"))),
                 basis="unknown",
                 source_artifact="shareholding_pattern.json",
-                confidence=str(match.get("confidence", "missing") or "missing"),
+                confidence=_trend_confidence(match.get("confidence")),
                 warnings=warnings,
             )
         )
@@ -386,7 +392,7 @@ def _build_growth_summary(
                     absolute_change=_round(item.get("absolute_change") if isinstance(item.get("absolute_change"), (int, float)) else None),
                     basis=str(item.get("basis", _basis_from_growth(payload)) or _basis_from_growth(payload)),
                     source_artifact="financial_growth.json",
-                    confidence=str(item.get("confidence", "missing") or "missing"),
+                    confidence=_trend_confidence(item.get("confidence")),
                     warnings=[str(w) for w in item.get("warnings", [])] if isinstance(item.get("warnings"), list) else [],
                 )
             )
@@ -538,7 +544,7 @@ def _fact_point(fact: Dict[str, Any]) -> TrendPoint:
         value=_round(fact.get("value") if isinstance(fact.get("value"), (int, float)) else None),
         basis=str(fact.get("basis") or "unknown"),
         source_artifact=str(fact.get("source_artifact") or ""),
-        confidence=str(fact.get("confidence") or "missing"),
+        confidence=_trend_confidence(fact.get("confidence")),
         metric_name=str(fact.get("metric_name") or ""),
         availability_status=str(fact.get("availability_status") or "missing"),
         source_statement=str(fact.get("source_statement") or ""),
@@ -587,7 +593,7 @@ def _build_series_from_truth(
                             value=_round(_parse_numeric(match.get("holding_percent"))),
                             basis="unknown",
                             source_artifact="shareholding_pattern.json",
-                            confidence=str(match.get("confidence") or "missing"),
+                            confidence=_trend_confidence(match.get("confidence")),
                             metric_name=metric_id.replace("_", " "),
                             availability_status="present_direct",
                             source_statement="shareholding",
@@ -637,7 +643,7 @@ def _build_growth_summary_from_truth(
                     absolute_change=_round(item.get("absolute_change") if isinstance(item.get("absolute_change"), (int, float)) else None),
                     basis=str(item.get("basis") or payload.get("basis_used") or "unknown"),
                     source_artifact="financial_growth.json",
-                    confidence=str(item.get("confidence") or "missing"),
+                    confidence=_trend_confidence(item.get("confidence")),
                     warnings=[str(w) for w in item.get("warnings", [])] if isinstance(item.get("warnings"), list) else [],
                 )
             )
@@ -754,6 +760,11 @@ def build_financial_trends(*, company: str, company_root: Path) -> FinancialTren
         }
     )
 
+    # New disclosed metrics must reach the existing group consumers even when a legacy container does not list them.
+    for group_name, metric_ids in ANALYTICAL_METRIC_GROUPS.items():
+        for metric_id in metric_ids:
+            if not trend_groups[group_name][metric_id].series:
+                trend_groups[group_name][metric_id] = _build_series_from_truth(years=years, bundles=bundles, metric_id=metric_id)
     report = FinancialTrendReport(
         company=company,
         generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

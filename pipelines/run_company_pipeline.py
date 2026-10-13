@@ -2040,6 +2040,7 @@ def run_corporate_actions(context=None):
         year=context.year,
         normalized_path=normalized_path,
         raw_tables_path=raw_tables_path if raw_tables_path.exists() else None,
+        chunk_path=(context.extracted_dir / "clean_chunks.json") if (context.extracted_dir / "clean_chunks.json").exists() else None,
         output_path=output_path,
     )
     print("[CORPORATE ACTIONS]")

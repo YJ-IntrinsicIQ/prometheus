@@ -167,6 +167,11 @@ MODULE_SOURCE_MAP: Dict[str, str] = {
     "gold_capital_allocation": "company_memory/gold/capital_allocation_outcome_tracker.json",
     "gold_risk_evolution": "company_memory/gold/risk_evolution_timeline.json",
     "gold_credibility": "company_memory/gold/management_credibility_synthesis.json",
+    # ENG-MISSION52.2c: inputs consumed by the Contract V5 deterministic builder that had no module
+    "management_quality_evidence": "company_memory/management_quality/management_quality_evidence.json",
+    "verification_entities": "company_memory/verification_entities.json",
+    "financial_year_index": "company_memory/financial_year_index.json",
+    "financial_truth_pack_root": "company_memory/financial_truth_pack.json",
     # Pre-built AI artifacts — fingerprinted to detect content drift
     "committee_synthesis": "company_memory/investor_panel/committee_synthesis.json",
     "graham_analysis": "company_memory/investor_panel/graham_analysis.json",
@@ -175,6 +180,49 @@ MODULE_SOURCE_MAP: Dict[str, str] = {
     "munger_analysis": "company_memory/investor_panel/munger_analysis.json",
     "lynch_analysis": "company_memory/investor_panel/lynch_analysis.json",
 }
+
+
+# ENG-MISSION52.2c: modules whose members are DISCOVERED (years listed in an index file x glob
+# patterns), so an added/removed/renamed eligible file changes the digest. Content-based; the
+# member list is part of the digest; a used-year annual file that is absent is recorded as MISSING.
+SOURCE_MANIFEST_MODULES: Dict[str, Dict[str, Any]] = {
+    "source_text_chunks": {
+        "years_from": "company_memory/financial_year_index.json",
+        "years_key": "years_used",
+        "annual": "{fy}/extracted/clean_chunks.json",
+        "globs": ["{fy}/quarters/Q*/quarterly_chunks.json"],
+    },
+}
+
+
+def compute_source_manifest_fingerprint(company_root: Path, module_name: str) -> Dict[str, Any]:
+    spec = SOURCE_MANIFEST_MODULES[module_name]
+    try:
+        years = list(json.loads((company_root / spec["years_from"]).read_text(encoding="utf-8")).get(spec["years_key"], []))
+    except Exception:
+        years = []
+    members: Dict[str, str] = {}
+
+    def member(path: Path) -> str:
+        try:
+            return compute_digest(json.loads(path.read_text(encoding="utf-8")))
+        except Exception:
+            return "UNREADABLE:sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+    for fy in years:
+        annual = company_root / spec["annual"].format(fy=fy)
+        members[spec["annual"].format(fy=fy)] = member(annual) if annual.exists() else "MISSING"
+        for pattern in spec["globs"]:
+            for found in sorted(company_root.glob(pattern.format(fy=fy))):
+                members[str(found.relative_to(company_root))] = member(found)
+    payload = {"years": years, "members": members}
+    return {
+        "module": module_name,
+        "fingerprint_schema_version": FINGERPRINT_SCHEMA_VERSION,
+        "digest": "sha256:" + hashlib.sha256(_canonical_json(payload)).hexdigest(),
+        "record_count": len(members),
+        "source_artifact": f"manifest:{spec['years_from']}",
+    }
 
 
 def _stable_sort_key(item: Any) -> str:
@@ -325,6 +373,10 @@ def compute_company_fingerprints(
         except Exception as exc:
             errors[module_name] = str(exc)
             missing.append(module_name)
+
+    for module_name in SOURCE_MANIFEST_MODULES:
+        modules[module_name] = compute_source_manifest_fingerprint(company_root, module_name)
+        available.append(module_name)
 
     result: Dict[str, Any] = {
         "company": company_slug,

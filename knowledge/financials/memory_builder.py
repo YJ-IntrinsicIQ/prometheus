@@ -385,6 +385,17 @@ def build_capital_allocation_financial_timeline(*, company: str, company_root: P
             if cfo_val is not None and capex_val is not None:
                 fcf_value = round(cfo_val + capex_val, 2)
         fcf_source = "normalized_fundamentals.json" if (ratio_fcf is None and fcf_value is not None) else "financial_ratios.json"
+        # The canonical registry already reconciles aggregate capex, FCF and borrowing definitions.
+        # Prefer its usable preferred-basis facts; never pick an explicit alternate-basis variant here.
+        registry = _load_optional_json(company_root / year / "financials" / "financial_fact_registry.json") or {}
+        canonical = {fact.get("metric_id"): fact for fact in [*registry.get("available_facts", []), *registry.get("derived_facts", [])]
+                     if fact.get("fiscal_year") == year and fact.get("usable_downstream") and isinstance(fact.get("value"), (int, float))}
+        if "capex" in canonical:
+            capex_entry = {"value_crore": canonical["capex"]["value"], "source_artifact": "financial_fact_registry.json"}
+        if "total_debt" in canonical:
+            debt_entry = {"value_crore": canonical["total_debt"]["value"], "source_artifact": "financial_fact_registry.json"}
+        if "fcf" in canonical:
+            fcf_value, fcf_source = canonical["fcf"]["value"], "financial_fact_registry.json"
         timeline.append(
             {
                 "year": year,

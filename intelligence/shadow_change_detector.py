@@ -42,6 +42,26 @@ DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
 FINGERPRINT_SCHEMA_MISMATCH = "FINGERPRINT_SCHEMA_MISMATCH"
 
 
+# ENG-MISSION52.2c: versioned generation-contract override layered over the historical M39/M44
+# record. Only the override's "contract" block is functional (and is what gets fingerprinted);
+# the "governance" block is metadata.
+V5_OVERRIDE_KEY = "m52_contract_v5_override"
+
+
+def get_effective_contract(target: str, registry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The versioned override contract for `target` (question or generation unit), or None."""
+    contract = (registry.get(V5_OVERRIDE_KEY) or {}).get("contract")
+    if contract and target in (contract.get("generation_unit"), contract.get("question")):
+        return contract
+    return None
+
+
+def effective_contract_digest(contract: Dict[str, Any]) -> str:
+    import hashlib
+    raw = json.dumps(contract, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
+
+
 def _resolve_upstream_modules(
     target: str,
     registry: Dict[str, Any],
@@ -57,6 +77,10 @@ def _resolve_upstream_modules(
     if target in visited:
         return []
     visited.add(target)
+
+    override = get_effective_contract(target, registry)
+    if override:
+        return list(dict.fromkeys(override["upstream_modules"]))
 
     questions = registry.get("questions", {})
     generation_units = registry.get("generation_units", {})

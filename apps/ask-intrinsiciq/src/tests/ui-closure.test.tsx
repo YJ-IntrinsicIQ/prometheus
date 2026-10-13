@@ -3,8 +3,6 @@
  *
  * Validates the three remediated issues:
  *  1. Dead prometheus/adapter removed
- *  2. Gold-derived section titles normalized before display
- *  3. dynamicParams explicitly declared on dynamic company routes
  *
  * Plus onboarding-contract and regression checks.
  */
@@ -12,19 +10,10 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
-import { StructuredAnswerSections } from "@/src/components/structured-answer-sections";
-import {
-  dynamicParams as companyDynamicParams,
-} from "@/app/company/[companySlug]/page";
-import {
-  dynamicParams as questionDynamicParams,
-} from "@/app/company/[companySlug]/question/[questionId]/page";
 import {
   getCompanySlugs,
   getLandingCompanies,
   getCompanyResearchView,
-  getResearchAnswerCard,
 } from "@/src/lib/ask-intrinsiciq";
 
 // ── T1: dead adapter deleted ───────────────────────────────────────────────
@@ -57,17 +46,6 @@ describe("T2 – canonical dynamic discovery", () => {
   });
 });
 
-// ── T3: dynamicParams explicitly declared ──────────────────────────────────
-describe("T3 – dynamicParams explicit declaration", () => {
-  it("company [companySlug] page exports dynamicParams = true", () => {
-    expect(companyDynamicParams).toBe(true);
-  });
-
-  it("question [questionId] page exports dynamicParams = true", () => {
-    expect(questionDynamicParams).toBe(true);
-  });
-});
-
 // ── T4: arbitrary slug resolves through generic route ─────────────────────
 describe("T4 – arbitrary discovered slug", () => {
   it("every slug returned by getCompanySlugs() loads a research view", async () => {
@@ -88,64 +66,6 @@ describe("T5 – no production hardcoded company list", () => {
     const [slugs, companies] = await Promise.all([getCompanySlugs(), getLandingCompanies()]);
     const companySlugs = companies.map((c) => c.slug).sort();
     expect(companySlugs).toEqual([...slugs].sort());
-  });
-});
-
-// ── T6–T8: Gold section title normalization ────────────────────────────────
-describe("T6–T8 – Gold section normalization in StructuredAnswerSections", () => {
-  const goldSections = [
-    {
-      title: "Management track record (Gold)",
-      points: ["Consistent delivery on stated targets across three fiscal cycles."],
-    },
-    {
-      title: "Capital deployment returns (Gold)",
-      points: ["Incremental ROCE on deployed capital has been positive and above cost."],
-    },
-  ];
-
-  it("T6 – '(Gold)' suffix is not shown in management track record heading", () => {
-    render(<StructuredAnswerSections sections={goldSections} />);
-    expect(screen.getByText("Management track record")).toBeInTheDocument();
-    expect(screen.queryByText(/\(Gold\)/)).toBeNull();
-  });
-
-  it("T7 – '(Gold)' suffix is not shown in capital deployment returns heading", () => {
-    render(<StructuredAnswerSections sections={goldSections} />);
-    expect(screen.getByText("Capital deployment returns")).toBeInTheDocument();
-    expect(screen.queryByText(/\(Gold\)/)).toBeNull();
-  });
-
-  it("T8 – normalized Gold sections receive a named style treatment (not default fallback)", () => {
-    render(<StructuredAnswerSections sections={goldSections} />);
-    // The styled eyebrows "Management" and "Capital allocation" are only rendered
-    // when SECTION_STYLES has an entry for the normalized key.
-    expect(screen.getByText("Management")).toBeInTheDocument();
-    expect(screen.getByText("Capital allocation")).toBeInTheDocument();
-  });
-});
-
-// ── T9: unknown structured section renders gracefully ──────────────────────
-describe("T9 – unknown section renders without crash", () => {
-  it("an unrecognized section title gets the default fallback style", () => {
-    const sections = [
-      { title: "Some future backend section", points: ["A data point."] },
-    ];
-    render(<StructuredAnswerSections sections={sections} />);
-    // Default eyebrow text for unrecognized keys
-    expect(screen.getByText("Structured view")).toBeInTheDocument();
-    expect(screen.getByText("Some future backend section")).toBeInTheDocument();
-  });
-});
-
-// ── T10: missing optional artifact does not crash ─────────────────────────
-describe("T10 – missing artifact degrades gracefully", () => {
-  it("getResearchAnswerCard returns a safe unavailable card, not null, when answer card artifact is absent", async () => {
-    // tanla has a company_memory_index but may not have every answer card present.
-    const answer = await getResearchAnswerCard("tanla", "what-does-company-do");
-    // Must be non-null (graceful unavailable) or fully sourced — never a thrown exception.
-    expect(answer).not.toBeNull();
-    expect(["unavailable", "sourced", "partially_sourced", "supported"]).toContain(answer?.answerStatus);
   });
 });
 

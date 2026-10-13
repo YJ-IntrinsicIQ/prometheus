@@ -85,7 +85,7 @@ def test_dg01_active_registry_all_analysts_dirty_for_management_commitments():
     expected = {"graham_panel", "buffett_panel", "fisher_panel", "munger_panel", "lynch_panel",
                 "committee_synthesis", "how_good_is_management_synthesis"}
     assert dirty == expected, f"Expected 7 dirty units with v1 registry, got: {dirty}"
-    assert _planned_calls(result) == 7
+    assert _planned_calls(result) == 6  # Contract V5 (ENG-MISSION52): the management unit is deterministic -> 0 AI calls
 
 
 # --- DG-02: management_progression dirties all 5 analysts (both registries) ---
@@ -97,7 +97,7 @@ def test_dg02_management_progression_dirties_all_analysts_active():
     dirty = _dirty_units(result)
     for unit in ["graham_panel", "buffett_panel", "fisher_panel", "munger_panel", "lynch_panel"]:
         assert unit in dirty, f"{unit} must be dirty when management_progression changes"
-    assert _planned_calls(result) == 7
+    assert _planned_calls(result) == 6  # Contract V5 (ENG-MISSION52): the management unit is deterministic -> 0 AI calls
 
 
 def test_dg02_management_progression_dirties_all_analysts_proposed():
@@ -107,7 +107,7 @@ def test_dg02_management_progression_dirties_all_analysts_proposed():
     dirty = _dirty_units(result)
     for unit in ["graham_panel", "buffett_panel", "fisher_panel", "munger_panel", "lynch_panel"]:
         assert unit in dirty, f"{unit} must be dirty for management_progression (company_memory_context top-3 for all)"
-    assert _planned_calls(result) == 7
+    assert _planned_calls(result) == 6  # Contract V5 (ENG-MISSION52): the management unit is deterministic -> 0 AI calls
 
 
 def test_dg02_management_progression_in_all_analyst_upstream_modules():
@@ -206,8 +206,8 @@ def test_dg05_proposed_registry_scenario_i_4_calls():
     """Proposed registry reduces Scenario I from 7 to 4 calls."""
     proposed = _load_registry(PROPOSED_REGISTRY_PATH)
     result = _plan_with_registry(proposed, changed_modules=["management_commitments"])
-    assert _planned_calls(result) == 4, \
-        f"Proposed registry must plan 4 calls for Scenario I, got {_planned_calls(result)}"
+    assert _planned_calls(result) == 3, \
+        f"Proposed registry must plan 3 AI calls for Scenario I (4 dirty units, management deterministic), got {_planned_calls(result)}"
 
 
 def test_dg05_proposed_saves_3_calls_over_active():
@@ -365,8 +365,8 @@ def test_dg_management_progression_scenario_same_in_both():
     proposed = _load_registry(PROPOSED_REGISTRY_PATH)
     r_active = _plan_with_registry(active, changed_modules=["management_progression"])
     r_proposed = _plan_with_registry(proposed, changed_modules=["management_progression"])
-    assert _planned_calls(r_active) == 7
-    assert _planned_calls(r_proposed) == 7, "management_progression scenario must be unchanged"
+    assert _planned_calls(r_active) == 6
+    assert _planned_calls(r_proposed) == 6, "management_progression scenario must be unchanged"
 
 
 def test_dg_pcim_scenario_same_in_both():
@@ -375,8 +375,12 @@ def test_dg_pcim_scenario_same_in_both():
     proposed = _load_registry(PROPOSED_REGISTRY_PATH)
     r_active = _plan_with_registry(active, changed_modules=["pcim"])
     r_proposed = _plan_with_registry(proposed, changed_modules=["pcim"])
-    assert _planned_calls(r_active) == 6
+    # M44 replaced the whole-module 'pcim' dependency with per-section pcim:* modules in the ACTIVE
+    # registry, so a bare 'pcim' change no longer dirties it; the M42 proposal still depends on 'pcim'.
+    assert _planned_calls(r_active) == 0
     assert _planned_calls(r_proposed) == 6, "PCIM scenario unchanged by management_commitments optimization"
+    sections = sorted({m for u in active["generation_units"].values() for m in u["upstream_modules"] if m.startswith("pcim:")})
+    assert sections and _planned_calls(_plan_with_registry(active, changed_modules=sections)) == 6
 
 
 def test_dg_financial_scenario_same_in_both():
@@ -417,5 +421,6 @@ def test_dg_no_false_clean_all_7_when_pcim_and_mc_both_dirty():
     """All 7 units dirty when both pcim and management_commitments are dirty (full pipeline run)."""
     proposed = _load_registry(PROPOSED_REGISTRY_PATH)
     result = _plan_with_registry(proposed, changed_modules=["management_commitments", "pcim"])
-    assert _planned_calls(result) == 7, \
-        "Full pipeline rebuild must produce 7 calls even with proposed registry"
+    assert _planned_calls(result) == 6, \
+        "Full pipeline rebuild must plan 6 AI calls (7 dirty units; management is deterministic) even with proposed registry"
+    assert len(_dirty_units(result)) == 7

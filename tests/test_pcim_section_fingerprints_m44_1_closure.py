@@ -188,13 +188,22 @@ def test_m44c_03_5run_4company_section_stability():
 # M44C-04: Active v3 registry baseline = 0 planned calls
 # ---------------------------------------------------------------------------
 
+def _assert_v4_only_adds_override(active):
+    """v4 (ENG-MISSION52.2c) must differ from the preserved v3 only by the V5 override + version."""
+    if active["dependency_contract_version"] == "4":
+        v3 = _load_registry(ACTIVE_REGISTRY_PATH.parent / "answer_dependency_registry.v3_pre_m52.json")
+        strip = lambda r: {k: v for k, v in r.items() if k not in ("m52_contract_v5_override", "dependency_contract_version")}
+        assert strip(active) == strip(v3)
+
+
 def test_m44c_04_active_v3_baseline_zero_calls():
     """Active registry v3 produces 0 planned AI calls for all 4 companies with stable evidence."""
     from intelligence.regeneration_planner import plan_regeneration
     active = _load_registry(ACTIVE_REGISTRY_PATH)
-    assert active["dependency_contract_version"] == "3", (
-        f"Active registry is not v3: {active['dependency_contract_version']}"
+    assert active["dependency_contract_version"] in ("3", "4"), (
+        f"Active registry is not v3/v4: {active['dependency_contract_version']}"
     )
+    _assert_v4_only_adds_override(active)
     for company in COMPANIES:
         with patch("intelligence.regeneration_planner._load_dependency_registry", return_value=active):
             result = plan_regeneration(company)
@@ -391,9 +400,10 @@ def test_m44c_12_active_v3_and_v2_backup_exist():
     assert V2_BACKUP_PATH.exists(), "v2 backup file missing"
     active = _load_registry(ACTIVE_REGISTRY_PATH)
     v2 = _load_registry(V2_BACKUP_PATH)
-    assert active["dependency_contract_version"] == "3", (
-        f"Active registry not v3: {active['dependency_contract_version']}"
+    assert active["dependency_contract_version"] in ("3", "4"), (
+        f"Active registry not v3/v4: {active['dependency_contract_version']}"
     )
+    _assert_v4_only_adds_override(active)
     assert v2["dependency_contract_version"] == "2", (
         f"v2 backup not v2: {v2['dependency_contract_version']}"
     )

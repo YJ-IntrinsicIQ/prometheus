@@ -3,10 +3,11 @@ import { BrandMark } from "@/src/components/brand-mark";
 import { CompanySearch } from "@/src/components/company-search";
 import { landingView } from "@/src/data/landing-view";
 import { getLandingCompanies } from "@/src/lib/ask-intrinsiciq";
+import { COMPANIES } from "@/src/lib/story/companies";
 
 export default async function HomePage() {
-  const companies = await getLandingCompanies();
-  const showDevelopmentNote = companies.length > 0 && process.env.NODE_ENV !== "production";
+  // One selection flow: the companies the Cockpit supports, with availability from company discovery.
+  const companies = (await getLandingCompanies()).filter((c) => c.slug in COMPANIES).map((c) => ({ ...c, name: COMPANIES[c.slug].name }));
 
   return (
     <AppFrame>
@@ -28,7 +29,6 @@ export default async function HomePage() {
             searchLabel={landingView.searchLabel}
             helperText={landingView.helperText}
             companies={companies}
-            showDevelopmentNote={showDevelopmentNote}
           />
         </div>
       </section>

@@ -1,50 +1,39 @@
-import { notFound } from "next/navigation";
-import { AnswerView } from "@/src/components/answer-view";
+import { notFound, redirect } from "next/navigation";
 import { AppFrame } from "@/src/components/layout/app-frame";
-import { BrandMark } from "@/src/components/brand-mark";
-import {
-  getCompanyResearchView,
-  getResearchAnswerCardWithSource,
-  getResearchQuestionParams,
-} from "@/src/lib/ask-intrinsiciq";
+import { QuestionExperience, QuestionPending } from "@/src/components/story/question-experience";
+import { findQuestion, loadCatalog } from "@/src/lib/catalog/catalog";
+import { availableAnnualReports } from "@/src/lib/evidence/documents";
+import { questionRoute } from "@/src/lib/routes";
+import { relatedFor } from "@/src/lib/catalog/journey";
+import { loadExplorer } from "@/src/lib/catalog/load-explorer";
+import { approvedQuestionIds } from "@/src/lib/story/authorization";
+import { COMPANIES } from "@/src/lib/story/companies";
+import { loadQuestionView } from "@/src/lib/story/load-question";
+import { QUESTIONS } from "@/src/lib/story/questions";
 
-type QuestionPageProps = {
-  params: Promise<{
-    companySlug: string;
-    questionId: string;
-  }>;
-};
+export const dynamic = "force-dynamic";
 
-export const dynamicParams = true;
-
-export async function generateStaticParams() {
-  return getResearchQuestionParams();
-}
-
-export default async function QuestionPage({ params }: QuestionPageProps) {
+// One page for every catalog question. An approved answer is shown by the shared renderer; a catalog question without
+// one says so. A question that is not in the catalog is a 404.
+export default async function QuestionPage({ params }: { params: Promise<{ companySlug: string; questionId: string }> }) {
   const { companySlug, questionId } = await params;
-  const [company, answerWithSource] = await Promise.all([
-    getCompanyResearchView(companySlug),
-    getResearchAnswerCardWithSource(companySlug, questionId),
-  ]);
-
-  if (!company || !answerWithSource) {
-    notFound();
-  }
-
+  const company = COMPANIES[companySlug];
+  if (!company) notFound();
+  const catalog = await loadCatalog();
+  const hit = findQuestion(catalog, questionId);
+  if (!hit) notFound();
+  // A catalog question served by a certified question lives at the certified question's address.
+  if (!hit.viaCertified && hit.q.certifiedId && hit.q.certifiedId !== questionId) redirect(questionRoute(companySlug, hit.q.certifiedId));
+  const view = await loadQuestionView(companySlug, questionId); // null unless the approval gate passes for THIS company
+  if (view) return <AppFrame><QuestionExperience view={view} /></AppFrame>;
+  const available = await approvedQuestionIds(companySlug);
+  const family = catalog.families.find((f) => f.id === hit.q.family);
+  const title = QUESTIONS.find((q) => q.id === questionId)?.title ?? hit.q.title;
+  const explorer = await loadExplorer(companySlug);   // titles of the approved questions only
+  const related = relatedFor(catalog, available, companySlug, hit.q.id, 5);
   return (
     <AppFrame>
-      <section className="editorial-card rounded-[32px] px-6 py-8 md:px-10 md:py-10">
-        <BrandMark />
-        <div className="mt-12">
-          <AnswerView
-            companySlug={companySlug}
-            company={company}
-            answer={answerWithSource.card}
-            canarySource={answerWithSource.source === "HYBRID_CANARY" ? "HYBRID_CANARY" : undefined}
-          />
-        </div>
-      </section>
+      <QuestionPending slug={companySlug} company={company.name} available={available} docs={availableAnnualReports(companySlug)} titles={explorer?.titles} question={{ id: questionId, title }} familyTitle={family?.title ?? ""} familyId={hit.q.family} entry={hit.q} related={related} />
     </AppFrame>
   );
 }

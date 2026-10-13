@@ -189,7 +189,9 @@ class ManagementProgressionProducer:
             "coverage_status": coverage,
             "progression_items": items,
             "management_thesis_chains": cross_year["management_thesis_chains"],
-            "measurable_commitments": cross_year["measurable_commitments"],
+            # Only a REGISTER commitment (event id = register fingerprint) is a measurable commitment. A "commitment" claim lifted from another
+            # stream (e.g. investor-presentation text) has no register identity, so it never counts - and no two modules can disagree about it.
+            "measurable_commitments": [m for m in cross_year["measurable_commitments"] if m.get("commitment_fingerprint")],
             "contradiction_signals": cross_year["contradiction_signals"],
             "management_execution_outcomes": execution_outcomes,
             "source_manifest": self._source_manifest(coverage),
@@ -399,7 +401,10 @@ class ManagementProgressionProducer:
             # all commitment-sourced events filtered out.
             text = _pick(item, "original_statement", "normalized_commitment", "commitment", "topic", "title", "promise")
             text = _canonical_progression_text(text)
-            if not _specific_enough(text) or _is_low_value_progression_text(text):
+            # A commitment the register's canonical classifier stamped verifiable/hard is specific by definition: a generic text filter
+            # must not drop it (Sun's three hard commitments were dropped here, so the lifecycle owner never saw them).
+            canonically_verifiable = item.get("commitment_class") in ("HARD_COMMITMENT", "VERIFIABLE_UNDATED") and item.get("accountability_ontology") == "VERIFIABLE_COMMITMENT"
+            if not canonically_verifiable and (not _specific_enough(text) or _is_low_value_progression_text(text)):
                 continue
             period = _pick(item, "first_seen_period", "announcement_period", "source_period", "first_seen_year", "period")
             evidence = _evidence_from_item(item, "company_memory/management_commitments/management_commitments.json", period)
@@ -407,8 +412,7 @@ class ManagementProgressionProducer:
             # All commitment events start as "unresolved"; lifecycle is derived from action/completion
             # events sourced from projects, capacity, commentary, and capital_allocation_outcomes.
             fp = _pick(item, "commitment_fingerprint", "commitment_id", "promise_id", default=f"commitment_{len(results)+1}")
-            results.append(
-                self._event(
+            event = self._event(
                     # Prefer stable fingerprint over ordinal MC-XXXX id for cross-system linkage.
                     event_id=fp,
                     role="commitment",
@@ -423,7 +427,14 @@ class ManagementProgressionProducer:
                     # group into the same MP item regardless of text phrasing.
                     theme_hint=f"fp:{fp}",
                 )
-            )
+            if canonically_verifiable:
+                event["_canonical_verifiable"] = True  # private flag (stripped from public events): lets the 25-item cap keep this theme
+            if item.get("commitment_class"):
+                # The register's verdict travels with the commitment's identity, so no downstream stage classifies the same commitment again.
+                event["commitment_class"] = item["commitment_class"]
+                event["hard_commitment"] = bool(item.get("hard_commitment"))
+                event["target_period"] = str((item.get("commitment_basis") or {}).get("deadline_text") or "")
+            results.append(event)
         return results
 
     def _events_from_projects(self) -> List[Dict[str, Any]]:
@@ -801,9 +812,15 @@ class ManagementProgressionProducer:
                     {"theme": theme, "events": public_events},
                     self.metric_series,
                 ),
+                "_holds_verifiable_commitment": any(event.get("_canonical_verifiable") for event in grouped),
             }
             items.append(item)
-        return sorted(items, key=lambda item: (-_materiality_score(item), item["item_id"]))[:25]
+        ranked = sorted(items, key=lambda item: (-_materiality_score(item), item["item_id"]))
+        # The 25-item cap ranks by materiality score; it must not discard a theme that holds a canonical-verifiable register commitment.
+        pinned = [item for item in ranked[25:] if item.pop("_holds_verifiable_commitment", False)]
+        for item in ranked:
+            item.pop("_holds_verifiable_commitment", None)
+        return ranked[:25] + pinned
 
     def _event(self, *, event_id: str, role: str, event_type: str, source_period: str, event_period: str = "", target_period: str = "", resolved_period: str = "", actor: str = "management", statement_text: str = "", action_taken: str = "", operational_outcome: str = "", financial_or_business_outcome: str = "", verification_status: str = "unresolved", evidence: List[Dict[str, Any]] | None = None, stream_type: str = "", theme_hint: str = "") -> Dict[str, Any]:
         return {

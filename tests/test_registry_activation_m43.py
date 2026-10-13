@@ -252,8 +252,8 @@ def test_m43_11_scenario_i_call_savings():
     result_proposed = _plan_with_registry(proposed, changed_modules=["management_commitments"])
     calls_v1 = _planned_calls(result_v1)
     calls_proposed = _planned_calls(result_proposed)
-    assert calls_v1 == 7, f"v1: Scenario I must plan 7 calls, got {calls_v1}"
-    assert calls_proposed == 4, f"Proposed: Scenario I must plan 4 calls, got {calls_proposed}"
+    assert calls_v1 == 6, f"v1: Scenario I must plan 6 AI calls (7 dirty, management deterministic), got {calls_v1}"
+    assert calls_proposed == 3, f"Proposed: Scenario I must plan 3 AI calls (4 dirty, management deterministic), got {calls_proposed}"
     assert calls_v1 - calls_proposed == 3, \
         f"Promotion must save exactly 3 calls, saved {calls_v1 - calls_proposed}"
 
@@ -290,8 +290,11 @@ def test_m43_12_commitment_plus_pcim_rebuild_same_in_both_registries():
     proposed = _load_registry(PROPOSED_REGISTRY_PATH)
     result_active = _plan_with_registry(active, changed_modules=["management_commitments", "pcim"])
     result_proposed = _plan_with_registry(proposed, changed_modules=["management_commitments", "pcim"])
-    assert _planned_calls(result_active) == 7, "Active: all 7 dirty when pcim rebuilt"
-    assert _planned_calls(result_proposed) == 7, "Proposed: all 7 dirty when pcim rebuilt"
+    # active (M44) depends on pcim:* sections, so synthesise those as dirty too
+    sections = sorted({m for u in active["generation_units"].values() for m in u["upstream_modules"] if m.startswith("pcim:")})
+    result_active = _plan_with_registry(active, changed_modules=["management_commitments", "pcim"] + sections)
+    assert _planned_calls(result_active) == 6, "Active: all 7 units dirty when pcim rebuilt (6 AI calls; management deterministic)"
+    assert _planned_calls(result_proposed) == 6, "Proposed: all 7 units dirty when pcim rebuilt (6 AI calls; management deterministic)"
     dirty_active = _dirty_units(result_active)
     dirty_proposed = _dirty_units(result_proposed)
     expected = {

@@ -226,8 +226,10 @@ def test_exe_02_plan_one_call_for_target():
     all_units = plan.get("units", plan.get("unit_plans", []))
     unit_map = {u["generation_unit"]: u for u in all_units}
     target = unit_map.get(UNIT_TARGET, {})
-    assert target.get("planned_ai_calls") == 1, (
-        f"Expected 1 planned call for {UNIT_TARGET}, got {target.get('planned_ai_calls')}"
+    # Contract V5 (ENG-MISSION52 / 52.2b): the target unit is deterministic -> 0 AI calls, but the
+    # forced reason is still recorded and the unit is still planned for regeneration.
+    assert target.get("planned_ai_calls") == 0, (
+        f"Expected 0 planned AI calls for {UNIT_TARGET} under Contract V5, got {target.get('planned_ai_calls')}"
     )
     assert PROMPT_VERSION_CHANGED in target.get("regeneration_reason", [])
 

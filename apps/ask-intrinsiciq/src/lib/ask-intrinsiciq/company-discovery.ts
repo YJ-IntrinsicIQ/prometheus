@@ -2,12 +2,10 @@ import path from "node:path";
 import { readdir } from "node:fs/promises";
 import type {
   CompanyResearchView,
-  ResearchAnswerCard,
   ResearchCategory,
 } from "@/src/types";
 import { readJsonIfExists } from "@/src/lib/prometheus/read-json";
 import { getAskIntrinsicIqPaths, getRepoRoot } from "@/src/lib/ask-intrinsiciq/paths";
-import { getQuestionPresentationType } from "@/src/lib/ask-intrinsiciq/question-types";
 
 export type CompanyAvailabilityState = "READY" | "PARTIAL" | "UNAVAILABLE";
 
@@ -623,64 +621,5 @@ export async function buildCompanyResearchViewFromDiscovery(
       ],
       uncertaintySummary: buildUncertaintySummary(internalKey, memoryIndex, yearlyIndex, false),
     },
-  };
-}
-
-export async function buildUnavailableResearchAnswerCard(
-  companySlug: string,
-  questionId: string,
-  company: CompanyResearchView,
-): Promise<ResearchAnswerCard | null> {
-  const question = company.categories
-    .flatMap((category) => category.questions)
-    .find((entry) => entry.id === questionId);
-
-  if (!question) {
-    return null;
-  }
-
-  const nextQuestions = company.categories
-    .flatMap((category) => category.questions)
-    .filter((entry) => entry.id !== questionId)
-    .slice(0, 3)
-    .map((entry) => ({
-      id: entry.id,
-      questionId: entry.id,
-      title: entry.title,
-      shortLabel: entry.shortLabel,
-    })) as ResearchAnswerCard["nextQuestions"];
-
-  return {
-    id: question.answerCardId,
-    questionId: question.id,
-    title: question.title,
-    simpleAnswer: "Research for this question is not complete yet.",
-    whyItMatters:
-      "The company-memory record exists, but this question does not yet have a canonical Ask answer.",
-    keyPoints: [
-      `Company: ${company.company.displayName}`,
-      `Available years: ${company.company.reportingPeriodsCovered.join(", ") || "none"}`,
-    ],
-    detailedExplanation:
-      "This page is intentionally restrained. It shows that the route works, the company is recognized, and the answer is still incomplete rather than silently borrowed from another company.",
-    productsAndServices: [],
-    businessJourney: null,
-    financialVisualRefs: [],
-    evidenceSummary: [
-      {
-        label: "Availability",
-        detail: company.sourceState.summary ?? "Canonical Ask output is not yet available.",
-        evidenceStatus: "missing",
-      },
-    ],
-    uncertaintyNote: {
-      label: "Research incomplete",
-      detail: company.sourceState.uncertaintySummary?.mainUncertainty ?? "This question is not fully researched yet.",
-      evidenceStatus: "missing",
-    },
-    nextQuestions,
-    answerStatus: "unavailable",
-    questionType: getQuestionPresentationType(questionId),
-    generatedAt: company.generatedAt,
   };
 }

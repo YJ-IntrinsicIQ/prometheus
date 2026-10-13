@@ -287,6 +287,10 @@ def _build_promise_record(
         "specificity": commitment.get("statement_type") or "",
         "accountability_ontology": commitment.get("accountability_ontology") or "STRATEGIC_INTENT",
         "verification_applicability": commitment.get("verification_applicability") or "NOT_APPLICABLE",
+        # Canonical classification, passed through from the register (same fingerprint identity) - never re-derived here.
+        "commitment_class": commitment.get("commitment_class"),
+        "hard_commitment": bool(commitment.get("hard_commitment")),
+        "commitment_basis": commitment.get("commitment_basis"),
         "materiality": ((commitment.get("semantic_quality") or {}).get("materiality") if isinstance(commitment.get("semantic_quality"), dict) else None) or commitment.get("priority") or "",
         "promise_type": promise_type,
         "progression_status": lifecycle_item.get("current_status") or "announced",
@@ -516,6 +520,7 @@ def build_management_promise_tracker(
         "partially_verified_commitments": verification_counts.get("PARTIALLY_VERIFIED", 0),
         "contradicted_commitments": verification_counts.get("CONTRADICTED", 0),
         "unresolved_verifiable_commitments": verification_counts.get("UNVERIFIED", 0),
+        "hard_commitments": sum(1 for p in accountability_promises if p.get("hard_commitment")),
         "strategic_intents": ontology_counts.get("STRATEGIC_INTENT", 0),
         "aspirations": ontology_counts.get("ASPIRATION", 0),
         "policies_or_principles": ontology_counts.get("POLICY_OR_PRINCIPLE", 0),
