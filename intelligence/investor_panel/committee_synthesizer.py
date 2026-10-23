@@ -1,4 +1,6 @@
 from __future__ import annotations
+from knowledge.financials.authority_gate import load_vouched
+from core.context_paths import guarded_write_text, resolve_output_root
 
 import json
 import re
@@ -341,10 +343,9 @@ def _load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _write_json(path: Path, payload: Dict[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return path
+def _write_json(path: Path, payload: Dict[str, Any], *, root: Path | str) -> Path:
+    """The destination must lie inside the explicit, already-authorized output root."""
+    return guarded_write_text(root, path, json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def _flatten_strings(value: Any) -> List[str]:
@@ -2226,9 +2227,10 @@ class InvestmentCommitteeSynthesizer:
     ULTRA_COMPACT_ANALYST_CHAR_BUDGET = 420
     SOFT_MAX_PROMPT_CHARS = 28000
 
-    def __init__(self, company: str, companies_root: Path | str = Path("companies")):
+    def __init__(self, company: str, companies_root: Path | str, *, authorize_served_write: bool = False):
         self.company = company
-        self.companies_root = Path(companies_root)
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
         self.panel_dir = self.companies_root / company / "company_memory" / "investor_panel"
         self.output_path = self.panel_dir / "committee_synthesis.json"
         self.diagnostics_path = self.panel_dir / "committee_synthesis_diagnostics.json"
@@ -2689,7 +2691,7 @@ class InvestmentCommitteeSynthesizer:
             ),
         }
 
-        financial_truth_pack = _load_json(
+        financial_truth_pack = load_vouched(
             company_root / "company_memory" / "financials" / "financial_truth_pack.json"
         )
         shared_progression["financial_truth"] = {
@@ -4404,7 +4406,7 @@ class InvestmentCommitteeSynthesizer:
         if finalization_contract_violations:
             guard_diagnostics["finalization_contract_violations"] = finalization_contract_violations
             guard_diagnostics["status"] = "finalization_contract_violation"
-            _write_json(self.diagnostics_path, guard_diagnostics)
+            _write_json(self.diagnostics_path, guard_diagnostics, root=self.companies_root)
             raise ValueError(
                 "COMMITTEE_FINALIZATION_CONTRACT_VIOLATION: "
                 f"{json.dumps(finalization_contract_violations[:3], ensure_ascii=False)}"
@@ -4559,7 +4561,7 @@ class InvestmentCommitteeSynthesizer:
             or diagnostics.get("analyst_reference_repairs")
         ):
             diagnostics["status"] = "sanitized"
-            _write_json(self.diagnostics_path, diagnostics)
+            _write_json(self.diagnostics_path, diagnostics, root=self.companies_root)
         elif self.diagnostics_path.exists():
             self.diagnostics_path.unlink()
         return finalized
@@ -4929,7 +4931,7 @@ class InvestmentCommitteeSynthesizer:
             string_list_repairs=repairs["string_list_repairs"],
             analyst_reference_repairs=repairs["analyst_reference_repairs"],
         )
-        return _write_json(self.output_path, cleaned)
+        return _write_json(self.output_path, cleaned, root=self.companies_root)
 
     def run(self, *, cleanup_only: bool = False) -> Path:
         included, missing, excluded, warning_notes = self._load_inputs()
@@ -5088,6 +5090,7 @@ class InvestmentCommitteeSynthesizer:
                 prompt=prompt,
                 input_pack=llm_input_pack,
                 manifest_path=self.panel_dir / "committee_llm_call_manifest.json",
+                output_root=self.companies_root,
                 require_source_artifacts=True,
                 response_schema={"type": "object"},
                 temperature=0.0,
@@ -5123,4 +5126,4 @@ class InvestmentCommitteeSynthesizer:
             string_list_repairs=repairs["string_list_repairs"],
             analyst_reference_repairs=repairs["analyst_reference_repairs"],
         )
-        return _write_json(self.output_path, finalized)
+        return _write_json(self.output_path, finalized, root=self.companies_root)

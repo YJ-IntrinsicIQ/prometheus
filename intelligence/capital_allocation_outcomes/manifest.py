@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable
 
 from .contracts import ALLOCATION_OUTCOMES_GENERATOR_VERSION
-from .paths import get_capital_allocation_outcomes_dir
+from .paths import logical_capital_allocation_outcomes_dir
 
 
 def build_capital_allocation_manifest(
@@ -26,7 +26,7 @@ def build_capital_allocation_manifest(
         "generator_version": ALLOCATION_OUTCOMES_GENERATOR_VERSION,
         "company_slug": company_slug,
         "generated_at": generated_at,
-        "output_directory": str(get_capital_allocation_outcomes_dir(company_slug)),
+        "output_directory": str(logical_capital_allocation_outcomes_dir(company_slug)),
         "upstream_sources_considered": list(upstream_sources_considered),
         "upstream_sources_found": list(upstream_sources_found),
         "upstream_sources_missing": list(upstream_sources_missing),

@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from knowledge.company_memory import parse_financial_year
+from knowledge.company_memory.guardrails import evidenced_announcement_period, extract_dated_events, extract_issue_dates, extract_issue_economics
 
-from knowledge.capital_allocation_taxonomy import normalize_capital_allocation_item, resolve_economic_role
+from knowledge.financials.authority_gate import load_vouched
+from knowledge.capital_allocation_taxonomy import _NOT_AN_ALLOCATION_GROUPS, apply_label_verdict, event_nature, normalize_capital_allocation_item, resolve_economic_role, verify_stored_classification
 
 from .contracts import (
     ALLOCATION_CATEGORIES,
@@ -23,7 +25,7 @@ from .contracts import (
     OUTCOME_ATTRIBUTION_LEVELS,
 )
 from .manifest import build_capital_allocation_manifest
-from .longitudinal_profile import build_longitudinal_profile
+from .longitudinal_profile import build_longitudinal_profile, write_longitudinal_profile
 from .paths import (
     get_capital_allocation_assessments_path,
     get_capital_allocation_longitudinal_profile_path,
@@ -36,6 +38,7 @@ from .paths import (
 from .progression import CapitalAllocationOutcomesProgressionAdapter, build_capital_allocation_event, build_timeline
 from .validators import validate_capital_allocation_outcomes_payload
 from .writer import write_json_file
+from core.context_paths import logical_company_path, resolve_output_root, safe_destination
 from intelligence.progression import build_confidence
 
 
@@ -158,6 +161,9 @@ _RE_FOREIGN_CCY = re.compile(r"\b(?:USD|EUR|GBP|JPY|CNY|AUD|CAD|SGD|CHF)\b", re.
 # Per-share amounts cannot determine total capital deployment
 _RE_PER_SHARE = re.compile(r"\bper\s+(?:equity\s+)?share\b", re.IGNORECASE)
 _RE_NUMBER = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
+_RE_INVESTEE_STAKE = re.compile(r"minority\s+(?:stake|investment|interest)|equity\s+investment|stake\s+in\b|subscri", re.IGNORECASE)
+_RE_OWN_ISSUANCE = re.compile(r"issu|allot|esop|esop|buy-?back|dividend|rights|preferential|qip", re.IGNORECASE)
+_RE_SHARE_COUNT = re.compile(r"\b\d[\d,]*\s+(?:(?:equity|preference|ordinary)\s+)?shares?\b", re.IGNORECASE)
 
 
 def _parse_amount_to_crore(value: Any) -> Optional[float]:
@@ -253,10 +259,6 @@ def _parse_amount_to_crore(value: Any) -> Optional[float]:
     return abs(primary) * multiplier if primary != 0 else None
 
 
-def _company_root(company: str) -> Path:
-    return Path("companies") / company
-
-
 def _load_related_records(company_root: Path) -> Dict[str, List[Dict[str, Any]]]:
     def _extract(path: Path, key_options: Sequence[str]) -> List[Dict[str, Any]]:
         payload = _load_company_payload(path)
@@ -275,14 +277,15 @@ def _load_related_records(company_root: Path) -> Dict[str, List[Dict[str, Any]]]
 
 
 def _load_financial_artifacts(company_root: Path) -> Dict[str, Any]:
+    """Financial inputs are read only if they were built against the current registries (knowledge.financials.authority_gate): otherwise they are absent."""
     financial_root = company_root / "company_memory" / "financials"
     investor_dir = financial_root / "investor_financial_modules"
     return {
-        "financial_memory_summary": _load_company_payload(financial_root / "financial_memory_summary.json"),
-        "financial_driver_attribution": _load_company_payload(financial_root / "financial_driver_attribution.json"),
-        "financial_truth_pack": _load_company_payload(financial_root / "financial_truth_pack.json"),
-        "capital_allocation_financial_timeline": _load_company_payload(financial_root / "capital_allocation_financial_timeline.json"),
-        "capital_allocation_roi_ledger": _load_company_payload(investor_dir / "capital_allocation_roi_ledger.json"),
+        "financial_memory_summary": load_vouched(financial_root / "financial_memory_summary.json"),
+        "financial_driver_attribution": load_vouched(financial_root / "financial_driver_attribution.json"),
+        "financial_truth_pack": load_vouched(financial_root / "financial_truth_pack.json"),
+        "capital_allocation_financial_timeline": load_vouched(financial_root / "capital_allocation_financial_timeline.json"),
+        "capital_allocation_roi_ledger": load_vouched(investor_dir / "capital_allocation_roi_ledger.json"),
     }
 
 
@@ -354,7 +357,8 @@ def _name_specificity_score(name: str) -> int:
 
 
 def _family_key(allocation_category: str, allocation_name: str) -> str:
-    tokens = [token for token in _token_set(allocation_name) if token not in {"capital", "allocation", "event", "capitalallocation"}]
+    # sorted: _token_set is a set, so its iteration order (and with it the family key and which records merge) varied with PYTHONHASHSEED between runs
+    tokens = sorted(token for token in _token_set(allocation_name) if token not in {"capital", "allocation", "event", "capitalallocation"})
     if len(tokens) < 3:
         return allocation_category
     return " ".join(tokens[:6])
@@ -387,6 +391,11 @@ def _inferred_business_purpose(allocation_category: str, item: Dict[str, Any], l
     return text or "The capital allocation purpose is not yet specific enough to classify with confidence."
 
 
+def _has_word(text: str, phrase: str) -> bool:
+    """Whole-word phrase match on normalised text: 'platform' must not be found in 'Tanla Platforms', nor 'r d' in 'order dated'."""
+    return re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", text) is not None
+
+
 def _map_allocation_category(item: Dict[str, Any], ledger_entry: Dict[str, Any]) -> str:
     text = _normalize_text(
         " ".join(
@@ -397,9 +406,8 @@ def _map_allocation_category(item: Dict[str, Any], ledger_entry: Dict[str, Any])
                 item.get("category"),
                 item.get("canonical_category"),
                 item.get("capital_allocation_group"),
-                ledger_entry.get("capital_allocation_event_type"),
-                ledger_entry.get("purpose"),
-                ledger_entry.get("investor_interpretation"),
+                # The year-level ledger entry (event type, purpose, interpretation) describes the whole year, not this item: using its words labelled an amalgamation as
+                # R&D because the year's ledger text mentioned research. Classification reads the item's own fields only.
             )
             if part
         )
@@ -407,62 +415,100 @@ def _map_allocation_category(item: Dict[str, Any], ledger_entry: Dict[str, Any])
     canonical = _normalize_text(item.get("canonical_category"))
     group = _normalize_text(item.get("capital_allocation_group"))
 
+    # A typed minority/subscription investment is decided by its extracted category's event nature, not by a stored label from an older taxonomy (an equity
+    # subscription once tagged 'r_and_d_investment') or by free-text words in its stated purpose ("platform", "research", ...). The company's own issuances are excluded.
+    typed_category = str(item.get("category") or "")
+    if (typed_category and group != "treasury_actions" and _RE_INVESTEE_STAKE.search(typed_category) and not _RE_OWN_ISSUANCE.search(typed_category)
+            and event_nature(typed_category, "")["nature"] == "minority_or_subscription"):
+        return "strategic_investment"
+    # "Allocation of QIP proceeds to working capital" / "Use of IPO proceeds to repay borrowings": the record is the OBJECT the issue proceeds were used for (its category), not
+    # another equity issuance. The object decides the category; a land or building purchase is operating-asset spending, not the acquisition of a business.
+    use_action = _normalize_text(" ".join(str(item.get(k) or "") for k in ("action", "value", "category")))
+    if _USE_OF_PROCEEDS.search(use_action):
+        if re.search(r"\bunutili[sz]ed\b", use_action) and not re.search(r"\b(?:allocation|use|used)\b", use_action):
+            return "retained_cash"                      # proceeds not yet spent are held, not deployed
+        obj = _normalize_text(" ".join(str(item.get(k) or "") for k in ("category", "action", "value", "purpose")))
+        for pattern, category in (
+            (r"working capital", "working_capital"), (r"product development|research and development|\br d\b", "product_development"),
+            (r"repay|prepay|debt repayment|borrowings", "debt_repayment"), (r"capital expenditure|\bcapex\b|facility|land|building|plant|equipment", "organic_capex"),
+            (r"general corporate|\bgcp\b", "other"),
+        ):
+            if re.search(pattern, obj):
+                return category
+        return "other"
     if canonical in {"cwip", "capex"}:
         return "organic_capex"
+    # A label the taxonomy has verified against the item's own words (see _apply_label_verdict) as an acquisition is an acquisition, whatever descriptive words ("platform",
+    # "analytics") the target's business adds to the purpose; those words used to move a 100% share purchase into 'technology_investment'.
+    if canonical in {"acquisitions", "acquisition"} and not any(_has_word(text, w) for w in ("amalgamation", "merger", "merge", "merged")):
+        return "acquisition"
+    # Treasury placements and intra-group advances keep the meaning their verified label gives them; a word in the counterparty's NAME ("Digital Labs") must not decide it.
+    if canonical in {"temporary investment", "bank deposit", "mutual fund investment"}:
+        return "retained_cash"
+    # A related-party loan the company RECEIVED or availed is a financing inflow, never a deployment into the counterparty.
+    if canonical.startswith("related party loan") and any(_has_word(text, w) for w in ("availed", "availing", "received", "taken", "borrowed")):
+        return "other"
+    if canonical.startswith("related party loan given"):
+        return "subsidiary_investment"
+    # Shares an ESOP trust buys in the market are neither a buyback by the company nor a technology/R&D spend: an outflow on its own terms.
+    if canonical == "treasury share purchase":
+        return "other"
     # debt_raised = financing source (proceeds of borrowings), not a deployment — skip to "other"
     # so it doesn't get misclassified as debt_repayment via the canonical check below.
     if canonical == "debt raised":
         return "other"
-    if any(term in text for term in ("special dividend", "extra dividend", "one-off dividend", "exceptional dividend")):
+    if any(_has_word(text, term) for term in ("special dividend", "extra dividend", "one-off dividend", "exceptional dividend")):
         return "special_dividend"
     if canonical in {"dividend_paid", "dividend_declared"} or "dividend" in text:
         return "dividend"
     # "buy back" (hyphen removed by normalizer) must be caught before the debt_repaid canonical check
-    if canonical == "buyback" or any(term in text for term in ("buyback", "buy back", "share repurchase", "repurchase of shares")):
+    if canonical == "buyback" or any(_has_word(text, term) for term in ("buyback", "buy back", "share repurchase", "repurchase of shares")):
         return "share_buyback"
-    if canonical == "equity_issuance" or any(term in text for term in ("rights issue", "qip", "preferential allotment", "equity issuance", "fresh issue", "shares allotted")):
+    if canonical in {"debt repaid", "debt_repaid", "lease liability payment", "lease_liability_payment"}:
+        return "debt_repayment"                   # an explicit typed label decides before words in a free-text purpose ("...funded from the equity issuance")
+    if canonical == "equity_issuance" or any(_has_word(text, term) for term in ("rights issue", "qip", "preferential allotment", "equity issuance", "fresh issue", "shares allotted")):
         return "equity_issuance"
-    if canonical in {"debt_repaid", "lease_liability_payment"} or any(term in text for term in ("debt repayment", "loan repaid", "borrowings repaid", "repayment of borrowings", "lease liability")):
+    if canonical in {"debt_repaid", "lease_liability_payment"} or any(_has_word(text, term) for term in ("debt repayment", "loan repaid", "borrowings repaid", "repayment of borrowings", "lease liability")):
         return "debt_repayment"
-    if any(term in text for term in ("working capital", "receivable", "inventory", "payable", "cash conversion")):
+    if any(_has_word(text, term) for term in ("working capital", "receivable", "inventory", "payable", "cash conversion")):
         return "working_capital"
-    if any(term in text for term in ("unutilised proceeds", "unutilized proceeds", "retained earnings", "cash parked", "surplus cash", "idle cash")):
+    if any(_has_word(text, term) for term in ("unutilised proceeds", "unutilized proceeds", "retained earnings", "cash parked", "surplus cash", "idle cash")):
         return "retained_cash"
-    if any(term in text for term in ("maintain", "maintenance", "replacement", "upkeep", "sustaining capex", "sustain capex")):
+    if any(_has_word(text, term) for term in ("maintain", "maintenance", "replacement", "upkeep", "sustaining capex", "sustain capex")):
         return "maintenance_capex"
-    if any(term in text for term in ("capacity", "plant", "facility", "factory", "production line", "manufacturing line", "commission", "throughput", "output", "expansion")):
+    if any(_has_word(text, term) for term in ("capacity", "plant", "facility", "factory", "production line", "manufacturing line", "commission", "throughput", "output", "expansion")):
         return "capacity_expansion"
-    if any(term in text for term in ("product", "new product", "feature", "offering")):
+    if any(_has_word(text, term) for term in ("product", "new product", "feature", "offering")):
         return "product_development"
-    if any(term in text for term in ("research and development", "r and d", "r&d", "research", "intangible", "innovation")):
+    if any(_has_word(text, term) for term in ("research and development", "r and d", "r&d", "research", "intangible", "innovation")):
         return "research_and_development"
-    if any(term in text for term in ("technology", "digital", "software", "automation", "platform", "system")):
+    if any(_has_word(text, term) for term in ("technology", "digital", "software", "automation", "platform", "system")):
         return "technology_investment"
-    if any(term in text for term in ("acquisition integration", "integration", "amalgamation", "post merger", "post-acquisition", "m&a integration")):
+    if any(_has_word(text, term) for term in ("acquisition integration", "integration", "amalgamation", "post merger", "post-acquisition", "m&a integration")):
         return "acquisition_integration"
-    if any(term in text for term in ("acquisition", "acquire", "purchase", "takeover", "merge", "amalgamation")):
+    if any(_has_word(text, term) for term in ("acquisition", "acquire", "purchase", "takeover", "merge", "amalgamation")):
         return "acquisition"
-    if any(term in text for term in ("joint venture", "jv", "partnership", "alliance", "collaboration")):
+    if any(_has_word(text, term) for term in ("joint venture", "jv", "partnership", "alliance", "collaboration")):
         return "joint_venture"
-    if any(term in text for term in ("subsidiary", "wholly owned subsidiary")):
+    if any(_has_word(text, term) for term in ("subsidiary", "wholly owned subsidiary")):
         return "subsidiary_investment"
-    if any(term in text for term in ("restructuring", "reorganization", "reorganisation", "demerger", "spin off", "spin-off")):
+    if any(_has_word(text, term) for term in ("restructuring", "reorganization", "reorganisation", "demerger", "spin off", "spin-off")):
         return "restructuring"
-    if any(term in text for term in ("debt funded", "borrowed funds", "borrowed capital")):
+    if any(_has_word(text, term) for term in ("debt funded", "borrowed funds", "borrowed capital")):
         return "debt_funded_investment"
-    if canonical in {"capital_reduction"} or "capital reduction" in text:
+    if canonical in {"capital_reduction"} or _has_word(text, "capital reduction"):
         return "restructuring"
     if canonical in {"cwip", "capex", "strategic_investments"} or group == "true_capital_deployment":
-        if any(term in text for term in ("strategic", "investment")):
+        if any(_has_word(text, term) for term in ("strategic", "investment")):
             return "strategic_investment"
         return "organic_capex"
     if group == "shareholder_returns" and "dividend" in text:
         return "dividend"
     if group == "shareholder_returns" and "buyback" in text:
         return "share_buyback"
-    if group == "financing_actions" and any(term in text for term in ("equity", "issue", "allotment", "rights", "qip")):
+    if group == "financing_actions" and any(_has_word(text, term) for term in ("equity", "issue", "allotment", "rights", "qip")):
         return "equity_issuance"
-    if group == "financing_actions" and any(term in text for term in ("debt", "repay", "loan", "lease")):
+    if group == "financing_actions" and any(_has_word(text, term) for term in ("debt", "repay", "loan", "lease")):
         return "debt_repayment"
     if "retained" in text or "cash" in text:
         return "retained_cash"
@@ -513,6 +559,13 @@ _LEDGER_CRORE_FIELDS = (
 )
 
 
+_LEDGER_FIELDS_BY_CATEGORY = {
+    "organic_capex": ("capex_deployed",), "maintenance_capex": ("capex_deployed",), "capacity_expansion": ("capex_deployed",), "technology_investment": ("capex_deployed",),
+    "working_capital": ("working_capital_deployed",),
+    "product_development": ("product_development_or_intangible_investment",), "research_and_development": ("product_development_or_intangible_investment",),
+    "debt_repayment": ("debt_repayment",), "dividend": ("dividends",), "special_dividend": ("dividends",),
+    "equity_issuance": ("capital_raised",), "retained_cash": ("retained_earnings",),
+}
 _RE_AMOUNT_FOR_SHARES = re.compile(r"^(?P<amt>.*?)\s+for\s+(?P<n>[\d,]+)\s+(?:equity\s+)?shares\b", re.IGNORECASE)
 _BUYBACK_CATEGORIES = {"buyback", "share_buyback", "buy_back"}
 _FACE_VALUE_CEILING_PER_SHARE = 10.0  # INR: a buyback pays at least market price; at or below this the figure is the shares' nominal (share-capital) value
@@ -580,8 +633,9 @@ def _candidate_amount(item: Dict[str, Any], ledger_entry: Dict[str, Any]) -> Opt
     if category.replace(" ", "_") in _BUYBACK_CATEGORIES:
         return None
 
-    # Ledger numeric crore fields — typed in producer, safe to trust
-    for field in _LEDGER_CRORE_FIELDS:
+    # Ledger numeric crore fields — typed in producer. A ledger field is the annual aggregate of ONE kind of flow, so it can only stand in for an item of that kind: the
+    # first non-zero field used to be returned for every item (a dividend line carried the year's capex figure, a deposit line the year's capex).
+    for field in _LEDGER_FIELDS_BY_CATEGORY.get(category.replace(" ", "_"), ()):
         v = ledger_entry.get(field)
         if isinstance(v, (int, float)) and v != 0:
             return abs(float(v))
@@ -596,6 +650,9 @@ def _amount_basis(item: Dict[str, Any], ledger_entry: Dict[str, Any], amount: Op
         amount_raw = item.get("amount")
         if amount_raw not in (None, "", [], {}):
             if isinstance(amount_raw, str) and amount_raw.strip():
+                # A count of shares (or a per-share price) is not a currency amount: the typed basis says so instead of leaving a bare unknown unit.
+                if _RE_SHARE_COUNT.search(amount_raw):
+                    return "share_count_not_currency"
                 return "unit_ambiguous"
         return "unknown"
     for field in ("amount_crore", "amount_raised_crore"):
@@ -603,8 +660,9 @@ def _amount_basis(item: Dict[str, Any], ledger_entry: Dict[str, Any], amount: Op
             return "source_item"
     if item.get("amount") not in (None, "", [], {}):
         return "source_item"
+    category = str(item.get("allocation_category") or item.get("category") or "").lower().replace(" ", "_")
     if any(isinstance(ledger_entry.get(f), (int, float)) and ledger_entry.get(f) != 0
-           for f in _LEDGER_CRORE_FIELDS):
+           for f in _LEDGER_FIELDS_BY_CATEGORY.get(category, ())):
         return "ledger_summary"
     return "derived"
 
@@ -878,6 +936,11 @@ def _financial_outcome_text(record: Dict[str, Any], summary: Dict[str, Any], dri
         financial_outcome = "CASH_FLOW_EFFECT: Debt repayment reduces financial liability; interest savings and leverage improvement are the direct financial outcomes."
         per_share_outcome = "Lower leverage may support per-share outcomes over time, but the link is indirect."
         balance_sheet_outcome = "Balance sheet liability reduced; coverage ratios and interest expense are the verifiable outcomes."
+    elif _pending_distribution(record):
+        operating_outcome = "This is primarily a capital-structure or distribution decision rather than an operating investment."
+        financial_outcome = "UNABLE_TO_ATTRIBUTE: The dividend is proposed or recommended; no payment is evidenced, so no capital has been returned and no distribution outcome exists yet."
+        per_share_outcome = "No per-share consequence until the dividend is paid."
+        balance_sheet_outcome = "No balance-sheet effect until the dividend is paid."
     elif category in {"dividend", "special_dividend", "share_buyback", "equity_issuance", "retained_cash"}:
         operating_outcome = "This is primarily a capital-structure or distribution decision rather than an operating investment."
         financial_outcome = "CASH_FLOW_EFFECT: Capital returned to shareholders; the financial outcome is the distribution itself."
@@ -917,6 +980,15 @@ _DIRECTLY_ATTRIBUTABLE_CATEGORIES = frozenset({
     "dividend", "special_dividend", "share_buyback", "debt_repayment",
 })
 
+
+def _pending_distribution(record: Dict[str, Any]) -> bool:
+    """A dividend that is only proposed / recommended / declared-subject-to-approval - or whose payment is not evidenced - is not a completed distribution: nothing has left the company,
+    no capital was returned and no owner-value consequence exists. Only a dividend whose lifecycle is evidenced as PAID is executed."""
+    if str(record.get("allocation_category") or "") not in {"dividend", "special_dividend"} or record.get("lifecycle") == "paid":
+        return False
+    # a lifecycle that is not stated falls back to the record's status: only a dividend whose status says it was carried out is treated as executed
+    return record.get("lifecycle") == "proposed" or str(record.get("current_status") or "") in {"", "announced", "proposed", "committed", "planned"}
+
 # ENG-122: Five-tier outcome attribution.
 # HEURISTIC_CAUSAL_ATTRIBUTION_PATHS = 0 — no token-overlap or temporal inference.
 def _determine_outcome_attribution(record: Dict[str, Any], evidence: Sequence[Dict[str, Any]]) -> str:
@@ -943,7 +1015,9 @@ def _determine_outcome_attribution(record: Dict[str, Any], evidence: Sequence[Di
         return "NEGATIVE_OUTCOME"
 
     # Directly attributable: the cash transaction itself IS the economic event.
-    # No causal inference required — distribution/repayment is self-evidencing.
+    # No causal inference required — distribution/repayment is self-evidencing ONCE IT HAS HAPPENED: a proposal is not the event.
+    if _pending_distribution(record):
+        return "NO_OUTCOME_EVIDENCE"
     if category in _DIRECTLY_ATTRIBUTABLE_CATEGORIES:
         return "DIRECTLY_ATTRIBUTABLE"
 
@@ -995,8 +1069,11 @@ def _causal_attribution_states(record: Dict[str, Any], evidence: Sequence[Dict[s
     else:
         deployment_state = "UNABLE_TO_VERIFY"
 
+    pending_distribution = _pending_distribution(record)
     # --- Execution state ---
-    if category in _DISTRIBUTION_CATEGORIES or category == "debt_repayment":
+    if pending_distribution:
+        execution_state = "NOT_STARTED"                     # announced / proposed: no payment is evidenced
+    elif category in _DISTRIBUTION_CATEGORIES or category == "debt_repayment":
         execution_state = "COMPLETED"
     elif has_project_evidence and any(t in note_text for t in ("operational", "commissioned", "integrated")):
         execution_state = "OPERATIONAL"
@@ -1023,7 +1100,7 @@ def _causal_attribution_states(record: Dict[str, Any], evidence: Sequence[Dict[s
         operating_outcome_state = "UNABLE_TO_VERIFY"
 
     # --- Financial outcome state (strict: only cash transactions have attributable financial outcomes) ---
-    if category in {"dividend", "special_dividend", "share_buyback", "debt_repayment"}:
+    if category in {"dividend", "special_dividend", "share_buyback", "debt_repayment"} and not pending_distribution:
         financial_outcome_state = "CASH_FLOW_EFFECT"
     else:
         # Revenue/profit growth after an acquisition or capex program is NOT attributable
@@ -1033,7 +1110,7 @@ def _causal_attribution_states(record: Dict[str, Any], evidence: Sequence[Dict[s
     # --- Per-share consequence state ---
     if category == "share_buyback":
         per_share_consequence_state = "SHARE_COUNT_REDUCTION"
-    elif category in {"dividend", "special_dividend"}:
+    elif category in {"dividend", "special_dividend"} and not pending_distribution:
         per_share_consequence_state = "OWNER_EARNINGS_EFFECT"
     else:
         per_share_consequence_state = "UNABLE_TO_ATTRIBUTE"
@@ -1049,7 +1126,9 @@ def _causal_attribution_states(record: Dict[str, Any], evidence: Sequence[Dict[s
         value_creation_classification = "UNABLE_TO_VERIFY"
 
     # --- Causal attribution confidence ---
-    if category in _DISTRIBUTION_CATEGORIES:
+    if pending_distribution:
+        causal_attribution_confidence = "UNKNOWN"
+    elif category in _DISTRIBUTION_CATEGORIES:
         causal_attribution_confidence = "MEDIUM"
     elif category == "debt_repayment":
         causal_attribution_confidence = "LOW"
@@ -1256,14 +1335,105 @@ def _build_allocation_group(candidate: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+_PROCEEDS_NOISE = frozenset({"allocation", "allocated", "proceeds", "proceed", "qip", "ipo", "issue", "use", "used", "funding", "from", "for", "to", "of", "the", "and", "including", "purposes",
+                             "purpose", "utilized", "utilised", "spending", "towards", "as", "per", "objects", "object", "with"})
+
+
+def _object_tokens(value: str) -> set:
+    """The words that name WHAT issue proceeds were used for, lightly stemmed (facilities / facility)."""
+    out = set()
+    for token in _token_set(value) - _PROCEEDS_NOISE:
+        out.add(token[:-3] + "y" if token.endswith("ies") else token[:-1] if token.endswith("s") and len(token) > 4 else token)
+    return out
+
+
+_INSTRUMENT = re.compile(r"\b(qip|ipo|rights issue|preferential)\b|qualified institutional placement|initial public", re.I)
+
+
+def _proceeds_instrument(name: str) -> str:
+    match = _INSTRUMENT.search(name or "")
+    if not match:
+        return ""
+    word = match.group(0).lower()
+    return {"qualified institutional placement": "qip", "initial public": "ipo"}.get(word, word)
+
+
+_ISSUE_INSTRUMENTS = (("qip", re.compile(r"\bqip\b|qualified institutional|qualified_institutional", re.I)), ("ipo", re.compile(r"\bipo\b|initial public", re.I)),
+                      ("bonus", re.compile(r"\bbonus\b", re.I)), ("rights", re.compile(r"\brights?\s+issue\b", re.I)),
+                      ("private_placement", re.compile(r"private placement|preferential", re.I)), ("esop", re.compile(r"\besop\b|employee stock|stock option", re.I)))
+
+
+def _candidate_text(candidate: Dict[str, Any]) -> str:
+    reference = candidate.get("source_reference") or {}
+    return " ".join(str(x or "") for x in (candidate.get("allocation_name"), candidate.get("event_category_text"), reference.get("short_excerpt"), reference.get("canonical_category")))
+
+
+def _issue_instrument(candidate: Dict[str, Any]) -> str:
+    """The instrument an issue of shares used (a QIP, an IPO, bonus shares, a rights issue, a private placement, an ESOP issue): different instruments are different events with different
+    proceeds, dates and uses, whatever their shared category."""
+    text = _candidate_text(candidate)
+    return next((name for name, pattern in _ISSUE_INSTRUMENTS if pattern.search(text)), "")
+
+
+def _financing_family(candidate: Dict[str, Any]) -> str:
+    canonical = str((candidate.get("source_reference") or {}).get("canonical_category") or "")
+    return "debt" if canonical.startswith("debt") else "equity" if canonical in {"equity_issuance", "qualified_institutional_placement", "share_issuance"} else ""
+
+
+def _dividend_recipient(candidate: Dict[str, Any]) -> str:
+    text = _normalize_text(f"{candidate.get('allocation_name') or ''} {candidate.get('event_category_text') or ''}")
+    return "non_controlling_interests" if re.search(r"non controlling|minority", text) else "shareholders"
+
+
+def _same_event_kind(group_member: Dict[str, Any], candidate: Dict[str, Any]) -> bool:
+    """Whether two candidates can be the same kind of event. A known lifecycle (a proposed dividend is not a paid one) and a known amount role (a closing balance is not a period flow,
+    a cumulative utilisation of issue proceeds is neither the issue nor annual spending) must agree; an unknown one (None) is compatible. A use of issue proceeds is further tied to
+    the instrument that raised them (QIP vs IPO) and to the object it was used for, so that two uses never merge for sharing a category."""
+    a_life, b_life = group_member.get("lifecycle"), candidate.get("lifecycle")
+    if a_life and b_life and a_life != b_life:
+        return False
+    if candidate.get("allocation_category") in {"dividend", "special_dividend"} and "proposed" in {a_life, b_life} and a_life != b_life:
+        return False                      # a dividend whose lifecycle is not stated may be the paid one, but never the proposed one
+    if candidate.get("allocation_category") in {"dividend", "special_dividend"} and _dividend_recipient(group_member) != _dividend_recipient(candidate):
+        return False                      # a dividend paid to the minority holders of a subsidiary is not the company's dividend to its own shareholders
+    a_fam, b_fam = _financing_family(group_member), _financing_family(candidate)
+    if a_fam and b_fam and a_fam != b_fam:
+        return False                      # a repayment of borrowings is not part of an equity issue
+    if candidate.get("allocation_category") == "equity_issuance" and not candidate.get("use_of_issue_proceeds") and not group_member.get("use_of_issue_proceeds"):
+        a_inst, b_inst = _issue_instrument(group_member), _issue_instrument(candidate)
+        if a_inst and b_inst and a_inst != b_inst:
+            return False                  # a QIP, an IPO, bonus shares and a private placement are distinct events
+    a_role, b_role = (group_member.get("non_flow_amount") or {}).get("role"), (candidate.get("non_flow_amount") or {}).get("role")
+    if bool(a_role) != bool(b_role) or (a_role and b_role and a_role != b_role):
+        return False
+    if bool(group_member.get("use_of_issue_proceeds")) != bool(candidate.get("use_of_issue_proceeds")):
+        return False
+    if candidate.get("use_of_issue_proceeds"):
+        a_inst, b_inst = _proceeds_instrument(group_member.get("allocation_name", "")), _proceeds_instrument(candidate.get("allocation_name", ""))
+        if a_inst and b_inst and a_inst != b_inst:
+            return False
+        a_obj = _object_tokens(f"{group_member.get('allocation_name', '')} {group_member.get('event_category_text') or ''}")
+        b_obj = _object_tokens(f"{candidate.get('allocation_name', '')} {candidate.get('event_category_text') or ''}")
+        if not (a_obj & b_obj):
+            return False
+    return True
+
+
 def _group_similarity(group: Dict[str, Any], candidate: Dict[str, Any]) -> int:
-    # Dividend declarations/payments in different fiscal years are distinct
-    # events unless an explicit transaction identity proves otherwise.
+    if any(not _same_event_kind(member, candidate) for member in group.get("source_items", [])):
+        return 0
+    # A dividend is paid (or proposed) for one fiscal year: the same wording in another year is another event unless an explicit transaction identity proves otherwise.
     if group["allocation_category"] in {"dividend", "special_dividend"} and candidate["source_year"] not in group["source_years"]:
         if not candidate.get("economic_flow_id") and not candidate.get("transaction_id") and not candidate.get("deal_id"):
-            prior_amounts = {c.get("amount") for c in group.get("source_items", []) if c.get("amount") is not None}
-            if candidate.get("amount") is not None and prior_amounts and candidate.get("amount") not in prior_amounts:
-                return -1
+            return -1
+    # Named-entity events (investments, acquisitions, JVs) are one event only when they share a distinctive name token; the same category plus generic words
+    # ("equity", "shares", "investments") is not identity.
+    # "other"/"unknown" say nothing about WHAT the event is, so two such records are one event only when they also share a distinctive name token (a related-party loan was
+    # merged into an ESOP-trust share purchase, and took its amount, because both were "other").
+    if candidate["allocation_category"] in _HIGH_SPECIFICITY_CATEGORIES or candidate["allocation_category"] in {"other", "unknown"}:
+        distinctive = (_token_set(candidate["allocation_name"]) - _MERGE_NOISE - _GENERIC_EVENT_WORDS) & (group["signature_tokens"] - _MERGE_NOISE - _GENERIC_EVENT_WORDS)
+        if not distinctive:
+            return 0
     score = 0
     if group["allocation_category"] == candidate["allocation_category"]:
         score += 4
@@ -1322,6 +1492,12 @@ _MERGE_NOISE = frozenset({
 })
 
 
+_GENERIC_EVENT_WORDS = frozenset({
+    "equity", "equities", "share", "shares", "investment", "investments", "invested", "acquired", "acquire", "acquires", "acquiring", "selective", "stake", "minority",
+    "subscription", "subscribed", "private", "public", "company", "group", "holdings", "services", "india", "indian", "fy", "year", "ipo", "ipos", "capital",
+})
+
+
 def _merge_candidates(candidates: Sequence[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
     groups: List[Dict[str, Any]] = []
     merged = 0
@@ -1346,24 +1522,94 @@ def _merge_candidates(candidates: Sequence[Dict[str, Any]]) -> Tuple[List[Dict[s
     return groups, merged
 
 
+# --- amount role and lifecycle -------------------------------------------------------------------------------------------------------------------------------------------
+# An allocation record's `amount` is ONE period's flow. Three kinds of figure look like amounts but are not: a cumulative utilisation of issue proceeds (the QIP table's
+# "utilised up to March 31, 2026"), a closing balance (a loan's outstanding principal, unchanged year to year), and a proposed amount that has not been paid. Each is kept
+# - typed, with its basis and as-of period - in `non_flow_amounts`, and none is promoted to `amount` (a stock never silently becomes a flow, a plan never becomes spending).
+_USE_OF_PROCEEDS = re.compile(r"\b(?:allocation|allocated|use|used|utili[sz]ation|utili[sz]ed|unutili[sz]ed)\b.*\bproceeds?\b|\bproceeds?\b.*\b(?:allocation|utili[sz]ed|utili[sz]ation|unutili[sz]ed)\b|"
+                               r"\bfrom (?:the )?(?:qip|ipo|rights issue|preferential (?:issue|allotment)|issue) proceeds\b|\b(?:qip|ipo) proceeds\b|\bobjects? of the (?:issue|offer)\b|\bunutili[sz]ed\b", re.I)
+_BORROWING_VERBS = re.compile(r"\b(?:availed|taken|raised|borrowed|sanctioned|disbursed|granted|advanced)\b", re.I)
+_BALANCE_CUE = re.compile(r"\bbalance outstanding\b|\boutstanding (?:as at|at)\b|\bclosing balance\b", re.I)
+_PROPOSED_CUE = re.compile(r"\b(?:recommended|proposed|propose[sd]?|declare|to be paid|subject to (?:the )?(?:shareholders?'?s?'?|member'?s?'?)? ?approval|subject to approval)\b", re.I)
+_PAID_CUE = re.compile(r"\b(?:paid|payout|distributed|disbursed)\b", re.I)
+_EXPLICIT_FY = re.compile(r"(?:\bfy\.?\s*|financial year\s+|year ended\s+(?:march\s+31,?\s+)?)(\d{4})(?:\s*[-\u2013/]\s*(\d{2,4}))?", re.I)
+
+
+def _explicit_fiscal_year(text: str) -> Optional[str]:
+    """The fiscal year an item's OWN wording names ("availed during FY 2023-24", "year ended March 31, 2024"), as fyYY; None when it names none or several."""
+    years = set()
+    for first, second in _EXPLICIT_FY.findall(text or ""):
+        end = int(second[-2:]) if second else int(first) % 100
+        years.add(f"fy{end:02d}")
+    return years.pop() if len(years) == 1 else None
+
+
+def _amount_role(item: Dict[str, Any], source_year: str) -> Tuple[str, Optional[str]]:
+    """(role, event_period) of the item's amount: period_flow | cumulative_utilisation | closing_balance. The event period is the fiscal year the item's own wording names."""
+    action = _normalize_text(" ".join(str(item.get(k) or "") for k in ("action", "value", "category")))
+    purpose = _normalize_text(str(item.get("purpose") or ""))
+    if _USE_OF_PROCEEDS.search(action):
+        return ("closing_balance" if re.search(r"\bunutili[sz]ed\b", action) and not re.search(r"\b(?:allocation|use|used)\b", action) else "cumulative_utilisation"), None
+    named = _explicit_fiscal_year(f"{item.get('action') or item.get('value') or ''} {item.get('purpose') or ''}")
+    borrowing = _BORROWING_VERBS.search(action) or _BORROWING_VERBS.search(purpose)
+    category = str(item.get("canonical_category") or item.get("category") or "").lower()
+    if borrowing and ("loan" in action or "borrowing" in action or "debt" in category or "loan" in purpose):
+        this_year = named == source_year or bool(re.search(r"\bduring (?:the )?(?:year|period|fy)\b|\bfor the year\b", f"{action} {purpose}"))
+        if named and named < source_year:
+            return "closing_balance", named              # "availed during FY 2023-24", reported in a later year: the figure is the balance the later statements carry
+        if _BALANCE_CUE.search(purpose) and not re.search(r"\bduring the year\b|\bduring year\b", str(item.get("amount") or ""), re.I):
+            return "closing_balance", named
+        if not this_year:
+            return "closing_balance", named              # a loan's stated amount with no statement that it was raised in this year is a principal / balance, not a period flow
+    return "period_flow", named
+
+
+def _dividend_lifecycle(item: Dict[str, Any]) -> Optional[str]:
+    """proposed | paid for a dividend item, from its own wording. A recommended / declared-subject-to-approval dividend has not been paid."""
+    text = _normalize_text(" ".join(str(item.get(k) or "") for k in ("action", "value", "purpose", "status")))
+    if "dividend" not in text:
+        return None
+    if _PROPOSED_CUE.search(text) and not _PAID_CUE.search(_normalize_text(str(item.get("action") or item.get("value") or ""))):
+        return "proposed"
+    return "paid" if _PAID_CUE.search(text) else None
+
+
+
 def _candidate_from_item(
     year: str,
     item: Dict[str, Any],
     group_name: str,
     ledger_entry: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
+    # An allocation record needs its own description. An item with neither a `value` nor a `purpose` used to be named from the YEAR's ledger summary ("Operating
+    # reinvestment") and given the year's ledger figure: a synthetic record, not an evidenced event, and a duplicate of the typed capex record.
+    if not (_normalize_text(item.get("value")) or _normalize_text(item.get("purpose"))):
+        return None
     allocation_category = _map_allocation_category(item, ledger_entry)
     if group_name in IGNORED_SOURCE_GROUPS and allocation_category in {"unknown", "other"}:
         return None
     if group_name not in RELEVANT_SOURCE_GROUPS and allocation_category in {"unknown", "other"}:
         return None
 
+    lifecycle = _dividend_lifecycle(item) if allocation_category in {"dividend", "special_dividend"} else None
+    if lifecycle == "proposed":
+        item = {**item, "suppress_ledger_amount": True}      # the ledger's dividend figure is what was PAID in the year; it is not a proposal's amount
+    amount_role, named_period = _amount_role(item, year)
     allocation_name = _allocation_name_from_item(item, ledger_entry, allocation_category)
+    if amount_role == "cumulative_utilisation" and (item.get("action") or item.get("value")):
+        allocation_name = str(item.get("action") or item.get("value")).strip()        # a use of issue proceeds keeps the wording that names the issue and the object
     normalized_name = _normalize_text(allocation_name)
     family_key = _family_key(allocation_category, allocation_name)
     funding_source = _infer_funding_source(allocation_category, item, ledger_entry)
     amount = _candidate_amount({**item, "allocation_category": allocation_category}, ledger_entry)
     amount_basis = _amount_basis(item, ledger_entry, amount)
+    non_flow_amount = None
+    if amount is not None and amount_role != "period_flow":
+        non_flow_amount = {"value": amount, "unit": "INR crore", "role": amount_role, "as_of": year, "basis": amount_basis, "stated": item.get("amount") if isinstance(item.get("amount"), str) else None}
+        amount, amount_basis = None, f"{amount_role}_not_a_period_flow"
+    if lifecycle == "proposed" and amount is not None:
+        non_flow_amount = {"value": amount, "unit": "INR crore", "role": "proposed_not_paid", "as_of": year, "basis": amount_basis, "stated": item.get("amount") if isinstance(item.get("amount"), str) else None}
+        amount, amount_basis = None, "proposed_not_paid"
     source_reference = _compact_source_item(year, item, group_name)
     if ledger_entry:
         source_reference.setdefault("linked_ledger_reference", _compact_ledger_reference(year, ledger_entry))
@@ -1395,6 +1641,15 @@ def _candidate_from_item(
         "funding_source": funding_source if funding_source in ALLOCATION_FUNDING_SOURCES else "unknown",
         "amount": amount,
         "amount_basis": amount_basis,
+        "amount_stated": item.get("amount") if isinstance(item.get("amount"), str) else None,
+        "event_category_text": item.get("category") if isinstance(item.get("category"), str) else None,
+        "counterparty": item.get("counterparty") or item.get("entity") or None,
+        "event_date": item.get("announcement_date") or item.get("effective_date") or item.get("event_date") or None,
+        "classification_status": item.get("classification_status"),
+        "lifecycle": lifecycle,
+        "use_of_issue_proceeds": amount_role == "cumulative_utilisation",
+        "non_flow_amount": non_flow_amount,
+        "named_period": named_period,
         **resolve_economic_role({"action": allocation_name, "purpose": item.get("purpose"), "status": item.get("status"), "category": allocation_category, "canonical_category": allocation_category, "capital_allocation_group": group_name, **{k: item.get(k) for k in ("economic_flow_id", "transaction_id", "deal_id")}}),
         "economic_flow_relation": item.get("economic_flow_relation") or ("LINKED_BUT_DISTINCT_FLOW" if "sale consideration" in _normalize_text(allocation_name) and "against loan" in _normalize_text(allocation_name) else "DISTINCT_FLOW"),
         "economic_flow_authority": item.get("economic_flow_authority") or ("EXPLICIT_SOURCE_STATEMENT" if "sale consideration" in _normalize_text(allocation_name) and "against loan" in _normalize_text(allocation_name) else "NONE"),
@@ -1424,6 +1679,9 @@ def _candidate_from_item(
         "ledger_roi_measurability_status": ledger_entry.get("roi_measurability_status"),
     }
     return candidate
+
+
+_apply_label_verdict = apply_label_verdict      # the one shared rule (knowledge.capital_allocation_taxonomy.apply_label_verdict)
 
 
 def _load_pcim_allocation_items(company_root: Path) -> List[Tuple[str, str, Dict[str, Any]]]:
@@ -1479,6 +1737,7 @@ def _load_pcim_allocation_items(company_root: Path) -> List[Tuple[str, str, Dict
         for item in year_entry.get("items") or []:
             if not isinstance(item, dict):
                 continue
+            item = _apply_label_verdict(item)
             group_name = str(item.get("capital_allocation_group") or "uncertain")
             if group_name in skip_groups:
                 continue
@@ -1517,6 +1776,64 @@ def _enrich_buyback_amounts(company_root: Path, candidates: List[Dict[str, Any]]
             candidate.setdefault("source_reference", {})["disclosure_page"] = action.get("source_page")
 
 
+def _year_chunks(year_dir: Path) -> List[Dict[str, Any]]:
+    """The year's clean chunks; the re-chunked file (made from the filing PDF by the current chunker) outranks a stored one."""
+    for name in ("clean_chunks_rechunked.json", "clean_chunks.json"):
+        try:
+            payload = json.loads((year_dir / "extracted" / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        chunks = payload.get("chunks") if isinstance(payload, dict) else payload
+        if isinstance(chunks, list):
+            return [c for c in chunks if isinstance(c, dict)]
+    return []
+
+
+def _filing_dated_events(year_dir: Path) -> List[Dict[str, Any]]:
+    return extract_dated_events(_year_chunks(year_dir))
+
+
+def _attach_issue_dates(company_root: Path, candidates: List[Dict[str, Any]]) -> None:
+    """An equity issuance's period is the year the filing says it was allotted, not the year of the report that recites it (a FY26 note on the QIP allotted on March 13, 2023)."""
+    wanted = [c for c in candidates if c.get("allocation_category") == "equity_issuance" and not c.get("event_date")]
+    if not wanted:
+        return
+    instruments: Dict[str, Dict[str, Any]] = {}
+    for year_dir in sorted(p for p in company_root.glob("fy*") if p.is_dir()):
+        for name, found in extract_issue_dates(_year_chunks(year_dir)).items():
+            if name not in instruments or found["date"] < instruments[name]["date"]:
+                instruments[name] = {**found, "source_year": year_dir.name}
+    for candidate in wanted:
+        text = _normalize_text(f"{candidate.get('allocation_name')} {candidate.get('event_category_text')}")
+        for name, pattern in (("qip", r"\bqip\b|qualified institutional placement"), ("ipo", r"\bipo\b|initial public"), ("rights", r"rights issue"), ("preferential", r"preferential")):
+            if re.search(pattern, text) and name in instruments:
+                found = instruments[name]
+                candidate.update({"event_date": found["date"], "event_period": found["period"], "event_date_page": found["page"], "event_date_source_year": found["source_year"]})
+                break
+
+
+def _attach_issue_economics(company_root: Path, candidates: List[Dict[str, Any]]) -> None:
+    """Gross versus net proceeds of a QIP: the filing states the shares and the issue price (gross = shares x price) and the issue expenses; the objects table totals the NET proceeds
+    (gross less expenses). The figure a record carries as its `amount` is named for what it is, and the other two travel beside it - only when the three reconcile."""
+    wanted = [c for c in candidates if c.get("allocation_category") == "equity_issuance" and _issue_instrument(c) == "qip" and c.get("amount") is not None and not c.get("use_of_issue_proceeds")]
+    if not wanted:
+        return
+    economics: Dict[str, Any] = {}
+    for year_dir in sorted(p for p in company_root.glob("fy*") if p.is_dir()):
+        for key, value in extract_issue_economics(_year_chunks(year_dir)).items():
+            economics.setdefault(key, value)
+    gross, expenses = economics.get("gross_crore"), economics.get("issue_expenses_crore")
+    for candidate in wanted:
+        net = float(candidate["amount"])
+        if gross is not None and expenses is not None and abs(net + expenses - gross) <= max(0.1, 0.001 * gross):
+            candidate["amount_basis_detail"] = "net_proceeds_after_issue_expenses"
+            candidate["proceeds_breakdown"] = {"gross_proceeds_crore": gross, "issue_expenses_crore": expenses, "net_proceeds_crore": net, "shares_allotted": economics.get("shares"),
+                                               "issue_price": economics.get("issue_price"), "gross_check": f"{economics.get('shares'):,} shares x {economics.get('issue_price')} = {gross}",
+                                               "pages": {"gross": economics.get("gross_page"), "issue_expenses": economics.get("issue_expenses_page")}}
+        else:
+            candidate["amount_basis_detail"] = "proceeds_basis_not_established"        # the filing's figures do not reconcile (or one is missing): the amount is not called gross or net
+
+
 def _transaction_candidates(company_root: Path) -> List[Dict[str, Any]]:
     """G3: acquisitions the filing announces but has not completed. Read from financials/financial_transaction_disclosures.json (the filing's own status sentence and
     terms, in the stated currency). The record states SIGNED, NOT COMPLETED; nothing is converted, estimated or inferred as done."""
@@ -1526,9 +1843,12 @@ def _transaction_candidates(company_root: Path) -> List[Dict[str, Any]]:
             payload = json.loads((year_dir / "financials" / "financial_transaction_disclosures.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        dated_events = None
         for index, tx in enumerate(payload.get("transactions", [])):
             if tx.get("status") not in {"signed_pending_completion", "announced"} or not tx.get("target"):
                 continue
+            if dated_events is None:
+                dated_events = _filing_dated_events(year_dir)
             item = {
                 "source_item_id": f"txn_{year_dir.name}_{index}", "source_page": tx.get("source_page"), "canonical_category": "acquisition", "value": f"Proposed acquisition of {tx['target']} (signed; closing pending)",
                 "reasoning": f"{tx.get('source_line_item', '')} {tx.get('status_basis', '')}".strip(), "status": "announced", "source_artifact": "financial_transaction_disclosures.json",
@@ -1536,6 +1856,9 @@ def _transaction_candidates(company_root: Path) -> List[Dict[str, Any]]:
             candidate = _candidate_from_item(year_dir.name, item, "true_capital_deployment", {})
             if candidate is None:
                 continue
+            dated = evidenced_announcement_period(None, year_dir.name, str(tx["target"]), dated_events)
+            if dated["basis"] == "dated_event":     # the filing's own dated statement (e.g. a note: "On April 27, 2026, the Group entered into a definitive agreement ...")
+                candidate.update({"event_date": dated["event_date"], "event_period": dated["period"], "event_date_page": dated.get("event_page")})
             candidate.update({"transaction_status": tx["status"], "transaction_terms": tx.get("terms_as_stated"), "transaction_status_basis": tx.get("status_basis"), "disclosure_page": tx.get("source_page"),
                               "amount": None, "amount_basis": "foreign_currency_terms_not_converted" if tx.get("terms_as_stated") else "unknown"})
             out.append(candidate)
@@ -1574,7 +1897,13 @@ def _build_candidates(company_root: Path) -> Tuple[List[Dict[str, Any]], Dict[st
             for item in items:
                 if not isinstance(item, dict):
                     continue
-                candidate = _candidate_from_item(year, item, group_name, ledger_entry)
+                # The same own-text check as the PCIM path: a stored label from an older run can belong to a neighbouring line. Replaced or quarantined labels also move the
+                # item's group, and a financing inflow (debt raised) is a capital SOURCE, never a deployment.
+                item = _apply_label_verdict(item)
+                group_name_effective = str(item.get("capital_allocation_group") or group_name)
+                if str(item.get("canonical_category") or "") == "debt_raised":
+                    continue
+                candidate = _candidate_from_item(year, item, group_name_effective, ledger_entry)
                 if candidate is None:
                     continue
                 candidates.append(candidate)
@@ -1595,7 +1924,7 @@ def _build_candidates(company_root: Path) -> Tuple[List[Dict[str, Any]], Dict[st
                     candidates.append(candidate)
         for action in year_entry.get("share_issue_actions") or []:
             if isinstance(action, dict):
-                line_item = _normalize_text(action.get("source_line_item"))
+                line_item = _normalize_text(f"{action.get('source_line_item') or ''} {action.get('value') or ''}")
                 if any(term in line_item for term in ("expense", "payable", "unutilised", "unutilized", "monitoring agency")):
                     continue
                 if not (action.get("amount_raised_crore") is not None or action.get("shares_issued") is not None):
@@ -1631,6 +1960,10 @@ def _build_candidates(company_root: Path) -> Tuple[List[Dict[str, Any]], Dict[st
         event_type = str(ledger_entry.get("capital_allocation_event_type") or "").strip()
         if not year or (year, event_type) in existing_year_types:
             continue
+        # A ledger entry of the generic kinds ("operating reinvestment", "unclear") is the year's aggregate, not an event: it duplicates the typed capex record and would be
+        # named from the ledger summary. Only entries that name a specific event (a shareholder return, a raise, a repayment) may create a record here.
+        if event_type in {"", "operating_reinvestment", "unclear", "unknown", "capital_deployment"}:
+            continue
         amount = ledger_entry.get("amount")
         material_fields = (
             "capital_raised", "capex_deployed", "working_capital_deployed",
@@ -1662,8 +1995,32 @@ def _build_candidates(company_root: Path) -> Tuple[List[Dict[str, Any]], Dict[st
             candidates.append(candidate)
 
     _enrich_buyback_amounts(company_root, candidates)
+    _attach_issue_dates(company_root, candidates)
+    _attach_issue_economics(company_root, candidates)
     candidates.extend(_transaction_candidates(company_root))
     return candidates, artifacts
+
+
+_ENTITY_EVENT_CATEGORIES = {"acquisition", "acquisition_integration", "strategic_investment", "joint_venture", "subsidiary_investment"}
+_RE_ENTITY = re.compile(r"\b(?:shares?|stake|interest|units?)\s+(?:of|in)\s+((?:[A-Z][\w&.\-]*\s+){0,5}?[A-Z][\w&.\-]*(?:\s+(?:Private|Pvt\.?|Public))?\s+(?:Limited|Ltd\.?|Inc\.?|Corporation|Corp\.?|LLC|LLP|plc|Pte\.?\s+Ltd\.?))", re.UNICODE)
+_RE_ENTITY_ACQ = re.compile(r"\b(?:acquisition of|acquire[sd]?|acquiring)\s+(?:\d[\d.,]*\s*%\s+(?:of\s+)?)?((?:[A-Z][\w&.\-]*\s+){0,5}?[A-Z][\w&.\-]*(?:\s+(?:Private|Pvt\.?|Public))?\s+(?:Limited|Ltd\.?|Inc\.?|Corporation|Corp\.?|LLC|LLP|plc))", re.UNICODE)
+
+
+def _entity_from_name(name: str, category: str) -> Optional[str]:
+    """The counterparty named in the event wording, only for events that have one and only when it carries a legal-entity suffix; otherwise unknown."""
+    if category not in _ENTITY_EVENT_CATEGORIES or not name:
+        return None
+    m = _RE_ENTITY.search(name) or _RE_ENTITY_ACQ.search(name)
+    return " ".join(m.group(1).split()) if m else None
+
+
+def _typed_event(group: Dict[str, Any], candidates: Sequence[Dict[str, Any]], latest: Dict[str, Any]) -> Dict[str, Any]:
+    """Event nature/completion from the shared taxonomy vocabulary. Only a deployment-type event has a nature here; the company's own issuances and returns are not
+    'subscriptions' or 'stakes' even when their wording says 'preference shares'."""
+    if group["allocation_category"] not in _ENTITY_EVENT_CATEGORIES:
+        return {"nature": "other", "completion": "unspecified"}
+    category_text = next((c.get("event_category_text") for c in reversed(candidates) if c.get("event_category_text")), "")
+    return event_nature(category_text, group["allocation_name"], latest.get("transaction_status") or "")
 
 
 def _finalize_allocation_record(
@@ -1688,11 +2045,22 @@ def _finalize_allocation_record(
     # Conflicting dividend totals across source representations are not safely
     # resolvable by recency; retain the event but remove it from weighted totals.
     if group["allocation_category"] in {"dividend", "special_dividend"}:
-        dividend_amounts = {round(float(c["amount"]), 6) for c in candidates if c.get("amount") is not None}
-        if len(dividend_amounts) > 1:
+        dividend_amounts = sorted({round(float(c["amount"]), 6) for c in candidates if c.get("amount") is not None})
+        # a rounded highlight (161.0) beside the statement's own figure (161.4463) is one amount at two precisions, not a conflict: within half a percent the most precise stands
+        clustered = [a for i, a in enumerate(dividend_amounts) if i == 0 or abs(a - dividend_amounts[i - 1]) > max(0.5, 0.005 * abs(a))]
+        if len(clustered) > 1:
             amount = None
+        elif len(dividend_amounts) > 1:
+            precise = max(dividend_amounts, key=lambda a: len(repr(a).split(".")[-1]))
+            amount_source = next((c for c in reversed(candidates) if c.get("amount") is not None and round(float(c["amount"]), 6) == precise), amount_source)
+            amount = amount_source["amount"]
     # An amount is the figure of ONE source item, so it is stamped with that item's own period; it is not the total of deployment_periods.
     amount_period = amount_source["source_year"] if (amount is not None and amount_source) else None
+    if amount is not None and amount_source and group["allocation_category"] == "equity_issuance" and amount_source.get("event_period") and amount_source["event_period"] != amount_period:
+        # the issue's proceeds belong to the year the filing says the shares were allotted, whichever later report recites them
+        amount_period = amount_source["event_period"]
+        deployment_periods = _years_covered([*deployment_periods, amount_period])
+        first_observed_period = deployment_periods[0]
     if amount is not None:
         amount_basis = "semantic_amount_ambiguous" if group["allocation_category"] in {"dividend", "special_dividend"} and len({round(float(c["amount"]), 6) for c in candidates if c.get("amount") is not None}) > 1 else next(
             (candidate["amount_basis"] for candidate in reversed(candidates) if candidate.get("amount") is not None),
@@ -1701,10 +2069,12 @@ def _finalize_allocation_record(
     else:
         # No confirmed amount: surface unit_ambiguous if any candidate had a string amount with no parseable unit
         amount_basis = next(
-            (candidate["amount_basis"] for candidate in reversed(candidates) if candidate.get("amount_basis") == "unit_ambiguous"),
+            (candidate["amount_basis"] for candidate in reversed(candidates) if candidate.get("amount_basis") in ("share_count_not_currency", "unit_ambiguous")),
             "unknown",
         )
     current_status = _current_status_from_candidate(latest_candidate)
+    if latest_candidate.get("lifecycle") == "proposed":
+        current_status = "announced"             # recommended / subject to approval: not yet paid
     if latest_candidate.get("transaction_status") in {"signed_pending_completion", "announced"}:
         current_status = "announced"       # signed is not completed: the filing's status sentence outranks keyword matching on its own wording
 
@@ -1725,6 +2095,22 @@ def _finalize_allocation_record(
         "amount": amount,
         "amount_period": amount_period,
         "amount_basis": amount_basis,
+        # SSOT typed fields: an amount is ONE source item's figure in crore INR for ONE period; the stated wording stays for audit.
+        "amount_unit": "INR crore" if amount is not None else None,
+        "amount_currency": "INR" if amount is not None else None,
+        "amount_aggregation": "single_period_flow" if amount is not None else None,
+        "amount_basis_detail": next((c.get("amount_basis_detail") for c in reversed(candidates) if c.get("amount_basis_detail")), None),
+        "proceeds_breakdown": next((c.get("proceeds_breakdown") for c in reversed(candidates) if c.get("proceeds_breakdown")), None),
+        "amount_source_item_id": amount_source.get("source_item_id") if (amount is not None and amount_source) else None,
+        "amount_stated": next((c.get("amount_stated") for c in reversed(candidates) if c.get("amount_stated")), None),
+        "non_flow_amounts": [c["non_flow_amount"] for c in candidates if c.get("non_flow_amount")],
+        "lifecycle": next((c.get("lifecycle") for c in reversed(candidates) if c.get("lifecycle")), None),
+        "event_nature": _typed_event(group, candidates, latest_candidate)["nature"],
+        "event_completion": _typed_event(group, candidates, latest_candidate)["completion"],
+        "event_category_text": next((c.get("event_category_text") for c in reversed(candidates) if c.get("event_category_text")), None),
+        "entity": next((c.get("counterparty") for c in reversed(candidates) if c.get("counterparty")), None) or _entity_from_name(group["allocation_name"], group["allocation_category"]),
+        "event_date": next((c.get("event_date") for c in reversed(candidates) if c.get("event_date")), None),
+        "event_period": next((c.get("event_period") for c in reversed(candidates) if c.get("event_period")), None) or next((c.get("named_period") for c in reversed(candidates) if c.get("named_period") and c.get("non_flow_amount")), None),
         "transaction_status": next((c.get("transaction_status") for c in reversed(candidates) if c.get("transaction_status")), None),
         "transaction_terms": next((c.get("transaction_terms") for c in reversed(candidates) if c.get("transaction_terms")), None),
         "transaction_status_basis": next((c.get("transaction_status_basis") for c in reversed(candidates) if c.get("transaction_status_basis")), None),
@@ -1829,6 +2215,8 @@ def _finalize_allocation_record(
         record["causal_confidence"] = "low"
     semantic_states = _causal_attribution_states(record, record["return_evidence"])
     record.update(semantic_states)
+    if _pending_distribution(record):
+        record["deployment_eligibility"] = "INELIGIBLE_ANNOUNCED_NOT_DEPLOYED"          # a proposal is not a completed distribution
     record["semantic_state_violations"] = _validate_semantic_states(record)
     record["operating_outcome"], record["financial_outcome"], record["per_share_outcome"], record["balance_sheet_outcome"] = _financial_outcome_text(
         record,
@@ -1921,24 +2309,37 @@ def _finalize_allocation_record(
     return record, timeline, assessment
 
 
+_OUTPUT_FILES = (
+    "capital_allocation_outcomes.json",
+    "capital_allocation_timelines.json",
+    "capital_allocation_assessments.json",
+    "capital_allocation_validation.json",
+    "capital_allocation_manifest.json",
+    "capital_allocation_longitudinal_profile.json",
+)
+
+
 class CapitalAllocationOutcomesBuilder:
-    def __init__(self, company: str):
+    def __init__(self, company: str, companies_root: Path | str, *, authorize_served_write: bool = False):
         self.company = company
-        self.company_root = _company_root(company)
-        self.output_dir = get_capital_allocation_outcomes_dir(company)
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+        self.company_root = self.companies_root / company
+        self.output_dir = get_capital_allocation_outcomes_dir(company, self.companies_root)
+
+    def plan_outputs(self) -> Dict[str, Path]:
+        """The exact files build() would write. Read-only: nothing is created."""
+        return {name: safe_destination(self.companies_root, self.output_dir / name) for name in _OUTPUT_FILES}
 
     def build(self) -> Dict[str, Path]:
         payloads = build_capital_allocation_outcomes(company=self.company, company_root=self.company_root)
         written: Dict[str, Path] = {}
         for filename, payload in payloads.items():
-            written[filename] = write_json_file(self.output_dir / filename, payload)
-        # Phase 3: longitudinal profile (reads Phase 2 artifacts just written)
-        longitudinal_path = get_capital_allocation_longitudinal_profile_path(self.company)
-        longitudinal_path.parent.mkdir(parents=True, exist_ok=True)
+            written[filename] = write_json_file(self.output_dir / filename, payload, root=self.companies_root)
+        # Phase 3: longitudinal profile (reads Phase 2 artifacts just written, from this same root)
+        longitudinal_path = get_capital_allocation_longitudinal_profile_path(self.company, self.companies_root)
         profile = build_longitudinal_profile(self.company, self.company_root)
-        import json as _json
-        longitudinal_path.write_text(_json.dumps(profile, indent=2, ensure_ascii=False), encoding="utf-8")
-        written["capital_allocation_longitudinal_profile.json"] = longitudinal_path
+        written["capital_allocation_longitudinal_profile.json"] = write_longitudinal_profile(self.companies_root, longitudinal_path, profile)
         return written
 
 
@@ -2044,7 +2445,7 @@ def build_capital_allocation_outcomes(*, company: str, company_root: Path) -> Di
             "company_memory/risks/risk_registry.json",
         ],
         upstream_sources_found=[
-            str(path)
+            logical_company_path(path, company_root.parent)
             for path in (
                 company_root / "company_memory" / "financials" / "capital_allocation_financial_timeline.json",
                 company_root / "company_memory" / "financials" / "investor_financial_modules" / "capital_allocation_roi_ledger.json",
@@ -2058,7 +2459,7 @@ def build_capital_allocation_outcomes(*, company: str, company_root: Path) -> Di
             if path.exists()
         ],
         upstream_sources_missing=[
-            str(path)
+            logical_company_path(path, company_root.parent)
             for path in (
                 company_root / "company_memory" / "financials" / "capital_allocation_financial_timeline.json",
                 company_root / "company_memory" / "financials" / "investor_financial_modules" / "capital_allocation_roi_ledger.json",
@@ -2089,9 +2490,11 @@ def build_capital_allocation_outcomes(*, company: str, company_root: Path) -> Di
     }
 
 
-def write_capital_allocation_outcomes(*, company: str, company_root: Path, output_dir: Path) -> Dict[str, Path]:
+def write_capital_allocation_outcomes(*, company: str, company_root: Path, output_dir: Path, output_root: Path | str, authorize_served_write: bool = False) -> Dict[str, Path]:
+    """Write the bundle under output_dir, which must lie inside the explicit, absolute output_root."""
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)
     payloads = build_capital_allocation_outcomes(company=company, company_root=company_root)
     written: Dict[str, Path] = {}
     for filename, payload in payloads.items():
-        written[filename] = write_json_file(output_dir / filename, payload)
+        written[filename] = write_json_file(output_dir / filename, payload, root=root)
     return written

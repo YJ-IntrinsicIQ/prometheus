@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, planned_writes, resolve_output_root, safe_destination
 
 import json
 import copy
@@ -140,6 +141,22 @@ _FACE_VALUE_DISALLOWED_ROW_TOKENS = (
 )
 
 _DISCOVERY_EXCERPT_CACHE: Dict[str, Dict[str, str]] = {}
+
+
+_SHARE_LABEL_SCALES = (
+    (re.compile(r"\bnos\.?\s*in\s*['\u2019]?000'?s?\b|\bin\s+thousands?\b|\(\s*['\u2019]?000'?s?\s*\)", re.I), 1e3),
+    (re.compile(r"\bnos\.?\s*in\s*crores?\b|\bin\s+crores?\b", re.I), 1e7),
+    (re.compile(r"\bnos\.?\s*in\s*(?:lakhs?|lacs?)\b|\bin\s+(?:lakhs?|lacs?)\b", re.I), 1e5),
+    (re.compile(r"\bnos\.?\s*in\s*millions?\b|\bin\s+millions?\b", re.I), 1e6),
+)
+
+
+def _share_count_label_scale(label: str) -> float:
+    """A share-count row can carry its own unit in the label ("Weighted average shares outstanding - Basic (Nos. in 000's)"): the number printed is in that unit, not in shares."""
+    for pattern, scale in _SHARE_LABEL_SCALES:
+        if pattern.search(label):
+            return scale
+    return 1.0
 
 
 def _empty_entry(field_name: str) -> Dict[str, Any]:
@@ -706,8 +723,13 @@ def _face_value_source_allowed(row: Dict[str, Any]) -> bool:
         return False
     if any(token in normalized_line_item for token in ("fair value", "market value", "nav", "investment value")):
         return False
-    if re.search(r"equity shares of (?:[₹`]|r(?:s|e)\.?)\s*\d+(?:\.\d+)? each", normalized_line_item):
-        return not any(token in normalized_line_item for token in _FACE_VALUE_DISALLOWED_ROW_TOKENS)
+    par = re.search(r"equity shares of (?:[₹`]|r(?:s|e)\.?)\s*(\d+(?:\.\d+)?) each", normalized_line_item)
+    if par:
+        # The row is a face value only when its cell IS the par the label states ("Equity shares of Rs.2 each | 2.00"); beside a capital amount ("... of Rs.10 each | 15.75" crore) the
+        # cell is the authorised/issued capital, not a per-share figure.
+        stated = float(par.group(1))
+        cells = [v.get("raw_number") for v in (row.get("values") or []) if isinstance(v, dict) and isinstance(v.get("raw_number"), (int, float))]
+        return bool(cells) and abs(cells[0] - stated) < 1e-9 and not any(token in normalized_line_item for token in _FACE_VALUE_DISALLOWED_ROW_TOKENS)
     if any(token in normalized_line_item for token in _FACE_VALUE_ALLOWED_LABEL_TOKENS):
         return True
     return False
@@ -920,6 +942,8 @@ def _build_normalized_entry(
         line_item_raw=str(row.get("line_item_raw", "")),
     )
     numeric_original = _parse_numeric(selected_value.get("value_raw"))
+    if field_name in {"shares_outstanding", "weighted_avg_shares", "diluted_shares"} and numeric_original is not None:
+        numeric_original *= _share_count_label_scale(str(row.get("line_item_raw", "")))      # "(Nos. in 000's)" / "(Nos. in Crores)": the count is stated in that unit
     extracted_value_type = str(selected_value.get("value_type", "") or "")
     normalized_value_type = _normalized_value_type(field_name, extracted_value_type)
     value_crore = _safe_value_crore(
@@ -996,6 +1020,8 @@ def _build_normalized_entry(
     entry["comparatives"] = []
     for comparative in comparative_values or []:
         comparative_numeric = _parse_numeric(comparative.get("value_raw"))
+        if field_name in {"shares_outstanding", "weighted_avg_shares", "diluted_shares"} and comparative_numeric is not None:
+            comparative_numeric *= _share_count_label_scale(str(row.get("line_item_raw", "")))
         comparative_entry = {
             "period": str(comparative.get("period", "")),
             "value_type": normalized_value_type,
@@ -1254,6 +1280,8 @@ def _entry_value_magnitude(entry: Dict[str, Any]) -> float:
 
 def _payables_component_kind(source_line_item: str) -> str:
     normalized = _normalize_label(source_line_item)
+    if "other than micro" in normalized:                  # "... of creditors / of trade payables other than micro enterprises and small enterprises": the remainder, whatever the lead-in
+        return "other_trade_payables"
     if any(token in normalized for token in _PAYABLES_MSME_TOKENS):
         return "msme_trade_payables"
     if any(token in normalized for token in _PAYABLES_OTHER_TOKENS):
@@ -1539,7 +1567,7 @@ def _apply_derived_fallbacks(preferred_sections: Dict[str, Any]) -> None:
         )
         total_debt_entry = balance_sheet["total_debt"]
     if (
-        (total_debt_entry.get("value_crore") is None or not total_debt_entry.get("is_primary_statement"))  # a note row never outranks the statement's own components
+        (total_debt_entry.get("value_crore") is None or not total_debt_entry.get("is_primary_statement") or not _is_explicit_debt_total(total_debt_entry))  # a note row, or a bare "(i) Borrowings" line that is one section's, never outranks the statement's own components
         and short_debt_entry.get("is_primary_statement")
         and long_debt_entry.get("is_primary_statement")
         and isinstance(short_debt_entry.get("value_crore"), (int, float))
@@ -1837,7 +1865,60 @@ def _extract_published_references(raw_tables_path: Path, preferred_sections: Dic
     return references
 
 
-def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path) -> Dict[str, Any]:
+
+# Statement LINES (not totals): a line the statement itself prints beats the same field read from a note table or a schedule sub-line. Balance-sheet totals are deliberately absent.
+SUPPLEMENT_REPLACEABLE_COMPONENTS = {"payables", "receivables", "inventory", "cash_and_equivalents", "other_bank_balances", "short_term_debt", "long_term_debt", "fixed_assets", "cwip", "investments",
+                                     "revenue", "pat", "pbt", "tax", "other_income", "finance_cost", "employee_cost", "depreciation", "cfo", "cfi", "cff", "capex", "tax_paid", "dividends_paid"}
+
+
+def _is_explicit_debt_total(entry: Dict[str, Any]) -> bool:
+    """A line that says it is the total ("Total borrowings", "Total debt"). A bare "Borrowings" / "(i) Borrowings" is one section's line of a balance sheet that splits current from
+    non-current, so it is a component however it was mapped."""
+    return bool(re.match(r"^(?:total|aggregate)\b.*\b(?:debt|borrowings?)\b", _normalize_label(str(entry.get("source_line_item") or ""))))
+
+
+def fill_missing_fields(base: Dict[str, Any], supplemented: Dict[str, Any]) -> Dict[str, Any]:
+    """Strictly additive combination of two normalizations of the same filing: `base` (extraction of the stored chunks) and `supplemented` (the same extraction plus the rows an
+    extraction of the re-chunked filing found). Every field `base` has stays exactly as it is; a field `base` lacks is taken from `supplemented` and labelled. A supplemental row
+    can therefore complete a statement but can never displace, or change the meaning of, a figure that was already extracted (it once supplied a segment 'Total assets (A)' and a
+    'Fresh equity share capital to be issued' line as the balance-sheet totals of a bank that already had them derived)."""
+    result = json.loads(json.dumps(base))
+    filled: List[str] = []
+    for section in ("profit_and_loss", "balance_sheet", "cash_flow", "share_data", "corporate_actions", "shareholding_pattern"):
+        for field_name, entry in (supplemented.get(section) or {}).items():
+            current = (result.get(section) or {}).get(field_name)
+            if not isinstance(entry, dict) or not isinstance(current, dict):
+                continue
+            replaceable = (
+                field_name in SUPPLEMENT_REPLACEABLE_COMPONENTS
+                and current.get("value_original") and entry.get("value_original")
+                and not current.get("is_primary_statement") and entry.get("is_primary_statement")
+                and not str(current.get("source_line_item") or "").startswith("derived:")
+                and str(entry.get("source_section_type") or "") == PRIMARY_SECTION_SOURCE_TYPES.get(section)
+            )
+            if (field_name == "total_debt" and current.get("value_original") and entry.get("derived") and entry.get("formula") == "short_term_debt + long_term_debt"
+                    and not (current.get("is_primary_statement") and _is_explicit_debt_total(current))):
+                replaceable = True        # the sum of the statement's two section lines replaces a note bucket or a single section's line that had been taken as the total
+            if replaceable:        # the statement's own line replaces a figure read from an unrelated note table (a maturity/ageing table's first bucket as the payables balance)
+                entry = dict(entry)
+                entry["warnings"] = list(entry.get("warnings") or []) + [f"primary-statement line from the re-chunked extraction replaced a non-primary baseline figure (read from {current.get('source_line_item')!r}, page {current.get('source_page')})"]
+                result[section][field_name] = entry
+                filled.append(f"{section}.{field_name}(replaced)")
+                continue
+            if not current.get("value_original") and entry.get("value_original"):
+                entry = dict(entry)
+                entry["warnings"] = list(entry.get("warnings") or []) + ["field supplied by the re-chunked extraction; the baseline extraction had no value"]
+                result[section][field_name] = entry
+                filled.append(f"{section}.{field_name}")
+    result.setdefault("warnings", []).append(f"supplemented fields: {', '.join(filled) if filled else 'none'}")
+    if result.get("normalization_status") == "partial_balance_sheet":
+        bs = result["balance_sheet"]
+        if bs["total_assets"].get("value_original") and (bs["net_worth"].get("value_original") or bs["equity_share_capital"].get("value_original")) and bs["total_liabilities"].get("value_original"):
+            result.pop("normalization_status", None)
+    return result
+
+
+def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path, allow_partial_balance_sheet: bool = False) -> Dict[str, Any]:
     raw = _load_raw_financials(raw_tables_path)
     target_year = _fy_year_from_slug(year) or ""
 
@@ -2082,7 +2163,12 @@ def normalize_financial_tables(*, company: str, year: str, raw_tables_path: Path
     )
     has_liabilities = bool(payload["balance_sheet"]["total_liabilities"]["value_original"])
     if not (has_assets and has_equity and has_liabilities):
-        raise RuntimeError("normalized fundamentals missing usable balance sheet assets/equity/liabilities data")
+        if not allow_partial_balance_sheet:
+            raise RuntimeError("normalized fundamentals missing usable balance sheet assets/equity/liabilities data")
+        # Opt-in (candidate rebuilds): the profit-and-loss statement is usable, the balance sheet is not. The artifact says so instead of the year being dropped, and every
+        # balance-sheet fact then stays missing in the registry rather than coming from an unrelated table.
+        payload["normalization_status"] = "partial_balance_sheet"
+        _append_if_missing(payload["warnings"], "balance sheet incomplete: total assets, equity or total liabilities not extracted; balance-sheet facts are unavailable for this year")
 
     if not payload["cash_flow"]["cfo"]["value_original"]:
         _append_if_missing(payload["warnings"], "CFO missing")
@@ -2111,8 +2197,13 @@ def write_normalized_fundamentals(
     year: str,
     raw_tables_path: Path,
     output_path: Path,
+    output_root: Path | str,
+    authorize_served_write: bool = False,
+    dry_run: bool = False,
 ) -> Dict[str, Any]:
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
+    if dry_run:     # read-only: the exact files this call would write
+        return planned_writes(root, output_path)
     payload = normalize_financial_tables(company=company, year=year, raw_tables_path=raw_tables_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    guarded_write_text(root, output_path, json.dumps(payload, indent=2, ensure_ascii=False))
     return payload

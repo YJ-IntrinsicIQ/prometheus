@@ -46,6 +46,8 @@ NEG_RX = re.compile(r"\b(?:not|no|nor|never|lacks?|missing|unavailable|without|c
 def split_clauses(sentence: str) -> list[str]:
     """Clauses of one sentence. A comma splits only where both sides carry a negation, so a genuine claim cannot hide behind an explanatory one."""
     s = " ".join(str(sentence).split())
+    if "Checked so far:" in s or "Not yet concluded:" in s:      # the gate's own fallback wording is one unit
+        return [s.strip(" .")]
     out: list[str] = []
     for part in re.split(r";\s+|,\s+so\s+|,\s+but\s+", s):
         bits = re.split(r",\s+(?:and\s+)?(?!not\b|nor\b)(?=[^,]*\b(?:not|no)\b)", part)
@@ -61,6 +63,8 @@ def classify(clause: str) -> tuple[str | None, str]:
     c = " ".join(re.sub(r"“[^”]*”", " ", str(clause)).split())
     if not c or not NEG_RX.search(c) and c.lower() not in UI_LABELS:
         return None, "no-negation"
+    if "Checked so far:" in c or "Not yet concluded:" in c:
+        return EXPLANATORY, "g5-fallback-wording"
     if c.endswith("?"):
         return UI_OR_SYSTEM, "ui-question"
     if COVERAGE_RX.search(c):
@@ -106,12 +110,12 @@ PROFILES: dict[str, dict] = {
                      [rf"maintenance\s+(?:capex|capital\s+expenditure){NUM}", rf"growth\s+(?:capex|capital\s+expenditure){NUM}", rf"expansion\s+capex{NUM}"], applies="industrial"),
     "revenue_split": P("Revenue by product, segment or region", r"revenue\s+(?:breakdown|mix|by\s+(?:source|product|segment|region)|split)|mix\s+by\s+segment|segment\s+or\s+geography|split\s+of\s+revenue|margins\s+by\s+revenue\s+source|product,\s+segment\s+or\s+region|revenue\s+is\s+not\s+broken|between\s+sources",
                        [r"segment", r"geograph", r"revenue\s+by\s+(?:region|geography|market|segment|product)"], [rf"segment\s+(?:revenue|results?){NUM}", rf"revenue\s+by\s+(?:geography|region|segment|product|market){NUM}", rf"segment\s+(?:information|reporting|assets|liabilities){NUM}"], rec=("__model__", "engines")),
-    "project_outcomes": P("Project utilisation, output and returns", r"utili[sz]ation|throughput|incremental\s+revenue|project\s+records|capacity\s+records|output\s+and\s+returns|cost,\s+output", [r"capacity\s+utili[sz]ation", r"utili[sz]ation", r"throughput", r"incremental\s+revenue"], [rf"capacity\s+utili[sz]ation{NUM}", rf"utili[sz]ation{NUM}%", rf"throughput{NUM}"], record_files=("capacity/capacity_assessments.json", "projects/project_assessments.json")),
+    "project_outcomes": P("Project utilisation, output and returns", r"utili[sz]ation|throughput|incremental\s+revenue|site-level\s+revenue|project\s+records|capacity\s+records|output\s+and\s+returns|cost,\s+output", [r"capacity\s+utili[sz]ation", r"utili[sz]ation", r"throughput", r"incremental\s+revenue"], [rf"capacity\s+utili[sz]ation{NUM}", rf"utili[sz]ation{NUM}%", rf"throughput{NUM}"], record_files=("capacity/capacity_assessments.json", "projects/project_assessments.json")),
     "competitive_position": P("Competitive position (share, pricing power vs peers)", r"moat|competitive\s+position|market\s+share|pricing\s+power|peer|competition|competitive\s+threats", [r"market\s+share", r"pricing\s+power", r"competitive\s+position", r"switching\s+cost"], [rf"market\s+share{NUM}%", rf"(?:our|the company.s)\s+market\s+share{NUM}"]),
     "market_size": P("Market size and industry dynamics", r"market\s+size|industry\s+dynamics|growth\s+runway|total\s+addressable", [r"market\s+size", r"industry\s+size", r"addressable\s+market", r"industry\s+(?:growth|outlook)"], [rf"(?:market|industry)\s+size{NUM}", rf"addressable\s+market{NUM}", rf"industry\s+(?:is\s+)?(?:expected|projected|estimated)\s+to\s+grow{NUM}"]),
     "management_incentives": P("Management incentives (pay, ESOP, promoter alignment)", r"incentives?\b|esop|remuneration|promoter\s+alignment|pay\b", [r"remuneration", r"\besops?\b", r"stock\s+option", r"managerial\s+personnel"], [rf"remuneration{NUM}", rf"\besops?\b{NUM}", rf"stock\s+options?{NUM}"]),
     "rd_spend": P("R&D spending and pipeline", r"research\s+and\s+development|r&d|pipeline\s+(?:stages|outcomes)", [r"research\s+and\s+development", r"r\s*&\s*d\b"], [rf"research\s+and\s+development(?:\s+(?:expense|expenditure|spend))?{NUM}", rf"r\s*&\s*d\s+(?:expense|expenditure|spend)\w*{NUM}"], applies="industrial"),
-    "contingent": P("Contingent liabilities", r"contingent\s+liabilit|off-balance", [r"contingent\s+liabilit"], [rf"contingent\s+liabilit\w+{NUM}"], rec=("balance_sheet_strength", "contingent_liabilities")),
+    "contingent": P("Contingent liabilities", r"contingent\s+liabilit", [r"contingent\s+liabilit"], [rf"contingent\s+liabilit\w+{NUM}"], rec=("balance_sheet_strength", "contingent_liabilities")),
     "peer_comparison": P("Peer comparison", r"peer|competitor", [r"peer", r"competitor"], [rf"peer\s+(?:group|comparison){NUM}"]),
     "commitment_followthrough": P("Follow-through reporting against prior commitments", r"follow-through|register\s+has\s+not\s+linked|progression\s+tracker|evidence\s+is\s+(?:not\s+)?linked|against\s+prior-year\s+commitments|later\s+evidence|confirm\s+or\s+contradict|no\s+later\s+disclosure|score-target|confirmation|fulfilment|approval\s+is\s+not|no\s+evidence\s+either\s+way|nor\s+evidence\s+of\s+non-delivery", [r"progress\s+(?:against|towards|on)", r"against\s+(?:our\s+)?(?:targets?|commitments?)", r"status\s+of\s+(?:our\s+)?(?:targets?|commitments?)"], [rf"progress\s+(?:against|towards)\s+(?:our\s+)?(?:targets?|commitments?|goals?){NUM}", rf"against\s+(?:our\s+)?(?:targets?|commitments?)[^.]{{0,60}}(?:achieved|met|completed|%)"], note="per-commitment: needs a per-commitment later-filing check"),
     "transaction_amounts": P("Consideration for completed transactions", r"^amount:|amounts?\s+(?:are\s+)?not\s+in\s+the\s+extracted|completed\s+transactions?\s+are\s+recorded|consideration", [r"\bconsideration\b", r"purchase\s+price"], [rf"(?:aggregate\s+|total\s+)?consideration{NUM}", rf"purchase\s+price{NUM}"]),
@@ -120,7 +124,7 @@ PROFILES: dict[str, dict] = {
     "risk_response": P("Management response to a recorded risk", r"management\s+response|response\s+is\s+(?:recorded|linked)|no\s+response\s+is\s+recorded|response\s+is\s+linked", [r"mitigation", r"risk\s+mitigat"], [rf"mitigation\s+(?:plan|measures?|strateg\w+|:){NUM}?", r"risk\s+mitigation\s+(?:plan|measures?|strateg)"], note="per-risk: the filing's mitigation column must be matched to each recorded risk"),
     "management_depth": P("Management depth, succession and organisation quality", r"management\s+depth|succession|quality\s+of\s+its\s+sales", [r"succession", r"key\s+managerial\s+personnel", r"senior\s+management"], [rf"succession\s+plan\w*{NUM}?", r"key\s+managerial\s+personnel\s+(?:are|include|comprise)"]),
     "segment_margins": P("Product-level or segment margins", r"product-level|segment\s+margins|margins\s+by", [r"segment\s+(?:profit|margin|result)", r"segment\s+results?"], [rf"segment\s+(?:profit|results?|margin)s?{NUM}"]),
-    "capital_outcomes": P("Outcome of capital deployed", r"capital\s+deployed|capital\s+allocation\s+lacks|operating\s+outcomes|capital\s+is\s+recorded\s+under|no\s+capital\s+is\s+recorded|capital\s+deployments?\s+lack|returns\s+on\s+(?:acquisitions|capex)|financial\s+returns|operating\s+returns?|acquisition\s+outcomes?|initiative-level", [r"return\s+on\s+(?:capital|investment)", r"\broic\b", r"payback"], [rf"\broic\b{NUM}", rf"return\s+on\s+(?:invested\s+)?capital{NUM}"]),
+    "capital_outcomes": P("Returns on specific capital allocations", r"capital\s+deployed|capital\s+allocation\s+lacks|operating\s+outcomes|capital\s+is\s+recorded\s+under|no\s+capital\s+is\s+recorded|capital\s+deployments?\s+lack|returns\s+on\s+(?:acquisitions|capex)|financial\s+returns|operating\s+returns?|acquisition\s+outcomes?|initiative-level", [r"return\s+on\s+(?:capital|investment)", r"\broic\b", r"payback"], [rf"\broic\b{NUM}", rf"return\s+on\s+(?:invested\s+)?capital{NUM}"]),
 }
 # topics that already have an anchor family in g4 (concentration, transactions, guidance, order book, credit cost) reuse it
 for t, label, claim in (("concentration", "Customer / depositor concentration", r"concentration|customer"), ("transactions", "Transaction status", r"transaction\s+status|transactions?\s+mentioned|completed\s+and\s+pending|pending[- ]transaction|completed\s+(?:deal|transaction)|completion\s+status|transactions?\s+and\s+their"),
@@ -262,30 +266,33 @@ def rewrite_for(clause: str, label: str, locator: str) -> str:
 
 
 def judge(L: "g4.Ledger", clause: str, cls: str, context: str = "") -> dict:
-    """The provenance verdict for one genuine absence clause, from the evidence gate (pipelines/g5_verify): state, whether it is VERIFIED, the wording change if the sentence
-    claims more than the evidence, the investor fallback, and the review item if a person must decide."""
+    """The provenance verdict for one genuine absence clause, from the evidence gate (pipelines/g5_verify): state, whether it is VERIFIED, the investor replacement when the wording
+    claims more than the evidence supports, the fallback parts, and the review item if a person must decide."""
     from pipelines import g5_verify as V
     v = V.verify_claim(L, clause, cls, context)
     topic = v["topic"]
     out: dict[str, Any] = {"claim": clause, "class": cls, "topic": topic, "company": L.key, "fy": L.fy, "verification": v, "fallback": v.get("fallback"), "reasons": v["reasons"], "rewrite": None, "review": None,
-                           "basis": v.get("basis", "; ".join(v["reasons"])), "locator": v.get("locator", ""), "level": v["level"]}
+                           "basis": v.get("basis", "; ".join(v["reasons"])), "locator": v.get("locator", ""), "level": v["level"], "record_statement_ok": v.get("record_statement_ok", False)}
     if topic:
         out["evidence_group"] = group_key(L.key, L.fy, topic, cls, "record" if cls == EXTRACTION_ABSENCE else "source")
     st = v["status"]
     if st == "VERIFIED":
-        out.update(state=v["state"], verified=True, status="VERIFIED_NOT_EXTRACTED" if v["state"] == "NOT_EXTRACTED" else "VERIFIED_NOT_APPLICABLE")
+        out.update(state=v["state"], verified=True, status="VERIFIED_NOT_EXTRACTED" if v["state"] == "NOT_EXTRACTED" else "VERIFIED_NOT_APPLICABLE", supplement=V.source_supplement(v))
         return out
-    fb = V.fallback_sentence(v["fallback"], PROFILES[topic]["label"]) if v.get("fallback") and topic else None
+    # the one customer rule: a statement that is not VERIFIED, and is not a record fact the destination probe confirmed, is replaced by what is established
+    needs_replacement = not out["record_statement_ok"]
+    fb = v.get("fallback")
+    text = V.fallback_sentence(fb) if (fb and needs_replacement) else None
     if st == "CONTRADICTED":
-        out.update(state=None, verified=False, status="CONTRADICTED", rewrite=fb)
+        out.update(state=None, verified=False, status="CONTRADICTED", rewrite=text)
         return out
     out.update(verified=False, review=review_id(L.key, topic, clause))
     if not topic:
-        out.update(state=None, status="UNRESOLVED_UNPROFILED", locators_hint=v.get("leads"))
+        out.update(state=None, status="UNRESOLVED_UNPROFILED", locators_hint=v.get("leads"), rewrite=text)
     elif v["level"] == "SEARCH_FACT" or (v["level"] == "SOURCE_NEGATIVE" and resolve(L, topic)["state"] == "NOT_DISCLOSED_CANDIDATE"):
-        out.update(state="NOT_DISCLOSED", status="UNRESOLVED_NOT_DISCLOSED_CANDIDATE", rewrite=fb if v["level"] == "SOURCE_NEGATIVE" else None)
+        out.update(state="NOT_DISCLOSED", status="UNRESOLVED_NOT_DISCLOSED_CANDIDATE", rewrite=text)
     else:
-        out.update(state=None, status="UNRESOLVED_REVIEW", rewrite=fb if v["level"] in ("SOURCE_NEGATIVE", "NOT_APPLICABLE") else None)
+        out.update(state=None, status="UNRESOLVED_REVIEW", rewrite=text)
     out["record_verified"] = bool(v["record_facts"]) and all(r["present"] is False for r in v["record_facts"])
     return out
 
@@ -330,12 +337,30 @@ def _text_fields(a: dict):
             yield f, None, v
 
 
-def annotate_answer(L: "g4.Ledger", a: dict) -> tuple[dict, dict]:
-    """Return (annotated copy, report). Rewrites only the clauses the evidence contradicts; adds claim-linked `g5_absence` entries for every verified genuine clause and a
-    `g5_review_pending` list for the rest. Everything else in the answer is left byte-identical."""
+def annotate_answer(L: "g4.Ledger", a: dict, compact: bool = False) -> tuple[dict, dict]:
+    """Return (annotated copy, report). A clause whose wording claims more than the evidence supports (contradicted, or a source-level negative / inapplicability that is not
+    VERIFIED) is replaced by the evidence gate's investor fallback; a record-level statement the gate cannot verify is kept as written. Claim-linked `g5_absence` entries carry the
+    state and `verification`; everything that is not VERIFIED is listed in `g5_review_pending` with its machine reasons. Everything else is left byte-identical."""
     import copy
+    from pipelines import g5_verify as V
     b = copy.deepcopy(a)
     changes: list[dict] = []
+    seen_topic: set[str] = set()
+    generated: list[tuple[str, dict]] = []
+    event_checks: list[dict] = []
+    def walk_events(o, path):                                   # positive claims first, in EVERY investor-visible string (claims, relationships, key points…): an acquisition / completion the records do not support is restated as the record describes it
+        if isinstance(o, str):
+            t2, evs = V.apply_event_rewrites(L, o)
+            event_checks.extend({**e, "field": path} for e in evs)
+            if t2 != o:
+                changes.append({"field": path, "before": o, "after": t2, "reason": "UNSUPPORTED_EVENT", "topic": "event", "reasons": [e["status"] for e in evs if e["status"] != "SUPPORTED_EVENT"], "locator": ""})
+            return t2
+        if isinstance(o, list):
+            return [walk_events(x, f"{path}[{i}]") for i, x in enumerate(o)]
+        if isinstance(o, dict):
+            return {k: (v if re.match(r"^g[45]\d*_", k) else walk_events(v, f"{path}.{k}")) for k, v in o.items()}
+        return o
+    b = walk_events(b, "")
     for f, i, t in list(_text_fields(b)):
         new = t
         for sent in re.split(r"(?<=[.;])\s+(?=[A-Z“\d])", " ".join(t.split())):
@@ -343,14 +368,45 @@ def annotate_answer(L: "g4.Ledger", a: dict) -> tuple[dict, dict]:
                 cls, _ = classify(clause)
                 if cls in GENUINE:
                     j = judge(L, clause, cls, sent)
+                    if j.get("supplement") and clause in new and j["supplement"] not in new:
+                        new = new.replace(clause, clause + "; " + j["supplement"], 1)
+                        changes.append({"field": f if i is None else f"{f}[{i}]", "before": clause, "after": clause + "; " + j["supplement"], "reason": "VERIFIED_SUPPLEMENT", "topic": j["topic"], "reasons": [], "locator": j.get("locator", "")})
                     if j.get("rewrite") and clause in new:
-                        new = new.replace(clause, j["rewrite"], 1)
-                        changes.append({"field": f if i is None else f"{f}[{i}]", "before": clause, "after": j["rewrite"], "reason": j["status"], "topic": j["topic"], "locator": j.get("locator", "")})
+                        short = compact or (j["topic"] or clause) in seen_topic
+                        text = V.fallback_sentence(j["fallback"], short=short)
+                        seen_topic.add(j["topic"] or clause)
+                        head = ""
+                        hm = re.match(r"^(.{20,}?)\s+(?:because|since)\s+", clause)       # keep the method statement that preceded the unsupported reason
+                        if hm:
+                            head = hm.group(1).rstrip(" ,;") + ". "
+                        core = clause.rstrip(")] ")
+                        tail = clause[len(core):].strip()                       # keep the closing bracket of an aside so the sentence stays balanced
+                        new = re.sub(re.escape(clause) + r"(?:,\s+so\b[^.;]*)?", lambda _m: head + text + tail, new, count=1)      # and drop a consequence ("…, so X cannot be assessed") that rested on the unsupported premise
+                        generated.append((text, j))
+                        changes.append({"field": f if i is None else f"{f}[{i}]", "before": clause, "after": head + text, "reason": j["status"], "topic": j["topic"], "reasons": j["reasons"], "locator": j.get("locator", "")})
         if new != t:
             if i is None:
                 b[f] = new
             else:
                 b[f][i] = new
+    for di, dd in enumerate(b.get("deterministic_precision_facts") or []):          # the precision facts' meanings are investor text too
+        mean = dd.get("semantic_meaning") if isinstance(dd, dict) else None
+        if not mean:
+            continue
+        newm = mean
+        for sent in re.split(r"(?<=[.;])\s+(?=[A-Z“\d])", " ".join(str(mean).split())):
+            for clause in split_clauses(sent):
+                cls, _ = classify(clause)
+                if cls in GENUINE:
+                    j = judge(L, clause, cls, sent)
+                    if j.get("rewrite") and clause in newm:
+                        text = V.fallback_sentence(j["fallback"], short=True if (compact or (j["topic"] or clause) in seen_topic) else False)
+                        seen_topic.add(j["topic"] or clause)
+                        newm = newm.replace(clause, text, 1)
+                        generated.append((text, j))
+                        changes.append({"field": f"deterministic_precision_facts[{di}].semantic_meaning", "before": clause, "after": text, "reason": j["status"], "topic": j["topic"], "reasons": j["reasons"], "locator": ""})
+        if newm != mean:
+            dd["semantic_meaning"] = newm
     entries, pending, system = [], [], []
     seen: set[str] = set()
     dpf_texts = [("deterministic_precision_facts", i, str(d.get("semantic_meaning"))) for i, d in enumerate(b.get("deterministic_precision_facts") or []) if isinstance(d, dict) and d.get("semantic_meaning")]
@@ -366,24 +422,28 @@ def annotate_answer(L: "g4.Ledger", a: dict) -> tuple[dict, dict]:
                     continue
                 seen.add(clause)
                 j = judge(L, clause, cls, sent)
-                if j["state"] and j["status"] in ("VERIFIED_NOT_EXTRACTED", "VERIFIED_NOT_APPLICABLE", "UNRESOLVED_NOT_DISCLOSED_CANDIDATE"):
-                    entries.append({"claim": clause, "field": where, "topic": j["topic"] or "other", "state": j["state"], "basis": j["basis"], "locator": j.get("locator", ""),
-                                    "evidence_group": j.get("evidence_group", ""), "verification": "VERIFIED" if j["verified"] else "PENDING_HUMAN_CONFIRMATION", "review": j.get("review")})
-                    if not j["verified"]:
-                        pending.append({"review": j["review"], "claim": clause, "field": where, "status": j["status"]})
+                base = {"claim": clause, "field": where, "topic": j["topic"] or "other", "basis": j["basis"], "locator": j.get("locator", ""), "evidence_group": j.get("evidence_group", ""), "review": j.get("review"),
+                        "reasons": j["reasons"], "record_verified": j.get("record_verified", False), "record_statement_ok": j.get("record_statement_ok", False)}
+                if j["status"] in ("VERIFIED_NOT_EXTRACTED", "VERIFIED_NOT_APPLICABLE"):
+                    entries.append({**base, "state": j["state"], "verification": "VERIFIED"})
+                elif j["status"] == "UNRESOLVED_NOT_DISCLOSED_CANDIDATE":
+                    entries.append({**base, "state": "NOT_DISCLOSED", "verification": "PENDING_HUMAN_CONFIRMATION"})
+                    pending.append({"review": j["review"], "claim": clause, "field": where, "status": j["status"], "reasons": j["reasons"]})
                 else:
-                    pending.append({"review": j.get("review"), "claim": clause, "field": where, "status": j["status"]})
-    if entries:
-        b["g5_absence"] = entries
-    else:
-        b.pop("g5_absence", None)
+                    pending.append({"review": j["review"], "claim": clause, "field": where, "status": j["status"], "reasons": j["reasons"], "record_verified": base["record_verified"]})
+    scoped = [{"claim": text, "topic": j["topic"], "state": None, "verification": "UNVERIFIED_SCOPED_STATEMENT", "replaces_status": j["status"], "reasons": j["reasons"], "fallback": j["fallback"], "review": j.get("review"), "replacement": text} for text, j in generated]
+    b["g5_absence"] = entries + scoped if (entries or scoped) else None
+    if not b["g5_absence"]:
+        b.pop("g5_absence")
     if pending:
         b["g5_review_pending"] = pending
     else:
         b.pop("g5_review_pending", None)
     if system:
         b["g5_system_statements"] = system
-    return b, {"changes": changes, "entries": len(entries), "pending": len(pending), "system": len(system)}
+    if event_checks:
+        b["g5_event_checks"] = [{k: v for k, v in e.items() if k != "span"} for e in event_checks]
+    return b, {"changes": changes, "entries": len(entries), "pending": len(pending), "system": len(system), "scoped": len(scoped)}
 
 
 def coverage_check(L: "g4.Ledger", clause: str) -> tuple[bool | None, str]:

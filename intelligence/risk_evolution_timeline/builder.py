@@ -1,4 +1,6 @@
 from __future__ import annotations
+from knowledge.financials.authority_gate import load_vouched
+from core.context_paths import guarded_write_text, resolve_output_root, safe_destination
 
 import json
 import re
@@ -345,9 +347,9 @@ def _load_sources(company_slug: str, companies_root: Path) -> Dict[str, Any]:
         "capacity": _load_json(mem / "capacity" / "capacity_registry.json"),
         "capital_allocation_gold": _load_json(mem / "gold" / "capital_allocation_outcome_tracker.json"),
         "strategy_gold": _load_json(mem / "gold" / "strategy_evolution_timeline.json"),
-        "financial_truth": _load_json(mem / "financials" / "financial_truth_pack.json"),
-        "financial_trends": _load_json(mem / "financials" / "financial_trends.json"),
-        "working_capital": _load_json(mem / "financials" / "investor_financial_modules" / "working_capital_quality_drilldown.json"),
+        "financial_truth": load_vouched(mem / "financials" / "financial_truth_pack.json"),
+        "financial_trends": load_vouched(mem / "financials" / "financial_trends.json"),
+        "working_capital": load_vouched(mem / "financials" / "investor_financial_modules" / "working_capital_quality_drilldown.json"),
         "company_model": _load_json(mem / "company_model" / "company_model.json"),
     }
 
@@ -844,7 +846,7 @@ def _patterns(themes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def build_risk_evolution_timeline(
     company_slug: str,
     *,
-    companies_root: Path | str = Path("companies"),
+    companies_root: Path | str,
     generated_at: Optional[str] = None,
 ) -> Dict[str, Any]:
     companies_root = Path(companies_root)
@@ -889,16 +891,19 @@ def build_risk_evolution_timeline(
     }
 
 
+def plan_risk_evolution_timeline_output(company_slug: str, *, companies_root: Path | str, authorize_served_write: bool = False) -> Path:
+    """The exact file write_risk_evolution_timeline would write. Read-only: nothing is created."""
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    return safe_destination(root, root / company_slug / "company_memory" / "gold" / "risk_evolution_timeline.json")
+
+
 def write_risk_evolution_timeline(
     company_slug: str,
     *,
-    companies_root: Path | str = Path("companies"),
+    companies_root: Path | str,
     generated_at: Optional[str] = None,
+    authorize_served_write: bool = False,
 ) -> Path:
-    companies_root = Path(companies_root)
-    payload = build_risk_evolution_timeline(company_slug, companies_root=companies_root, generated_at=generated_at)
-    out_dir = companies_root / company_slug / "company_memory" / "gold"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "risk_evolution_timeline.json"
-    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return out_path
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    payload = build_risk_evolution_timeline(company_slug, companies_root=root, generated_at=generated_at)
+    return guarded_write_text(root, plan_risk_evolution_timeline_output(company_slug, companies_root=root, authorize_served_write=authorize_served_write), json.dumps(payload, indent=2, ensure_ascii=False))

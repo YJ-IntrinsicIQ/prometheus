@@ -12,6 +12,7 @@ from .dimensions import aggregate_overall_view, confidence_from_coverage, normal
 from .evidence_linker import build_management_quality_evidence
 from .manifest import build_management_quality_manifest
 from .paths import get_management_quality_dir
+from core.context_paths import resolve_output_root, safe_destination
 from .synthesis import build_conviction_lists, build_turning_points, evaluate_dimensions
 from .validators import validate_management_quality_payload
 from .writer import write_json_file
@@ -28,10 +29,6 @@ def _load_json(path: Path) -> Dict[str, Any] | List[Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-
-
-def _company_root(company: str) -> Path:
-    return Path("companies") / company
 
 
 def _load_company_payload(path: Path) -> Dict[str, Any]:
@@ -375,12 +372,26 @@ def _investor_implication(overall_view: str, overall_direction: str) -> str:
     return "There is not yet enough evidence to change conviction with confidence."
 
 
+_OUTPUT_FILES = (
+    "management_quality_summary.json",
+    "management_quality_dimensions.json",
+    "management_quality_evidence.json",
+    "management_quality_validation.json",
+    "management_quality_manifest.json",
+)
+
+
 class ManagementQualityBuilder:
-    def __init__(self, company: str, companies_root: Path | str = Path("companies")) -> None:
+    def __init__(self, company: str, companies_root: Path | str, *, authorize_served_write: bool = False) -> None:
         self.company = company
-        self.companies_root = Path(companies_root)
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
         self.company_root = self.companies_root / company
-        self.output_dir = get_management_quality_dir(company)
+        self.output_dir = get_management_quality_dir(company, self.companies_root)
+
+    def plan_outputs(self) -> Dict[str, Path]:
+        """The exact files build() would write. Read-only: nothing is created."""
+        return {name: safe_destination(self.companies_root, self.output_dir / name) for name in _OUTPUT_FILES}
 
     def build(self) -> Dict[str, Path]:
         payloads = build_management_quality_payloads(company=self.company, company_root=self.company_root)
@@ -392,18 +403,20 @@ class ManagementQualityBuilder:
             "management_quality_manifest.json": payloads["management_quality_manifest.json"],
         }
         return {
-            filename: write_json_file(self.output_dir / filename, payload)
+            filename: write_json_file(self.output_dir / filename, payload, root=self.companies_root)
             for filename, payload in written.items()
         }
 
 
-def build_management_quality(company: str, companies_root: Path | str = Path("companies")) -> Dict[str, Path]:
-    return ManagementQualityBuilder(company=company, companies_root=companies_root).build()
+def build_management_quality(company: str, companies_root: Path | str, *, authorize_served_write: bool = False) -> Dict[str, Path]:
+    return ManagementQualityBuilder(company=company, companies_root=companies_root, authorize_served_write=authorize_served_write).build()
 
 
-def write_management_quality(*, company: str, company_root: Path, output_dir: Path) -> Dict[str, Path]:
+def write_management_quality(*, company: str, company_root: Path, output_dir: Path, output_root: Path | str, authorize_served_write: bool = False) -> Dict[str, Path]:
+    """Write the bundle under output_dir, which must lie inside the explicit, absolute output_root."""
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)
     payloads = build_management_quality_payloads(company=company, company_root=company_root)
     return {
-        filename: write_json_file(output_dir / filename, payload)
+        filename: write_json_file(output_dir / filename, payload, root=root)
         for filename, payload in payloads.items()
     }

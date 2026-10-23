@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_capacity_cleaner_accepts_comparative_years_inside_current_disclosures(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="ujjivan", year="fy21")
+    context = CompanyContext(company="ujjivan", year="fy21", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -37,7 +37,7 @@ def test_capacity_cleaner_accepts_comparative_years_inside_current_disclosures(t
 
 def test_capacity_cleaner_handles_example_years_inside_current_disclosures(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="tanla", year="fy20")
+    context = CompanyContext(company="tanla", year="fy20", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -80,7 +80,7 @@ def test_capacity_cleaner_handles_example_years_inside_current_disclosures(tmp_p
 
 def test_non_promotable_ambiguous_historical_capacity_is_quarantined_with_diagnostics(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="sun_pharma", year="fy22")
+    context = CompanyContext(company="sun_pharma", year="fy22", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -112,7 +112,7 @@ def test_non_promotable_ambiguous_historical_capacity_is_quarantined_with_diagno
 
 def test_generic_non_promotable_ambiguous_capacity_variant_is_quarantined(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="acme", year="fy25")
+    context = CompanyContext(company="acme", year="fy25", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -152,7 +152,7 @@ def test_generic_non_promotable_ambiguous_capacity_variant_is_quarantined(tmp_pa
 
 def test_capacity_cleaner_does_not_borrow_status_from_adjacent_initiative(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="ujjivan", year="fy24")
+    context = CompanyContext(company="ujjivan", year="fy24", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -177,7 +177,7 @@ def test_capacity_cleaner_does_not_borrow_status_from_adjacent_initiative(tmp_pa
 
 def test_capacity_cleaner_normalizes_explicit_and_missing_status_values(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="acme", year="fy25")
+    context = CompanyContext(company="acme", year="fy25", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -236,7 +236,7 @@ def test_capacity_cleaner_normalizes_explicit_and_missing_status_values(tmp_path
 
 def test_capacity_cleaner_keeps_planned_and_delayed_distinct(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="acme", year="fy25")
+    context = CompanyContext(company="acme", year="fy25", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 

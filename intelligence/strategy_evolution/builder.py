@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root, safe_destination
 
 import json
 import re
@@ -414,7 +415,7 @@ def _build_themes_from_timeline(
 
 def build_strategy_evolution_timeline(
     company_slug: str,
-    companies_root: Path = Path("."),
+    companies_root: Path,
 ) -> Dict[str, Any]:
     sources = _load_sources(company_slug, companies_root)
 
@@ -500,13 +501,18 @@ def _all_active_periods(themes: List[Dict[str, Any]]) -> List[str]:
     return sorted(periods)
 
 
+def plan_strategy_evolution_timeline_output(company_slug: str, companies_root: Path | str, *, authorize_served_write: bool = False) -> Path:
+    """The exact file write_strategy_evolution_timeline would write. Read-only: nothing is created."""
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    return safe_destination(root, root / company_slug / "company_memory" / "gold" / "strategy_evolution_timeline.json")
+
+
 def write_strategy_evolution_timeline(
     company_slug: str,
-    companies_root: Path = Path("."),
+    companies_root: Path | str,
+    *,
+    authorize_served_write: bool = False,
 ) -> Path:
-    result = build_strategy_evolution_timeline(company_slug, companies_root)
-    out_dir = companies_root / company_slug / "company_memory" / "gold"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "strategy_evolution_timeline.json"
-    out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
-    return out_path
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    result = build_strategy_evolution_timeline(company_slug, root)
+    return guarded_write_text(root, plan_strategy_evolution_timeline_output(company_slug, root, authorize_served_write=authorize_served_write), json.dumps(result, indent=2, ensure_ascii=False))

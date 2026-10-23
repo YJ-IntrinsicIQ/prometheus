@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, planned_writes, resolve_output_root, safe_destination
 
 import json
 import re
@@ -117,9 +118,9 @@ def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+def _write_json(path: Path, payload: Any, *, root: Path | str) -> None:
+    """The destination must lie inside the explicit, already-authorized output root."""
+    guarded_write_text(root, path, json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def _dedupe_preserve(items: Iterable[Any]) -> List[Any]:
@@ -668,6 +669,8 @@ def _global_basis_resolution(
 def _apply_to_normalized(
     normalized_path: Path,
     resolution_report: FinancialBasisResolutionReport,
+    *,
+    root: Path | str,
 ) -> int:
     if not normalized_path.exists():
         return 0
@@ -783,13 +786,15 @@ def _apply_to_normalized(
             warnings.append("critical financial fields include unresolved basis after financial_basis_resolution")
         manifest["basis_warnings"] = _dedupe_preserve(warnings)
 
-    _write_json(normalized_path, payload)
+    _write_json(normalized_path, payload, root=root)
     return updated
 
 
 def _apply_to_truth_report(
     reconciliation_path: Path,
     resolution_report: FinancialBasisResolutionReport,
+    *,
+    root: Path | str,
 ) -> int:
     if not reconciliation_path.exists():
         return 0
@@ -829,7 +834,7 @@ def _apply_to_truth_report(
     payload["unresolved_contradictions"] = unresolved
     payload["resolved_contradictions"] = resolved
     payload["warning_resolutions"] = warning_resolutions
-    _write_json(reconciliation_path, payload)
+    _write_json(reconciliation_path, payload, root=root)
     return applied
 
 
@@ -912,14 +917,20 @@ def write_financial_basis_resolution(
     year: str,
     financial_root: Path,
     output_path: Path,
+    output_root: Path | str,
+    authorize_served_write: bool = False,
+    dry_run: bool = False,
 ) -> FinancialBasisResolutionReport:
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
+    if dry_run:     # read-only: the exact files this call would write
+        return planned_writes(root, output_path, financial_root / "normalized_fundamentals.json", financial_root / "financial_fact_registry.json", financial_root / "financial_truth_reconciliation_report.json", financial_root / "financial_artifact_quarantine_report.json")
     report = build_financial_basis_resolution(company=company, year=year, financial_root=financial_root)
     normalized_path = financial_root / "normalized_fundamentals.json"
     registry_path = financial_root / "financial_fact_registry.json"
     reconciliation_path = financial_root / "financial_truth_reconciliation_report.json"
     quarantine_path = financial_root / "financial_artifact_quarantine_report.json"
 
-    _apply_to_normalized(normalized_path, report)
+    _apply_to_normalized(normalized_path, report, root=root)
 
     if registry_path.exists():
         write_financial_fact_registry(
@@ -929,11 +940,13 @@ def write_financial_basis_resolution(
             registry_output_path=registry_path,
             reconciliation_output_path=reconciliation_path if reconciliation_path.exists() else financial_root / "financial_truth_reconciliation_report.json",
             quarantine_output_path=quarantine_path,
+            output_root=root,
+            authorize_served_write=authorize_served_write,
         )
         for item in report.field_resolutions:
             if item.applied_to_normalized and item.resolved_basis in {"standalone", "consolidated"}:
                 item.applied_to_fact_registry = True
 
-    _apply_to_truth_report(reconciliation_path, report)
-    _write_json(output_path, report.to_dict())
+    _apply_to_truth_report(reconciliation_path, report, root=root)
+    _write_json(output_path, report.to_dict(), root=root)
     return report

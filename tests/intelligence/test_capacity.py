@@ -80,7 +80,7 @@ def test_explicit_manufacturing_capacity_announcement_creates_item(tmp_path, mon
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, manifest = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -107,7 +107,7 @@ def test_vague_scaling_ambition_does_not_create_item(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -131,7 +131,7 @@ def test_non_core_public_infrastructure_capacity_is_quarantined(tmp_path, monkey
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -164,7 +164,7 @@ def test_workforce_and_facility_capacity_do_not_merge(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -204,7 +204,7 @@ def test_related_project_is_linked(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -242,7 +242,7 @@ def test_related_commitment_is_linked(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -266,7 +266,7 @@ def test_installation_does_not_equal_commissioning(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -291,7 +291,7 @@ def test_commissioning_does_not_equal_operations(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -316,7 +316,7 @@ def test_operations_do_not_imply_utilization(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, assessments, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -343,7 +343,7 @@ def test_explicit_utilization_updates_status(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, assessments, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -369,7 +369,7 @@ def test_missing_denominator_prevents_utilization_rate_calculation(tmp_path, mon
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, assessments, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -395,7 +395,7 @@ def test_capex_without_capacity_evidence_does_not_create_capacity_item(tmp_path,
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -433,7 +433,7 @@ def test_delayed_ramp_up_becomes_turning_point_candidate(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, timelines, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -458,7 +458,7 @@ def test_underutilization_weakens_conviction(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, assessments, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -478,7 +478,7 @@ def test_repeated_annual_mention_is_deduplicated(tmp_path, monkeypatch):
     _write_year_artifacts(tmp_path, "acme", "fy23", capacity_items=[item])
     _write_year_artifacts(tmp_path, "acme", "fy24", capacity_items=[dict(item, item_id="c2", year="2024")])
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, timelines, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -517,7 +517,7 @@ def test_differently_worded_same_capacity_item_merges(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -549,7 +549,7 @@ def test_distinct_expansion_phases_remain_separate(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -573,7 +573,7 @@ def test_output_growth_after_commissioning_does_not_prove_causality(tmp_path, mo
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     _, _, assessments, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -691,7 +691,7 @@ def test_progression_order_is_deterministic(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     _, timelines, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -714,7 +714,7 @@ def test_confidence_preserves_limitations(tmp_path, monkeypatch):
         ],
     )
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -747,7 +747,7 @@ def test_no_raw_document_search_occurs(tmp_path, monkeypatch):
 
     monkeypatch.setattr(Path, "read_text", tracking_read_text)
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()
 
     assert read_paths
     assert not any("/raw/" in path for path in read_paths)
@@ -772,4 +772,4 @@ def test_no_llm_call_occurs(tmp_path, monkeypatch):
 
     monkeypatch.setattr("knowledge.ai.get_llm", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("LLM should not be called")))
 
-    CapacityEvolutionBuilder(company="acme").build()
+    CapacityEvolutionBuilder(company="acme", companies_root=tmp_path / "companies").build()

@@ -370,7 +370,7 @@ def test_malformed_source_handling(tmp_path):
 
 def test_missing_source_handling(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="syntheticco", year="fy25")
+    context = CompanyContext(company="syntheticco", year="fy25", companies_root=tmp_path / "companies")
     context.create_directories()
     missing_output = context.financials_dir / "financial_discovery.json"
 
@@ -380,6 +380,7 @@ def test_missing_source_handling(tmp_path, monkeypatch):
             year="fy25",
             chunk_path=context.extracted_dir / "clean_chunks.json",
             output_path=missing_output,
+            output_root=tmp_path,
         )
 
 

@@ -345,7 +345,7 @@ def test_capital_allocation_outcomes_builder_links_and_progresses(tmp_path, monk
     monkeypatch.chdir(tmp_path)
     _write_capacity_expansion_fixture(tmp_path, "acme")
 
-    builder = CapitalAllocationOutcomesBuilder(company="acme")
+    builder = CapitalAllocationOutcomesBuilder(company="acme", companies_root=tmp_path / "companies")
     written = builder.build()
 
     output_dir = tmp_path / "companies" / "acme" / "company_memory" / "capital_allocation_outcomes"
@@ -373,7 +373,7 @@ def test_capital_allocation_outcomes_keeps_distinct_period_dividends_separate(tm
     monkeypatch.chdir(tmp_path)
     _write_dividend_fixture(tmp_path, "acme")
 
-    CapitalAllocationOutcomesBuilder(company="acme").build()
+    CapitalAllocationOutcomesBuilder(company="acme", companies_root=tmp_path / "companies").build()
     output_dir = tmp_path / "companies" / "acme" / "company_memory" / "capital_allocation_outcomes"
     outcomes = json.loads((output_dir / "capital_allocation_outcomes.json").read_text(encoding="utf-8"))
 

@@ -35,7 +35,10 @@ def main() -> int:
     ap.add_argument("--owner-authorized", default="", help="the owner's authorization note (required to apply)")
     ap.add_argument("--manifest-sha256", default="", help="sha256 of the final authorization manifest the owner approved (required with --apply)")
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--companies-root", required=True, type=Path, help="absolute company-data root (required; no default)")
+    ap.add_argument("--authorize-served-write", action="store_true", help="permit --companies-root to be the served companies/ tree")
     a = ap.parse_args()
+    ac.configure_companies_root(a.companies_root, authorize_served=a.authorize_served_write, read_only=not a.apply)   # a dry run only reads
 
     pairs = json.loads((ROOT / "preview" / "M59_pairs.json").read_text())["pairs"]
     fams = None if a.families == "all" else set(a.families.split(","))
@@ -56,7 +59,7 @@ def main() -> int:
         if key in registry:
             problems.append(f"{key}: already registered — not touched")
             continue
-        cand_file = json.loads((ROOT / "companies" / p["company"] / "company_memory/ask_intrinsiciq/m59_candidate_answers.json").read_text())
+        cand_file = json.loads((ac.companies_root() / p["company"] / "company_memory/ask_intrinsiciq/m59_candidate_answers.json").read_text())
         entry = cand_file["answers"].get(p["question_id"])
         if not entry:
             problems.append(f"{key}: no candidate in the candidate file")
@@ -86,7 +89,7 @@ def main() -> int:
     reg_path = ROOT / "governance" / "approval_registry.json"
     shutil.copyfile(reg_path, reg_path.with_name(f"approval_registry.pre_m59_{stamp}.json"))
     for co in sorted({p["company"] for p, _ in plan}):
-        sp = ROOT / "companies" / co / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json"
+        sp = ac.companies_root() / co / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json"
         shutil.copyfile(sp, sp.with_name(f"shadow_level3_hybrid_answers.pre_m59_{stamp}.json"))
         doc = json.loads(sp.read_text())
         for p, entry in plan:

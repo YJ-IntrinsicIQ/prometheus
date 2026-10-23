@@ -16,6 +16,8 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Use 'all' or a comma-separated company list.",
     )
+    parser.add_argument("--companies-root", required=True, help="absolute companies root (there is no default)")
+    parser.add_argument("--authorize-served-write", action="store_true", help="required when the root is the served companies/ tree")
     parser.add_argument(
         "--include-panel",
         action="store_true",
@@ -31,10 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    companies = parse_company_selector(args.companies)
+    companies = parse_company_selector(args.companies, companies_root=args.companies_root)
     outputs = run_quality_regression(
         companies=companies,
+        companies_root=args.companies_root,
         include_panel=args.include_panel,
+        authorize_served_write=args.authorize_served_write,
     )
     for name, path in outputs.items():
         print(f"{name}: {path}")

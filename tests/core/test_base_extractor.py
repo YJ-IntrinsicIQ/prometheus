@@ -1,3 +1,4 @@
+from pathlib import Path
 import json
 import sys
 import types
@@ -172,7 +173,7 @@ def test_base_extractor_caps_input_items_when_env_is_set(extractor_paths, monkey
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
 
 
-def test_base_extractor_stamps_context_year_as_source_year(extractor_paths):
+def test_base_extractor_stamps_context_year_as_source_year(extractor_paths, tmp_path):
     input_path, _ = extractor_paths
     input_path.write_text(
         json.dumps(
@@ -183,7 +184,7 @@ def test_base_extractor_stamps_context_year_as_source_year(extractor_paths):
         encoding="utf-8",
     )
 
-    context = CompanyContext(company="tanla", year="fy20")
+    context = CompanyContext(company="tanla", year="fy20", companies_root=tmp_path)   # root contains the extractor outputs
     set_context(context)
     try:
         extractor = RecordingExtractor(

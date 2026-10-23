@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable
 
 from .contracts import PROJECTS_GENERATOR_VERSION
-from .paths import get_projects_dir
+from .paths import logical_projects_dir
 
 
 def build_projects_manifest(
@@ -27,7 +27,7 @@ def build_projects_manifest(
         "generator_version": PROJECTS_GENERATOR_VERSION,
         "company_slug": company_slug,
         "generated_at": generated_at,
-        "output_directory": str(get_projects_dir(company_slug)),
+        "output_directory": str(logical_projects_dir(company_slug)),
         "upstream_sources_considered": list(upstream_sources_considered),
         "upstream_sources_found": list(upstream_sources_found),
         "upstream_sources_missing": list(upstream_sources_missing),

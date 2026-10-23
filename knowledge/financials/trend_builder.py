@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from .authority_gate import annotate_projection
+from core.context_paths import guarded_write_text, planned_writes, resolve_output_root, safe_destination
+
 import json
 import time
 from pathlib import Path
@@ -291,6 +294,8 @@ def _extract_metric_series(
                 basis=basis,
                 source_artifact=artifact,
                 confidence=_point_confidence(value, warnings),
+                availability_status="present_direct" if value is not None else "missing",
+                usable_downstream=value is not None,          # the year file was settled by the registry: a rejected figure is not in it
                 warnings=warnings,
             )
         )
@@ -500,6 +505,8 @@ def _alias_points(series: TrendSeries) -> List[Dict[str, Any]]:
             "unit": series.unit,
             "basis": point.basis,
             "confidence": point.confidence,
+            "availability_status": point.availability_status,
+            "usable_downstream": point.usable_downstream,
             "source_artifacts": [point.source_artifact],
             "warnings": list(point.warnings),
         }
@@ -539,9 +546,11 @@ def _apply_comparability_warnings(
 
 
 def _fact_point(fact: Dict[str, Any]) -> TrendPoint:
+    usable = bool(fact.get("usable_downstream"))
     return TrendPoint(
         year=str(fact.get("fiscal_year") or ""),
-        value=_round(fact.get("value") if isinstance(fact.get("value"), (int, float)) else None),
+        # a fact the registry does not let the year use is a point WITHOUT its value: the rejected figure stays in the registry as a diagnostic and travels no further
+        value=_round(fact.get("value") if usable and isinstance(fact.get("value"), (int, float)) else None),
         basis=str(fact.get("basis") or "unknown"),
         source_artifact=str(fact.get("source_artifact") or ""),
         confidence=_trend_confidence(fact.get("confidence")),
@@ -831,8 +840,12 @@ def build_financial_trends(*, company: str, company_root: Path) -> FinancialTren
     return report
 
 
-def write_financial_trends(*, company: str, company_root: Path, output_path: Path) -> FinancialTrendReport:
+def write_financial_trends(*, company: str, company_root: Path, output_path: Path, output_root: Path | str, authorize_served_write: bool = False, dry_run: bool = False) -> FinancialTrendReport:
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
+    if dry_run:     # read-only: the exact files this call would write
+        return planned_writes(root, output_path)
     report = build_financial_trends(company=company, company_root=company_root)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+    payload = report.to_dict()
+    annotate_projection(payload, company_root)          # each point states how far the filing check went; one not checked says so
+    guarded_write_text(root, output_path, json.dumps(payload, indent=2))
     return report

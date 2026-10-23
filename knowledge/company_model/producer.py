@@ -7,31 +7,35 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from .contract import SCHEMA_VERSION, confidence, evidence_ref
+from core.context_paths import guarded_write_text, resolve_output_root, safe_destination
 from .evidence_adapter import CompanyModelSources, load_company_model_sources, loaded_payload, yearly_payloads
 from .validator import validate_company_model
 
 
-def build_company_model(company_slug: str, *, companies_root: Path | str = Path("companies"), generated_at: str | None = None) -> Dict[str, Any]:
+def build_company_model(company_slug: str, *, companies_root: Path | str, generated_at: str | None = None) -> Dict[str, Any]:
     sources = load_company_model_sources(company_slug, companies_root=companies_root)
     generated_at = generated_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     builder = CompanyModelProducer(sources=sources, generated_at=generated_at)
     return builder.build()
 
 
-def write_company_model(company_slug: str, *, companies_root: Path | str = Path("companies"), generated_at: str | None = None) -> Dict[str, Path]:
-    payload = build_company_model(company_slug, companies_root=companies_root, generated_at=generated_at)
+def plan_company_model_outputs(company_slug: str, companies_root: Path | str, *, authorize_served_write: bool = False) -> Dict[str, Path]:
+    """The exact files write_company_model would write. Read-only: nothing is created."""
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    output_dir = root / company_slug / "company_memory" / "company_model"
+    return {name: safe_destination(root, output_dir / name) for name in ('company_model.json', 'company_model_validation.json', 'company_model_manifest.json')}
+
+
+def write_company_model(company_slug: str, *, companies_root: Path | str, generated_at: str | None = None, authorize_served_write: bool = False) -> Dict[str, Path]:
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    payload = build_company_model(company_slug, companies_root=root, generated_at=generated_at)
     validation = validate_company_model(payload)
-    output_dir = Path(companies_root) / company_slug / "company_memory" / "company_model"
-    output_dir.mkdir(parents=True, exist_ok=True)
     manifest = payload["source_manifest"]
-    paths = {
-        "company_model.json": output_dir / "company_model.json",
-        "company_model_validation.json": output_dir / "company_model_validation.json",
-        "company_model_manifest.json": output_dir / "company_model_manifest.json",
-    }
-    paths["company_model.json"].write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    paths["company_model_validation.json"].write_text(json.dumps(validation, indent=2, ensure_ascii=False), encoding="utf-8")
-    paths["company_model_manifest.json"].write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    output_dir = root / company_slug / "company_memory" / "company_model"
+    paths = {name: safe_destination(root, output_dir / name) for name in ('company_model.json', 'company_model_validation.json', 'company_model_manifest.json')}
+    guarded_write_text(root, paths["company_model.json"], json.dumps(payload, indent=2, ensure_ascii=False))
+    guarded_write_text(root, paths["company_model_validation.json"], json.dumps(validation, indent=2, ensure_ascii=False))
+    guarded_write_text(root, paths["company_model_manifest.json"], json.dumps(manifest, indent=2, ensure_ascii=False))
     if validation["status"] == "fail":
         raise ValueError(f"Company Model validation failed for {company_slug}: {validation['errors']}")
     return paths

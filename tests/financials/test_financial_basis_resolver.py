@@ -210,6 +210,7 @@ def test_direct_standalone_statement_title_near_table_resolves_high_confidence(t
         year="fy25",
         financial_root=financial_root,
         output_path=financial_root / "financial_basis_resolution.json",
+        output_root=tmp_path,
     )
     normalized = json.loads((financial_root / "normalized_fundamentals.json").read_text(encoding="utf-8"))
 
@@ -262,6 +263,7 @@ def test_subsidiaries_exist_but_standalone_table_extracted_keeps_field_standalon
         year="fy25",
         financial_root=financial_root,
         output_path=financial_root / "financial_basis_resolution.json",
+        output_root=tmp_path,
     )
     normalized = json.loads((financial_root / "normalized_fundamentals.json").read_text(encoding="utf-8"))
 
@@ -308,6 +310,7 @@ def test_both_standalone_and_consolidated_tables_can_coexist(tmp_path):
         year="fy25",
         financial_root=financial_root,
         output_path=financial_root / "financial_basis_resolution.json",
+        output_root=tmp_path,
     )
     normalized = json.loads((financial_root / "normalized_fundamentals.json").read_text(encoding="utf-8"))
 
@@ -361,6 +364,7 @@ def test_preferred_basis_comes_from_resolved_fields_not_global_document_hint(tmp
         year="fy25",
         financial_root=financial_root,
         output_path=financial_root / "financial_basis_resolution.json",
+        output_root=tmp_path,
     )
     normalized = json.loads((financial_root / "normalized_fundamentals.json").read_text(encoding="utf-8"))
 
@@ -391,6 +395,7 @@ def test_global_basis_does_not_set_preferred_when_fields_remain_unknown(tmp_path
         year="fy25",
         financial_root=financial_root,
         output_path=financial_root / "financial_basis_resolution.json",
+        output_root=tmp_path,
     )
     normalized = json.loads((financial_root / "normalized_fundamentals.json").read_text(encoding="utf-8"))
 
@@ -419,6 +424,7 @@ def test_resolver_does_not_upgrade_unknown_field_to_incompatible_preferred_basis
         year="fy25",
         financial_root=financial_root,
         output_path=financial_root / "financial_basis_resolution.json",
+        output_root=tmp_path,
     )
     normalized = json.loads((financial_root / "normalized_fundamentals.json").read_text(encoding="utf-8"))
 
@@ -446,6 +452,7 @@ def test_resolver_demotes_stale_incompatible_canonical_basis(tmp_path):
         year="fy25",
         financial_root=financial_root,
         output_path=financial_root / "financial_basis_resolution.json",
+        output_root=tmp_path,
     )
     normalized = json.loads((financial_root / "normalized_fundamentals.json").read_text(encoding="utf-8"))
 
@@ -479,6 +486,7 @@ def test_no_basis_evidence_found_stays_unknown(tmp_path):
         year="fy25",
         financial_root=financial_root,
         output_path=financial_root / "financial_basis_resolution.json",
+        output_root=tmp_path,
     )
     normalized = json.loads((financial_root / "normalized_fundamentals.json").read_text(encoding="utf-8"))
 
@@ -523,6 +531,7 @@ def test_false_basis_unknown_warning_gets_resolved_only_when_confidence_is_mediu
         year="fy25",
         financial_root=financial_root,
         output_path=financial_root / "financial_basis_resolution.json",
+        output_root=tmp_path,
     )
     truth_report = json.loads((financial_root / "financial_truth_reconciliation_report.json").read_text(encoding="utf-8"))
 
@@ -544,6 +553,7 @@ def test_low_confidence_does_not_resolve_basis_warning(tmp_path):
         year="fy25",
         financial_root=financial_root,
         output_path=financial_root / "financial_basis_resolution.json",
+        output_root=tmp_path,
     )
     truth_report = json.loads((financial_root / "financial_truth_reconciliation_report.json").read_text(encoding="utf-8"))
 

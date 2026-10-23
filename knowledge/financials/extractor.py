@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, planned_writes, resolve_output_root, safe_destination
 
 import json
 import re
@@ -113,7 +114,7 @@ NUMBER_TOKEN_RE = re.compile(r"^[\(\[]?-?(?:\d[\d,]*)(?:\.\d+)?[\)\]]?%?$")
 NOTE_TOKEN_RE = re.compile(r"^\d{1,3}[a-z]?(?:\([^)]+\))?$", re.IGNORECASE)
 DATE_PERIOD_RE = re.compile(
     r"(?:as at|as on|for the year ended|year ended)\s+("
-    r"(?:[A-Za-z]+\s+\d{1,2},\s+\d{4})"
+    r"(?:[A-Za-z]+\s+\d{1,2},?\s+\d{4})"      # the comma is optional: "March 31 2022" is a period header too
     r"|(?:\d{1,2}[/-]\d{1,2}[/-]\d{4})"
     r"|(?:\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+\d{4})"
     r")",
@@ -260,6 +261,9 @@ def _unit_hint(text: str, table_type: str) -> str:
         declared = _declared_money_unit(lowered)
         if declared:
             return declared
+        # "(` in 000's)" is a money-unit declaration too (Indian banks): it must also win over the "per share" label of the EPS row.
+        if re.search(r"\bin\s+000(?:[\u2019']s|s)?\b", lowered):
+            return "thousands"
     if "per share" in lowered or table_type == "eps":
         return "INR per share" if any(token in lowered for token in ("rs", "₹", "inr")) else "per share"
     if "number of shares" in lowered or "weighted average" in lowered or "nominal value per share" in lowered:
@@ -412,7 +416,15 @@ def _trim_table_text(text: str, table_type: str) -> str:
         if m and m.start() <= 500 and not late_cash_flow_footer:
             starts.append(m.start())
     if starts:
-        cleaned = cleaned[min(starts):]
+        start = min(starts)
+        # Some statement pages print the signature block BEFORE the table (heading, "As per our report of even date", signatories, then "Particulars ..."). A stop phrase
+        # that precedes the table's own header is a header, not the end of the table: start at the header so the rows that follow are kept.
+        if "particulars" in lowered:
+            header_at = lowered.index("particulars")
+            early_stops = [lowered.find(stop) for stop in STOP_PHRASES if 0 <= lowered.find(stop) < header_at]
+            if early_stops and start < min(early_stops) and header_at > start:
+                start = header_at
+        cleaned = cleaned[start:]
         lowered = cleaned.lower()
     stop_positions = [lowered.find(stop) for stop in STOP_PHRASES if stop in lowered]
     if stop_positions:
@@ -480,6 +492,7 @@ def _extract_periods(text: str) -> List[str]:
     # Step 1: date-based periods ("as at March 31, 2026" → "March 31, 2026")
     for match in DATE_PERIOD_RE.finditer(text):
         label = _clean_text(match.group(1))
+        label = re.sub(r"^([A-Za-z]+\s+\d{1,2})\s+(\d{4})$", r"\1, \2", label)      # one spelling per date: "March 31 2022" -> "March 31, 2022"
         if label:
             key = label.lower()
             if key not in seen:
@@ -559,10 +572,11 @@ def _row_values_look_table_like(values: Sequence[str]) -> bool:
 def _is_paragraph_like_label(label: str) -> bool:
     lowered = label.lower().strip()
     words = lowered.split()
-    long_line_item = bool(re.match(r"^(?:purchase|payments?|proceeds|acquisition|repayment|investment)s?\b", lowered)) and len(words) <= 24   # G3: two-line cash-flow captions
+    # G3: two-line cash-flow captions; the MSME disclosure's two trade-payables rows ("Total outstanding dues of trade payables other than micro enterprises and small enterprises.")
+    long_line_item = bool(re.match(r"^(?:purchase|payments?|proceeds|acquisition|repayment|investment|total outstanding dues)s?\b", lowered)) and len(words) <= 24
     if len(words) > 14 and not long_line_item:
         return True
-    if lowered.endswith("."):
+    if lowered.endswith(".") and not long_line_item:
         return True
     if any(phrase in lowered for phrase in ("the company", "the board", "in accordance with", "during the year", "independent auditor")):
         return True
@@ -634,7 +648,7 @@ def _capital_summary_row_is_salvageable(label: str, values: Sequence[str], table
 def _normalize_label(label: str) -> str:
     cleaned = _clean_text(label)
     cleaned = re.sub(
-        r"^.*?\b(?:particulars|category)\b(?:\s+notes?\s+no)?(?:\s+(?:fy\s?\d{2,4}|as at\s+[A-Za-z]+\s+\d{1,2},\s+\d{4}|for the year ended\s+[A-Za-z]+\s+\d{1,2},\s+\d{4}))*\s*",
+        r"^.*?\b(?:particulars|category)\b(?:\s+notes?(?:\s+no\.?)?)?(?:\s+(?:fy\s?\d{2,4}|as at\s+[A-Za-z]+\s+\d{1,2},\s+\d{4}|for the year ended\s+[A-Za-z]+\s+\d{1,2},\s+\d{4}))*\s*",
         "",
         cleaned,
         flags=re.IGNORECASE,
@@ -674,6 +688,36 @@ def _is_row_enumerator(token: str, collected: int, expected: int) -> bool:
     return collected >= expected >= 1 and bool(re.fullmatch(r"\(\d{1,2}\)", token))
 
 
+_SUBNOTE_REFERENCE = re.compile(r"^\d{1,2}\.\d$")
+
+
+def _drop_subnote_reference(values: List[str], expected: int) -> List[str]:
+    """A sub-note reference ("8.1", "4.1") sits in the Note column before the amounts. With one more cell than the table has period columns, a leading cell of that shape is the
+    reference, not the current-year amount ("(iv) Other bank balances 8.1 329.75 -" is 329.75 for the current year and nil for the prior year, not 8.1 and 329.75)."""
+    if expected >= 2 and len(values) == expected + 1 and _SUBNOTE_REFERENCE.match(values[0]) and _is_number_token(values[0]):
+        return values[1:]
+    return values
+
+
+_NOTE_QUALIFIER = re.compile(r"^\([ivxIVX]{1,4}\)$")
+
+
+def _skip_note_qualifiers(tokens: Sequence[str], index: int) -> int:
+    """Index of the last token of a note reference whose qualifiers follow the note number ("3A (I) & (II)"): the qualifiers are consumed only when they are followed directly by the
+    row's value cells - a "(i)" followed by words is the next row's list marker."""
+    cursor = index + 1
+    while cursor < len(tokens) and (_NOTE_QUALIFIER.match(tokens[cursor]) or tokens[cursor] in {"&", "and", ","}):
+        cursor += 1
+    if cursor > index + 1 and cursor < len(tokens) and _is_value_token(tokens[cursor]) and any(_NOTE_QUALIFIER.match(t) for t in tokens[index + 1:cursor]):
+        return cursor - 1
+    return index
+
+
+def _is_bullet(tokens: Sequence[str], index: int, collected: int, expected: int) -> bool:
+    """A dash after a complete row that is followed by words is the NEXT row's bullet ("- Total outstanding dues of ..."), not a nil value column."""
+    return (collected >= expected >= 1 and tokens[index] in _NIL_TOKENS and index + 1 < len(tokens) and bool(re.match(r"[A-Za-z]", tokens[index + 1])))
+
+
 def _split_rows(table_text: str, table_type: str) -> Tuple[List[Tuple[str, List[str]]], List[str], List[str]]:
     tokens = _strip_column_headers(table_text).split()
     if not tokens:
@@ -689,6 +733,8 @@ def _split_rows(table_text: str, table_type: str) -> Tuple[List[Tuple[str, List[
     while index < len(tokens):
         token = tokens[index]
         if NOTE_TOKEN_RE.match(token):
+            index = _skip_note_qualifiers(tokens, index)       # "3A (I) & (II) 103,713.8": the note reference is "3A (I) & (II)", not a row labelled "(I) & (II)"
+            token = tokens[index]
             # Note reference integer (e.g., "13", "29") — skip it whether or not
             # a numeric value follows. In proper tables the note ref is followed
             # by the value; in segment tables it may be followed by another label.
@@ -703,9 +749,10 @@ def _split_rows(table_text: str, table_type: str) -> Tuple[List[Tuple[str, List[
             if small_first and not _should_skip_label(label, table_type):
                 values = [tokens[index + 1]]
                 index += 2
-                while index < len(tokens) and _is_value_token(tokens[index]) and len(values) < max(expected_values, 4) and not _is_row_enumerator(tokens[index], len(values), expected_values):
+                while index < len(tokens) and _is_value_token(tokens[index]) and len(values) < max(expected_values, 4) and not _is_row_enumerator(tokens[index], len(values), expected_values) and not _is_bullet(tokens, index, len(values), expected_values):
                     values.append(tokens[index])
                     index += 1
+                values = _drop_subnote_reference(values, expected_values)
                 if len(values) >= expected_values and _row_values_look_table_like(values):
                     rows.append((label, values))
                 else:
@@ -721,9 +768,10 @@ def _split_rows(table_text: str, table_type: str) -> Tuple[List[Tuple[str, List[
                 values: List[str] = []
                 index += 1
                 value_limit = 12 if table_type == "fixed_assets" else max(expected_values, 4)
-                while index < len(tokens) and _is_value_token(tokens[index]) and len(values) < value_limit and not _is_row_enumerator(tokens[index], len(values), expected_values):
+                while index < len(tokens) and _is_value_token(tokens[index]) and len(values) < value_limit and not _is_row_enumerator(tokens[index], len(values), expected_values) and not _is_bullet(tokens, index, len(values), expected_values):
                     values.append(tokens[index])
                     index += 1
+                values = _drop_subnote_reference(values, expected_values)
                 if len(values) >= expected_values and _row_values_look_table_like(values):
                     rows.append((label, values))
                 elif _capital_summary_row_is_salvageable(label, values, table_type):
@@ -753,9 +801,10 @@ def _split_rows(table_text: str, table_type: str) -> Tuple[List[Tuple[str, List[
             values = [token]
             index += 1
             value_limit = 12 if table_type == "fixed_assets" else max(expected_values, 4)
-            while index < len(tokens) and _is_value_token(tokens[index]) and len(values) < value_limit and not _is_row_enumerator(tokens[index], len(values), expected_values):
+            while index < len(tokens) and _is_value_token(tokens[index]) and len(values) < value_limit and not _is_row_enumerator(tokens[index], len(values), expected_values) and not _is_bullet(tokens, index, len(values), expected_values):
                 values.append(tokens[index])
                 index += 1
+            values = _drop_subnote_reference(values, expected_values)
             if len(values) >= expected_values and _row_values_look_table_like(values):
                 rows.append((label, values))
             elif _capital_summary_row_is_salvageable(label, values, table_type):
@@ -775,6 +824,9 @@ def _split_rows(table_text: str, table_type: str) -> Tuple[List[Tuple[str, List[
     return rows, warnings, rejected_labels
 
 
+_BANK_SECTION_HEADING = re.compile(r"^(?:CAPITAL AND LIABILITIES|EQUITY AND LIABILITIES|ASSETS)\s+(?=[A-Z][a-z])")
+
+
 def _label_balance_sheet_boundary_totals(
     rows: Sequence[Tuple[str, List[str]]],
 ) -> List[Tuple[str, List[str]]]:
@@ -790,7 +842,11 @@ def _label_balance_sheet_boundary_totals(
         next_label = _clean_text(labeled[index + 1][0]).lower()
         if normalized in {"total", "total."} and "equity and liabilities" in next_label:
             labeled[index] = ("Total Assets", values)
-    return labeled
+        elif normalized in {"total", "total."} and labeled[index + 1][0].startswith("ASSETS "):
+            # the RBI bank format: the TOTAL that closes CAPITAL AND LIABILITIES, directly before the ASSETS side opens, is total capital and liabilities (equal to total assets)
+            labeled[index] = ("Total equity and liabilities", values)
+    # a section heading glued to its first row by text extraction ("CAPITAL AND LIABILITIES Capital", "ASSETS Cash and Balances with Reserve Bank of India") is not part of the label
+    return [(_BANK_SECTION_HEADING.sub("", label, count=1) if _BANK_SECTION_HEADING.match(label) else label, values) for label, values in labeled]
 
 
 def _confidence_for_rows(row_count: int, basis: str, score: int, is_primary_statement: bool) -> str:
@@ -1660,6 +1716,14 @@ def _extract_primary_statement_with_assembly(
         inherited_unit = "" if _unit_hint(unit_source_text, destination_table_type) else _inherited_unit_text(assembly_chunk_ids, chunks, chunk_positions, by_chunk_id)
         if inherited_unit:
             unit_source_text = f"{unit_source_text} {inherited_unit}"
+        # A statement whose column headers ("Year ended 31/03/2022 ...") were printed at the end of the PRECEDING chunk has rows with unresolved periods, which the
+        # normalizer cannot use. The immediately preceding chunk is then searched for the period headers (only when the span itself has none).
+        if not _extract_periods(unit_source_text):
+            first_position = min((chunk_positions[c] for c in assembly_chunk_ids if c in chunk_positions), default=None)
+            if first_position:
+                previous_text = _clean_text(chunks[first_position - 1].get("text", ""))
+                if _extract_periods(previous_text):
+                    unit_source_text = f"{previous_text[-600:]} {unit_source_text}"
 
         # Build rows with assembly metadata, using per-row chunk_ids
         built_rows = _build_row_objects(
@@ -1800,6 +1864,18 @@ def extract_financial_tables(
         discovery.sections.get(name) for name in FINANCIAL_DISCOVERY_SECTIONS
     ):
         raise RuntimeError(f"financial_extraction requires a valid discovery artifact: {discovery_path}")
+
+    # Source identity: a report is filed under a fiscal-year folder by its owner, but the statements say which year they are for. When the two disagree (the report in the
+    # `fy23` folder is the FY2023-24 report) the first column of a statement is NOT the target year, which is warned about here and handled by the year-aware column choice.
+    year_counts: Dict[int, int] = {}
+    for chunk in chunks:
+        for found in re.finditer(r"(?:year|period)\s+ended\s+(?:on\s+)?(?:March\s+31,?\s+|31\s*[/.-]\s*0?3\s*[/.-]\s*)(20\d\d)", str(chunk.get("text", "")), re.I):
+            year_counts[int(found.group(1))] = year_counts.get(int(found.group(1)), 0) + 1
+    target_match = re.fullmatch(r"fy(\d{2})", str(year).lower())
+    if year_counts and target_match:
+        reported_year = max(year_counts, key=year_counts.get)
+        if reported_year != 2000 + int(target_match.group(1)):
+            result.warnings.append(f"source_year_mismatch: the report filed under {year} states its statements for FY{reported_year}; target-year facts come from the matching column, not the first")
 
     extracted_by_table: Dict[str, List[ExtractedFinancialRow]] = {name: [] for name in FINANCIAL_EXTRACTION_TABLES}
 
@@ -1985,6 +2061,23 @@ def extract_financial_tables(
         if candidates and not per_section_tables and section_name not in {"auditor_report", "accounting_policy", "irrelevant_financial_text"}:
             result.warnings.append(f"no extractable financial rows found for {section_name}")
 
+    # A primary statement whose own chunk never says "consolidated"/"standalone" (a bank's profit-and-loss account continuing a page whose title is in the previous chunk)
+    # takes the basis of the filing's other primary statements when they all agree. Without it, its rows sit in the 'unknown' basis view and lose to sub-schedule rows
+    # that happen to carry a basis.
+    primary_rows = [row for rows in extracted_by_table.values() for row in rows if row.is_primary_statement]
+    known_bases = {row.basis for row in primary_rows if row.basis in {"consolidated", "standalone"}}
+    if not known_bases:      # no primary statement states its basis: use the filing's own, when (almost) every row that states one agrees
+        counts = {basis: sum(1 for rows in extracted_by_table.values() for row in rows if row.basis == basis) for basis in ("consolidated", "standalone")}
+        total_known = sum(counts.values())
+        if total_known and max(counts.values()) >= 0.9 * total_known:
+            known_bases = {max(counts, key=counts.get)}
+    if len(known_bases) == 1:
+        inherited_basis = next(iter(known_bases))
+        for row in primary_rows:
+            if row.basis == "unknown":
+                row.basis = inherited_basis
+                row.warnings.append(f"basis inherited from the filing's other primary statements: {inherited_basis}")
+
     result.tables = extracted_by_table
 
     pdf_path = _locate_source_pdf(result, chunk_path)
@@ -2033,6 +2126,7 @@ _HEADLINE_LABELS = (
 def extract_headline_metrics(chunks: Sequence[Dict[str, Any]], pdf_path: Optional[Path] = None) -> Dict[str, Any]:
     """Headline KPIs stated in the filing's own words. One value per metric, only if all occurrences agree; disagreements are reported, not guessed."""
     seen: Dict[str, Dict[float, Dict[str, Any]]] = {}
+    scope_qualified: Dict[str, set] = {}
     for chunk in chunks:
         text = " ".join(str(chunk.get("text", "")).split())
         page = chunk.get("page") if isinstance(chunk.get("page"), int) else None
@@ -2052,10 +2146,14 @@ def extract_headline_metrics(chunks: Sequence[Dict[str, Any]], pdf_path: Optiona
                 for m in re.finditer(pattern, text, re.IGNORECASE):
                     if metric_id == "management_cash_and_liquid_investments" and not re.search(r"post\s+dividend|liquid\s+funds|treasury|fixed\s+deposits", text[max(0,m.start()-100):m.end()+180], re.I):
                         continue
+                    if kind == "amount" and re.match(r"\s*\(\s*(?:including|excluding|incl\.?|excl\.?|of\s+which)\b", text[m.end(): m.end() + 40], re.I):
+                        # "Total deposits (including deposit of J163 Crores from ...)": a scope-qualified figure of one business/segment/entity, not the company-wide measure
+                        scope_qualified.setdefault(metric_id, set()).add(float(m.group(1).replace(",", "")))
+                        continue
                     value = float(m.group(1).replace(",", ""))
                     seen.setdefault(metric_id, {}).setdefault(value, {"value": value, "unit": "INR crore" if kind == "amount" else "count" if kind == "count" else "%", "sentence": text[max(0, m.start() - 40): m.end() + 40], "chunk_page": page, "figure": m.group(1), "count": 0})["count"] += 1
     metrics: List[Dict[str, Any]] = []
-    conflicts: List[Dict[str, Any]] = []
+    conflicts: List[Dict[str, Any]] = [{"metric_id": metric_id, "values": sorted(values), "reason": "scope_qualified"} for metric_id, values in sorted(scope_qualified.items())]
     doc = None
     if pdf_path is not None:
         try:
@@ -2163,6 +2261,65 @@ def extract_transaction_disclosures(chunks: Sequence[Dict[str, Any]], pdf_path: 
     return {"transactions": sorted(transactions, key=lambda item: item["target"])}
 
 
+SUPPLEMENTABLE_TABLES = ("profit_and_loss", "balance_sheet", "cash_flow")
+
+
+def _component_label(label: Any) -> str:
+    return re.sub(r"^(?:\(?[ivx]+\)|\([a-z]\)|[a-z]\)|\d+\.)\s*", "", str(label or "").strip().lower())
+
+
+def _row_identity(row: Dict[str, Any]) -> Tuple[Any, ...]:
+    return (
+        str(row.get("line_item_raw") or "").strip().lower(), row.get("page"), row.get("basis"), row.get("source_section_type"),
+        tuple((str(v.get("period")), str(v.get("value_raw"))) for v in row.get("values", [])),
+    )
+
+
+def _is_statement_row(row: Dict[str, Any]) -> bool:
+    return bool(row.get("is_primary_statement")) or str(row.get("source_section_type") or "").startswith("primary_")
+
+
+def merge_raw_tables(base: Dict[str, Any], supplement: Dict[str, Any]) -> Dict[str, Any]:
+    """Add the rows an extraction of the REBUILT chunks found and the baseline extraction did not. Baseline rows are never removed or altered, so a fact that was extracted
+    before cannot regress; a supplemental row is marked, and normalization still ranks it against the baseline rows (primary statement first). Re-chunking the filing can
+    recover rows the stored chunks lost (a balance sheet's trade-payables line) but can also re-assemble a statement differently, which is why this merges instead of replacing."""
+    merged = json.loads(json.dumps(base))
+    added = 0
+    for table_type, rows in (supplement.get("tables") or {}).items():
+        if table_type not in SUPPLEMENTABLE_TABLES:      # only the three statements are completed this way; note tables (shareholding, borrowings, dividend ...) are not
+            continue
+        target = merged.setdefault("tables", {}).setdefault(table_type, [])
+        known = {_row_identity(r) for r in target}
+        # A component label that appears more than once in a statement (it can span two pages) with different values ("(i) Borrowings" under both non-current and current liabilities) cannot be
+        # attributed to a section once its heading is split off, and would otherwise be read as the total: such rows are not supplemented.
+        # Only the statement's own rows are compared: the same words in a note table ("Property, plant and equipment" in a related-party or segment note) are another table, and
+        # counting them dropped the balance sheet's PPE row for being "ambiguous".
+        label_values: Dict[Tuple[Any, ...], set] = {}
+        for row in rows:
+            if not _is_statement_row(row):
+                continue
+            key = (_component_label(row.get("line_item_raw")), row.get("basis"))
+            label_values.setdefault(key, set()).add(tuple(str(v.get("value_raw")) for v in row.get("values", [])))
+        same_cells = {(r.get("page"), r.get("basis"), tuple(str(v.get("value_raw")) for v in r.get("values", []))) for r in target}
+        for row in rows:
+            if _is_statement_row(row) and len(label_values[(_component_label(row.get("line_item_raw")), row.get("basis"))]) > 1:
+                continue
+            # a list-marker label ("(i) Borrowings") whose cells already exist on that page under a section-prefixed label is the same row, not a new one
+            marker_label = _component_label(row.get("line_item_raw")) != str(row.get("line_item_raw") or "").strip().lower()
+            if marker_label and (row.get("page"), row.get("basis"), tuple(str(v.get("value_raw")) for v in row.get("values", []))) in same_cells:
+                continue
+            identity = _row_identity(row)
+            if identity in known:
+                continue
+            known.add(identity)
+            row = dict(row)
+            row["warnings"] = list(row.get("warnings") or []) + ["supplemental_row: found only in the extraction of re-chunked filing text"]
+            target.append(row)
+            added += 1
+    merged.setdefault("warnings", []).append(f"raw tables merged with a re-chunked extraction: {added} supplemental rows")
+    return merged
+
+
 def _rejections_payload(result: FinancialExtractionResult) -> Dict[str, Any]:
     return {
         "company": result.company,
@@ -2179,7 +2336,13 @@ def write_financial_extraction(
     chunk_path: Path,
     discovery_path: Path,
     output_path: Path,
+    output_root: Path | str,
+    authorize_served_write: bool = False,
+    dry_run: bool = False,
 ) -> FinancialExtractionResult:
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
+    if dry_run:     # read-only: the exact files this call would write
+        return planned_writes(root, output_path, output_path.parent / "financial_extraction_rejections.json", output_path.parent / "financial_headline_metrics.json")
     result = extract_financial_tables(
         company=company,
         year=year,
@@ -2188,21 +2351,15 @@ def write_financial_extraction(
     )
     discovery = _parse_discovery(discovery_path)
     readiness = build_financial_extraction_readiness(discovery, result)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(result.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    guarded_write_text(root, output_path, json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
     rejections_path = output_path.parent / "financial_extraction_rejections.json"
-    rejections_path.write_text(
-        json.dumps(_rejections_payload(result), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    guarded_write_text(root, rejections_path, json.dumps(_rejections_payload(result), indent=2, ensure_ascii=False))
     chunks_for_headlines = _load_chunks(chunk_path)
     headline = extract_headline_metrics(chunks_for_headlines, _locate_source_pdf(result, chunk_path))
     from .discovery import _document_basis  # noqa: PLC0415 - document-level basis (standalone-only / consolidated-only), 'unknown' when the filing has both or neither
-    (output_path.parent / "financial_headline_metrics.json").write_text(
-        json.dumps({"company": company, "year": year, "source": "management_highlights", "basis": _document_basis(chunks_for_headlines)[0], **headline}, indent=2, ensure_ascii=False), encoding="utf-8")
+    guarded_write_text(root, output_path.parent / "financial_headline_metrics.json", json.dumps({"company": company, "year": year, "source": "management_highlights", "basis": _document_basis(chunks_for_headlines)[0], **headline}, indent=2, ensure_ascii=False))
     transactions = extract_transaction_disclosures(chunks_for_headlines, _locate_source_pdf(result, chunk_path))
-    (output_path.parent / "financial_transaction_disclosures.json").write_text(
-        json.dumps({"company": company, "year": year, **transactions}, indent=2, ensure_ascii=False), encoding="utf-8")
+    guarded_write_text(root, output_path.parent / "financial_transaction_disclosures.json", json.dumps({"company": company, "year": year, **transactions}, indent=2, ensure_ascii=False))
     # G3.1: minimum material-anchor coverage. Statement-level readiness alone says nothing about capital allocation, segments, contingencies or transactions.
     from .anchor_coverage import build_anchor_coverage, extraction_status  # noqa: PLC0415
     from .corporate_actions import buyback_disclosures_from_chunks, dividend_disclosures_from_chunks  # noqa: PLC0415
@@ -2210,11 +2367,11 @@ def write_financial_extraction(
         chunks=chunks_for_headlines, raw_tables=result.to_dict(), headline=headline, transactions=transactions, year=year,
         buyback_or_dividend_disclosures=len(buyback_disclosures_from_chunks(chunks_for_headlines, year)) + len(dividend_disclosures_from_chunks(chunks_for_headlines, year)),
     )
-    (output_path.parent / "financial_anchor_coverage.json").write_text(json.dumps({"company": company, "year": year, **coverage}, indent=2, ensure_ascii=False), encoding="utf-8")
+    guarded_write_text(root, output_path.parent / "financial_anchor_coverage.json", json.dumps({"company": company, "year": year, **coverage}, indent=2, ensure_ascii=False))
     readiness["anchor_coverage"] = {"counts": coverage["counts"], "not_extracted": coverage["not_extracted"], "completeness": coverage["completeness"]}
     readiness["extraction_status"] = extraction_status(str(readiness.get("status")), coverage)
     readiness_path = output_path.parent / "financial_extraction_readiness.json"
-    readiness_path.write_text(json.dumps(readiness, indent=2, ensure_ascii=False), encoding="utf-8")
+    guarded_write_text(root, readiness_path, json.dumps(readiness, indent=2, ensure_ascii=False))
     if readiness.get("status") == "BLOCKED":
         raise RuntimeError(
             f"FINANCIAL_EXTRACTION_NOT_READY: {', '.join(readiness.get('blocking_reasons') or ['insufficient coverage'])}"

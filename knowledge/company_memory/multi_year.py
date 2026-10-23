@@ -349,8 +349,11 @@ def _bucket_payload(item: Dict[str, Any], *, category: Optional[str] = None) -> 
 
 
 class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
-    def __init__(self, company: str, companies_root: Path | str = Path("companies")):
-        super().__init__(company=company, companies_root=companies_root)
+    OUTPUT_FILES = ("company_year_index.json", "business_dna_evolution.json", "strategy_timeline.json", "promise_tracker.json", "risk_evolution.json", "capital_allocation_timeline.json",
+                    "management_consistency.json", "taxonomy_review_candidates.json", "multi_year_index.json")
+
+    def __init__(self, company: str, companies_root: Path | str, *, authorize_served_write: bool = False):
+        super().__init__(company=company, companies_root=companies_root, authorize_served_write=authorize_served_write)
         self.company_memory_dir = self.company_root / "company_memory"
         self.output_dir = self.company_memory_dir / "multi_year"
         self.taxonomy: Optional[ArchetypeRegistry] = None
@@ -1221,5 +1224,5 @@ class MultiYearCompanyMemoryBuilder(CompanyMemoryAggregateBuilder):
 
         written_paths: Dict[str, Path] = {}
         for filename, payload in files.items():
-            written_paths[filename] = _write_json(self.output_dir / filename, payload)
+            written_paths[filename] = _write_json(self.output_dir / filename, payload, root=self.companies_root)
         return written_paths

@@ -392,6 +392,7 @@ def test_write_year_financial_quality_summary_persists_valid_payload(tmp_path: P
         year="fy25",
         financial_root=financial_root,
         output_path=output_path,
+        output_root=tmp_path,
     )
 
     saved = json.loads(output_path.read_text(encoding="utf-8"))

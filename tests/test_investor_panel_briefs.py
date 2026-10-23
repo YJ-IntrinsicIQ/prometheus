@@ -60,7 +60,7 @@ def test_briefs_are_generated_from_analysis_files_only(tmp_path, monkeypatch):
     pcim_path = tmp_path / "companies" / "acme" / "company_memory" / "pcim_v1.json"
     pcim_path.write_text("SHOULD NOT BE READ", encoding="utf-8")
 
-    written = InvestorBriefBuilder(company="acme").build()
+    written = InvestorBriefBuilder(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).build()
 
     brief_text = written["graham_brief.md"].read_text(encoding="utf-8")
     assert "SHOULD NOT BE READ" not in brief_text
@@ -88,7 +88,7 @@ def test_renderer_uses_only_user_facing_brief(tmp_path, monkeypatch):
     }
     (panel_dir / "graham_analysis.json").write_text(json.dumps(payload), encoding="utf-8")
 
-    written = InvestorBriefBuilder(company="acme").build()
+    written = InvestorBriefBuilder(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).build()
     brief_text = written["graham_brief.md"].read_text(encoding="utf-8")
 
     assert "Visible balance-sheet caution." in brief_text
@@ -103,7 +103,7 @@ def test_briefs_do_not_contain_internal_terms_or_evidence_ids(tmp_path, monkeypa
     monkeypatch.chdir(tmp_path)
     _write_analysis(tmp_path, "acme", "graham")
 
-    written = InvestorBriefBuilder(company="acme").build()
+    written = InvestorBriefBuilder(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).build()
     brief_text = written["graham_brief.md"].read_text(encoding="utf-8")
 
     assert "PCIM" not in brief_text
@@ -123,7 +123,7 @@ def test_brief_index_preserves_hidden_evidence_traceability(tmp_path, monkeypatc
     _write_analysis(tmp_path, "acme", "graham")
     _write_analysis(tmp_path, "acme", "buffett")
 
-    written = InvestorBriefBuilder(company="acme").build()
+    written = InvestorBriefBuilder(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).build()
     index_payload = json.loads(written["brief_index.json"].read_text(encoding="utf-8"))
 
     assert index_payload["company"] == "acme"
@@ -155,7 +155,7 @@ def test_briefs_do_not_use_recommendation_language(tmp_path, monkeypatch):
         red_flags=["Investors may want to sell if margins weaken."],
     )
 
-    written = InvestorBriefBuilder(company="acme").build()
+    written = InvestorBriefBuilder(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).build()
     brief_text = written["buffett_brief.md"].read_text(encoding="utf-8").lower()
 
     assert "strong buy" not in brief_text
@@ -180,7 +180,7 @@ def test_missing_evidence_is_explained_in_user_friendly_language(tmp_path, monke
     ]
     (panel_dir / "lynch_analysis.json").write_text(json.dumps(payload), encoding="utf-8")
 
-    written = InvestorBriefBuilder(company="acme").build()
+    written = InvestorBriefBuilder(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).build()
     brief_text = written["lynch_brief.md"].read_text(encoding="utf-8")
 
     assert "## What Is Missing" in brief_text
@@ -193,7 +193,7 @@ def test_output_works_when_one_analyst_file_is_missing(tmp_path, monkeypatch):
     _write_analysis(tmp_path, "acme", "graham")
     _write_analysis(tmp_path, "acme", "buffett")
 
-    written = InvestorBriefBuilder(company="acme").build()
+    written = InvestorBriefBuilder(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).build()
     index_payload = json.loads(written["brief_index.json"].read_text(encoding="utf-8"))
 
     assert "graham_brief.md" in written
@@ -214,7 +214,7 @@ def test_briefs_render_embedded_user_facing_brief(tmp_path, monkeypatch):
     payload["user_facing_brief"]["bottom_line"] = "The downside looks manageable, but the evidence is not complete."
     (panel_dir / "graham_analysis.json").write_text(json.dumps(payload), encoding="utf-8")
 
-    written = InvestorBriefBuilder(company="acme").build()
+    written = InvestorBriefBuilder(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).build()
     brief_text = written["graham_brief.md"].read_text(encoding="utf-8")
 
     assert "This lens focuses on downside protection first." in brief_text
@@ -232,7 +232,7 @@ def test_missing_user_facing_brief_does_not_fall_back(tmp_path, monkeypatch):
     payload.pop("user_facing_brief")
     (panel_dir / "graham_analysis.json").write_text(json.dumps(payload), encoding="utf-8")
 
-    written = InvestorBriefBuilder(company="acme").build()
+    written = InvestorBriefBuilder(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).build()
     index_payload = json.loads(written["brief_index.json"].read_text(encoding="utf-8"))
 
     assert "graham_brief.md" not in written

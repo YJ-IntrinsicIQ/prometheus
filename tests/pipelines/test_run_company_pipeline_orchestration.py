@@ -14,7 +14,7 @@ def _write_json(path: Path, payload) -> None:
 
 
 def _context(tmp_path: Path, company: str = "acme", year: str = "fy25") -> CompanyContext:
-    context = CompanyContext(company=company, year=year)
+    context = CompanyContext(company=company, year=year, companies_root=Path.cwd() / "companies")
     context.create_directories()
     return context
 
@@ -889,20 +889,20 @@ def test_audit_stage_writes_financial_quality_scorecard(tmp_path, monkeypatch):
     monkeypatch.setattr(
         run_company_pipeline,
         "run_company_artifact_audit",
-        lambda company, fix_safe=False: calls.append(("artifact_audit", company, fix_safe))
+        lambda company, fix_safe=False, **kwargs: calls.append(("artifact_audit", company, fix_safe))
         or {"company_artifact_audit.json": Path("companies") / company / "audit" / "company_artifact_audit.json"},
     )
     monkeypatch.setattr(
         run_company_pipeline,
         "write_financial_quality_scorecard",
-        lambda company, companies_root=Path("companies"): calls.append(("financial_scorecard", company, companies_root))
+        lambda company, companies_root, authorize_served_write=False: calls.append(("financial_scorecard", company, companies_root))
         or {"financial_quality_scorecard.json": Path("companies") / company / "audit" / "financial_quality_scorecard.json"},
     )
 
     outputs = run_company_pipeline.run_audit_stage(company="acme", fix_safe=True)
 
     assert calls[0] == ("artifact_audit", "acme", True)
-    assert calls[1] == ("financial_scorecard", "acme", Path("companies"))
+    assert calls[1] == ("financial_scorecard", "acme", (tmp_path / "companies").resolve())
     assert "financial_quality_scorecard.json" in outputs
 
 
@@ -1112,7 +1112,7 @@ def test_financial_attribution_requires_financial_trends(tmp_path, monkeypatch):
 
 def test_investor_financials_stage_writes_company_memory_modules(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    output_dir = Path("companies") / "acme" / "company_memory" / "financials" / "investor_financial_modules"
+    output_dir = (tmp_path / "companies").resolve() / "acme" / "company_memory" / "financials" / "investor_financial_modules"
 
     def fake_write(**kwargs):
         assert kwargs["company"] == "acme"
@@ -1142,7 +1142,8 @@ def test_investor_financials_stage_writes_company_memory_modules(tmp_path, monke
     assert written["investor_financial_modules_manifest.json"] == output_dir / "investor_financial_modules_manifest.json"
 
 
-def test_panel_stage_accepts_year(monkeypatch):
+def test_panel_stage_accepts_year(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)          # main() creates the company-year directories: never in the served tree
     calls = []
 
     monkeypatch.setattr(
@@ -1190,7 +1191,7 @@ def test_company_memory_handlers_accept_company_only_context(tmp_path, monkeypat
     from core.company_context import CompanyMemoryContext
 
     # Build a company-only context (year=None, eligible_years populated)
-    mem_context = CompanyMemoryContext(company="acme")
+    mem_context = CompanyMemoryContext(company="acme", companies_root=tmp_path / "companies")
     mem_context.create_directories()
 
     # List of all company-memory stage handlers to test

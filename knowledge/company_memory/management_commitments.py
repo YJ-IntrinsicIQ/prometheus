@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root, safe_destination
 
 import hashlib
 import json
@@ -2013,13 +2014,21 @@ def validate_management_commitments_payload(
 @dataclass
 class ManagementCommitmentsBuilder:
     company: str
-    companies_root: Path | str = Path("companies")
+    companies_root: Path | str
+    authorize_served_write: bool = False
     output_dir: Path = field(init=False)
 
+    OUTPUT_FILES = ("management_commitments.json", "commitment_timeline.json", "commitment_validation.json", "management_commitments_manifest.json")
+
     def __post_init__(self) -> None:
-        self.companies_root = Path(self.companies_root)
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(self.companies_root, authorize_served=self.authorize_served_write)
         self.company_root = self.companies_root / self.company
         self.output_dir = self.company_root / "company_memory" / "management_commitments"
+
+    def plan_outputs(self) -> Dict[str, Path]:
+        """The exact files build() would write. Read-only: nothing is created."""
+        return {name: safe_destination(self.companies_root, self.output_dir / name) for name in self.OUTPUT_FILES}
 
     def _discover_years(self) -> List[Path]:
         if not self.company_root.exists():
@@ -2261,9 +2270,9 @@ class ManagementCommitmentsBuilder:
 
         written_paths: Dict[str, Path] = {}
         for filename, payload in files.items():
-            written_paths[filename] = _write_json(self.output_dir / filename, payload)
+            written_paths[filename] = _write_json(self.output_dir / filename, payload, root=self.companies_root)
         return written_paths
 
 
-def build_management_commitments(company: str, companies_root: Path | str = Path("companies")) -> Dict[str, Path]:
-    return ManagementCommitmentsBuilder(company=company, companies_root=companies_root).build()
+def build_management_commitments(company: str, companies_root: Path | str, *, authorize_served_write: bool = False) -> Dict[str, Path]:
+    return ManagementCommitmentsBuilder(company=company, companies_root=companies_root, authorize_served_write=authorize_served_write).build()

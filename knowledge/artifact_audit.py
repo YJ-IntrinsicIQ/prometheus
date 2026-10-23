@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, logical_company_path, resolve_output_root
 
 import json
 from datetime import datetime, timezone
@@ -83,16 +84,13 @@ def _load_json(path: Path) -> Any:
         return "__malformed_json__"
 
 
-def _write_json(path: Path, payload: Dict[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return path
+def _write_json(path: Path, payload: Dict[str, Any], *, root: Path | str) -> Path:
+    """The destination must lie inside the explicit, already-authorized output root."""
+    return guarded_write_text(root, path, json.dumps(payload, indent=2, ensure_ascii=False))
 
 
-def _write_text(path: Path, text: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    return path
+def _write_text(path: Path, text: str, *, root: Path | str) -> Path:
+    return guarded_write_text(root, path, text)
 
 
 def _contains_source_chunk(payload: Any) -> bool:
@@ -112,17 +110,23 @@ def _collect_years(company_root: Path) -> List[str]:
 
 
 class ArtifactAudit:
-    def __init__(self, company: str, *, companies_root: Path | str = Path("companies"), fix_safe: bool = False):
+    def __init__(self, company: str, *, companies_root: Path | str, fix_safe: bool = False, authorize_served_write: bool = False):
         self.company = company
-        self.companies_root = Path(companies_root)
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
         self.company_root = self.companies_root / company
         self.fix_safe = fix_safe
+        self.authorize_served_write = authorize_served_write
         self.artifacts_checked: List[str] = []
         self.checks: List[Dict[str, Any]] = []
         self.critical_failures: List[str] = []
         self.warnings: List[str] = []
         self.recommendations: List[str] = []
         self.status = "pass"
+
+    def _label(self, artifact: str) -> str:
+        """Checks record artifacts as companies/<slug>/..., independent of the absolute root this run used."""
+        return logical_company_path(artifact, self.companies_root) if str(artifact).startswith(str(self.companies_root)) else artifact
 
     def _add_check(
         self,
@@ -134,6 +138,7 @@ class ArtifactAudit:
         details: Optional[Dict[str, Any]] = None,
         recommendation: Optional[str] = None,
     ) -> None:
+        artifact = self._label(artifact)
         self.artifacts_checked.append(artifact)
         self.status = _merge_status(self.status, status)
         payload = {
@@ -154,7 +159,7 @@ class ArtifactAudit:
             self.recommendations.append(recommendation)
 
     def _check_json_file(self, path: Path, *, check_name: str, required: bool = False) -> Any:
-        artifact = str(path)
+        artifact = self._label(str(path))
         if not path.exists():
             if required:
                 self._add_check(
@@ -177,7 +182,7 @@ class ArtifactAudit:
         return payload
 
     def _audit_year_artifacts(self, year: str) -> None:
-        context = CompanyContext(company=self.company, year=year)
+        context = CompanyContext(company=self.company, year=year, companies_root=self.companies_root, authorize_served_write=self.authorize_served_write)
         year_root = self.company_root / year
         context.create_directories()
         raw_docs = [
@@ -512,7 +517,7 @@ class ArtifactAudit:
             return
         updated = dict(blueprint)
         updated["dnas_status"] = DEPRECATED_BLUEPRINT_DNAS_STATUS
-        _write_json(path, updated)
+        _write_json(path, updated, root=self.companies_root)
         self._add_check(
             check_name="fix_safe",
             status="warning",
@@ -789,15 +794,16 @@ def render_markdown_report(payload: Dict[str, Any]) -> str:
 def run_company_artifact_audit(
     company: str,
     *,
-    companies_root: Path | str = Path("companies"),
+    companies_root: Path | str,
     fix_safe: bool = False,
+    authorize_served_write: bool = False,
 ) -> Dict[str, Path]:
-    auditor = ArtifactAudit(company, companies_root=companies_root, fix_safe=fix_safe)
+    auditor = ArtifactAudit(company, companies_root=companies_root, fix_safe=fix_safe, authorize_served_write=authorize_served_write)
     payload = auditor.run()
-    company_root = Path(companies_root) / company
-    audit_dir = company_root / "audit"
-    json_path = _write_json(audit_dir / "company_artifact_audit.json", payload)
-    md_path = _write_text(audit_dir / "company_artifact_audit.md", render_markdown_report(payload))
+    root = auditor.companies_root
+    audit_dir = root / company / "audit"
+    json_path = _write_json(audit_dir / "company_artifact_audit.json", payload, root=root)
+    md_path = _write_text(audit_dir / "company_artifact_audit.md", render_markdown_report(payload), root=root)
     return {
         "company_artifact_audit.json": json_path,
         "company_artifact_audit.md": md_path,

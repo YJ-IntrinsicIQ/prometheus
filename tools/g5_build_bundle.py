@@ -75,14 +75,15 @@ def main() -> None:
                 base = json.loads((Path(args.cand) / f"{k}__{qid}.candidate.json").read_text())["answer"]
                 base_kind = "g4_g5_candidate"
             new, rep = G.annotate_answer(L, base)
+            if m59.words(new) > max(600, m59.words(orig)):
+                new, rep = G.annotate_answer(L, base, compact=True)
             new = norm(new)
             f_orig, f_new = validate(co, qid, orig), validate(co, qid, new)
-            changed = sorted({c for c in ("simple_answer", "what_evidence_shows", "what_may_mean_economically", "what_is_not_yet_proven", "what_to_monitor", "key_points", "evidence_gaps", "g5_absence", "g5_review_pending", "g5_system_statements")
-                              if new.get(c) != orig.get(c)})
+            changed = sorted(c for c in set(new) | set(orig) if new.get(c) != orig.get(c))      # every top-level field, so no investor-visible change goes unlisted
             row = {"slot": slot, "company": k, "question_id": qid, "base": base_kind,
                    "original": {"content_fingerprint": compute_content_fingerprint(orig), "full_digest": compute_full_artifact_digest(orig), "registry_fingerprint": registry[slot].get("fingerprint")},
                    "proposed": {"content_fingerprint": compute_content_fingerprint(new), "full_digest": compute_full_artifact_digest(new)},
-                   "changed_fields": changed, "rewrites": rep["changes"], "entries": rep["entries"], "pending": rep["pending"], "system_statements": rep["system"],
+                   "changed_fields": changed, "rewrites": rep["changes"], "entries": rep["entries"], "pending": rep["pending"], "scoped_statements": rep["scoped"], "system_statements": rep["system"],
                    "validator_failed_original": f_orig, "validator_failed_proposed": f_new, "validator_regression": sorted(set(f_new) - set(f_orig)),
                    "words_original": m59.words(orig), "words_proposed": m59.words(new),
                    "unresolved_evidence_questions": sorted({p["review"] or p["status"] for p in new.get("g5_review_pending", [])})}

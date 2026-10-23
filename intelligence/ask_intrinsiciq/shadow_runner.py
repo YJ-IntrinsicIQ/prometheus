@@ -384,7 +384,7 @@ def run_shadow_for_question(
 
     try:
         # Cache key includes question_id so different questions get different answers
-        from intelligence.ask_intrinsiciq.relationship_aware_composer import _build_composition_system_prompt
+        from intelligence.ask_intrinsiciq.relationship_aware_composer import _build_composition_system_prompt, typed_event_lines
         system_prompt = _build_composition_system_prompt(composition_plan, domain_q)
         evidence_lines = []
         all_claims = composition_plan.get("allowed_claims", []) + composition_plan.get("qualified_claims", [])
@@ -394,6 +394,7 @@ def run_shadow_for_question(
             f"Company: {company_display_name}\n"
             f"Question: {domain_q}\n\n"
             "Validated claims:\n" + "\n".join(evidence_lines)
+            + ("\n\nTyped evidence records:\n" + "\n".join(typed_event_lines(composition_plan.get("typed_evidence"))) if composition_plan.get("typed_evidence") else "")
             + "\n\nGenerate the investor answer as a JSON object following the composition contract."
         )
         fp = make_fingerprint(model, user_content, system_prompt, 0.0, f"m16_shadow_{question_id}_v1")

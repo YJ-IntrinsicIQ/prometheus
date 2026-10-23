@@ -483,6 +483,7 @@ def test_write_corporate_actions(tmp_path):
         normalized_path=normalized_path,
         raw_tables_path=raw_path,
         output_path=output_path,
+        output_root=tmp_path,
     )
     assert output_path.exists()
     written = json.loads(output_path.read_text())
@@ -512,6 +513,7 @@ def test_corporate_action_rejections_record_rejected_candidates(tmp_path):
         normalized_path=normalized_path,
         raw_tables_path=raw_path,
         output_path=output_path,
+        output_root=tmp_path,
     )
 
     rejection_payload = json.loads(output_path.with_name("corporate_action_rejections.json").read_text(encoding="utf-8"))

@@ -66,7 +66,7 @@ def tracked_bundle(source_bundle: dict[str, Any]) -> TrackedBundle:
 @pytest.fixture(scope="session")
 def acceptance_summary(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     out_dir = tmp_path_factory.mktemp("harness_out")
-    return run_acceptance(COMPANY, QUESTION_SETS["recovery_baseline"], out_dir)
+    return run_acceptance(COMPANY, QUESTION_SETS["recovery_baseline"], out_dir, companies_root=Path(__file__).resolve().parents[2] / "companies")
 
 
 # ─── H1: TrackedBundle intercepts source access ────────────────────────────────
@@ -136,8 +136,12 @@ class TestSourceRegistry:
     def test_per_share_compounding_analysis_loaded(self, source_bundle: dict[str, Any]) -> None:
         """H2d: per_share_compounding_analysis is loaded with analysis records."""
         sources = source_bundle.get("sources") or {}
-        psa = (sources.get("per_share_compounding_analysis") or {}).get("payload") or {}
-        records = psa.get("analysis") or []
+        record = sources.get("per_share_compounding_analysis") or {}
+        if record.get("status") == "authority_unavailable":
+            # the served tree's financial modules predate the record of the registries they were built against: unavailable (not silently used) until migration
+            assert record["error"].startswith("FINANCIAL_AUTHORITY_")
+            return
+        records = (record.get("payload") or {}).get("analysis") or []
         assert len(records) >= 5, f"Expected >=5 per-share records, got {len(records)}"
 
 

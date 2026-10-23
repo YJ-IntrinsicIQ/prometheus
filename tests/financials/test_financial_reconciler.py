@@ -597,6 +597,7 @@ def test_write_financial_reconciliation_report(tmp_path):
         year="fy25",
         normalized_path=normalized_path,
         output_path=output_path,
+        output_root=tmp_path,
     )
 
     assert output_path.exists()

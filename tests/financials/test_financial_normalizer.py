@@ -1484,6 +1484,7 @@ def test_write_normalized_fundamentals(tmp_path):
         year="fy25",
         raw_tables_path=raw_path,
         output_path=output_path,
+        output_root=tmp_path,
     )
 
     assert output_path.exists()
@@ -1539,6 +1540,7 @@ def test_ratios_proceed_once_eps_and_share_count_value_types_are_normalized(tmp_
         year="fy25",
         raw_tables_path=raw_path,
         output_path=normalized_path,
+        output_root=tmp_path,
     )
     assert normalized_payload["profit_and_loss"]["eps_basic"]["source_value_type"] == "per_share"
     assert normalized_payload["share_data"]["shares_outstanding"]["source_value_type"] == "share_count"

@@ -50,6 +50,8 @@ CANONICAL_SECTION_FIELDS: Dict[str, List[str]] = {
         "capex",
         "fcf",
         "dividends_paid",
+        "dividends_paid_to_non_controlling_interests",
+        "dividends_received",
         "buyback_paid",
         "interest_paid",
         "tax_paid",
@@ -115,8 +117,6 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
                 "cost of materials consumed",
                 "material cost",
                 "materials consumed",
-                "consumption of materials stores and spare parts",
-                "consumption of materials, stores and spare parts",
             ],
         },
         "employee_cost": {
@@ -245,7 +245,7 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
     "balance_sheet": {
         "equity_share_capital": {
             "table_types": ["balance_sheet", "share_capital"],
-            "aliases": ["equity share capital", "share capital", "paid up capital", "paid up share capital"],
+            "aliases": ["equity share capital", "share capital", "paid up capital", "paid up share capital", "capital"],
         },
         "reserves": {
             "table_types": ["balance_sheet", "reserves", "share_capital", "statement_of_changes_in_equity"],
@@ -429,6 +429,17 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
             "table_types": ["cash_flow", "dividend", "corporate_actions"],
             "aliases": ["dividends paid", "dividend paid"],
         },
+        # A dividend is four different flows: paid to the parent's shareholders (dividends_paid), paid to non-controlling interests, received from investees (income), and
+        # declared/proposed but not yet paid (corporate-action disclosures, not a cash flow). They must never share a field.
+        "dividends_paid_to_non_controlling_interests": {
+            "table_types": ["cash_flow"],
+            "aliases": ["dividend payment to non controlling interests", "dividend paid to non controlling interests", "dividends paid to non controlling interests",
+                        "dividend to non controlling interests", "dividend paid to minority shareholders", "dividend payment to minority interest"],
+        },
+        "dividends_received": {
+            "table_types": ["cash_flow"],
+            "aliases": ["dividend received", "dividends received", "dividend received from subsidiary", "dividend received from associates"],
+        },
         "interest_paid": {
             "table_types": ["cash_flow", "borrowings"],
             "aliases": ["interest paid", "finance cost paid"],
@@ -491,6 +502,7 @@ FIELD_MAPPINGS: Dict[str, Dict[str, Dict[str, object]]] = {
                 "weighted average number of diluted equity shares",
                 "diluted weighted average number of equity shares",
                 "diluted weighted average shares",
+                "weighted average shares outstanding diluted",
                 "number of shares used for diluted eps",
                 "number of shares used in diluted eps calculation",
                 "weighted average number of shares used in computing diluted earnings per share",

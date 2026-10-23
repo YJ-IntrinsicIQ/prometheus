@@ -20,6 +20,7 @@ Canonical invariants (ENG-135A + ENG-135):
 # until multiple proven use cases require it.
 """
 from __future__ import annotations
+from knowledge.financials.authority_gate import load_vouched
 
 import json
 from datetime import datetime, timezone
@@ -115,7 +116,14 @@ def _build_cao_cases(cao_data: Dict[str, Any], latest_revenue: Optional[float]) 
         exec_state = alloc.get("execution_state", "UNKNOWN")
 
         # Operating outcome — distributions are transaction-complete; acquisitions are COMPLETED_TRANSACTION
-        if category in ("dividend", "special_dividend", "share_buyback", "debt_repayment"):
+        if category in ("dividend", "special_dividend") and (exec_state != "COMPLETED" or alloc.get("lifecycle") != "paid"):
+            # a proposed / recommended dividend is not a completed distribution: no payment evidenced, no owner-value consequence
+            operating_outcome = "Dividend proposed or recommended; payment is not evidenced, so no distribution has been completed."
+            operating_outcome_type = "none_disclosed"
+            financial_consequence = "none_disclosed"
+            economic_consequence = "unknown"
+            chain_stop = "SOURCE_NOT_DISCLOSED"
+        elif category in ("dividend", "special_dividend", "share_buyback", "debt_repayment"):
             operating_outcome = "none_disclosed"  # transaction IS the consequence
             operating_outcome_type = "none_disclosed"
             financial_consequence = "deterministic_transaction_consequence"
@@ -136,7 +144,7 @@ def _build_cao_cases(cao_data: Dict[str, Any], latest_revenue: Optional[float]) 
 
         # Per-share consequence
         per_share = None
-        if category in ("dividend", "share_buyback"):
+        if category in ("dividend", "share_buyback") and not (category == "dividend" and alloc.get("lifecycle") != "paid"):
             per_share = "Dividend/buyback directly reduces retained cash per share or increases EPS via share count reduction."
         elif category == "debt_repayment":
             per_share = "Debt reduction lowers interest burden per share prospectively."
@@ -497,7 +505,7 @@ def build_economic_attribution_intelligence(
     cao_data = _load_json(cao_path)
     mp_data = _load_json(mp_path)
     gold_risk = _load_json(gold_risk_path)
-    ftp = _load_json(financial_truth_path)
+    ftp = load_vouched(financial_truth_path)
 
     # Build per-year financial metrics lookup from FTP
     from collections import defaultdict

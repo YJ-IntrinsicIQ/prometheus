@@ -580,6 +580,7 @@ def test_write_financial_fact_registry_persists_both_artifacts(tmp_path):
         registry_output_path=registry_path,
         reconciliation_output_path=reconciliation_path,
         quarantine_output_path=quarantine_path,
+        output_root=tmp_path,
     )
 
     assert registry_path.exists()

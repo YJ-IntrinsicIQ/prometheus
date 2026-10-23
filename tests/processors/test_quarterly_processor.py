@@ -16,6 +16,8 @@ Tests cover:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from knowledge.financials.extractor import _extract_periods
 from knowledge.financials.period_roles import (
@@ -338,22 +340,22 @@ class TestRouterQuarterlyGateB:
 # ===========================================================================
 
 class TestCompanyContextQuarterRoot:
-    def test_quarter_root_path_structure(self):
-        ctx = CompanyContext(company="acme", year="fy27", quarter="Q1")
+    def test_quarter_root_path_structure(self, tmp_path):
+        ctx = CompanyContext(company="acme", year="fy27", quarter="Q1", companies_root=tmp_path / "companies")
         root = ctx.quarter_root
-        assert str(root) == "companies/acme/fy27/quarters/Q1"
+        assert ctx.logical(root) == "companies/acme/fy27/quarters/Q1" and root.is_absolute()
 
-    def test_quarter_root_raises_when_annual(self):
-        ctx = CompanyContext(company="acme", year="fy27", quarter=None)
+    def test_quarter_root_raises_when_annual(self, tmp_path):
+        ctx = CompanyContext(company="acme", year="fy27", quarter=None, companies_root=tmp_path / "companies")
         with pytest.raises(ValueError, match="quarter_root"):
             _ = ctx.quarter_root
 
-    def test_annual_year_root_unchanged(self):
-        ctx = CompanyContext(company="acme", year="fy27", quarter=None)
-        assert str(ctx.year_root) == "companies/acme/fy27"
+    def test_annual_year_root_unchanged(self, tmp_path):
+        ctx = CompanyContext(company="acme", year="fy27", quarter=None, companies_root=tmp_path / "companies")
+        assert ctx.logical(ctx.year_root) == "companies/acme/fy27" and ctx.year_root.is_absolute()
 
-    def test_q4_path(self):
-        ctx = CompanyContext(company="acme", year="fy27", quarter="Q4")
+    def test_q4_path(self, tmp_path):
+        ctx = CompanyContext(company="acme", year="fy27", quarter="Q4", companies_root=tmp_path / "companies")
         assert "Q4" in str(ctx.quarter_root)
 
 

@@ -6,6 +6,7 @@ from intelligence.progression import build_confidence
 
 from knowledge.company_memory.guardrails import (
     assess_progression_materiality,
+    evidenced_announcement_period,
     build_semantic_quality,
     classify_business_relevance,
     resolve_period_status,
@@ -77,6 +78,7 @@ def normalize_candidate(year_record: Dict[str, Any], item: Dict[str, Any], *, so
     expected_timeframe = build_expected_timeframe(item, _year_label(year_record.get("year")))
     expected_cost = build_expected_cost(item)
     full_text = " ".join(part for part in (name, description, location, status, expected_output_or_capacity, expected_timeframe) if part)
+    announcement = evidenced_announcement_period(item.get("year"), year_record.get("year"), " ".join(part for part in (name, description) if part), year_record.get("dated_events") or ())
     relevance = classify_business_relevance(full_text, module_name="projects", actor_type=str(item.get("actor") or ""), source_kind=source_kind)
     period_resolution = resolve_period_status(
         source_year=year_record.get("year"),
@@ -132,7 +134,8 @@ def normalize_candidate(year_record: Dict[str, Any], item: Dict[str, Any], *, so
         "project_type": project_type,
         "objective": objective,
         "business_rationale": _sanitize_public_text(build_business_rationale(name, description, project_type, location, expected_output_or_capacity)),
-        "announcement_period": _year_label(item.get("year") or year_record.get("year")),
+        "announcement_period": announcement["period"],
+        "announcement_basis": {key: value for key, value in announcement.items() if key != "period"},
         "expected_timeframe": expected_timeframe,
         "expected_output_or_capacity": _sanitize_public_text(expected_output_or_capacity),
         "expected_cost": expected_cost,

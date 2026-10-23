@@ -8,7 +8,7 @@ from pipelines import run_company_pipeline
 
 
 def _context(company: str = "acme", year: str = "fy25") -> CompanyContext:
-    context = CompanyContext(company=company, year=year)
+    context = CompanyContext(company=company, year=year, companies_root=Path.cwd() / "companies")
     context.create_directories()
     return context
 
@@ -23,6 +23,7 @@ def test_financials_stage_runs_year_level_pipeline_in_canonical_order(tmp_path, 
     monkeypatch.setattr(run_company_pipeline, "run_financial_normalization", lambda context=None: calls.append("financial_normalization") or Path("normalized_fundamentals.json"))
     monkeypatch.setattr(run_company_pipeline, "run_financial_validation", lambda context=None: calls.append("financial_validation") or Path("financial_validation_report.json"))
     monkeypatch.setattr(run_company_pipeline, "run_financial_reconciliation", lambda context=None: calls.append("financial_reconciliation") or Path("financial_reconciliation_report.json"))
+    monkeypatch.setattr(run_company_pipeline, "run_financial_authority", lambda context=None: calls.append("financial_authority") or Path("normalized_fundamentals.json"))
     monkeypatch.setattr(run_company_pipeline, "run_financial_ratios", lambda context=None: calls.append("financial_ratios") or Path("financial_ratios.json"))
     monkeypatch.setattr(run_company_pipeline, "run_financial_growth", lambda context=None: calls.append("financial_growth") or Path("financial_growth.json"))
     monkeypatch.setattr(run_company_pipeline, "run_corporate_actions", lambda context=None: calls.append("corporate_actions") or Path("corporate_actions.json"))
@@ -50,6 +51,9 @@ def test_financials_stage_runs_year_level_pipeline_in_canonical_order(tmp_path, 
         "financial_discovery",
         "financial_extraction",
         "financial_normalization",
+        "financial_validation",
+        "financial_reconciliation",
+        "financial_authority",
         "financial_validation",
         "financial_reconciliation",
         "financial_ratios",
@@ -112,7 +116,7 @@ def test_financial_memory_stage_runs_company_level_pipeline_in_canonical_order(t
         "financial_memory_artifacts",
         "financial_memory_audit",
     ]
-    assert written["financial_memory_audit_report.json"] == Path("companies") / "acme" / "company_memory" / "financials" / "financial_memory_audit_report.json"
+    assert written["financial_memory_audit_report.json"] == (tmp_path / "companies").resolve() / "acme" / "company_memory" / "financials" / "financial_memory_audit_report.json"
 
 
 def test_refresh_year_level_financial_quality_covers_every_discovered_financial_year(tmp_path, monkeypatch):
@@ -149,6 +153,7 @@ def test_financials_stage_writes_audit_before_reraising_downstream_failure(tmp_p
     monkeypatch.setattr(run_company_pipeline, "run_financial_normalization", lambda context=None: calls.append("financial_normalization") or Path("normalized_fundamentals.json"))
     monkeypatch.setattr(run_company_pipeline, "run_financial_validation", lambda context=None: calls.append("financial_validation") or Path("financial_validation_report.json"))
     monkeypatch.setattr(run_company_pipeline, "run_financial_reconciliation", lambda context=None: calls.append("financial_reconciliation") or Path("financial_reconciliation_report.json"))
+    monkeypatch.setattr(run_company_pipeline, "run_financial_authority", lambda context=None: calls.append("financial_authority") or Path("normalized_fundamentals.json"))
 
     def _raise_on_ratios(context=None):
         calls.append("financial_ratios")
@@ -183,6 +188,9 @@ def test_financials_stage_writes_audit_before_reraising_downstream_failure(tmp_p
         "financial_normalization",
         "financial_validation",
         "financial_reconciliation",
+        "financial_authority",
+        "financial_validation",
+        "financial_reconciliation",
         "financial_ratios",
         "financial_audit",
     ]
@@ -197,6 +205,7 @@ def test_financials_stage_blocks_downstream_when_final_audit_fails(tmp_path, mon
         "run_financial_normalization",
         "run_financial_validation",
         "run_financial_reconciliation",
+        "run_financial_authority",
         "run_financial_ratios",
         "run_financial_growth",
         "run_corporate_actions",

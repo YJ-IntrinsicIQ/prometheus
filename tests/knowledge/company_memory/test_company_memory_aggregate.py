@@ -140,7 +140,7 @@ def test_company_memory_aggregate_sorts_years_and_handles_late_arrival(tmp_path,
     _write_year_artifacts(tmp_path, "acme", "fy20", promise="Launch secure API platform")
     _write_year_artifacts(tmp_path, "acme", "fy23", complete=False)
 
-    builder = CompanyMemoryAggregateBuilder(company="acme")
+    builder = CompanyMemoryAggregateBuilder(company="acme", companies_root=Path.cwd() / "companies")
     builder.build()
 
     strategy = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "strategy_timeline.json").read_text())
@@ -170,7 +170,7 @@ def test_company_memory_aggregate_is_idempotent_and_preserves_provenance(tmp_pat
     _write_year_artifacts(tmp_path, "acme", "fy25", promise=promise, dnas=["Compliance Infrastructure", "Enterprise Platform"])
     _write_year_artifacts(tmp_path, "acme", "fy24", promise=promise, dnas=["Compliance Infrastructure"])
 
-    builder = CompanyMemoryAggregateBuilder(company="acme")
+    builder = CompanyMemoryAggregateBuilder(company="acme", companies_root=Path.cwd() / "companies")
     builder.build()
     output_dir = tmp_path / "companies" / "acme" / "company_memory"
     first_pass = {

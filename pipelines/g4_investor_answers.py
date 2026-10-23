@@ -2304,6 +2304,9 @@ if __name__ == "__main__":
     ap.add_argument("--out", required=True)
     ap.add_argument("--as-of", default=AS_OF.isoformat(), help="assessment date used to judge deadlines (default 2026-10-13)")
     args = ap.parse_args()
+    from core.context_paths import resolve_output_root
+    args.out = resolve_output_root(args.out)            # candidate output: explicit, absolute, never the served tree
+    args.root = resolve_output_root(args.root, authorize_served=True)  # read-only candidate/read root; this tool never writes under it
     AS_OF = _dt.date.fromisoformat(args.as_of)
     reg_before = (REPO / "governance" / "approval_registry.json").read_bytes()
     res = run(Path(args.root), Path(args.out))

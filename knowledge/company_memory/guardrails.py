@@ -950,6 +950,77 @@ def _source_year_value(source_year: Any) -> int | None:
     return None
 
 
+_MONTHS = {m: i for i, m in enumerate(("january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"), start=1)}
+_DATE = re.compile(r"\b(?:on\s+)?(?:(?P<d1>\d{1,2})(?:st|nd|rd|th)?\s+(?P<m1>[A-Za-z]{3,9})|(?P<m2>[A-Za-z]{3,9})\s+(?P<d2>\d{1,2})(?:st|nd|rd|th)?),?\s+(?P<y>20\d{2})\b", re.I)
+_EVENT_VERB = re.compile(r"\b(definitive agreement|entered into|signed|executed|announced|completed|acquired|agreed to acquire)\b", re.I)
+_PENDING = re.compile(r"subject to[^.]{0,80}(approval|closing|condition)|pending (regulatory )?approval|yet to (close|complete)", re.I)
+_ENTITY = re.compile(r"\b[A-Z][A-Za-z&]{3,}\b")
+_STOP_ENTITY = {"Group", "Company", "Limited", "Board", "Note", "Subject", "Acquisition", "Agreement", "Annual", "Report", "Million", "Billion", "April", "March", "January", "February", "June", "July", "August", "September", "October", "November", "December"}
+
+
+def fiscal_year_of(year: int, month: int, fy_end_month: int = 3) -> str:
+    """Fiscal-year label of a calendar date for a fiscal year ending in `fy_end_month` (March for the Indian filers in scope)."""
+    return f"fy{(year + (1 if month > fy_end_month else 0)) % 100:02d}"
+
+
+def extract_dated_events(chunks: Sequence[Dict[str, Any]], fy_end_month: int = 3) -> List[Dict[str, Any]]:
+    """Dated, signed/announced events stated in a filing's own text: a sentence that has an explicit calendar date and an event verb. Returned with the entity tokens it
+    names, the fiscal year the date falls in, whether the sentence says the event is still subject to approvals, and the page it comes from. Deterministic and company-agnostic."""
+    events: List[Dict[str, Any]] = []
+    # an entity token must be SPECIFIC: a name that recurs across a large share of the filing (the company, its country, generic terms) cannot identify one event
+    frequency: Dict[str, int] = {}
+    for chunk in chunks or []:
+        for token in set(_ENTITY.findall(_normalize_text(chunk.get("text")))):
+            frequency[token] = frequency.get(token, 0) + 1
+    specific_limit = max(5, int(0.025 * len(chunks or [])))
+    for chunk in chunks or []:
+        text = _normalize_text(chunk.get("text"))
+        sentences = re.split(r"(?<=[.;])\s+", text)
+        for position, sentence in enumerate(sentences):
+            date = _DATE.search(sentence)
+            if not date or len(sentence) > 600 or not _EVENT_VERB.search(sentence):
+                continue
+            if re.search(r"(as (at|on)|ended|ending|up to|until|before)\s*$", sentence[:date.start()].strip(), re.I):    # a balance-sheet / period-end reference is not an event date
+                continue
+            month = _MONTHS.get((date.group("m1") or date.group("m2") or "").lower())
+            day = int(date.group("d1") or date.group("d2") or 0)
+            if not month or not 1 <= day <= 31:
+                continue
+            year = int(date.group("y"))
+            entities = sorted({t for t in _ENTITY.findall(sentence) if t not in _STOP_ENTITY and frequency.get(t, 0) <= specific_limit})
+            if not entities:
+                continue
+            pending = bool(_PENDING.search(" ".join(sentences[position:position + 4])))
+            duplicate = next((e for e in events if e["date"] == f"{year:04d}-{month:02d}-{day:02d}" and e["entities"] == entities), None)
+            if duplicate is not None:
+                duplicate["pending"] = duplicate["pending"] or pending
+                continue
+            events.append({"date": f"{year:04d}-{month:02d}-{day:02d}", "period": fiscal_year_of(year, month, fy_end_month), "entities": entities, "pending": pending, "page": chunk.get("page"), "sentence": sentence[:400]})
+    return events
+
+
+def evidenced_announcement_period(claimed: Any, source_year: Any, text: str = "", dated_events: Sequence[Dict[str, Any]] = ()) -> Dict[str, Any]:
+    """The period an event is announced in, in order of evidence: (1) a dated event in the filing that names the item's entity (the 27 April 2026 Organon agreement, stated
+    in a note of the FY26 filing, falls in FY27); (2) an extracted `year` that differs from the filing's own year is kept only when the item's wording evidences it;
+    (3) otherwise the filing's own year, with the claim recorded as unsupported."""
+    source, claim = normalize_period_label(source_year), normalize_period_label(claimed)
+    item_tokens = set(_ENTITY.findall(_normalize_text(text))) - _STOP_ENTITY
+    matches = [e for e in dated_events or [] if item_tokens & set(e["entities"])]
+    if matches:
+        best = sorted(matches, key=lambda e: (e["date"], e.get("page") or 0))[0]
+        return {"period": best["period"], "basis": "dated_event", "event_date": best["date"], "event_page": best.get("page"), "pending": best["pending"]}
+    if not claim or claim == source:
+        return {"period": source or claim, "basis": "filing_period"}
+    digits = claim[2:] if claim.startswith("fy") else ""
+    if digits.isdigit() and len(digits) == 2:
+        yy = int(digits)
+        patterns = (rf"\bfy\s?-?{yy:02d}\b", rf"\bfy\s?-?20{yy:02d}\b", rf"\b20{yy:02d}\b", rf"\b20{(yy - 1) % 100:02d}\s?[-/–]\s?(?:20)?{yy:02d}\b")
+        lowered = _normalize_text(text).lower()
+        if any(re.search(pattern, lowered) for pattern in patterns):
+            return {"period": claim, "basis": "evidenced_in_item_text"}
+    return {"period": source or claim, "basis": f"claimed_{claim}_not_evidenced"}
+
+
 def normalize_period_label(value: Any) -> str:
     text = _normalize_text(value).lower()
     if not text:
@@ -1532,3 +1603,61 @@ def semantic_validation(
         "errors": errors,
         "warnings": warnings,
     }
+
+
+_ISSUE_INSTRUMENTS = {
+    "qip": re.compile(r"\bQIP\b|qualified institutional placement", re.I),
+    "ipo": re.compile(r"\bIPO\b|initial public (?:offer|offering)", re.I),
+    "rights": re.compile(r"rights issue", re.I),
+    "preferential": re.compile(r"preferential (?:allotment|issue)", re.I),
+}
+_ALLOTMENT_VERB = re.compile(r"\b(?:allotted|allotment|issued|listed)\b", re.I)
+
+
+def extract_issue_dates(chunks: Sequence[Dict[str, Any]], fy_end_month: int = 3) -> Dict[str, Dict[str, Any]]:
+    """The filing's own date for an equity issue: a sentence naming the instrument (QIP, IPO, rights issue, preferential allotment), saying it was allotted/issued, with a calendar
+    date. {instrument: {date, period, page, sentence}}; the earliest such date per instrument. Nothing is inferred when the filing states none."""
+    found: Dict[str, Dict[str, Any]] = {}
+    for chunk in chunks or []:
+        sentences = re.split(r"(?<=[.;])\s+", _normalize_text(chunk.get("text")))
+        for position, sentence in enumerate(sentences):
+            if len(sentence) > 500 or not _ALLOTMENT_VERB.search(sentence):
+                continue
+            context = f"{sentences[position - 1] if position else ''} {sentence}"      # the instrument may be named in the sentence before ("... through QIP. These shares were allotted on ...")
+            date = _DATE.search(sentence)
+            if not date:
+                continue
+            month = _MONTHS.get((date.group("m1") or date.group("m2") or "").lower())
+            day = int(date.group("d1") or date.group("d2") or 0)
+            if not month or not 1 <= day <= 31:
+                continue
+            year = int(date.group("y"))
+            named_here = [name for name, pattern in _ISSUE_INSTRUMENTS.items() if pattern.search(sentence)]
+            for name, pattern in _ISSUE_INSTRUMENTS.items():
+                # the instrument the sentence itself names decides; the sentence before is consulted only when this one names none ("... through QIP. These shares were allotted on ...")
+                if (name in named_here) if named_here else pattern.search(context):
+                    iso = f"{year:04d}-{month:02d}-{day:02d}"
+                    if name not in found or iso < found[name]["date"]:
+                        found[name] = {"date": iso, "period": fiscal_year_of(year, month, fy_end_month), "page": chunk.get("page"), "sentence": sentence[:300]}
+    return found
+
+
+
+_ALLOTTED_AT_PRICE = re.compile(r"allotted\s+(?P<shares>[\d,]+)\s+equity\s+shares\s+of\s+(?:rs\.?|inr|\u20b9)\s*[\d.]+\s*/?-?\s*each\s+at\s+(?:an?\s+)?issue\s+price\s+of\s+(?:rs\.?|inr|\u20b9)\s*(?P<price>[\d,]+(?:\.\d+)?)", re.I)
+_ISSUE_EXPENSES = re.compile(r"(?:spent|incurred)\s+(?:inr|rs\.?|\u20b9)\s*(?P<amt>[\d,]+(?:\.\d+)?)\s*crores?\s+towards\s+(?:the\s+)?(?:qip|qualified institutional placement|ipo|initial public offer|issue)", re.I)
+
+
+def extract_issue_economics(chunks: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """What the filing states about one equity issue's money: the shares and the issue price (gross proceeds = shares x price), and the issue expenses charged against the premium.
+    {shares, issue_price, gross_crore, issue_expenses_crore, pages}; a key is present only if the filing states it. Nothing is inferred."""
+    out: Dict[str, Any] = {}
+    for chunk in chunks or []:
+        text = re.sub(r"\s+", " ", str(chunk.get("text") or ""))
+        allotted = _ALLOTTED_AT_PRICE.search(text)
+        if allotted and "shares" not in out:
+            shares, price = int(allotted.group("shares").replace(",", "")), float(allotted.group("price").replace(",", ""))
+            out.update({"shares": shares, "issue_price": price, "gross_crore": round(shares * price / 1e7, 2), "gross_page": chunk.get("page")})
+        expenses = _ISSUE_EXPENSES.search(text)
+        if expenses and "issue_expenses_crore" not in out:
+            out.update({"issue_expenses_crore": float(expenses.group("amt").replace(",", "")), "issue_expenses_page": chunk.get("page")})
+    return out

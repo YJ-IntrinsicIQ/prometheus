@@ -31,6 +31,7 @@ from .normalizer import normalize_candidate, deduplicate_risks
 from .progression import build_risk_event, build_timeline, assess_risk_trajectory, derive_progression_status
 from .validators import validate_risk_payload
 from .writer import write_all_risk_outputs, print_risk_summary
+from core.context_paths import resolve_output_root, safe_destination
 
 
 def _utc_now() -> str:
@@ -745,9 +746,21 @@ def _build_risk_timelines(
     return timelines, assessments
 
 
+_RISK_OUTPUT_FILES = ("risk_registry.json", "risk_timelines.json", "risk_assessments.json", "risk_validation.json", "risk_manifest.json")
+
+
+def plan_risk_evolution_outputs(company: str, companies_root: Path | str, *, authorize_served_write: bool = False) -> Dict[str, Path]:
+    """The exact files build_risk_evolution would write. Read-only: nothing is created."""
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    risk_dir = root / company / "company_memory" / "risks"
+    return {name: safe_destination(root, risk_dir / name) for name in _RISK_OUTPUT_FILES}
+
+
 def build_risk_evolution(
     company: str,
-    companies_root: Path | str = Path("companies"),
+    companies_root: Path | str,
+    *,
+    authorize_served_write: bool = False,
 ) -> Dict[str, Path]:
     """
     Build canonical Risk Evolution Intelligence for a company.
@@ -765,7 +778,8 @@ def build_risk_evolution(
     Returns dict of output paths written.
     """
     
-    companies_root = Path(companies_root)
+    # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+    companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
     company_root = companies_root / company
     
     if not company_root.exists():
@@ -870,6 +884,7 @@ def build_risk_evolution(
         assessments=assessments,
         validation_report=validation_report,
         manifest=manifest,
+        root=companies_root,
     )
     
     # Print summary

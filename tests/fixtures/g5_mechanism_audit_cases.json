@@ -1,0 +1,277 @@
+{
+ "source": "preview/M63_G5_INDEPENDENT_MECHANISM_AUDIT.md section 4",
+ "cases": [
+  {
+   "id": "UA-01",
+   "company": "sun_pharma",
+   "claim": "Interest coverage for FY24 is not extracted into the records",
+   "audit_boundary": "wrong FY; FY26 report cannot prove FY24",
+   "audit_found_unsupported_verified": false,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-02",
+   "company": "datapatterns",
+   "claim": "Consolidated return on capital employed is not extracted into the records",
+   "audit_boundary": "wrong basis; DP23% is standalone",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-03",
+   "company": "tanla",
+   "claim": "Standalone return on capital employed is not extracted into the records",
+   "audit_boundary": "wrong basis; retrieved24.2% is consolidated",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-04",
+   "company": "datapatterns",
+   "claim": "Tanla return on capital employed is not extracted into the records",
+   "audit_boundary": "wrong company; evidence is DP",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-05",
+   "company": "tanla",
+   "claim": "Data Patterns return on capital employed is not extracted into the records",
+   "audit_boundary": "wrong company; evidence is Tanla",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-06",
+   "company": "datapatterns",
+   "claim": "Return on capital employed for the EMI-EMC Testing Facility is not extracted into the records",
+   "audit_boundary": "wrong project; company23% not facility return",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-07",
+   "company": "tanla",
+   "claim": "Return on capital employed for the ValueFirst acquisition is not extracted into the records",
+   "audit_boundary": "wrong transaction; company ROCE not ValueFirst outcome",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-08",
+   "company": "sun_pharma",
+   "claim": "Interest coverage for the Organon acquisition is not extracted into the records",
+   "audit_boundary": "wrong event; FY26 company coverage not pending deal economics",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-09",
+   "company": "datapatterns",
+   "claim": "Return on capital employed and inventory turnover are not extracted into the records",
+   "audit_boundary": "unsupported unprofiled compound component",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-10",
+   "company": "tanla",
+   "claim": "Return on capital employed and product defect rates are not extracted into the records",
+   "audit_boundary": "unsupported unprofiled compound component",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-11",
+   "company": "sun_pharma",
+   "claim": "Contingent liabilities and export-control exposure are not extracted into the records",
+   "audit_boundary": "unsupported unprofiled compound component",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-12",
+   "company": "datapatterns",
+   "claim": "Expected return on capital employed is not extracted into the records",
+   "audit_boundary": "actual ratio cannot prove forecast",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-13",
+   "company": "ujjivan",
+   "claim": "Interest coverage and product pipeline do not apply to a bank",
+   "audit_boundary": "blanket compound inapplicability; banking product pipeline relevant",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-14",
+   "company": "ujjivan",
+   "claim": "Return on capital employed and customer retention do not apply to a bank",
+   "audit_boundary": "blanket compound inapplicability; customer retention relevant",
+   "audit_found_unsupported_verified": false,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-15",
+   "company": "ujjivan",
+   "claim": "Research and development spending does not apply to a bank",
+   "audit_boundary": "bank exclusion fail-closed control",
+   "audit_found_unsupported_verified": false,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-16",
+   "company": "ujjivan",
+   "claim": "Maintenance versus growth capex does not apply to a bank",
+   "audit_boundary": "bank exclusion fail-closed control",
+   "audit_found_unsupported_verified": false,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-17",
+   "company": "sun_pharma",
+   "claim": "Organon completed acquisition consideration is not extracted into the records",
+   "audit_boundary": "signed pending, not completed sourceFY26pp38/47/311",
+   "audit_found_unsupported_verified": false,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-18",
+   "company": "ujjivan",
+   "claim": "Pending UFSL amalgamation status is not extracted into the records",
+   "audit_boundary": "completedApril30,2024 not pending",
+   "audit_found_unsupported_verified": false,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-19",
+   "company": "sun_pharma",
+   "claim": "Consolidated contingent liabilities are not extracted into the records",
+   "audit_boundary": "source selection first standalone; amounts/unit/basis must match",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-20",
+   "company": "tanla",
+   "claim": "Consolidated customer concentration is not extracted into the records",
+   "audit_boundary": "parser chooses standalone86%, not consolidated",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-21",
+   "company": "ujjivan",
+   "claim": "Customer concentration is not extracted into the records",
+   "audit_boundary": "17.16% is depositor concentration, not borrowing-customer concentration",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-22",
+   "company": "sun_pharma",
+   "claim": "Book value per share is not extracted into the records",
+   "audit_boundary": "real graph label/value separated; extraction exists p35, fail-closed acceptable limitation",
+   "audit_found_unsupported_verified": false,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-23",
+   "company": "ujjivan",
+   "claim": "Book value per share is not extracted into the records",
+   "audit_boundary": "real graph label/value separated; extraction exists p10, fail-closed acceptable limitation",
+   "audit_found_unsupported_verified": false,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-24",
+   "company": "datapatterns",
+   "claim": "Return on capital employed is not extracted into the records",
+   "audit_boundary": "positive control actualFY26standalone23%; record nullFY26 despiteFY22value",
+   "audit_found_unsupported_verified": false,
+   "expect": "may_verify_with_scope"
+  },
+  {
+   "id": "UA-25",
+   "company": "sun_pharma",
+   "claim": "The report provides no contingent liabilities figures",
+   "audit_boundary": "source-positive contradiction",
+   "audit_found_unsupported_verified": false,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-26",
+   "company": "datapatterns",
+   "claim": "Return on capital employed and book value per share are not extracted into the records",
+   "audit_boundary": "recognizedcompound fail-closed control",
+   "audit_found_unsupported_verified": false,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-27",
+   "company": "sun_pharma",
+   "claim": "Consolidated interest coverage of 49.5 times is not extracted into the records",
+   "audit_boundary": "company/basis on same page: extractor returns standalone5.6unknown basis, not asserted49.5",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-28",
+   "company": "datapatterns",
+   "claim": "Return on capital employed of 22% is not extracted into the records",
+   "audit_boundary": "FY25 prior-column22% is not FY26current23%; no explicit year token to rescue parser",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-29",
+   "company": "datapatterns",
+   "claim": "Return on capital employed of 7% is not extracted into the records",
+   "audit_boundary": "7% is variance next toROCE23%/22%, notROCE",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-30",
+   "company": "sun_pharma",
+   "claim": "Total contingent liabilities of 443.6 million rupees are not extracted into the records",
+   "audit_boundary": "443.6million is claims subcategory, nottotal; typedfact wrongly INRunscaled",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-31",
+   "company": "tanla",
+   "claim": "Customer concentration for three major customers is not extracted into the records",
+   "audit_boundary": "standalone source states2customers86%, not3",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-32",
+   "company": "ujjivan",
+   "claim": "Borrower concentration of 17.16% is not extracted into the records",
+   "audit_boundary": "17.16% top20depositors; advances denominator different",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-33",
+   "company": "datapatterns",
+   "claim": "Return on capital employed for the Indian defence industry is not extracted into the records",
+   "audit_boundary": "company ROCE notindustry returns",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  },
+  {
+   "id": "UA-34",
+   "company": "tanla",
+   "claim": "Return on capital employed after completion of the Organon deal is not extracted into the records",
+   "audit_boundary": "cross-company wrongeventstatus;ROCEcannotproveOrganonaftercompletion",
+   "audit_found_unsupported_verified": true,
+   "expect": "must_not_verify"
+  }
+ ]
+}

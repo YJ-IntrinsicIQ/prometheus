@@ -14785,3 +14785,75 @@ Ledger note: the previous entry above is 2026-10-02 (M37.2). M52–M62 (incl. M5
 - Stratified24 machine-supported occurrences (6/company, S5answers and S2projections):3 supported with scope,19 false-positive verification assertions,2 incomplete record bases. Failure counts refer to claimed evidence relationship, not19 proved false underlying absences. SunFY26geography already in4economic engines; DPworking-capital response citesEHS p93; other repeated actor/event/metric mismatch. Source-detection false negatives reported separately. Read-only actual resolve(DP,roce) returnsCONTRADICTED_BY_RECORDS fromFY22value whileFY26isnull, reproducing period-insensitive probe.24profiles inspected structurally, no repairs.
 - Commands: python3 /private/tmp/m63-adjudication-integrity.py; PYTHONDONTWRITEBYTECODE=1 python3 /private/tmp/m63-adjudication-records.py.3486 pre/post hashes unchanged;protected tree no additions/deletions.91proposed answer full digests/content fingerprints match,4projection-ledger/surface/inventory/queue/code hashes match;H881b59bb50786cbdc6597d22bcb83fbf7f4c7c24b29f09539fb73c6045fcc9ed recomputed.91approvals25Sun/22Tanla/21Ujjivan/23DP, registry/four served artifacts and backup5/5checksums+bytecomparisons intact. CurrentH identifies inspected bytes only;latercorrection requiresnewH. No G0 baseline change or unrelated test-suite run.
 - Deliverables: preview/M63_G5_INDEPENDENT_EVIDENCE_ADJUDICATION.md and preview/M63_G5_EVIDENCE_DECISIONS.json; scratch evidence /private/tmp/m63-g5-adjudication. Only deliverables/BACKLOG/SESSION_LOG written. ATLAS unchanged;G3BLOCKED;G4VERIFIED four-company candidates only;G5OPEN;G6/G7/production approval separate. No code/test/source/answer/projection/inventory/registry edits, generator, sealedholdout access, API cost, promotion, deployment or Git cleanup. Stop after this independent assessment.
+
+## 2026-10-13 — M63/G5 Evidence Verification: reuse before build — READY FOR INDEPENDENT G5 MECHANISM AUDIT (not self-certified) | $0
+- Traced claim_validator (AI claims with evidence_refs; not used by G4/G5), PACP, G1 facts, G3 anchor_coverage, ENG-135A resolver, entity_matcher, G4 Ledger. Reproduced red: previous G5 mechanism promoted all 24 challenged cases to VERIFIED (21 unsupported).
+- Built pipelines/g5_verify.py (reuses claim_validator vocabulary, entity_matcher, Ledger); judge() delegates; annotate_answer emits investor fallback + machine states; bundle builder compact retry; tools updated. Found/fixed: Sun management 'regulatory validation' hidden by customer-text rule; float digest parity; project 'expected' vs achieved fields; status words are not figures.
+- Tests: new 50 (all 24 cases + adversarial); provenance 48, bounded 62, G5 55, G4.1 76, G4 14; vitest 308/5 (3 ask-v2 + SP-09/DP-01); candidate G0 14/25, controls 5/5. Protected snapshot identical. Report preview/M63_G5_EVIDENCE_VERIFICATION_REPORT.md. No holdout, API, Git operation or production change.
+
+## 2026-10-13 — M63/G5 Root-cause repair (D1–D5) — READY FOR INDEPENDENT G5 RE-AUDIT (not self-certified) | $0
+- Reproduced the audit: 23 of 34 real-ledger claims wrongly VERIFIED (fixture tests/fixtures/g5_mechanism_audit_cases.json; 32 red tests). Repaired in pipelines/g5_verify.py (claim contract, components, local basis/columns/units/subtype), g5_provenance.annotate_answer (sentence-aware replacement, precision-fact meanings), app provenance/absence.ts (enforceEvidenceSafety, non-enumerable ledger), question-view.ts (internal keys excluded), discoveries.ts ('Amount' cell), build-panel.ts earlier fixes retained.
+- New scratch candidate /private/tmp/claude-501/g5c; manifest preview/m63_g5_root_cause_manifest.json (H3 e73715d9…, rendered surfaces pinned). Python all green (50/50/48/207+2/97/93/5); app 324/5 known; candidate G0 13/25 controls 5/5; customer-render tests 20 on candidate root. Protected snapshot identical; no holdout, API, Git operation, promotion.
+
+## 2026-10-14 — M63/G5 Final correction (positive claims + premise-free fallbacks) — READY FOR INDEPENDENT G5 RE-AUDIT (not self-certified) | $0
+- Traced Vishvakarma: source FY21 p.77 and all typed records say minority equity subscription; approved AI text said 'acquisition'. Added verify_events to pipelines/g5_verify.py (record + filing evidence for event type/completion), applied to all investor strings in annotate_answer and via ledger entries in Story/Panel/Explorer; subject_core fallback with no quoted premise. New tests tests/intelligence/test_g5_positive_claims.py (19, red first).
+- Scratch overlay root had been cleared: rebuilt with tools/g1_candidate_build.py + new tools/g5_make_root.py (34 audit cases and 24 originals reproduce). New candidate /private/tmp/claude-501/g6, manifest preview/m63_g5_final_correction_manifest.json (hash 3104f18e…). Tests: positive 19, root-cause 50, evidence 50, provenance 48, G4/G5 207+2, G1/G3 97, G2 93, mgmt 5, app 324/5 known, customer-render 20, G0 13/25 controls 5/5. Protected snapshot identical; no holdout/API/Git/promotion.
+
+## 2026-10-14 — M63/G5 Generation source hardening — GENERATION SOURCE HARDENED (targeted; for the final independent G5 audit) | $0
+- Traced the approved Ujjivan capital-allocation text to the Mission-17 hybrid composition stage: its evidence pack gave the model 'Acquired 200 equity shares…' with action_type research_and_development and amount 200.0 (share count as ₹ crore); the typed timeline record (Equity investment (minority stake), ₹2,000, FY21 p.77) never reached the prompt, and no instruction preserved event type/status. Added the shared fidelity contract to the composition, evidence-reasoner and v4 narrative prompts, typed event evidence (typed_events_from_timeline / typed_event_lines / build_composition_plan(typed_evidence)) and event_nature in knowledge/capital_allocation_taxonomy.py (shared with g5_verify). Tests: tests/intelligence/test_generation_fidelity.py (17). Pre-existing failures (mission4 dual validation 3, regeneration planner) confirmed on clean HEAD. No AI call; nothing regenerated; protected snapshot identical.
+
+
+## 2026-10-14 — Source-of-Truth & Evidence-Lineage Governance Contract — documentation only
+
+- Read Global SSOT Audit and ATLAS architecture/domain/presentation conventions; reviewed BACKLOG and SESSION_LOG status.
+- Added ten concise invariant → owner → proposed regression obligations in ATLAS; all marked PROPOSED — enforcement unverified. No executable test or passing result claimed.
+- BACKLOG SSOT-01–SSOT-10 remain OPEN for canonical authority, financial/event identity, AI evidence tiers/dependencies, fail-closed behavior, invalidation, discovery coverage, integration and rendered approval checks.
+- Validation: exact append-only changes confined to ATLAS/BACKLOG/SESSION_LOG; protected company artifacts and approval registry checked by pre/post hashes. No implementation tests run for this documentation-only change.
+- No implementation, regeneration, approval changes, deployment or sealed-holdout access; G3 BLOCKED, G4 four-company candidate scope, G5 OPEN and G6/G7 procedures unchanged. No gate certified.
+
+
+## 2026-10-14 — Phase 1: Upstream Data Integrity & SSOT Enforcement (exit BLOCKED)
+- Findings: financial code already correct, served financial data stale; classification read the whole source chunk; Vishvakarma merged with unrelated equity events and took the PNCPS amount; family keys depended on PYTHONHASHSEED.
+- Changed: fact_registry(+schema) period_role and contract; capital_allocation_taxonomy(+json); capital_allocation_outcomes builder/validators/longitudinal_profile; guardrails.evidenced_announcement_period with projects/capacity normalizers; tools/g1_candidate_build.py; ATLAS SSOT-02/03 status; tests/intelligence/test_phase1_ssot.py (33 pass).
+- Incident: a scratch-intended `build_projects('sun_pharma')` rewrote five served project files (gitignored, no backup); a restore attempt was denied and not retried. Details and options in the Phase 1 report §9. Nothing else under companies/ changed; approval registry untouched; no AI calls; G3 BLOCKED, G4 scope unchanged, G5 OPEN.
+
+
+## 2026-10-14 — Restoration + P0 builder write-safety (exit BLOCKED for full coverage)
+- Restoration (authorized): five Sun Pharma project files copied from the verified reconstruction; all five full SHA-256 hashes match `governance/poc_004/PRESERVATION_BASELINE.json`; semantic fingerprints match; `test_m43_10` passes; overwritten files backed up to `~/prometheus_rollback/sun_projects_overwritten_20261014/`.
+- Hardening: shared guard in `core/context_paths.py`; ~35 modules converted to explicit-root builders (ATLAS WS-01..WS-07); pipeline requires `--authorize-served-write`; project announcement-period wiring from Phase 1 removed (it renumbered ids). Tests: 214 new safety tests pass; full suite with the offline import workaround: 17 failures vs 18 in the pre-change baseline, 0 new.
+- Incident: a background pytest process that survived `pkill` modified two served `tips` files before the backstop existed (timestamp fields only). Not auto-repaired (needs authorization). No other served file changed; approval registry untouched; no AI calls; G3/G4/G5/G7 status unchanged.
+
+
+## 2026-10-14 — P0-A/B write-safety enforcement (exit BLOCKED)
+- P0-B: CompanyContext, pipeline direct writes, 17 financial writers, ingestion processors and the M59/answer-certification scripts now require an explicit absolute company-data root; the served tree needs an explicit flag; `PROMETHEUS_AUTHORIZE_SERVED_WRITE` no longer authorizes anything. Tests: `tests/test_p0b_write_safety_enforcement.py` (24 pass); changed suites match the baseline failure set.
+- P0-A: `tips` restoration NOT performed — the `repo_copy` files are not pre-change copies. The hash-verified field patch awaits explicit authorization.
+- Unconverted raw writers and limits are listed in `preview/PROMETHEUS_P0_AB_COMPLETION_REPORT.md` §3 and §6. P0-C not started.
+
+
+## 2026-10-14 — P0 closure (exit P0 VERIFIED)
+- Tips FY24: both files restored from hash-verified scratch copies (backup in `~/prometheus_rollback/`); hashes equal the protected manifest; Sun project baselines intact.
+- Evidence layer, business-understanding, company-memory and LLM-call-manifest writers now take `output_root` from production callers; other lower-risk exceptions documented.
+- P0-C: offline disposable-workspace run of 28 stages; the real repo's 30,776 files hash-identical before and after. Details: `preview/PROMETHEUS_P0_FINAL_REPORT.md`. Next: SSOT Phase 1.
+
+
+## 2026-10-15 — SSOT Phase 1 completion (exit BLOCKED for migration)
+- Fixed and checked against the filings in an isolated candidate: Sun FY26 cash 9,770.51 and debt 4,081.61, Tanla FY26 cash 748.01 (statutory line; 1,064 is a wider "cash and bank balances" measure) and capex, Tanla FY24 CFO (served value was PBT), Organon dated 27 Apr 2026 / FY27 and pending, Vishvakarma as a 200-share subscription, stable PJ/CP ids, neighbour-text and ledger-amount contamination in capital-allocation outcomes, fiscal-year off-by-one, balance-sheet-sourced revenue quarantined.
+- Open: Sun FY21 payables regression in the candidate, Sun dividend fact wrong in served and candidate, Ujjivan revenue FY21/22/24 quarantined with no replacement, residual classification issues. Details, hashes and migration/rollback plan: `preview/PROMETHEUS_SSOT_PHASE1_COMPLETION_REPORT.md`. Nothing migrated; no approvals or served data touched; test failures identical to HEAD.
+
+## 2026-10-16 — SSOT Phase 1 final remediation (exit BLOCKED on one non-content item)
+- Candidate rebuilt (`~/prometheus_candidates/ssot_phase1_final_candidate_20261016.tgz`, sha256 13a73191…9566): Sun FY21 payables 3,973.66, dividends separated, Ujjivan revenue/PAT recovered, classification fixes (Tanla ESOP purchase 18.21 and availed loan 132.19 now separate records, advance no longer technology_investment, amalgamation stays a merger, no merging of generic "other" records). Checked against the filings for the facts in the report.
+- Regression: 151 Phase 1 tests pass; no new failures in tests/intelligence (65 + 1 order-dependent), other dirs (11) or top-level tests (26, all fail on HEAD); 239 write-safety/isolation tests pass. 52 of 91 approvals have changed dependencies (planning only).
+- Blocked: chroma_db/chroma.sqlite3 changed before the isolation fix and cannot be restored (SSOT-P1-06). Nothing migrated, activated or approved; Phase 1 not self-certified. Report: `preview/PROMETHEUS_SSOT_PHASE1_FINAL_REMEDIATION.md`.
+
+
+
+## 2026-10-17 — SSOT critical remediation (exit READY FOR INDEPENDENT RETEST)
+- All 18 P0 audit findings fixed or fail-closed: metric-meaning contracts, row/statement-identity fixes in extraction, registry as sole authority (`settle_financial_authority`), typed economic events (lifecycle, amount role, issue dates), strict verifier rewrite. 163 new tests pass.
+- Evidence: 69 rejected figures, 499 artifacts, 0 leaks; Sun FY21 1,376.63 injection 0 leaks incl. real panel registry; verifier rejects 0 usable facts (643 VERIFIED +27 comparative, 158 PROVISIONAL, 631 DERIVED_UNVERIFIED). Regression: no new failures vs baseline.
+- Candidate sha256 63fc60f189eba84374c69d5d5428ca02d3f7648b9dd69763f1c06de974e4e1cf. 4,217 protected files unchanged; Chroma hash unchanged. Nothing migrated, certified, approved or regenerated. Report: `preview/PROMETHEUS_SSOT_CRITICAL_REMEDIATION_REPORT.md`.
+
+
+## 2026-10-17 - SSOT critical closure (exit READY FOR INDEPENDENT RETEST)
+- Closed F13/F14/F16/F17/F18/F21 and RT01-RT06 in an isolated candidate: authority enforced at consumption (manifest + dependency binding; Ask loader, panel, CIM/PCIM, ratios, direct readers), verifier rewritten around the complete fact identity with canonical derived binding, projections keep eligibility/verification state, structural scanner, data-fidelity fixes (share-count units, materials vs stores/spares, scope-qualified headlines, entity basis, derived capex, withheld margin/days), economic events (instrument identity, asset capex role, pending dividends, QIP gross/net/expenses).
+- Evidence: 24 retest verifier cases + 16 variants (10 false VERIFIED now REJECTED, positives VERIFIED), fabricated 4,000 debt REJECTED; 7 authority scenarios + October-16 + direct-ratio on real data all fail closed; scan 76 rejected facts / 25,659 points / 0 leaks (previous candidate: 8); census 1,429 usable facts, 0 rejected by the verifier (625 verified, 394 derived-verified, 175 provisional, 208 derived-unverified). Regression: no new unexplained failures.
+- Hash mismatch from the previous mission explained (83rd test appended 12 s after the manifest). Candidate sha256 `596538ac98093956a4a7fae89d92cdca4e1a0a98da5c2c5a20aaca6293444bc2`. Nothing migrated, certified, approved or regenerated; protected artifacts unchanged. Report: `preview/PROMETHEUS_SSOT_CRITICAL_CLOSURE_REPORT.md`.

@@ -74,7 +74,7 @@ def run(args) -> dict:
             cls, rule = G.classify(clause) if not label_line else ((G.ANALYTIC_UNCERTAINTY, "label-joined-analytic") if G.ANALYTIC_RX.search(label_line) or re.search(r"outcome|integration|execution", label_line, re.I) else (G.EXTRACTION_ABSENCE, "label-joined-to-text"))
             if cls is None:
                 continue
-            units.append({"anchor": label_line, "scope": scope, "company": company, "surface": surface, "location": location, "clause": clause[:320], "class": cls, "rule": rule, "protected": protected, "context": text[:400],
+            units.append({"anchor": label_line, "scope": scope, "company": company, "surface": surface, "location": location, "clause": clause[:320], "class": cls, "rule": rule, "protected": protected, "context": text,
                           "entries": entries})
 
     for k in m59.COMPANIES:
@@ -101,6 +101,12 @@ def run(args) -> dict:
     for scope, path, prot in (("S2_candidate_story_panel_explorer", args.surf_cand, False), ("S4_served_story_panel_explorer", args.surf_served, True)):
         sd = json.loads(Path(path).read_text())
         ents = surface_entries(sd)
+        if scope.startswith("S2") and getattr(args, "sandbox_root", ""):          # the ledger is attached as non-enumerable audit data, so link against the ledger files themselves
+            for k in m59.COMPANIES:
+                lf = Path(args.sandbox_root) / "companies" / k / "company_memory" / "ask_intrinsiciq" / "g5_absence_provenance.json"
+                led_entries = json.loads(lf.read_text())["entries"] if lf.exists() else []
+                for s_ in sd.get(k, []):
+                    ents[(k, s_["name"])] = led_entries
         for company, surf, loc, text, lab in surface_units(sd, scope):
             add(scope, company, surf, loc, text, prot, ents.get((company, surf)) if scope.startswith("S2") else None, lab)
 
@@ -129,29 +135,17 @@ def run(args) -> dict:
         elif u["class"] == G.UI_OR_SYSTEM and u["rule"] == "system-limitation":
             u["system_verified"], u["system_basis"] = sys_ok, sys_basis
 
-    # per-unit status
+    # per-unit status: the evidence gate decides (pipelines/g5_verify), unit by unit
     for u in units:
         if u["class"] not in G.GENUINE:
             continue
-        gr = groups[u["group"]]
-        r = gr["resolution"]
-        st = r["state"]
-        if u["class"] == G.INAPPLICABLE_MEASURE:
-            status = "VERIFIED_NOT_APPLICABLE" if ledgers[u["company"]].bank else "UNRESOLVED"
-        elif st == "CONTRADICTED_BY_RECORDS":
-            status = "CONTRADICTED"
-        elif u["class"] == G.DISCLOSURE_ABSENCE and st == "NOT_EXTRACTED":
-            status = "CONTRADICTED"            # the filing carries it; the claim says the filing does not
-        elif st == "NOT_EXTRACTED":
-            status = "VERIFIED_NOT_EXTRACTED"
-        elif st == "NOT_APPLICABLE":
-            status = "WRONG_NOT_APPLICABLE_CLAIM" if u["class"] != G.INAPPLICABLE_MEASURE else "VERIFIED_NOT_APPLICABLE"
-        elif st in ("NOT_DISCLOSED_CANDIDATE", "REVIEW", "UNPROFILED"):
-            status = "UNRESOLVED_" + st
-        else:
-            status = "UNRESOLVED"
-        u["status"] = status
+        j = G.judge(ledgers[u["company"]], u["clause"], u["class"], u.get("context", ""))
+        u["status"], u["state"], u["reasons"], u["level"] = j["status"], j["state"], j["reasons"], j["level"]
+        u["record_verified"] = j.get("record_verified", False)
+        u["record_statement_ok"] = j.get("record_statement_ok", False)
+        u["rewrite"] = j.get("rewrite")
         entries = u.get("entries")
+
         def match(e):
             c = u["clause"]
             return (e.get("claim") and (e["claim"] in c or c in e["claim"])) or (e.get("anchor") and e["anchor"] in c)
@@ -168,6 +162,7 @@ def main() -> None:
     ap.add_argument("--surf-served", required=True)
     ap.add_argument("--json", required=True)
     ap.add_argument("--bundle", default="")
+    ap.add_argument("--sandbox-root", default="")
     a = ap.parse_args()
     res = run(a)
     for gr in res["groups"]:

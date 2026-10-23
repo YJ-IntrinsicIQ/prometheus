@@ -26,6 +26,7 @@ This module produces evidence TO MP; it does NOT update lifecycle directly.
 """
 
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root, safe_destination
 
 import hashlib
 import json
@@ -493,9 +494,17 @@ def _classify_promise(
 
 # ── Main builder ──────────────────────────────────────────────────────────────
 
+def plan_verification_events_output(company_slug: str, companies_root: Path | str, *, authorize_served_write: bool = False) -> Path:
+    """The exact file build_verification_events would write. Read-only: nothing is created."""
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    return safe_destination(root, root / company_slug / "company_memory" / "gold" / _OUTPUT_NAME)
+
+
 def build_verification_events(
     company_slug: str,
-    companies_root: Path,
+    companies_root: Path | str,
+    *,
+    authorize_served_write: bool = False,
 ) -> Dict:
     """
     Build the verification events document for a company.
@@ -504,6 +513,7 @@ def build_verification_events(
     Writes to company_memory/gold/promise_verification_events.json.
     Returns the produced document.
     """
+    companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
     cm_root = companies_root / company_slug / "company_memory"
 
     # MC owns identity and ontology, so the bridge's classification universe is
@@ -597,21 +607,18 @@ def build_verification_events(
         "promise_classifications": [asdict(r) for r in classifications],
     }
 
-    out_path = cm_root / "gold" / _OUTPUT_NAME
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
+    guarded_write_text(companies_root, cm_root / "gold" / _OUTPUT_NAME, json.dumps(doc, indent=2, ensure_ascii=False))
     return doc
 
 
 if __name__ == "__main__":
     import sys
 
-    root = Path(__file__).resolve().parents[2]
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: python -m intelligence.management_promises.verification_bridge <company_slug>")
+    if len(sys.argv) not in (3, 4):
+        raise SystemExit("usage: python -m intelligence.management_promises.verification_bridge <company_slug> <absolute companies root> [--authorize-served-write]")
     slug = sys.argv[1]
-    companies_root = root / "companies"
-    doc = build_verification_events(slug, companies_root)
+    companies_root = Path(sys.argv[2])
+    doc = build_verification_events(slug, companies_root, authorize_served_write="--authorize-served-write" in sys.argv[3:])
     summary = doc["summary"]
     total = sum(summary.values())
     print(f"ENG-119 verification bridge: {slug}")

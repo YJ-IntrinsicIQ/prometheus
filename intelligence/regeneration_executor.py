@@ -30,6 +30,7 @@ Usage:
   python -m intelligence.regeneration_executor --execute-ai-regeneration [--company sun_pharma] [--dry-run]
 """
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root
 
 import argparse
 import hashlib
@@ -150,9 +151,9 @@ def _load_json(path: Path) -> Dict[str, Any]:
         return {}
 
 
-def _write_json(path: Path, data: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+def _write_json(path: Path, data: Dict[str, Any], *, root: Path | str) -> None:
+    """The destination must lie inside the explicit, already-authorized output root."""
+    guarded_write_text(root, path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
 def _file_digest(path: Path) -> str:
@@ -933,9 +934,11 @@ def _ensure_attempt1_history(manifest: Dict[str, Any]) -> bool:
 
 
 def run_regeneration(
-    company: str = "sun_pharma",
-    companies_root: Path = REPO / "companies",
+    company: str,
+    companies_root: Path | str,
     dry_run: bool = False,
+    *,
+    authorize_served_write: bool = False,
 ) -> Dict[str, Any]:
     """Execute one controlled AI regeneration for UNIT_TARGET.
 
@@ -951,7 +954,9 @@ def run_regeneration(
     from pipelines.pacp_adversarial import run_adversarial_suite
     import os
 
-    company_root = Path(companies_root) / company
+    # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+    companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    company_root = companies_root / company
     candidate_dir = company_root / "company_memory" / "ask_intrinsiciq"
     manifest_path = candidate_dir / MANIFEST_FILENAME
     certified_path = company_root / CERTIFIED_ARTIFACT_PATH
@@ -1251,7 +1256,7 @@ def run_regeneration(
             "composition_policy_version": COMPOSITION_POLICY["version"],
             "answer": answer,
         }
-        _write_json(candidate_path, candidate)
+        _write_json(candidate_path, candidate, root=companies_root)
         candidate_digest = _file_digest(candidate_path)
 
         # ── M47: Release eligibility (after write so digest is available) ────
@@ -1270,7 +1275,7 @@ def run_regeneration(
 
         # Patch eligibility state into candidate file
         candidate["eligibility_state"] = eligibility_state
-        _write_json(candidate_path, candidate)
+        _write_json(candidate_path, candidate, root=companies_root)
         candidate_digest = _file_digest(candidate_path)
 
     # ── Verify certified artifact untouched ───────────────────────────────────
@@ -1385,7 +1390,7 @@ def run_regeneration(
         if e.get("manifest_record_origin") != "RECONSTRUCTED_FROM_EXECUTION_EVIDENCE"
     ) + 1  # +1 for reconstructed attempt 1
 
-    _write_json(manifest_path, manifest)
+    _write_json(manifest_path, manifest, root=companies_root)
     return manifest
 
 
@@ -1605,9 +1610,11 @@ def _call_llm_v3(
 
 
 def run_regeneration_v3(
-    company: str = "sun_pharma",
-    companies_root: Path = REPO / "companies",
+    company: str,
+    companies_root: Path | str,
     dry_run: bool = False,
+    *,
+    authorize_served_write: bool = False,
 ) -> Dict[str, Any]:
     """Execute one controlled AI regeneration under Contract V3 (ENG-MISSION49).
 
@@ -1629,7 +1636,9 @@ def run_regeneration_v3(
     from intelligence.management_quality.contract_manifest import CONTRACT_V3_POLICY_DIGEST
     import os
 
-    company_root = Path(companies_root) / company
+    # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+    companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    company_root = companies_root / company
     candidate_dir = company_root / "company_memory" / "ask_intrinsiciq"
     manifest_path = candidate_dir / MANIFEST_FILENAME
     certified_path = company_root / CERTIFIED_ARTIFACT_PATH
@@ -1949,7 +1958,7 @@ def run_regeneration_v3(
             "composition_policy_version": COMPOSITION_POLICY["version"],
             "answer": answer,
         }
-        _write_json(candidate_path, candidate)
+        _write_json(candidate_path, candidate, root=companies_root)
         candidate_digest = _file_digest(candidate_path)
 
         # ── Release eligibility (M49: must pass PACP + EIV V2 + parity) ─────
@@ -1983,7 +1992,7 @@ def run_regeneration_v3(
             eligibility_state = "BLOCKED_MULTIPLE"
 
         candidate["eligibility_state"] = eligibility_state
-        _write_json(candidate_path, candidate)
+        _write_json(candidate_path, candidate, root=companies_root)
         candidate_digest = _file_digest(candidate_path)
 
     # ── Verify certified artifact untouched ───────────────────────────────────
@@ -2100,7 +2109,7 @@ def run_regeneration_v3(
     manifest["execution_history"].append(attempt_entry)
     manifest["last_updated"] = _utc_now()
     manifest["total_attempts"] = len(manifest["execution_history"])
-    _write_json(manifest_path, manifest)
+    _write_json(manifest_path, manifest, root=companies_root)
     return manifest
 
 
@@ -2125,6 +2134,11 @@ _SCHEMA_V4_NARRATIVE = {
     },
     "additionalProperties": False,
 }
+
+
+def _fidelity_block() -> str:
+    from intelligence.ask_intrinsiciq.relationship_aware_composer import evidence_fidelity_block
+    return evidence_fidelity_block().replace(chr(10), ' ')
 
 
 def _call_llm_v4_narrative(
@@ -2165,7 +2179,8 @@ def _call_llm_v4_narrative(
         "invent outcomes, or override any pre-built section. "
         "Avoid all evaluative language about management quality (do not say weak/strong/"
         "poor/excellent/credible/capable/disciplined management). "
-        "Do not say 'management quality'. Use factual, evidence-based language."
+        "Do not say 'management quality'. Use factual, evidence-based language. "
+        + _fidelity_block()
     )
 
     user_content = (
@@ -2227,9 +2242,11 @@ def _call_llm_v4_narrative(
 
 
 def run_regeneration_v4(
-    company: str = "sun_pharma",
-    companies_root: str = "companies",
+    company: str,
+    companies_root: Path | str,
     dry_run: bool = False,
+    *,
+    authorize_served_write: bool = False,
 ) -> Dict[str, Any]:
     """M51: Contract V4 Narrative-Only Regeneration Canary.
 
@@ -2250,7 +2267,9 @@ def run_regeneration_v4(
         validate_management_semantic_capability_parity,
     )
 
-    company_root = Path(companies_root) / company
+    # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+    companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    company_root = companies_root / company
     candidate_dir = company_root / "company_memory" / "ask_intrinsiciq"
     manifest_path = candidate_dir / MANIFEST_FILENAME
     certified_path = company_root / "company_memory" / "ask_intrinsiciq" / "shadow_level3_hybrid_answers.json"
@@ -2437,7 +2456,7 @@ def run_regeneration_v4(
             "llm_raw": llm_raw,
             "answer": final_artifact,
         }
-        _write_json(candidate_path, candidate)
+        _write_json(candidate_path, candidate, root=companies_root)
         candidate_digest = _file_digest(candidate_path)
 
         # ── Eligibility ────────────────────────────────────────────────────────
@@ -2467,7 +2486,7 @@ def run_regeneration_v4(
             eligibility_state = "BLOCKED_MULTIPLE"
 
         candidate["eligibility_state"] = eligibility_state
-        _write_json(candidate_path, candidate)
+        _write_json(candidate_path, candidate, root=companies_root)
         candidate_digest = _file_digest(candidate_path)
 
     # ── Verify certified artifact untouched ───────────────────────────────────
@@ -2522,7 +2541,7 @@ def run_regeneration_v4(
     manifest["execution_history"].append(attempt_entry)
     manifest["last_updated"] = _utc_now()
     manifest["total_attempts"] = len(manifest["execution_history"])
-    _write_json(manifest_path, manifest)
+    _write_json(manifest_path, manifest, root=companies_root)
 
     return {
         "decision": outcome,

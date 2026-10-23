@@ -7,6 +7,9 @@ import pytest
 
 from knowledge.company_model import build_company_model, validate_company_model, write_company_model
 
+READ_ONLY_COMPANIES = next(p for p in Path(__file__).resolve().parents if (p / "core" / "context_paths.py").is_file()) / "companies"   # explicit, absolute, READ-only source of served records
+
+
 
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -25,7 +28,7 @@ def _pcim_payload(company: str, business_model: dict) -> dict:
 
 
 def test_company_model_contract_preserves_evidence_for_real_company():
-    payload = build_company_model("tanla", generated_at="2026-08-13T00:00:00Z")
+    payload = build_company_model("tanla", generated_at="2026-08-13T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
     validation = validate_company_model(payload)
 
     assert validation["status"] == "pass"
@@ -93,7 +96,7 @@ def test_missing_optional_customer_detail_can_remain_partial(tmp_path: Path):
 
 
 def test_contradictory_business_and_revenue_model_fails_validation():
-    payload = build_company_model("tanla", generated_at="2026-08-13T00:00:00Z")
+    payload = build_company_model("tanla", generated_at="2026-08-13T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
     payload["revenue_engines"] = [
         {
             "engine_id": "bad_milestone",
@@ -110,7 +113,7 @@ def test_contradictory_business_and_revenue_model_fails_validation():
 
 
 def test_generic_output_specificity_failure():
-    payload = build_company_model("tanla", generated_at="2026-08-13T00:00:00Z")
+    payload = build_company_model("tanla", generated_at="2026-08-13T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
     payload["current_business_model"].update(
         {
             "summary": "Management is focused on growth and operational efficiency.",
@@ -130,7 +133,7 @@ def test_generic_output_specificity_failure():
 
 
 def test_generic_financial_services_description_rejected():
-    payload = build_company_model("tanla", generated_at="2026-08-13T00:00:00Z")
+    payload = build_company_model("tanla", generated_at="2026-08-13T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
     payload["current_business_model"].update(
         {
             "summary": "A financial services company serving retail customers.",
@@ -151,7 +154,7 @@ def test_generic_financial_services_description_rejected():
 
 
 def test_company_name_padding_alone_is_not_specific_enough():
-    payload = build_company_model("tanla", generated_at="2026-08-13T00:00:00Z")
+    payload = build_company_model("tanla", generated_at="2026-08-13T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
     payload["current_business_model"].update(
         {
             "summary": "Tanla is a company.",
@@ -265,7 +268,7 @@ def test_heterogeneous_real_company_models_generalize_without_company_branches()
     }
 
     for company, model_type in expected.items():
-        payload = build_company_model(company, generated_at="2026-08-13T00:00:00Z")
+        payload = build_company_model(company, generated_at="2026-08-13T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
         validation = validate_company_model(payload)
         assert validation["status"] == "pass", (company, validation)
         assert payload["current_business_model"]["business_model_type"] == model_type
@@ -493,7 +496,7 @@ class TestPhase121LongitudinalCurrentState:
 
     def test_validator_rejects_events_in_longitudinal_state(self):
         """Validator gate: Company Model must not duplicate full Management Progression event list."""
-        payload = build_company_model("tanla", generated_at="2026-09-03T00:00:00Z")
+        payload = build_company_model("tanla", generated_at="2026-09-03T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
         # Inject events into a state entry
         if payload.get("longitudinal_current_state"):
             payload["longitudinal_current_state"][0]["events"] = [{"event_id": "injected"}]
@@ -507,7 +510,7 @@ class TestPhase121LongitudinalCurrentState:
 
     def test_validator_rejects_source_chunk_in_evidence(self):
         """Validator gate: source_chunk must never appear in longitudinal state evidence."""
-        payload = build_company_model("tanla", generated_at="2026-09-03T00:00:00Z")
+        payload = build_company_model("tanla", generated_at="2026-09-03T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
         payload["longitudinal_current_state"] = [
             {
                 "state_id": "lcs-leak",
@@ -522,13 +525,13 @@ class TestPhase121LongitudinalCurrentState:
 
     def test_management_progression_source_in_manifest(self):
         """Gate 15/16: management_progression must appear in Company Model source manifest when available."""
-        payload = build_company_model("tanla", generated_at="2026-09-03T00:00:00Z")
+        payload = build_company_model("tanla", generated_at="2026-09-03T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
         sources_used = payload["source_manifest"]["sources_used"]
         assert any("management_progression" in s for s in sources_used)
 
     def test_tanla_production_regression(self):
         """Gate 13: Tanla production regression — Company Model must validate and include longitudinal state."""
-        payload = build_company_model("tanla", generated_at="2026-09-03T00:00:00Z")
+        payload = build_company_model("tanla", generated_at="2026-09-03T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
         validation = validate_company_model(payload)
 
         assert validation["status"] == "pass", validation["errors"]
@@ -539,7 +542,7 @@ class TestPhase121LongitudinalCurrentState:
 
     def test_datapatterns_production_regression(self):
         """Gate 14: Data Patterns production regression — Company Model must validate and include longitudinal state."""
-        payload = build_company_model("datapatterns", generated_at="2026-09-03T00:00:00Z")
+        payload = build_company_model("datapatterns", generated_at="2026-09-03T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
         validation = validate_company_model(payload)
 
         assert validation["status"] == "pass", validation["errors"]

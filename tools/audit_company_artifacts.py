@@ -12,6 +12,8 @@ from knowledge.artifact_audit import run_company_artifact_audit  # noqa: E402
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("company")
+    parser.add_argument("--companies-root", required=True, help="absolute companies root (there is no default)")
+    parser.add_argument("--authorize-served-write", action="store_true", help="required when the root is the served companies/ tree")
     parser.add_argument(
         "--fix-safe",
         action="store_true",
@@ -22,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    outputs = run_company_artifact_audit(args.company, fix_safe=args.fix_safe)
+    outputs = run_company_artifact_audit(args.company, companies_root=args.companies_root, fix_safe=args.fix_safe, authorize_served_write=args.authorize_served_write)
     for name, path in outputs.items():
         print(f"{name}: {path}")
 

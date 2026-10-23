@@ -195,15 +195,15 @@ class TestInvestorPresentationProcessorContract:
         manifest = _make_manifest(source_type=SourceType.ANNUAL_REPORT)
         assert proc.can_process(manifest) is False
 
-    def test_review_required_cannot_execute(self):
+    def test_review_required_cannot_execute(self, tmp_path):
         """REVIEW_REQUIRED manifest raises ProcessorUnavailableError on process()."""
         proc = InvestorPresentationProcessor()
         manifest = _make_manifest(status=ClassificationStatus.REVIEW_REQUIRED)
         from pathlib import Path
         with pytest.raises(ProcessorUnavailableError, match="IDENTIFIED"):
-            proc.process(manifest, Path("dummy.pdf"))
+            proc.process(manifest, Path("dummy.pdf"), companies_root=tmp_path / "companies")
 
-    def test_wrong_source_type_raises(self):
+    def test_wrong_source_type_raises(self, tmp_path):
         """Calling process() with QUARTERLY_REPORT manifest raises ProcessorUnavailableError."""
         proc = InvestorPresentationProcessor()
         manifest = _make_manifest(
@@ -212,7 +212,7 @@ class TestInvestorPresentationProcessorContract:
         )
         from pathlib import Path
         with pytest.raises(ProcessorUnavailableError, match="INVESTOR_PRESENTATION"):
-            proc.process(manifest, Path("dummy.pdf"))
+            proc.process(manifest, Path("dummy.pdf"), companies_root=tmp_path / "companies")
 
 
 # ===========================================================================

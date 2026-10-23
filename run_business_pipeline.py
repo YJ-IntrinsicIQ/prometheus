@@ -126,13 +126,13 @@ def _resolve_raw_document_path(company: str, year: str, raw_document_path=None) 
     return PROCESSED / company / _fy / "annual_report" / f"{company}_fy{year[-2:]}.pdf"
 
 
-def run_business_pipeline(company: str, year: str, raw_document_path=None):
+def run_business_pipeline(company: str, year: str, raw_document_path=None, *, companies_root, authorize_served_write=False):
     company, year = _resolve_company_year(company, year)
     raw_path = _resolve_raw_document_path(company, year, raw_document_path)
     if not raw_path.exists():
         raise FileNotFoundError(f"Raw document not found: {raw_path}")
 
-    context = CompanyContext(company=company, year=year)
+    context = CompanyContext(company=company, year=year, companies_root=companies_root, authorize_served_write=authorize_served_write)
     context.create_directories()
     set_context(context)
 
@@ -154,7 +154,7 @@ def run_business_pipeline(company: str, year: str, raw_document_path=None):
     memory_path = context.intelligence_dir / "company_memory.json"
     blueprint_path = context.intelligence_dir / "business_blueprint.json"
     classification_path = context.intelligence_dir / "business_classification.json"
-    save_company_memory(company_memory, memory_path)
+    save_company_memory(company_memory, memory_path, output_root=context.companies_root)
     _write_json(blueprint_path, business_blueprint.to_dict())
     _write_json(classification_path, business_classification)
 
@@ -205,12 +205,14 @@ def build_parser():
     parser.add_argument("company")
     parser.add_argument("year")
     parser.add_argument("raw_document_path", nargs="?", default=None)
+    parser.add_argument("--companies-root", required=True, help="absolute company-data root (there is no default)")
+    parser.add_argument("--authorize-served-write", action="store_true")
     return parser
 
 
 def main():
     args = build_parser().parse_args()
-    run_business_pipeline(args.company, args.year, args.raw_document_path)
+    run_business_pipeline(args.company, args.year, args.raw_document_path, companies_root=args.companies_root, authorize_served_write=args.authorize_served_write)
 
 
 if __name__ == "__main__":

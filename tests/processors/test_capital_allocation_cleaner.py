@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_capital_allocation_cleaner_resolves_report_year_anchors(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="tanla", year="fy22")
+    context = CompanyContext(company="tanla", year="fy22", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -49,7 +49,7 @@ def test_capital_allocation_cleaner_resolves_report_year_anchors(tmp_path, monke
 
 def test_capital_allocation_cleaner_rejects_ambiguous_periods(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="tanla", year="fy22")
+    context = CompanyContext(company="tanla", year="fy22", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -91,7 +91,7 @@ def test_capital_allocation_cleaner_rejects_ambiguous_periods(tmp_path, monkeypa
 
 def test_capital_allocation_cleaner_splits_composite_employee_plan_bundle(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="tanla", year="fy24")
+    context = CompanyContext(company="tanla", year="fy24", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -117,7 +117,7 @@ def test_capital_allocation_cleaner_splits_composite_employee_plan_bundle(tmp_pa
 
 def test_capital_allocation_cleaner_keeps_ambiguous_multi_year_history_blocked(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="tanla", year="fy24")
+    context = CompanyContext(company="tanla", year="fy24", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 

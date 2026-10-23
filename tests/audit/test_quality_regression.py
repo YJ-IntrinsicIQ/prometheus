@@ -29,7 +29,7 @@ def _quality() -> dict:
 
 def _seed_company(tmp_path: Path, company: str, years: list[str], *, include_company_memory: bool = False) -> None:
     for year in years:
-        context = CompanyContext(company=company, year=year)
+        context = CompanyContext(company=company, year=year, companies_root=Path.cwd() / "companies")
         context.create_directories()
         (context.raw_dir / "annual_report.pdf").write_text("pdf placeholder", encoding="utf-8")
         for filename in (
@@ -185,7 +185,7 @@ def test_quality_regression_all_pass_fixture_scores_above_90(tmp_path, monkeypat
     monkeypatch.chdir(tmp_path)
     _seed_company(tmp_path, "alpha", ["fy24", "fy25"])
 
-    outputs = run_quality_regression(companies=["alpha"])
+    outputs = run_quality_regression(companies_root=Path.cwd() / "companies", companies=["alpha"])
     payload = json.loads(outputs["prometheus_quality_scorecard.json"].read_text(encoding="utf-8"))
 
     assert payload["overall_status"] == "pass"
@@ -220,7 +220,7 @@ def test_quality_regression_stale_pcim_caps_score(tmp_path, monkeypatch):
     _write_json(multi_year_dir / "company_year_index.json", {"available_years": ["fy24", "fy25"], "years_detected": ["fy24", "fy25"]})
     _write_json(multi_year_dir / "multi_year_index.json", {"years_covered": ["fy24"], "limitations": ["fy25 not yet covered"]})
 
-    outputs = run_quality_regression(companies=["beta"])
+    outputs = run_quality_regression(companies_root=Path.cwd() / "companies", companies=["beta"])
     scorecard = json.loads(outputs["prometheus_quality_scorecard.json"].read_text(encoding="utf-8"))
 
     assert scorecard["scores"][0]["status"] == "fail"
@@ -236,7 +236,7 @@ def test_quality_regression_business_identity_conflict_caps_score(tmp_path, monk
     blueprint["dnas"] = [{"name": "Enterprise Platform", "confidence": 0.9}]
     _write_json(blueprint_path, blueprint)
 
-    outputs = run_quality_regression(companies=["gamma"])
+    outputs = run_quality_regression(companies_root=Path.cwd() / "companies", companies=["gamma"])
     scorecard = json.loads(outputs["prometheus_quality_scorecard.json"].read_text(encoding="utf-8"))
 
     assert scorecard["scores"][0]["status"] == "fail"
@@ -267,7 +267,7 @@ def test_quality_regression_captures_capital_allocation_violation(tmp_path, monk
         }],
     )
 
-    outputs = run_quality_regression(companies=["delta"])
+    outputs = run_quality_regression(companies_root=Path.cwd() / "companies", companies=["delta"])
     scorecard = json.loads(outputs["prometheus_quality_scorecard.json"].read_text(encoding="utf-8"))
 
     assert scorecard["scores"][0]["dimension_scores"]["capital_allocation_taxonomy"] < 100
@@ -277,7 +277,7 @@ def test_quality_regression_missing_panel_lowers_only_panel_dimension_when_reque
     monkeypatch.chdir(tmp_path)
     _seed_company(tmp_path, "epsilon", ["fy25"])
 
-    outputs = run_quality_regression(companies=["epsilon"], include_panel=True)
+    outputs = run_quality_regression(companies_root=Path.cwd() / "companies", companies=["epsilon"], include_panel=True)
     scorecard = json.loads(outputs["prometheus_quality_scorecard.json"].read_text(encoding="utf-8"))
 
     assert scorecard["scores"][0]["status"] != "fail"
@@ -313,7 +313,7 @@ def test_quality_regression_source_chunk_leakage_fails_and_caps_score(tmp_path, 
     _write_json(multi_year_dir / "company_year_index.json", {"available_years": ["fy25"], "years_detected": ["fy25"]})
     _write_json(multi_year_dir / "multi_year_index.json", {"years_covered": ["fy25"], "limitations": []})
 
-    outputs = run_quality_regression(companies=["zeta"])
+    outputs = run_quality_regression(companies_root=Path.cwd() / "companies", companies=["zeta"])
     scorecard = json.loads(outputs["prometheus_quality_scorecard.json"].read_text(encoding="utf-8"))
 
     assert scorecard["scores"][0]["status"] == "fail"
@@ -345,7 +345,7 @@ def test_quality_regression_trend_comparison_detects_worsening(tmp_path, monkeyp
     blueprint["dnas"] = [{"name": "Enterprise Platform", "confidence": 0.9}]
     _write_json(blueprint_path, blueprint)
 
-    outputs = run_quality_regression(companies=["theta"])
+    outputs = run_quality_regression(companies_root=Path.cwd() / "companies", companies=["theta"])
     scorecard = json.loads(outputs["prometheus_quality_scorecard.json"].read_text(encoding="utf-8"))
 
     assert "theta" in scorecard["trend_comparison"]["companies_worsened"]
@@ -357,7 +357,7 @@ def test_quality_regression_works_for_arbitrary_company_names(tmp_path, monkeypa
     _seed_company(tmp_path, "orbitworks", ["fy23", "fy24"])
     _seed_company(tmp_path, "northstar_holdings", ["fy22"])
 
-    outputs = run_quality_regression(companies=parse_company_selector("all"))
+    outputs = run_quality_regression(companies_root=Path.cwd() / "companies", companies=parse_company_selector("all", companies_root=Path.cwd() / "companies"))
     scorecard = json.loads(outputs["prometheus_quality_scorecard.json"].read_text(encoding="utf-8"))
 
     assert set(scorecard["companies_evaluated"]) == {"orbitworks", "northstar_holdings"}

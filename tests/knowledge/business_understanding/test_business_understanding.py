@@ -22,7 +22,7 @@ def _write_minimal_clean_inputs(context):
 
 
 def test_run_business_understanding_persists_artifacts(tmp_path, monkeypatch):
-    context = CompanyContext(company="tips", year="fy24")
+    context = CompanyContext(company="tips", year="fy24", companies_root=tmp_path / "companies")
     monkeypatch.chdir(tmp_path)
     context.create_directories()
     monkeypatch.setenv("AI_PROVIDER", "mock")
@@ -69,7 +69,7 @@ def test_run_business_understanding_persists_artifacts(tmp_path, monkeypatch):
 
 
 def test_load_document_payload_prefers_cleaned_artifacts(tmp_path, monkeypatch):
-    context = CompanyContext(company="polymatech", year="fy25")
+    context = CompanyContext(company="polymatech", year="fy25", companies_root=tmp_path / "companies")
     monkeypatch.chdir(tmp_path)
     context.create_directories()
     set_context(context)
@@ -117,7 +117,7 @@ def test_load_document_payload_prefers_cleaned_artifacts(tmp_path, monkeypatch):
 
 
 def test_load_document_payload_falls_back_to_document_stub_when_no_cleaned_artifacts(tmp_path, monkeypatch):
-    context = CompanyContext(company="tips", year="fy24")
+    context = CompanyContext(company="tips", year="fy24", companies_root=tmp_path / "companies")
     monkeypatch.chdir(tmp_path)
     context.create_directories()
     set_context(context)
@@ -132,7 +132,7 @@ def test_load_document_payload_falls_back_to_document_stub_when_no_cleaned_artif
 
 
 def test_run_business_intelligence_stage_persists_artifacts(tmp_path, monkeypatch):
-    context = CompanyContext(company="tips", year="fy24")
+    context = CompanyContext(company="tips", year="fy24", companies_root=tmp_path / "companies")
     monkeypatch.chdir(tmp_path)
     context.create_directories()
     set_context(context)
@@ -222,7 +222,7 @@ def test_run_business_intelligence_stage_persists_artifacts(tmp_path, monkeypatc
 
 
 def test_run_business_intelligence_stage_batches_multiple_modules_into_one_llm_call(tmp_path, monkeypatch):
-    context = CompanyContext(company="tips", year="fy24")
+    context = CompanyContext(company="tips", year="fy24", companies_root=tmp_path / "companies")
     monkeypatch.chdir(tmp_path)
     context.create_directories()
     set_context(context)
@@ -306,7 +306,7 @@ def test_run_business_intelligence_stage_batches_multiple_modules_into_one_llm_c
 
 
 def test_run_business_intelligence_stage_uses_saved_classification_before_rerunning_bu(tmp_path, monkeypatch):
-    context = CompanyContext(company="tanla", year="fy25")
+    context = CompanyContext(company="tanla", year="fy25", companies_root=tmp_path / "companies")
     monkeypatch.chdir(tmp_path)
     context.create_directories()
     set_context(context)
@@ -431,7 +431,7 @@ def test_run_business_intelligence_stage_uses_saved_classification_before_rerunn
 
 
 def test_build_runtime_retriever_generates_clean_chunks_when_missing(tmp_path, monkeypatch):
-    context = CompanyContext(company="tips", year="fy24")
+    context = CompanyContext(company="tips", year="fy24", companies_root=tmp_path / "companies")
     monkeypatch.chdir(tmp_path)
     context.create_directories()
     annual_report_dir = tmp_path / "data" / "annual_reports"
@@ -488,8 +488,13 @@ def test_build_runtime_retriever_generates_clean_chunks_when_missing(tmp_path, m
     assert (context.extracted_dir / "clean_chunks.json").exists()
 
 
-def test_run_all_reuses_business_understanding_bundle_and_context(monkeypatch):
-    context = CompanyContext(company="tips", year="fy24")
+def test_run_all_reuses_business_understanding_bundle_and_context(monkeypatch, tmp_path):
+    # run_all writes run_summary / intake report under companies/: run it against a disposable COPY of the company, never the served tree
+    import shutil
+    served_tips = next(p for p in Path(__file__).resolve().parents if (p / "core" / "context_paths.py").is_file()) / "companies" / "tips"
+    shutil.copytree(served_tips, tmp_path / "companies" / "tips")
+    monkeypatch.chdir(tmp_path)
+    context = CompanyContext(company="tips", year="fy24", companies_root=tmp_path / "companies")
     calls = []
     bundle = {
         "business_blueprint": {
@@ -576,7 +581,7 @@ def test_main_passes_context_to_run_all(monkeypatch):
         def create_directories(self):
             calls.append(("create_directories", self))
 
-    monkeypatch.setattr(run_company_pipeline, "CompanyContext", lambda company, year: FakeContext())
+    monkeypatch.setattr(run_company_pipeline, "CompanyContext", lambda company, year, **kwargs: FakeContext())
     monkeypatch.setattr(run_company_pipeline, "set_context", lambda context: calls.append(("set_context", context)))
     monkeypatch.setattr(run_company_pipeline, "run_all", lambda context=None: calls.append(("run_all", context)))
     monkeypatch.setattr(run_company_pipeline.sys, "argv", ["run_company_pipeline", "tips", "fy24", "--stage", "all"])
@@ -604,7 +609,7 @@ def test_main_passes_context_to_run_business_intelligence_stage(monkeypatch):
         def create_directories(self):
             calls.append(("create_directories", self))
 
-    monkeypatch.setattr(run_company_pipeline, "CompanyContext", lambda company, year: FakeContext())
+    monkeypatch.setattr(run_company_pipeline, "CompanyContext", lambda company, year, **kwargs: FakeContext())
     monkeypatch.setattr(run_company_pipeline, "set_context", lambda context: calls.append(("set_context", context)))
     monkeypatch.setattr(
         run_company_pipeline,
@@ -700,8 +705,10 @@ def test_main_runs_multi_year_memory_without_year(monkeypatch):
     assert calls == [("run_multi_year_memory_stage", "tips", None)]
 
 
-def test_run_discovery_ensures_active_company_year_index_before_steps(monkeypatch):
-    context = CompanyContext(company="polymatech", year="fy24")
+def test_run_discovery_ensures_active_company_year_index_before_steps(monkeypatch, tmp_path):
+    context = CompanyContext(company="polymatech", year="fy24", companies_root=tmp_path / "companies")
+    context.create_directories()
+    (context.raw_dir / "project_discovery_results.json").write_text('[{"candidate": 1}]', encoding="utf-8")   # a disposable discovery result, not the served company's
     calls = []
 
     monkeypatch.setattr(run_company_pipeline, "set_context", lambda current: calls.append(("set_context", current)))

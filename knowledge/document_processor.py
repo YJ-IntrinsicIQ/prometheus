@@ -32,6 +32,7 @@ Error taxonomy (Part 15):
 """
 
 from __future__ import annotations
+from core.context_paths import guarded_write_text, logical_company_path as _logical, resolve_output_root, safe_destination
 
 import traceback
 from abc import ABC, abstractmethod
@@ -172,7 +173,7 @@ class ProcessorInterface(ABC):
         """Return True when this processor can handle *manifest*."""
 
     @abstractmethod
-    def process(self, manifest: DocumentIntakeManifest, source_path: Path) -> Any:
+    def process(self, manifest: DocumentIntakeManifest, source_path: Path, *, companies_root: Path | str, authorize_served_write: bool = False) -> Any:
         """Execute the processor and return a typed result.
 
         Raises ProcessorExecutionError on failure.
@@ -199,7 +200,10 @@ class AnnualReportProcessor(ProcessorInterface):
         return manifest.document_identity.source_type == SourceType.ANNUAL_REPORT
 
     def process(
-        self, manifest: DocumentIntakeManifest, source_path: Path
+        self, manifest: DocumentIntakeManifest, source_path: Path,
+        *,
+        companies_root: Path | str | None = None,  # adapter is read-only
+        authorize_served_write: bool = False,
     ) -> LegacyPipelineInputs:
         """Return LegacyPipelineInputs via the compatibility adapter.
 
@@ -342,7 +346,10 @@ class QuarterlyReportProcessor(ProcessorInterface):
         )
 
     def process(
-        self, manifest: DocumentIntakeManifest, source_path: Path
+        self, manifest: DocumentIntakeManifest, source_path: Path,
+        *,
+        companies_root: Path | str,
+        authorize_served_write: bool = False,
     ) -> QuarterlyProcessingResult:
         """Execute quarterly ingestion and return QuarterlyProcessingResult.
 
@@ -350,6 +357,7 @@ class QuarterlyReportProcessor(ProcessorInterface):
             ProcessorUnavailableError: if manifest is not IDENTIFIED QUARTERLY_REPORT.
             ProcessorExecutionError:   on unexpected failures.
         """
+        root = resolve_output_root(companies_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
         import json
         import time as _time
 
@@ -384,12 +392,12 @@ class QuarterlyReportProcessor(ProcessorInterface):
             )
 
         period_label = f"{quarter} {fiscal_year.upper()}"
-        storage_root = Path("companies") / company / fiscal_year / "quarters" / quarter
+        storage_root = root / company / fiscal_year / "quarters" / quarter
         warnings: List[str] = []
 
         try:
             # ── Create quarter storage directory ─────────────────────────
-            storage_root.mkdir(parents=True, exist_ok=True)
+            safe_destination(root, storage_root).mkdir(parents=True, exist_ok=True)
 
             # ── Detect basis from entity scope ────────────────────────────
             entity_scope = getattr(manifest, "entity_scope", None)
@@ -399,7 +407,7 @@ class QuarterlyReportProcessor(ProcessorInterface):
 
             # ── Step 1: Chunk the document ────────────────────────────────
             chunks_path = storage_root / "quarterly_chunks.json"
-            self._run_chunker(source_path, chunks_path, warnings)
+            self._run_chunker(source_path, chunks_path, warnings, root=root)
 
             # ── Step 2: Discover financial sections ───────────────────────
             discovery_path = storage_root / "quarterly_discovery.json"
@@ -409,6 +417,7 @@ class QuarterlyReportProcessor(ProcessorInterface):
                 chunks_path=chunks_path,
                 discovery_path=discovery_path,
                 warnings=warnings,
+                root=root,
             )
 
             # ── Step 3: Extract financial tables ──────────────────────────
@@ -421,14 +430,12 @@ class QuarterlyReportProcessor(ProcessorInterface):
                 discovery_path=discovery_path,
                 raw_tables_path=raw_tables_path,
                 warnings=warnings,
+                root=root,
             )
 
             # ── Step 4: Write manifest JSON ───────────────────────────────
             manifest_path = storage_root / "quarterly_manifest.json"
-            manifest_path.write_text(
-                json.dumps(manifest.to_dict(), indent=2, default=str),
-                encoding="utf-8",
-            )
+            guarded_write_text(root, manifest_path, json.dumps(manifest.to_dict(), indent=2, default=str))
 
             # ── Step 5: Build and write processing result ─────────────────
             result = QuarterlyProcessingResult(
@@ -437,7 +444,7 @@ class QuarterlyReportProcessor(ProcessorInterface):
                 quarter=quarter,
                 period_label=period_label,
                 source_file=str(source_path.resolve()),
-                storage_path=str(storage_root),
+                storage_path=_logical(storage_root, root),
                 status="SUCCESS",
                 document_hash=manifest.file.content_hash,
                 source_type=manifest.document_identity.source_type.value,
@@ -446,17 +453,14 @@ class QuarterlyReportProcessor(ProcessorInterface):
                 warnings=warnings,
                 extracted_fact_count=extracted_fact_count,
                 period_roles_found=sorted(set(period_roles_found)),
-                chunks_path=str(chunks_path),
-                manifest_path=str(manifest_path),
-                raw_tables_path=str(raw_tables_path),
-                result_path=str(storage_root / "quarterly_processing_result.json"),
+                chunks_path=_logical(chunks_path, root),
+                manifest_path=_logical(manifest_path, root),
+                raw_tables_path=_logical(raw_tables_path, root),
+                result_path=_logical(storage_root / "quarterly_processing_result.json", root),
             )
             result_path = storage_root / "quarterly_processing_result.json"
-            result.result_path = str(result_path)
-            result_path.write_text(
-                json.dumps(result.to_dict(), indent=2, default=str),
-                encoding="utf-8",
-            )
+            result.result_path = _logical(result_path, root)
+            guarded_write_text(root, result_path, json.dumps(result.to_dict(), indent=2, default=str))
             return result
 
         except (ProcessorUnavailableError, ProcessorExecutionError):
@@ -469,7 +473,8 @@ class QuarterlyReportProcessor(ProcessorInterface):
     # ── Internal helpers ─────────────────────────────────────────────────────
 
     def _run_chunker(
-        self, source_path: Path, chunks_path: Path, warnings: List[str]
+        self, source_path: Path, chunks_path: Path, warnings: List[str],
+        root: Path | str,
     ) -> None:
         """Run smart_chunker on the source PDF and write chunks JSON."""
         try:
@@ -488,16 +493,10 @@ class QuarterlyReportProcessor(ProcessorInterface):
             warnings.append(
                 f"smart_chunker/pdf_reader not available ({exc}); chunks written as empty."
             )
-            chunks_path.write_text(
-                '{"company":"","year":"","document_type":"quarterly_report","chunk_count":0,"chunks":[]}',
-                encoding="utf-8",
-            )
+            guarded_write_text(root, chunks_path, '{"company":"","year":"","document_type":"quarterly_report","chunk_count":0,"chunks":[]}')
         except Exception as exc:
             warnings.append(f"Chunking failed ({exc}); chunks written as empty.")
-            chunks_path.write_text(
-                '{"company":"","year":"","document_type":"quarterly_report","chunk_count":0,"chunks":[]}',
-                encoding="utf-8",
-            )
+            guarded_write_text(root, chunks_path, '{"company":"","year":"","document_type":"quarterly_report","chunk_count":0,"chunks":[]}')
 
     def _run_discovery(
         self,
@@ -507,6 +506,7 @@ class QuarterlyReportProcessor(ProcessorInterface):
         chunks_path: Path,
         discovery_path: Path,
         warnings: List[str],
+        root: Path | str,
     ) -> None:
         """Run financial discovery and write discovery JSON."""
         import json
@@ -517,17 +517,11 @@ class QuarterlyReportProcessor(ProcessorInterface):
                 year=fiscal_year,
                 chunk_path=chunks_path,
             )
-            discovery_path.write_text(
-                json.dumps(result.to_dict(), indent=2, default=str),
-                encoding="utf-8",
-            )
+            guarded_write_text(root, discovery_path, json.dumps(result.to_dict(), indent=2, default=str))
         except Exception as exc:
             warnings.append(f"Financial discovery failed ({exc}); wrote empty discovery.")
             # Write minimal valid discovery so extraction can detect missing sections.
-            discovery_path.write_text(
-                '{"sections": {}, "source_documents": [], "generated_at": ""}',
-                encoding="utf-8",
-            )
+            guarded_write_text(root, discovery_path, '{"sections": {}, "source_documents": [], "generated_at": ""}')
 
     def _run_extraction_and_annotate(
         self,
@@ -539,6 +533,7 @@ class QuarterlyReportProcessor(ProcessorInterface):
         discovery_path: Path,
         raw_tables_path: Path,
         warnings: List[str],
+        root: Path | str,
     ) -> tuple[int, List[str]]:
         """Run financial extraction + period role annotation; write raw_tables JSON.
 
@@ -582,24 +577,15 @@ class QuarterlyReportProcessor(ProcessorInterface):
                     period_roles_found.append(v.period_role)
 
             # Write raw tables with period roles.
-            raw_tables_path.write_text(
-                json.dumps(extraction.to_dict(), indent=2, default=str),
-                encoding="utf-8",
-            )
+            guarded_write_text(root, raw_tables_path, json.dumps(extraction.to_dict(), indent=2, default=str))
 
         except RuntimeError as exc:
             # extraction raises RuntimeError for empty chunks or invalid discovery.
             warnings.append(f"Financial extraction skipped: {exc}")
-            raw_tables_path.write_text(
-                '{"tables": {}, "rejections": [], "source_documents": []}',
-                encoding="utf-8",
-            )
+            guarded_write_text(root, raw_tables_path, '{"tables": {}, "rejections": [], "source_documents": []}')
         except Exception as exc:
             warnings.append(f"Financial extraction failed ({exc}); raw tables empty.")
-            raw_tables_path.write_text(
-                '{"tables": {}, "rejections": [], "source_documents": []}',
-                encoding="utf-8",
-            )
+            guarded_write_text(root, raw_tables_path, '{"tables": {}, "rejections": [], "source_documents": []}')
 
         return extracted_fact_count, period_roles_found
 
@@ -728,6 +714,9 @@ class InvestorPresentationProcessor(ProcessorInterface):
         self,
         manifest: DocumentIntakeManifest,
         source_path: Path,
+        *,
+        companies_root: Path | str,
+        authorize_served_write: bool = False,
     ) -> InvestorPresentationResult:
         """Execute the investor presentation pipeline.
 
@@ -735,6 +724,7 @@ class InvestorPresentationProcessor(ProcessorInterface):
             ProcessorUnavailableError: if manifest is not IDENTIFIED INVESTOR_PRESENTATION.
             ProcessorExecutionError:   on unexpected failures.
         """
+        root = resolve_output_root(companies_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
         import json
         import time as _time
         from knowledge.document_intake import SourceType
@@ -777,7 +767,7 @@ class InvestorPresentationProcessor(ProcessorInterface):
         # Document-scoped storage path prevents collision with quarterly artifacts.
         doc_hash_short = manifest.file.content_hash.replace("sha256:", "")[:16]
         storage_root = (
-            Path("companies") / company / fiscal_year / "presentations" / doc_hash_short
+            root / company / fiscal_year / "presentations" / doc_hash_short
         )
         warnings: List[str] = []
 
@@ -786,11 +776,11 @@ class InvestorPresentationProcessor(ProcessorInterface):
 
         try:
             # ── Create storage directory ─────────────────────────────────────
-            storage_root.mkdir(parents=True, exist_ok=True)
+            safe_destination(root, storage_root).mkdir(parents=True, exist_ok=True)
 
             # ── Step 1: Chunk the document ────────────────────────────────────
             chunks_path = storage_root / "presentation_chunks.json"
-            self._run_chunker(source_path, chunks_path, warnings)
+            self._run_chunker(source_path, chunks_path, warnings, root=root)
 
             # ── Step 2: Discover financial sections ───────────────────────────
             discovery_path = storage_root / "presentation_discovery.json"
@@ -800,6 +790,7 @@ class InvestorPresentationProcessor(ProcessorInterface):
                 chunks_path=chunks_path,
                 discovery_path=discovery_path,
                 warnings=warnings,
+                root=root,
             )
 
             # ── Step 3: Extract financial tables + annotate period roles ──────
@@ -814,14 +805,12 @@ class InvestorPresentationProcessor(ProcessorInterface):
                 discovery_path=discovery_path,
                 raw_tables_path=raw_tables_path,
                 warnings=warnings,
+                root=root,
             )
 
             # ── Step 4: Write manifest JSON ───────────────────────────────────
             manifest_path = storage_root / "presentation_manifest.json"
-            manifest_path.write_text(
-                json.dumps(manifest.to_dict(), indent=2, default=str),
-                encoding="utf-8",
-            )
+            guarded_write_text(root, manifest_path, json.dumps(manifest.to_dict(), indent=2, default=str))
 
             # ── Step 5: Determine status ──────────────────────────────────────
             status = "SUCCESS"
@@ -842,7 +831,7 @@ class InvestorPresentationProcessor(ProcessorInterface):
                 period_label=period_label,
                 context_quarter=context_quarter,
                 source_file=str(source_path.resolve()),
-                storage_path=str(storage_root),
+                storage_path=_logical(storage_root, root),
                 status=status,
                 document_hash=manifest.file.content_hash,
                 source_type=manifest.document_identity.source_type.value,
@@ -851,16 +840,13 @@ class InvestorPresentationProcessor(ProcessorInterface):
                 extracted_fact_count=extracted_fact_count,
                 period_roles_found=sorted(set(period_roles_found)),
                 slide_count=slide_count,
-                chunks_path=str(chunks_path),
-                manifest_path=str(manifest_path),
-                raw_tables_path=str(raw_tables_path),
+                chunks_path=_logical(chunks_path, root),
+                manifest_path=_logical(manifest_path, root),
+                raw_tables_path=_logical(raw_tables_path, root),
             )
             result_path = storage_root / "presentation_result.json"
-            result.result_path = str(result_path)
-            result_path.write_text(
-                json.dumps(result.to_dict(), indent=2, default=str),
-                encoding="utf-8",
-            )
+            result.result_path = _logical(result_path, root)
+            guarded_write_text(root, result_path, json.dumps(result.to_dict(), indent=2, default=str))
             return result
 
         except (ProcessorUnavailableError, ProcessorExecutionError):
@@ -888,7 +874,8 @@ class InvestorPresentationProcessor(ProcessorInterface):
                 return 0
 
     def _run_chunker(
-        self, source_path: Path, chunks_path: Path, warnings: List[str]
+        self, source_path: Path, chunks_path: Path, warnings: List[str],
+        root: Path | str,
     ) -> None:
         try:
             from scripts.pdf_reader import extract_pages
@@ -906,16 +893,10 @@ class InvestorPresentationProcessor(ProcessorInterface):
             warnings.append(
                 f"smart_chunker/pdf_reader not available ({exc}); chunks written as empty."
             )
-            chunks_path.write_text(
-                '{"company":"","year":"","document_type":"investor_presentation","chunk_count":0,"chunks":[]}',
-                encoding="utf-8",
-            )
+            guarded_write_text(root, chunks_path, '{"company":"","year":"","document_type":"investor_presentation","chunk_count":0,"chunks":[]}')
         except Exception as exc:
             warnings.append(f"Chunking failed ({exc}); chunks written as empty.")
-            chunks_path.write_text(
-                '{"company":"","year":"","document_type":"investor_presentation","chunk_count":0,"chunks":[]}',
-                encoding="utf-8",
-            )
+            guarded_write_text(root, chunks_path, '{"company":"","year":"","document_type":"investor_presentation","chunk_count":0,"chunks":[]}')
 
     def _run_discovery(
         self,
@@ -925,6 +906,7 @@ class InvestorPresentationProcessor(ProcessorInterface):
         chunks_path: Path,
         discovery_path: Path,
         warnings: List[str],
+        root: Path | str,
     ) -> None:
         import json
         try:
@@ -934,16 +916,10 @@ class InvestorPresentationProcessor(ProcessorInterface):
                 year=fiscal_year,
                 chunk_path=chunks_path,
             )
-            discovery_path.write_text(
-                json.dumps(result.to_dict(), indent=2, default=str),
-                encoding="utf-8",
-            )
+            guarded_write_text(root, discovery_path, json.dumps(result.to_dict(), indent=2, default=str))
         except Exception as exc:
             warnings.append(f"Financial discovery failed ({exc}); wrote empty discovery.")
-            discovery_path.write_text(
-                '{"sections": {}, "source_documents": [], "generated_at": ""}',
-                encoding="utf-8",
-            )
+            guarded_write_text(root, discovery_path, '{"sections": {}, "source_documents": [], "generated_at": ""}')
 
     def _run_extraction_and_annotate(
         self,
@@ -956,6 +932,7 @@ class InvestorPresentationProcessor(ProcessorInterface):
         discovery_path: Path,
         raw_tables_path: Path,
         warnings: List[str],
+        root: Path | str,
     ) -> tuple[int, List[str]]:
         import json
 
@@ -989,23 +966,14 @@ class InvestorPresentationProcessor(ProcessorInterface):
                 if v.period_role:
                     period_roles_found.append(v.period_role)
 
-            raw_tables_path.write_text(
-                json.dumps(extraction.to_dict(), indent=2, default=str),
-                encoding="utf-8",
-            )
+            guarded_write_text(root, raw_tables_path, json.dumps(extraction.to_dict(), indent=2, default=str))
 
         except RuntimeError as exc:
             warnings.append(f"Financial extraction skipped: {exc}")
-            raw_tables_path.write_text(
-                '{"tables": {}, "rejections": [], "source_documents": []}',
-                encoding="utf-8",
-            )
+            guarded_write_text(root, raw_tables_path, '{"tables": {}, "rejections": [], "source_documents": []}')
         except Exception as exc:
             warnings.append(f"Financial extraction failed ({exc}); raw tables empty.")
-            raw_tables_path.write_text(
-                '{"tables": {}, "rejections": [], "source_documents": []}',
-                encoding="utf-8",
-            )
+            guarded_write_text(root, raw_tables_path, '{"tables": {}, "rejections": [], "source_documents": []}')
 
         return extracted_fact_count, period_roles_found
 
@@ -1633,7 +1601,11 @@ class EarningsReleaseProcessor(ProcessorInterface):
         self,
         manifest: DocumentIntakeManifest,
         source_path: Path,
+        *,
+        companies_root: Path | str,
+        authorize_served_write: bool = False,
     ) -> EarningsReleaseResult:
+        root = resolve_output_root(companies_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
         import json
 
         if manifest.classification.status != ClassificationStatus.IDENTIFIED:
@@ -1662,12 +1634,12 @@ class EarningsReleaseProcessor(ProcessorInterface):
         source_period = f"{fiscal_quarter.value} {fiscal_year.upper()}"
         doc_hash_short = manifest.file.content_hash.replace("sha256:", "")[:16]
         storage_root = (
-            Path("companies") / company / fiscal_year / "earnings_releases" / doc_hash_short
+            root / company / fiscal_year / "earnings_releases" / doc_hash_short
         )
         warnings: List[str] = []
 
         try:
-            storage_root.mkdir(parents=True, exist_ok=True)
+            safe_destination(root, storage_root).mkdir(parents=True, exist_ok=True)
             full_text, page_ranges = EarningsCallTranscriptProcessor._extract_full_text_with_pages(
                 source_path, warnings
             )
@@ -1707,50 +1679,32 @@ class EarningsReleaseProcessor(ProcessorInterface):
             )
 
             chunks_path = storage_root / "release_chunks.json"
-            chunks_path.write_text(
-                json.dumps(
+            guarded_write_text(root, chunks_path, json.dumps(
                     {"chunks": [{"page": page, "text": text} for page, text in page_texts]},
                     indent=2,
                     default=str,
-                ),
-                encoding="utf-8",
-            )
+                ))
 
             financial_facts_path = storage_root / "reported_financial_facts.json"
-            financial_facts_path.write_text(
-                json.dumps({"source_period": source_period, "facts": financial_facts}, indent=2, default=str),
-                encoding="utf-8",
-            )
+            guarded_write_text(root, financial_facts_path, json.dumps({"source_period": source_period, "facts": financial_facts}, indent=2, default=str))
             management_claims_path = storage_root / "management_claims.json"
-            management_claims_path.write_text(
-                json.dumps({"source_period": source_period, "claims": management_claims}, indent=2, default=str),
-                encoding="utf-8",
-            )
+            guarded_write_text(root, management_claims_path, json.dumps({"source_period": source_period, "claims": management_claims}, indent=2, default=str))
             operational_evidence_path = storage_root / "operational_evidence.json"
-            operational_evidence_path.write_text(
-                json.dumps({"source_period": source_period, "items": operational_evidence}, indent=2, default=str),
-                encoding="utf-8",
-            )
+            guarded_write_text(root, operational_evidence_path, json.dumps({"source_period": source_period, "items": operational_evidence}, indent=2, default=str))
             common_evidence_path = storage_root / "common_evidence.json"
-            common_evidence_path.write_text(
-                json.dumps(common_evidence, indent=2, default=str),
-                encoding="utf-8",
-            )
+            guarded_write_text(root, common_evidence_path, json.dumps(common_evidence, indent=2, default=str))
 
             manifest_path = storage_root / "release_manifest.json"
-            manifest_path.write_text(
-                json.dumps(
+            guarded_write_text(root, manifest_path, json.dumps(
                     {
                         "manifest": manifest.to_dict(),
                         "source_period": source_period,
                         "release_date": release_date,
-                        "storage_root": str(storage_root),
+                        "storage_root": _logical(storage_root, root),
                     },
                     indent=2,
                     default=str,
-                ),
-                encoding="utf-8",
-            )
+                ))
 
             result = EarningsReleaseResult(
                 company=company,
@@ -1758,7 +1712,7 @@ class EarningsReleaseProcessor(ProcessorInterface):
                 context_quarter=context_quarter,
                 release_date=release_date,
                 source_file=str(source_path.resolve()),
-                storage_path=str(storage_root),
+                storage_path=_logical(storage_root, root),
                 document_hash=manifest.file.content_hash,
                 source_type=manifest.document_identity.source_type.value,
                 source_channel=manifest.document_identity.source_channel.value,
@@ -1767,19 +1721,16 @@ class EarningsReleaseProcessor(ProcessorInterface):
                 management_claim_count=len(management_claims),
                 operational_evidence_count=len(operational_evidence),
                 common_evidence_count=len(common_evidence["records"]),
-                chunks_path=str(chunks_path),
-                manifest_path=str(manifest_path),
-                financial_facts_path=str(financial_facts_path),
-                management_claims_path=str(management_claims_path),
-                operational_evidence_path=str(operational_evidence_path),
-                common_evidence_path=str(common_evidence_path),
+                chunks_path=_logical(chunks_path, root),
+                manifest_path=_logical(manifest_path, root),
+                financial_facts_path=_logical(financial_facts_path, root),
+                management_claims_path=_logical(management_claims_path, root),
+                operational_evidence_path=_logical(operational_evidence_path, root),
+                common_evidence_path=_logical(common_evidence_path, root),
             )
             result_path = storage_root / "release_processing_result.json"
-            result.result_path = str(result_path)
-            result_path.write_text(
-                json.dumps(result.to_dict(), indent=2, default=str),
-                encoding="utf-8",
-            )
+            result.result_path = _logical(result_path, root)
+            guarded_write_text(root, result_path, json.dumps(result.to_dict(), indent=2, default=str))
             return result
 
         except (ProcessorUnavailableError, ProcessorExecutionError):
@@ -2088,6 +2039,9 @@ class EarningsCallTranscriptProcessor(ProcessorInterface):
         self,
         manifest: DocumentIntakeManifest,
         source_path: Path,
+        *,
+        companies_root: Path | str,
+        authorize_served_write: bool = False,
     ) -> EarningsCallTranscriptResult:
         """Execute the transcript processing pipeline.
 
@@ -2095,6 +2049,7 @@ class EarningsCallTranscriptProcessor(ProcessorInterface):
             ProcessorUnavailableError: if manifest is not IDENTIFIED EARNINGS_CALL_TRANSCRIPT.
             ProcessorExecutionError:   on unexpected failures.
         """
+        root = resolve_output_root(companies_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
         import json
         import time as _time
         from knowledge.document_intake import SourceType
@@ -2135,12 +2090,12 @@ class EarningsCallTranscriptProcessor(ProcessorInterface):
         # Document-scoped storage — multiple calls per quarter coexist safely.
         doc_hash_short = manifest.file.content_hash.replace("sha256:", "")[:16]
         storage_root = (
-            Path("companies") / company / fiscal_year / "earnings_calls" / doc_hash_short
+            root / company / fiscal_year / "earnings_calls" / doc_hash_short
         )
         warnings: List[str] = []
 
         try:
-            storage_root.mkdir(parents=True, exist_ok=True)
+            safe_destination(root, storage_root).mkdir(parents=True, exist_ok=True)
 
             # ── Step 1: Extract full text ──────────────────────────────────────
             full_text, page_ranges = self._extract_full_text_with_pages(source_path, warnings)
@@ -2168,16 +2123,13 @@ class EarningsCallTranscriptProcessor(ProcessorInterface):
 
             # ── Step 7: Write document-scoped artifacts ────────────────────────
             chunks_path = storage_root / "transcript_chunks.json"
-            self._write_chunks(source_path, chunks_path, warnings)
+            self._write_chunks(source_path, chunks_path, warnings, root=root)
 
             turns_path = storage_root / "transcript_turns.json"
-            turns_path.write_text(
-                json.dumps(
+            guarded_write_text(root, turns_path, json.dumps(
                     {"source_period": source_period, "turns": turns},
                     indent=2, default=str,
-                ),
-                encoding="utf-8",
-            )
+                ))
 
             common_evidence_path = storage_root / "common_evidence.json"
             common_evidence = self._build_common_evidence(
@@ -2189,8 +2141,7 @@ class EarningsCallTranscriptProcessor(ProcessorInterface):
             )
 
             claims_path = storage_root / "management_claims.json"
-            claims_path.write_text(
-                json.dumps(
+            guarded_write_text(root, claims_path, json.dumps(
                     {
                         "source_period": source_period,
                         "company": company,
@@ -2199,14 +2150,9 @@ class EarningsCallTranscriptProcessor(ProcessorInterface):
                         "claims": claims,
                     },
                     indent=2, default=str,
-                ),
-                encoding="utf-8",
-            )
+                ))
 
-            common_evidence_path.write_text(
-                json.dumps(common_evidence, indent=2, default=str),
-                encoding="utf-8",
-            )
+            guarded_write_text(root, common_evidence_path, json.dumps(common_evidence, indent=2, default=str))
 
             manifest_data = {
                 "company": company,
@@ -2217,7 +2163,7 @@ class EarningsCallTranscriptProcessor(ProcessorInterface):
                 "document_hash": manifest.file.content_hash,
                 "source_type": manifest.document_identity.source_type.value,
                 "source_channel": manifest.document_identity.source_channel.value,
-                "storage_root": str(storage_root),
+                "storage_root": _logical(storage_root, root),
                 "speaker_count": speaker_count,
                 "turn_count": turn_count,
                 "management_turn_count": management_turn_count,
@@ -2226,10 +2172,7 @@ class EarningsCallTranscriptProcessor(ProcessorInterface):
                 "warnings": warnings,
             }
             manifest_path = storage_root / "transcript_manifest.json"
-            manifest_path.write_text(
-                json.dumps(manifest_data, indent=2, default=str),
-                encoding="utf-8",
-            )
+            guarded_write_text(root, manifest_path, json.dumps(manifest_data, indent=2, default=str))
 
             result_obj = EarningsCallTranscriptResult(
                 company=company,
@@ -2237,7 +2180,7 @@ class EarningsCallTranscriptProcessor(ProcessorInterface):
                 context_quarter=context_quarter,
                 call_date=call_date,
                 source_file=str(source_path.resolve()),
-                storage_path=str(storage_root),
+                storage_path=_logical(storage_root, root),
                 status="SUCCESS",
                 document_hash=manifest.file.content_hash,
                 source_type=manifest.document_identity.source_type.value,
@@ -2248,18 +2191,15 @@ class EarningsCallTranscriptProcessor(ProcessorInterface):
                 management_turn_count=management_turn_count,
                 analyst_question_count=analyst_question_count,
                 evidence_count=evidence_count,
-                chunks_path=str(chunks_path),
-                manifest_path=str(manifest_path),
-                turns_path=str(turns_path),
-                claims_path=str(claims_path),
-                common_evidence_path=str(common_evidence_path),
+                chunks_path=_logical(chunks_path, root),
+                manifest_path=_logical(manifest_path, root),
+                turns_path=_logical(turns_path, root),
+                claims_path=_logical(claims_path, root),
+                common_evidence_path=_logical(common_evidence_path, root),
             )
             result_path = storage_root / "processing_result.json"
-            result_path.write_text(
-                json.dumps(result_obj.to_dict(), indent=2, default=str),
-                encoding="utf-8",
-            )
-            result_obj.result_path = str(result_path)
+            guarded_write_text(root, result_path, json.dumps(result_obj.to_dict(), indent=2, default=str))
+            result_obj.result_path = _logical(result_path, root)
             return result_obj
 
         except (ProcessorUnavailableError, ProcessorExecutionError):
@@ -2388,7 +2328,7 @@ class EarningsCallTranscriptProcessor(ProcessorInterface):
         return _re.sub(r"\s+", " ", m.group(0)).strip() if m else None
 
     @staticmethod
-    def _write_chunks(source_path: Path, chunks_path: Path, warnings: List[str]) -> None:
+    def _write_chunks(source_path: Path, chunks_path: Path, warnings: List[str], root: Path | str) -> None:
         """Write page-scoped transcript chunks to storage (best-effort)."""
         import json as _json
         try:
@@ -2400,13 +2340,10 @@ class EarningsCallTranscriptProcessor(ProcessorInterface):
                 page_text = text[start:end].strip()
                 if page_text:
                     chunks.append({"page": page, "text": page_text})
-            chunks_path.write_text(
-                _json.dumps({"chunks": chunks}, indent=2, default=str),
-                encoding="utf-8",
-            )
+            guarded_write_text(root, chunks_path, _json.dumps({"chunks": chunks}, indent=2, default=str))
         except Exception as exc:
             warnings.append(f"Chunking skipped: {exc}")
-            chunks_path.write_text('{"chunks": []}', encoding="utf-8")
+            guarded_write_text(root, chunks_path, '{"chunks": []}')
 
 
 # ---------------------------------------------------------------------------
@@ -2673,7 +2610,11 @@ class ExchangeDisclosureProcessor(ProcessorInterface):
         self,
         manifest: DocumentIntakeManifest,
         source_path: Path,
+        *,
+        companies_root: Path | str,
+        authorize_served_write: bool = False,
     ) -> ExchangeDisclosureResult:
+        root = resolve_output_root(companies_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
         import json as _json
         from knowledge.document_intake import SourceType
 
@@ -2703,10 +2644,10 @@ class ExchangeDisclosureProcessor(ProcessorInterface):
         # When fiscal_year is not known, use 'undated' as safe fallback.
         fy_segment = fiscal_year or "undated"
         storage_root = (
-            Path("companies") / company / fy_segment
+            root / company / fy_segment
             / "exchange_disclosures" / hash_short
         )
-        storage_root.mkdir(parents=True, exist_ok=True)
+        safe_destination(root, storage_root).mkdir(parents=True, exist_ok=True)
 
         # Extract full text.
         full_text = self._extract_full_text(source_path, warnings_list)
@@ -2739,8 +2680,7 @@ class ExchangeDisclosureProcessor(ProcessorInterface):
         manifest_path = storage_root / "disclosure_manifest.json"
         result_path = storage_root / "processing_result.json"
 
-        evidence_path.write_text(
-            _json.dumps({
+        guarded_write_text(root, evidence_path, _json.dumps({
                 "authority": "EXCHANGE_DISCLOSURE",
                 "company": company,
                 "fiscal_year": fiscal_year,
@@ -2750,20 +2690,14 @@ class ExchangeDisclosureProcessor(ProcessorInterface):
                 "source_file": str(source_path),
                 "document_hash": content_hash,
                 "records": event_records,
-            }, indent=2, default=str),
-            encoding="utf-8",
-        )
-        claims_path.write_text(
-            _json.dumps({
+            }, indent=2, default=str))
+        guarded_write_text(root, claims_path, _json.dumps({
                 "authority": "EXCHANGE_DISCLOSURE",
                 "company": company,
                 "source_file": str(source_path),
                 "claims": management_claims,
-            }, indent=2, default=str),
-            encoding="utf-8",
-        )
-        manifest_path.write_text(
-            _json.dumps({
+            }, indent=2, default=str))
+        guarded_write_text(root, manifest_path, _json.dumps({
                 "processor": "ExchangeDisclosureProcessor",
                 "version": "1.0",
                 "company": company,
@@ -2776,15 +2710,13 @@ class ExchangeDisclosureProcessor(ProcessorInterface):
                 "event_count": len(event_records),
                 "claim_count": len(management_claims),
                 "warnings": warnings_list,
-            }, indent=2, default=str),
-            encoding="utf-8",
-        )
+            }, indent=2, default=str))
 
         result = ExchangeDisclosureResult(
             company=company,
             fiscal_year=fiscal_year,
             source_file=str(source_path),
-            storage_path=str(storage_root) + "/",
+            storage_path=_logical(storage_root, root) + "/",
             document_hash=content_hash,
             filing_date=filing_date,
             event_count=len(event_records),
@@ -2793,13 +2725,10 @@ class ExchangeDisclosureProcessor(ProcessorInterface):
             status="SUCCESS",
             warnings=warnings_list,
             evidence_path=str(evidence_path),
-            claims_path=str(claims_path),
-            result_path=str(result_path),
+            claims_path=_logical(claims_path, root),
+            result_path=_logical(result_path, root),
         )
-        result_path.write_text(
-            _json.dumps(result.to_dict(), indent=2, default=str),
-            encoding="utf-8",
-        )
+        guarded_write_text(root, result_path, _json.dumps(result.to_dict(), indent=2, default=str))
         return result
 
     # ------------------------------------------------------------------
@@ -2965,6 +2894,8 @@ def process_document(
     path: Path | str,
     *,
     execute: bool = False,
+    companies_root: Path | str | None = None,
+    authorize_served_write: bool = False,
 ) -> DocumentProcessingResult:
     """Canonical entry point: identify → route → optionally execute.
 
@@ -3163,7 +3094,10 @@ def process_document(
         )
 
     try:
-        output = processor.process(manifest, path)
+        output = processor.process(
+            manifest, path, companies_root=companies_root,
+            authorize_served_write=authorize_served_write,
+        )
     except CompatibilityAdapterError as exc:
         return _finish(
             DocumentProcessingResult(

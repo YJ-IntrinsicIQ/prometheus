@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, planned_writes, resolve_output_root, safe_destination
 
 import json
 import re
@@ -269,6 +270,25 @@ def _heading_at_page_tail(lowered: str, hit: str) -> bool:
     return bool(re.search(r"integral part of the (?:financial )?statements|referred to in our report|of even date|even date", before)) or bool(re.match(r"\s*(?:as\s+)?referred\s+to\s+in\s+our\s+report", after))   # "This is the Statement of Profit and Loss referred to in our report"
 
 
+_BUSINESS_COMBINATION_MARKERS = ("scheme of amalgamation", "pooling of interest", "taken over in accordance", "assets and liabilities taken over", "assets and liabilities of the transferor",
+                                 "assets transferred", "vested in the", "appointed date")
+_STATEMENT_ANCHORS = ("cash flow from operating", "cash flows from operating", "cash flow from / (used in) operating", "net cash", "capital and liabilities", "equity and liabilities", "profit before tax",
+                     "total income", "balance sheet as at", "statement of cash flow", "cash flow statement")
+_STATEMENT_HEADING = re.compile(r"balance\s+sheet\s+as\s+(?:at|on)|statement\s+of\s+financial\s+position|profit\s+and\s+loss\s+account\s+for|statement\s+of\s+profit", re.I)
+
+
+def _is_business_combination_note(text: str) -> bool:
+    """A note that describes an amalgamation and lists the assets and liabilities TAKEN OVER (a transferor's balance, not the reporting entity's closing balance sheet) shares
+    row labels with a balance sheet ("Investments", "Fixed assets", "Total assets (A)"). It is a note, never a primary statement or a schedule of the reporting entity."""
+    lowered = text.lower()
+    if not any(marker in lowered for marker in _BUSINESS_COMBINATION_MARKERS):
+        return False
+    # a real statement that merely mentions the scheme (a cash-flow statement's reconciliation line, a balance sheet's heading) carries its own statement anchors
+    if _STATEMENT_HEADING.search(lowered[:300]) or any(anchor in lowered for anchor in _STATEMENT_ANCHORS):
+        return False
+    return True
+
+
 def _category_candidates(text: str) -> List[Tuple[str, List[str], int]]:
     lowered = text.lower()
     common_signals = _table_like_signals(text) + _statement_scope_signals(text)
@@ -295,6 +315,7 @@ def _category_candidates(text: str) -> List[Tuple[str, List[str], int]]:
         "assets" in lowered
         and (
             "equity and liabilities" in lowered
+            or "capital and liabilities" in lowered        # the RBI bank format's heading (Schedule 1-11 balance sheet)
             or (
                 "liabilities" in lowered
                 and "equity" in lowered
@@ -334,6 +355,14 @@ def _category_candidates(text: str) -> List[Tuple[str, List[str], int]]:
         and "period_columns" in common_signals
         and len(re.findall(r"\b\d[\d,]*(?:\.\d+)?\b", text)) >= 12
     )
+    # Banking format: the income -> expenditure -> profit structure is "Interest Earned / Other Income ... Interest Expended / Operating Expenses ... Net profit", with no
+    # corporate "total income" line. A page whose title was lost still carries that structure.
+    bank_pl_structure_present = (
+        all(token in lowered for token in ("interest earned", "other income", "interest expended", "operating expenses", "net profit"))
+        and not any(token in lowered for token in ("operating activities", "investing activities", "financing activities"))
+        and len(re.findall(r"\b\d[\d,]*(?:\.\d+)?\b", text)) >= 12
+    )
+    pl_structure_present = pl_structure_present or bank_pl_structure_present
     if pl_structure_present and not pl_heading_present:
         candidates.append(("primary_profit_and_loss_statement", ["structural:income_expenses_profit", *common_signals], 131))
     if (
@@ -382,7 +411,10 @@ def _category_candidates(text: str) -> List[Tuple[str, List[str], int]]:
         candidates.append(("irrelevant_financial_text", signals + common_signals, 10))
 
     filtered: List[Tuple[str, List[str], int]] = []
+    business_combination = _is_business_combination_note(text)
     for category, signals, score in candidates:
+        if business_combination and (category in PRIMARY_SECTION_KEYS or category.startswith("schedule_")):
+            continue
         has_primary_statement_structure = "structural:assets_equity_liabilities" in signals
         if category == "statement_of_changes_in_equity":
             if "statement of changes in equity" not in lowered and not (
@@ -924,6 +956,8 @@ def _discover_balance_sheet_schedules(
 
         # Check for schedule patterns - be restrictive to avoid false positives
         found_schedules = []
+        if _is_business_combination_note(text):
+            continue
         for sched_name, patterns in BALANCE_SHEET_SCHEDULE_PATTERNS.items():
             if any(pattern in text for pattern in patterns):
                 if _looks_like_schedule_header(text):
@@ -1249,8 +1283,10 @@ def discover_financial_sections(*, company: str, year: str, chunk_path: Path) ->
     return result
 
 
-def write_financial_discovery(*, company: str, year: str, chunk_path: Path, output_path: Path) -> FinancialDiscoveryResult:
+def write_financial_discovery(*, company: str, year: str, chunk_path: Path, output_path: Path, output_root: Path | str, authorize_served_write: bool = False, dry_run: bool = False) -> FinancialDiscoveryResult:
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
+    if dry_run:     # read-only: the exact files this call would write
+        return planned_writes(root, output_path)
     result = discover_financial_sections(company=company, year=year, chunk_path=chunk_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(result.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    guarded_write_text(root, output_path, json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
     return result

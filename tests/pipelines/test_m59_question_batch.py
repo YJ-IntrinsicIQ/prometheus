@@ -16,6 +16,11 @@ from pipelines import m59_question_batch as m  # noqa: E402
 from pipelines.answer_certification import compute_content_fingerprint, compute_full_artifact_digest  # noqa: E402
 
 REG = ROOT / "governance" / "approval_registry.json"
+SERVED = ROOT / "companies"
+
+from pipelines import answer_certification as _ac  # noqa: E402
+
+_ac.configure_companies_root(SERVED, read_only=True)   # these tests only read the served answers
 
 
 @pytest.fixture(scope="module")
@@ -130,9 +135,9 @@ def test_candidate_files_match_the_review_package(rows):
 
 def test_activation_refuses_without_owner_authorization():
     before = REG.read_bytes()
-    p = subprocess.run([sys.executable, str(ROOT / "pipelines" / "m59_activate.py"), "--families", "financials", "--apply"], capture_output=True, text=True, cwd=ROOT)
+    p = subprocess.run([sys.executable, str(ROOT / "pipelines" / "m59_activate.py"), "--families", "financials", "--apply", "--companies-root", str(SERVED), "--authorize-served-write"], capture_output=True, text=True, cwd=ROOT)
     assert p.returncode == 2 and "REFUSED" in p.stdout
-    dry = subprocess.run([sys.executable, str(ROOT / "pipelines" / "m59_activate.py"), "--families", "financials"], capture_output=True, text=True, cwd=ROOT)
+    dry = subprocess.run([sys.executable, str(ROOT / "pipelines" / "m59_activate.py"), "--families", "financials", "--companies-root", str(SERVED)], capture_output=True, text=True, cwd=ROOT)
     assert dry.returncode == 0 and "DRY RUN" in dry.stdout
     assert REG.read_bytes() == before
 
@@ -221,7 +226,7 @@ def test_final_manifest_is_exact_and_matches_the_candidate_artifacts():
 
 def test_activation_is_idempotent_after_m59_4_and_refuses_already_registered_pairs():
     before = REG.read_bytes()
-    dry = subprocess.run([sys.executable, str(ROOT / "pipelines" / "m59_activate.py"), "--families", "all"], capture_output=True, text=True, cwd=ROOT)
+    dry = subprocess.run([sys.executable, str(ROOT / "pipelines" / "m59_activate.py"), "--families", "all", "--companies-root", str(SERVED)], capture_output=True, text=True, cwd=ROOT)
     assert dry.returncode == 0 and "DRY RUN" in dry.stdout
     assert "selected 71 READY pairs; 0 eligible; 71 refused/skipped" in dry.stdout and "already registered" in dry.stdout
     assert REG.read_bytes() == before

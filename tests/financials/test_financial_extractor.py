@@ -97,6 +97,7 @@ def test_profit_and_loss_table_extraction(tmp_path):
         chunk_path=chunk_path,
         discovery_path=discovery_path,
         output_path=output_path,
+        output_root=tmp_path,
     )
 
     assert output_path.exists()
@@ -159,6 +160,7 @@ def test_profit_and_loss_continuation_extracts_owner_attributable_pat(tmp_path):
         chunk_path=chunk_path,
         discovery_path=discovery_path,
         output_path=output_path,
+        output_root=tmp_path,
     )
 
     rows = result.tables["profit_and_loss"]
@@ -228,6 +230,7 @@ def test_balance_sheet_continuation_preserves_total_assets_from_tail_titled_chun
         chunk_path=chunk_path,
         discovery_path=discovery_path,
         output_path=output_path,
+        output_root=tmp_path,
     )
 
     rows = result.tables["balance_sheet"]
@@ -322,6 +325,7 @@ def test_profit_and_loss_table_extraction_recognizes_year_ended_periods(tmp_path
         chunk_path=chunk_path,
         discovery_path=discovery_path,
         output_path=output_path,
+        output_root=tmp_path,
     )
 
     rows = result.tables["profit_and_loss"]
@@ -1340,6 +1344,7 @@ def test_rejected_rows_are_written_to_rejection_audit(tmp_path):
             chunk_path=chunk_path,
             discovery_path=discovery_path,
             output_path=output_path,
+            output_root=tmp_path,
         )
 
     rejection_payload = json.loads((tmp_path / "financial_extraction_rejections.json").read_text(encoding="utf-8"))
@@ -1388,6 +1393,7 @@ def test_wrapped_revenue_row_roman_numeral_prefix(tmp_path):
         chunk_path=chunk_path,
         discovery_path=discovery_path,
         output_path=output_path,
+        output_root=tmp_path,
     )
 
     rows = result.tables["profit_and_loss"]
@@ -1495,6 +1501,7 @@ def test_revenue_and_pat_split_across_adjacent_chunks(tmp_path):
         chunk_path=chunk_path,
         discovery_path=discovery_path,
         output_path=output_path,
+        output_root=tmp_path,
     )
 
     rows = result.tables["profit_and_loss"]

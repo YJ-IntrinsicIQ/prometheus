@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, planned_writes, resolve_output_root, safe_destination
 
 import json
 import time
@@ -129,10 +130,12 @@ def _find_fact(bundle: Dict[str, Any], *metric_ids: str) -> Optional[Dict[str, A
     for fact in candidates:
         if _usable(fact) and _fact_has_numeric_value(fact):
             return fact
+    # A fact the registry did not let be used (unreliable, invalid, partial-balance-sheet) is NOT a fallback: its number used to be returned here when no usable fact existed, which
+    # carried a bank's rejected "receivables" into the working-capital drill-down and PCIM. The metric is unavailable instead; a placeholder without a number may still be returned.
     for fact in candidates:
-        if _fact_has_numeric_value(fact):
+        if not _fact_has_numeric_value(fact):
             return fact
-    return candidates[0] if candidates else None
+    return None
 
 
 def _metric_in_truth_list(items: Sequence[Dict[str, Any]], metric_ids: Sequence[str]) -> bool:
@@ -1077,12 +1080,14 @@ def build_investor_financial_modules(*, company: str, company_root: Path) -> Dic
     }
 
 
-def write_investor_financial_modules(*, company: str, company_root: Path, output_dir: Path) -> Dict[str, Path]:
+def write_investor_financial_modules(*, company: str, company_root: Path, output_dir: Path, output_root: Path | str, authorize_served_write: bool = False, dry_run: bool = False) -> Dict[str, Path]:
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
+    if dry_run:     # read-only: the exact files this call would write
+        return planned_writes(root, output_dir)
     payloads = build_investor_financial_modules(company=company, company_root=company_root)
-    output_dir.mkdir(parents=True, exist_ok=True)
     written: Dict[str, Path] = {}
     for filename, payload in payloads.items():
         path = output_dir / filename
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        guarded_write_text(root, path, json.dumps(payload, indent=2, ensure_ascii=False))
         written[filename] = path
     return written

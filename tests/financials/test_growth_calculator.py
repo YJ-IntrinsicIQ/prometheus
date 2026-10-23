@@ -493,6 +493,7 @@ def test_write_financial_growth(tmp_path):
         reconciliation_path=current_dir / "financial_reconciliation_report.json",
         ratios_path=current_dir / "financial_ratios.json",
         output_path=output_path,
+        output_root=tmp_path,
     )
     assert output_path.exists()
     written = json.loads(output_path.read_text())

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, planned_writes, resolve_output_root, safe_destination
 
 import dataclasses
 import re
@@ -8,7 +9,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
+from .semantic_contracts import enforce_semantic_contracts
 from .fact_registry_schema import (
+    CLOSING_STOCK_METRICS,
     FinancialArtifactQuarantineReport,
     FinancialFact,
     FinancialFactRegistry,
@@ -78,6 +81,7 @@ METRIC_NAME_MAP = {
     "cfo": "Cash From Operations",
     "capex": "Capital Expenditure",
     "capex_ppe_cwip_cash_outflow": "PPE/CWIP Capex Cash Outflow",
+    "capex_ppe_and_intangible_cash_outflow": "Combined PPE/CWIP and Intangible Capex Cash Outflow (one cash-flow line, no split)",
     "capex_intangible_cash_outflow": "Intangible Capex Cash Outflow",
     "capitalized_product_development": "Capitalized Product Development",
     "gross_block_additions": "Gross Block Additions",
@@ -494,6 +498,23 @@ def _derive_cash_conversion_cycle(facts_by_metric: Dict[str, List[FinancialFact]
     )
 
 
+def _value_for_fiscal_year(values: List[Any], fiscal_year: str) -> Dict[str, Any] | None:
+    """The cell of a raw row that belongs to `fiscal_year`. A filing's first column is the target year only when the report is that year's own (a file filed under one fiscal-year folder can be the
+    following year's report, whose first column is the later year). Cells whose period names the target year win; if some cells name other years and none names the target, the row has no
+    value for it; only a row whose periods are all unresolved falls back to its first cell."""
+    cells = [v for v in values if isinstance(v, dict)]
+    match = re.fullmatch(r"fy(\d{2})", str(fiscal_year).lower())
+    if not cells or not match:
+        return cells[0] if cells else None
+    target = str(2000 + int(match.group(1)))
+    for cell in cells:
+        if target in str(cell.get("period") or ""):
+            return cell
+    if any(re.search(r"20\d\d", str(cell.get("period") or "")) for cell in cells):
+        return None
+    return cells[0]
+
+
 def _add_raw_capex_classification_facts(
     facts_by_metric: Dict[str, List[FinancialFact]],
     raw_payload: Dict[str, Any] | None,
@@ -514,7 +535,9 @@ def _add_raw_capex_classification_facts(
         values = row.get("values")
         if not isinstance(values, list) or not values:
             continue
-        first = values[0] if isinstance(values[0], dict) else {}
+        first = _value_for_fiscal_year(values, fiscal_year)
+        if first is None:
+            continue
         value = first.get("value_crore")
         if not isinstance(value, (int, float)):
             continue
@@ -559,11 +582,19 @@ def _add_raw_capex_classification_facts(
             and bool(re.search(r"\b(?:purchase|purchases|payment|payments|acquisition|acquisitions|additions?|expenditure)\b", normalized))
             and not re.search(r"\b(?:disposal|sale|sold|proceeds|gain|loss|depreciation|amorti[sz]ation|written|impairment)\b", normalized)
         )
-        if is_cash_flow_row and _contains_pattern(normalized, CAPEX_INTANGIBLE_PATTERNS):
+        # ONE cash-flow line that covers PPE/CWIP and intangibles together ("Payments for purchase of property, plant and equipment (including capital work-in-progress, other
+        # intangible assets ...)") is the combined outflow. It is recorded as that and never as two component amounts: the filing gives no split, and the same figure under both
+        # component names invented one.
+        if is_cash_flow_row and _contains_pattern(normalized, CAPEX_INTANGIBLE_PATTERNS) and _contains_pattern(normalized, CAPEX_PPE_PATTERNS):
+            facts_by_metric.setdefault("capex_ppe_and_intangible_cash_outflow", []).append(
+                FinancialFact(metric_id="capex_ppe_and_intangible_cash_outflow", metric_name=_canonical_metric_name("capex_ppe_and_intangible_cash_outflow"), value=float(value), unit="INR crore",
+                              **{**base_kwargs, "notes": ["one cash-flow line covers PPE/CWIP and intangibles; the filing gives no split"]})
+            )
+        elif is_cash_flow_row and _contains_pattern(normalized, CAPEX_INTANGIBLE_PATTERNS):
             facts_by_metric.setdefault("capex_intangible_cash_outflow", []).append(
                 FinancialFact(metric_id="capex_intangible_cash_outflow", metric_name=_canonical_metric_name("capex_intangible_cash_outflow"), value=float(value), unit="INR crore", **base_kwargs)
             )
-        if is_cash_flow_row and _contains_pattern(normalized, CAPEX_PPE_PATTERNS):
+        if is_cash_flow_row and _contains_pattern(normalized, CAPEX_PPE_PATTERNS) and not _contains_pattern(normalized, CAPEX_INTANGIBLE_PATTERNS):
             facts_by_metric.setdefault("capex_ppe_cwip_cash_outflow", []).append(
                 FinancialFact(metric_id="capex_ppe_cwip_cash_outflow", metric_name=_canonical_metric_name("capex_ppe_cwip_cash_outflow"), value=float(value), unit="INR crore", **base_kwargs)
             )
@@ -736,9 +767,12 @@ def _repair_capex_for_separate_intangibles(facts_by_metric: Dict[str, List[Finan
     if not (capex_items and ppe_items and intangible_items):
         return
     capex, ppe, intangible = _pick_best_fact(capex_items), _pick_best_fact(ppe_items), _pick_best_fact(intangible_items)
-    if None in (capex.value, ppe.value, intangible.value) or abs(capex.value - ppe.value) > 1e-6 or abs(intangible.value) < 1e-6 or ppe.basis != intangible.basis or ppe.source_line_item == intangible.source_line_item:   # one combined line ('PPE and intangibles') matches both component patterns
+    if None in (capex.value, ppe.value, intangible.value) or abs(intangible.value) < 1e-6 or abs(ppe.value) < 1e-6 or ppe.basis != intangible.basis or ppe.source_line_item == intangible.source_line_item:   # one combined line ('PPE and intangibles') matches both component patterns
         return
-    total = capex.value + intangible.value
+    # capex is ONE component alone (the PPE line, or - when the intangible line outranked a long wrapped PPE caption - the intangible line): the total is both lines
+    if abs(capex.value - ppe.value) > 1e-6 and abs(capex.value - intangible.value) > 1e-6:
+        return
+    total = ppe.value + intangible.value
     repaired = dataclasses.replace(
         capex, value=total, availability_status="present_derived", derived=True, source_line_item=f"derived: {capex.source_line_item[:60]} + {intangible.source_line_item[:60]}",
         formula="capex = PPE/CWIP purchases + intangible purchases (separate cash-flow lines)", inputs_used=["capex_ppe_cwip_cash_outflow", "capex_intangible_cash_outflow"],
@@ -775,7 +809,8 @@ def _derive_total_capex_for_fcf(facts_by_metric: Dict[str, List[FinancialFact]],
     ppe_items, intangible_items = facts_by_metric.get("capex_ppe_cwip_cash_outflow", []), facts_by_metric.get("capex_intangible_cash_outflow", [])
     if preferred and ppe_items and intangible_items:
         capex_best, ppe_best, intangible_best = _pick_best_fact(preferred), _pick_best_fact(ppe_items), _pick_best_fact(intangible_items)
-        if None not in (capex_best.value, ppe_best.value, intangible_best.value) and abs(capex_best.value - ppe_best.value) < 1e-6 and abs(intangible_best.value) > 1e-6 and ppe_best.source_line_item != intangible_best.source_line_item:
+        if None not in (capex_best.value, ppe_best.value, intangible_best.value) and (abs(capex_best.value - ppe_best.value) < 1e-6 or abs(capex_best.value - intangible_best.value) < 1e-6) \
+                and abs(intangible_best.value) > 1e-6 and abs(ppe_best.value) > 1e-6 and ppe_best.source_line_item != intangible_best.source_line_item:
             preferred = []
     if preferred:
         best = _pick_best_fact(preferred)
@@ -950,13 +985,24 @@ def _parse_normalized_facts(
     reconciliation_checks: Dict[str, Dict[str, Any]],
 ) -> Dict[str, List[FinancialFact]]:
     facts: Dict[str, List[FinancialFact]] = {}
+    excluded = payload.get("registry_exclusions") if isinstance(payload.get("registry_exclusions"), dict) else {}
+    for metric_id, record in excluded.items():
+        # A value the registry already rejected (see registry_authority): it stays a quarantined fact with its reason, and nothing else is built for the metric.
+        entry = dict(record.get("entry") or {})
+        fact = _build_fact_from_normalized(metric_id=metric_id, fiscal_year=year, section_name=str(record.get("section") or ""), entry=entry, reconciliation=reconciliation_checks.get(metric_id))
+        fact.availability_status = str(record.get("status") or "invalid")
+        fact.confidence = fact.availability_status
+        fact.usable_downstream = False
+        fact.reconciliation_status = "fail"
+        fact.warnings = list(fact.warnings) + [str(reason) for reason in record.get("reasons") or []]
+        facts.setdefault(metric_id, []).append(fact)
     for section_name, section_payload in payload.items():
-        if not isinstance(section_payload, dict):
+        if not isinstance(section_payload, dict) or section_name in {"registry_exclusions", "registry_context"}:
             continue
         for metric_id, entry in section_payload.items():
             if not isinstance(entry, dict):
                 continue
-            if metric_id in {"warnings", "limitations", "basis_manifest"}:
+            if metric_id in excluded or metric_id in {"warnings", "limitations", "basis_manifest"}:
                 continue
             if not any(
                 key in entry
@@ -977,6 +1023,7 @@ def _parse_normalized_facts(
                 entry=entry,
                 reconciliation=reconciliation_checks.get(metric_id),
             )
+            _enforce_unit_plausibility(fact, entry)
             facts.setdefault(metric_id, []).append(fact)
             if metric_id == "shares_outstanding":
                 clone = FinancialFact(**{**fact.__dict__, "metric_id": "closing_shares", "metric_name": _canonical_metric_name("closing_shares")})
@@ -1550,17 +1597,154 @@ def _fact_from_precise_missing(metric_id: str, year: str, note: str) -> Financia
     return fact
 
 
+def _enforce_period_role(fact: FinancialFact) -> None:
+    """SSOT contract: a closing-balance metric whose value came from an opening-balance row is not a fact. It is made invalid (never usable downstream), not silently kept."""
+    if fact.period_role == "opening_balance" and fact.metric_id in CLOSING_STOCK_METRICS and fact.availability_status in {"present_direct", "present_derived", "partial"}:
+        fact.availability_status = "invalid"
+        fact.confidence = "invalid"
+        fact.usable_downstream = False
+        fact.reconciliation_status = "fail"
+        fact.warnings = list(fact.warnings) + [f"{fact.metric_id}: source row states an opening balance ({fact.source_line_item!r}); a closing balance is required"]
+
+
+PROFIT_AND_LOSS_FLOW_METRICS = {"revenue", "pat", "pbt", "tax"}
+
+
+# A metric's source line must not contradict what the metric IS. These fragments (matched on the normalised source line) mark lines that share words with a metric but are a
+# different thing: share-issue proceeds are not a buyback, other COMPREHENSIVE income is not other income, a purchase of fixed assets is not the fixed-asset balance, a
+# movement ("increase/(decrease) in investments (net)") is not the investments balance. Such a fact is invalid and unusable downstream, with the reason recorded.
+LABEL_CONTRADICTIONS = {
+    "buyback_paid": ("proceeds from", "issue of", "issuance", "escrow", "transfer to"),
+    "other_income": ("comprehensive",),
+    "fixed_assets": ("purchase of", "payment", "reclassified", "additions", "proceeds"),
+    "investments": ("increase", "decrease", "(net)", "investment property", "gross value", "fixed deposit", "htm", "purchase of", "sale of", "proceeds", "loss on", "gain on"),
+    "equity_share_capital": ("to be issued", "fresh equity"),
+    "tax": ("adjustment",),
+    "tax_paid": ("dividend",),
+    "employee_cost": ("director",),
+    "other_bank_balances": ("reserve bank",),
+    "finance_cost": ("lease", "income", "received", "earned"),
+}
+
+
+def _enforce_unit_plausibility(fact: FinancialFact, entry: Dict[str, Any]) -> None:
+    """A monetary amount printed as thousands of units but read as plain rupees ("13,789.6" -> 0.0014 crore) is a unit that was not resolved, not a tiny amount: invalid
+    rather than a figure that is wrong by orders of magnitude."""
+    raw = str(entry.get("value_original") or "").replace(",", "")
+    try:
+        printed = abs(float(raw))
+    except ValueError:
+        return
+    if str(entry.get("unit_original") or "").lower() == "rupees" and printed >= 1000 and isinstance(fact.value, (int, float)) and abs(fact.value) < 0.01 and fact.unit == "INR crore":
+        fact.availability_status = "invalid"
+        fact.confidence = "invalid"
+        fact.usable_downstream = False
+        fact.reconciliation_status = "fail"
+        fact.warnings = list(fact.warnings) + [f"{fact.metric_id}: printed {entry.get('value_original')} was read as rupees ({fact.value} crore); the statement's unit was not resolved"]
+
+
+def _enforce_label_contract(fact: FinancialFact) -> None:
+    if fact.availability_status not in {"present_direct", "present_derived", "partial"} or fact.derived:
+        return
+    label = " ".join(re.findall(r"[a-z()]+", str(fact.source_line_item or "").lower()))
+    hit = next((fragment for fragment in LABEL_CONTRADICTIONS.get(fact.metric_id, ()) if fragment in label), None)
+    if hit:
+        fact.availability_status = "invalid"
+        fact.confidence = "invalid"
+        fact.usable_downstream = False
+        fact.reconciliation_status = "fail"
+        fact.warnings = list(fact.warnings) + [f"{fact.metric_id}: the source line {fact.source_line_item!r} contradicts the metric (contains {hit!r}); it is a different quantity"]
+
+
+BANK_UNRELIABLE_TOTALS = {"total_assets", "total_liabilities", "net_worth"}
+
+
+BALANCE_SHEET_STOCK_METRICS = {"total_debt", "short_term_debt", "long_term_debt", "payables", "receivables", "inventory", "cash_and_equivalents", "total_assets", "total_liabilities", "net_worth",
+                               "reserves", "equity_share_capital", "fixed_assets", "cwip", "investments", "other_bank_balances"}
+
+
+def _enforce_stock_source(fact: FinancialFact) -> None:
+    """SSOT contract: a balance-sheet figure that is not derived comes from the balance sheet (cash may also come from the cash-flow statement's closing line). A 'borrowings'
+    table is a note: its first maturity bucket (13,766.3 million in a liquidity table) was taken as the company's total debt, where the statement's own components sum to 33,430.3."""
+    if fact.metric_id not in BALANCE_SHEET_STOCK_METRICS or fact.derived or fact.availability_status not in {"present_direct", "partial"}:
+        return
+    allowed = {"balance_sheet"} | ({"cash_flow"} if fact.metric_id == "cash_and_equivalents" else set())
+    if fact.source_statement and fact.source_statement not in allowed and not str(fact.source_statement).startswith(("derived", "financial_")):
+        fact.availability_status = "invalid"
+        fact.confidence = "invalid"
+        fact.usable_downstream = False
+        fact.reconciliation_status = "fail"
+        fact.warnings = list(fact.warnings) + [f"{fact.metric_id}: read from a {fact.source_statement!r} note table, not from the balance sheet"]
+
+
+def _enforce_bank_employee_cost(fact: FinancialFact, *, bank_format: bool) -> None:
+    """In the bank (RBI schedule) format the employee-cost line is Schedule 16's 'Payments to and provisions for employees'. Any other 'employee benefit expense' row is a
+    note about a part of it (the share-based-payment note's ESOP expense of 22 crore against a bank whose employee cost is several hundred crore), so it is not the metric."""
+    if bank_format and fact.metric_id == "employee_cost" and fact.availability_status in {"present_direct", "present_derived", "partial"} and not fact.derived \
+            and "payments to" not in str(fact.source_line_item or "").lower():
+        fact.availability_status = "unreliable"
+        fact.confidence = "unreliable"
+        fact.usable_downstream = False
+        fact.reconciliation_status = "fail"
+        fact.warnings = list(fact.warnings) + ["employee_cost: bank format — not read from 'Payments to and provisions for employees' (Schedule 16); the row is a note about a part of the cost"]
+
+
+def _bank_total_is_sound(fact: FinancialFact) -> bool:
+    """In the RBI bank format the balance sheet closes CAPITAL AND LIABILITIES with a TOTAL that equals the assets total. Total assets is sound when read directly from that line;
+    net worth is sound as paid-up capital plus reserves. Total liabilities (which would need the ESOP-outstanding and merger-reserve conventions) is not accepted."""
+    label = " ".join(re.findall(r"[a-z]+", str(fact.source_line_item or "").lower()))
+    if fact.metric_id == "total_assets":
+        return (not fact.derived) and fact.source_statement == "balance_sheet" and label in {"total equity and liabilities", "total assets"}
+    if fact.metric_id == "net_worth":
+        return bool(fact.derived) and re.sub(r"\s+", "", str(fact.formula or "")) == "equity_share_capital+reserves"
+    return False
+
+
+def _enforce_balance_sheet_availability(fact: FinancialFact, *, partial_balance_sheet: bool, bank_format: bool) -> None:
+    """SSOT contract for balance-sheet figures the extraction cannot stand behind. (1) A year normalized with an incomplete balance sheet has no authoritative balance-sheet
+    stock at all. (2) In the bank (RBI schedule) format the statement itself carries no 'Total assets' line, so a total taken from a note or derived from components is not
+    the balance-sheet total. Such facts are marked unreliable and unusable downstream, with the reason; they are not dropped silently and not replaced by a guess."""
+    if fact.availability_status not in {"present_direct", "present_derived", "partial"}:
+        return
+    reason = None
+    if partial_balance_sheet and fact.source_statement in {"balance_sheet", "derived_from_normalized_fundamentals"} and fact.metric_id in (BANK_UNRELIABLE_TOTALS | {"total_debt", "reserves", "equity_share_capital", "payables", "receivables", "inventory"}):
+        reason = "the balance sheet was not extracted for this year (normalization_status partial_balance_sheet)"
+    elif bank_format and fact.metric_id in BANK_UNRELIABLE_TOTALS and not _bank_total_is_sound(fact):
+        reason = ("bank-format balance sheet: this total is neither the statement's own closing total ('Total equity and liabilities' / 'Total assets', which equal each other) nor "
+                  "paid-up capital plus reserves, so it was not read from the statement")
+    if reason:
+        fact.availability_status = "unreliable"
+        fact.confidence = "unreliable"
+        fact.usable_downstream = False
+        fact.reconciliation_status = "fail"
+        fact.warnings = list(fact.warnings) + [f"{fact.metric_id}: {reason}"]
+
+
+def _enforce_source_statement(fact: FinancialFact) -> None:
+    """SSOT contract: a profit-and-loss flow (revenue, PAT, PBT, tax) cannot be sourced from a balance-sheet table. Such a fact is made invalid (quarantined, never usable
+    downstream) instead of being presented: a bank's FY21 'Revenue' of 197.8 crore was a segment-table cell that the extractor had filed under the balance sheet."""
+    if fact.metric_id in PROFIT_AND_LOSS_FLOW_METRICS and str(fact.source_statement or "") == "balance_sheet" and fact.availability_status in {"present_direct", "present_derived", "partial"}:
+        fact.availability_status = "invalid"
+        fact.confidence = "invalid"
+        fact.usable_downstream = False
+        fact.reconciliation_status = "fail"
+        fact.warnings = list(fact.warnings) + [f"{fact.metric_id}: sourced from a balance-sheet table ({fact.source_line_item!r}, page {fact.source_page}); a profit-and-loss figure is required"]
+
+
 def build_financial_fact_registry(
     *,
     company: str,
     year: str,
     financial_root: Path,
+    ignore_artifacts: frozenset = frozenset(),
 ) -> Tuple[FinancialFactRegistry, FinancialTruthReconciliationReport, FinancialArtifactQuarantineReport]:
     artifacts: Dict[str, Dict[str, Any]] = {}
     registry_warnings: List[str] = []
     source_artifacts_read: List[str] = []
     for filename in ARTIFACT_FILENAMES:
         path = financial_root / filename
+        if filename in ignore_artifacts:
+            continue
         if not path.exists():
             _append_unique(registry_warnings, f"Optional artifact missing: {filename}")
             continue
@@ -1757,8 +1941,38 @@ def build_financial_fact_registry(
     precise_missing_facts: List[FinancialFact] = []
     unreliable_facts: List[FinancialFact] = []
     invalid_facts: List[FinancialFact] = []
+    normalized_payload = artifacts.get("normalized_fundamentals.json") or {}
+    partial_balance_sheet = str(normalized_payload.get("normalization_status") or "") == "partial_balance_sheet"
+    context = normalized_payload.get("registry_context") if isinstance(normalized_payload.get("registry_context"), dict) else None
+    bank_format = bool(context["bank_format"]) if context and "bank_format" in context else any(
+        str((entry or {}).get("source_section_type") or "").startswith("schedule_")
+        for section in ("balance_sheet", "profit_and_loss")
+        for entry in (normalized_payload.get(section) or {}).values()
+        if isinstance(entry, dict)
+    ) or "interest earned" in str(((normalized_payload.get("profit_and_loss") or {}).get("revenue") or {}).get("source_line_item") or "").lower()
     registry_quarantined_facts: List[FinancialFact] = []
+    balance_sheet_entries = {k: e for k, e in (normalized_payload.get("balance_sheet") or {}).items() if isinstance(e, dict)}
+    has_primary_balance_sheet = any(e.get("is_primary_statement") for e in balance_sheet_entries.values())
+    entity_basis = str((context or {}).get("entity_basis") or "")
     for fact in best_facts.values():
+        if entity_basis in {"standalone", "consolidated"} and fact.basis in {"consolidated", "standalone", "unknown"} and fact.basis != entity_basis:
+            # the report presents one set of statements (entity_basis, read from its own declaration): a fact built from a raw table row or a headline sentence is on that basis too
+            fact.warnings = list(fact.warnings) + [f"{fact.metric_id}: basis {fact.basis} relabelled {entity_basis}: the report presents only {entity_basis} statements"]
+            fact.basis = entity_basis
+        entry = balance_sheet_entries.get(fact.metric_id) or {}
+        if (has_primary_balance_sheet and fact.metric_id in (BALANCE_SHEET_STOCK_METRICS | {"other_assets"}) and not fact.derived and fact.availability_status in {"present_direct", "partial"}
+                and entry.get("value_crore") == fact.value and not entry.get("is_primary_statement") and str(entry.get("source_section_type") or "") == "financial_note"):
+            # The year's balance sheet WAS extracted, and this figure is not from it: it is a same-named row of a note (a related-party or segment table), which is a different quantity
+            # (a note's "Property, plant and equipment" of 13.37 crore stood as the fixed assets of a company whose balance sheet states 11,114).
+            fact.availability_status, fact.confidence, fact.usable_downstream, fact.reconciliation_status = "invalid", "invalid", False, "fail"
+            fact.warnings = list(fact.warnings) + [f"{fact.metric_id}: read from a note table while the balance sheet itself was extracted for this year; the statement's own line is required"]
+        _enforce_period_role(fact)
+        _enforce_source_statement(fact)
+        _enforce_label_contract(fact)
+        _enforce_stock_source(fact)
+        enforce_semantic_contracts(fact, bank_format=bank_format)
+        _enforce_bank_employee_cost(fact, bank_format=bank_format)
+        _enforce_balance_sheet_availability(fact, partial_balance_sheet=partial_balance_sheet, bank_format=bank_format)
         if fact.availability_status == "present_direct":
             available_facts.append(fact)
         elif fact.availability_status == "present_derived":
@@ -2024,25 +2238,19 @@ def write_financial_fact_registry(
     registry_output_path: Path,
     reconciliation_output_path: Path,
     quarantine_output_path: Path,
+    output_root: Path | str,
+    authorize_served_write: bool = False,
+    dry_run: bool = False,
 ) -> Tuple[FinancialFactRegistry, FinancialTruthReconciliationReport, FinancialArtifactQuarantineReport]:
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
+    if dry_run:     # read-only: the exact files this call would write
+        return planned_writes(root, registry_output_path, reconciliation_output_path, quarantine_output_path)
     registry, report, quarantine_report = build_financial_fact_registry(
         company=company,
         year=year,
         financial_root=financial_root,
     )
-    registry_output_path.parent.mkdir(parents=True, exist_ok=True)
-    registry_output_path.write_text(
-        json.dumps(registry.to_dict(), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    reconciliation_output_path.parent.mkdir(parents=True, exist_ok=True)
-    reconciliation_output_path.write_text(
-        json.dumps(report.to_dict(), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    quarantine_output_path.parent.mkdir(parents=True, exist_ok=True)
-    quarantine_output_path.write_text(
-        json.dumps(quarantine_report.to_dict(), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    guarded_write_text(root, registry_output_path, json.dumps(registry.to_dict(), indent=2, ensure_ascii=False))
+    guarded_write_text(root, reconciliation_output_path, json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
+    guarded_write_text(root, quarantine_output_path, json.dumps(quarantine_report.to_dict(), indent=2, ensure_ascii=False))
     return registry, report, quarantine_report

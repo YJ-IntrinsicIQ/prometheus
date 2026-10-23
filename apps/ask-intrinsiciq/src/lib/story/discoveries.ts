@@ -118,7 +118,7 @@ export function buildDiscoveries(input: StoryInputs): Discovery[] {
       keyNumber: { value: `${names.length} ${names.length === 1 ? "deal" : "deals"}`, label: `0 with an attributable outcome (${acq.nodes[0].period})` },
       why: "Deals change what shareholders own; whether they paid off is a diligence question the records cannot yet answer.",
       years: acq.nodes[0].period,
-      visual: { kind: "table", head: ["Question", "What the records show"], rows: [["Transaction completed", names.join("; ")], ["Integration or execution", "Not in the extracted records"], ["Attributable financial outcome", "Not in the extracted records"], ["Amount", names.some((n) => /₹/.test(n)) ? "Stated in the capital ledger" : "Not in the extracted records"]] },
+      visual: { kind: "table", head: ["Question", "What the records show"], rows: [["Transaction completed", names.join("; ")], ["Integration or execution", "Not in the extracted records"], ["Attributable financial outcome", "Not in the extracted records"], ["Amount", names.some((n) => /₹/.test(n)) ? "Stated in the capital ledger" : "Not yet established here"]] },
       discovered: `${names.join(" and ")} ${names.length === 1 ? "is" : "are"} recorded as completed in ${acq.nodes[0].period}. Nothing in the records says what was done next or what they contributed.`,
       evidence: [
         { trust: "Observed", text: `Completed: ${names.join("; ")}`, source: acq.nodes[0].evidence[0] ?? "" },

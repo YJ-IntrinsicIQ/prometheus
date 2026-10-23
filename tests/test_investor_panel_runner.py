@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.authority_support import save_vouched
+
 from core.company_context import CompanyContext
 from intelligence.investor_panel.evidence_router import split_clean_and_diagnostics
 from intelligence.investor_panel import runner as panel_runner
@@ -362,10 +364,7 @@ def _write_pcim(base_dir: Path, company: str, missing_sections=None):
             {"year": "fy25", "section": section, "reason": "Missing for test"}
         )
 
-    (company_memory_dir / "pcim_v1.json").write_text(
-        json.dumps(pcim),
-        encoding="utf-8",
-    )
+    save_vouched(company_memory_dir / "pcim_v1.json", pcim)
 
 
 def _write_large_pcim(base_dir: Path, company: str):
@@ -469,7 +468,7 @@ def _write_large_pcim(base_dir: Path, company: str):
         "uncertainty_missing_data": {"incomplete_years": [], "missing_sections": [], "missing_items": []},
         "source_cim": "cim_v1.json",
     }
-    (company_memory_dir / "pcim_v1.json").write_text(json.dumps(pcim), encoding="utf-8")
+    save_vouched(company_memory_dir / "pcim_v1.json", pcim)
 
 
 class FakeLLM:
@@ -835,7 +834,7 @@ def test_panel_runner_loads_selected_doctrine_and_generates_llm_output(tmp_path,
     fake_llm = FakeLLM(_llm_output(doctrine_id="graham", rating="strong"))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
 
     payload = json.loads(written["graham_analysis.json"].read_text())
@@ -853,7 +852,7 @@ def test_panel_runner_passes_only_declared_pcim_sections_into_prompt(tmp_path, m
     fake_llm = FakeLLM(_llm_output(doctrine_id="graham"))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     runner.run(analyst="graham")
 
     prompt = fake_llm.calls[0]["prompt"]
@@ -883,7 +882,7 @@ def test_declared_analysts_receive_multi_year_inputs_in_prompt(tmp_path, monkeyp
     fake_llm = FakeLLM(_llm_output(doctrine_id=analyst))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     runner.run(analyst=analyst)
 
     prompt = fake_llm.calls[0]["prompt"]
@@ -900,7 +899,7 @@ def test_compact_prompt_pack_removes_source_chunk_and_preserves_evidence_ids(tmp
     fake_llm = FakeLLM(_llm_output(doctrine_id="munger", rating="mixed", evidence_ids=["ev_risk_0", "ev_risk_1"]))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="munger")
     payload = json.loads(written["munger_analysis.json"].read_text())
     prompt = fake_llm.calls[0]["prompt"]
@@ -936,7 +935,7 @@ def test_large_pcim_prompt_stays_under_budget_and_uses_compact_view(tmp_path, mo
     fake_llm = FakeLLM(_llm_output(doctrine_id="munger", rating="mixed", evidence_ids=["ev_risk_0", "ev_inc_0"]))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     runner.run(analyst="munger")
 
     prompt = fake_llm.calls[0]["prompt"]
@@ -1061,11 +1060,11 @@ def test_large_financial_truth_inputs_are_compacted_but_not_dropped(tmp_path, mo
         "financial_panel_status": "warning",
         "financial_panel_status_reason": ("Status reason " * 20).strip(),
     }
-    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+    save_vouched(pcim_path, pcim)
 
     fake_llm = FakeLLM(_llm_output(doctrine_id="graham", rating="mixed", evidence_ids=["ev_fin_1"]))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     runner.run(analyst="graham")
 
     prompt = fake_llm.calls[0]["prompt"]
@@ -1116,7 +1115,7 @@ def test_prompt_budget_diagnostics_record_dropped_sections_and_emergency_mode(tm
     fake_llm = FakeLLM(_llm_output(doctrine_id="munger", rating="mixed", evidence_ids=["ev_cap_1"]))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     runner.run(analyst="munger")
 
     diagnostics = json.loads(
@@ -1213,7 +1212,7 @@ def test_panel_runner_never_accesses_raw_documents(tmp_path, monkeypatch):
     fake_llm = FakeLLM(_llm_output(doctrine_id="lynch"))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="lynch")
     payload = json.loads(written["lynch_analysis.json"].read_text())
 
@@ -1228,9 +1227,9 @@ def test_panel_runner_fails_fast_if_pcim_contains_source_chunk(tmp_path, monkeyp
     pcim_path = tmp_path / "companies" / "acme" / "company_memory" / "pcim_v1.json"
     pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
     pcim["risk_inputs"]["risk_by_year"][0]["items"][0]["source_chunk"] = "raw leaked chunk"
-    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+    save_vouched(pcim_path, pcim)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     with pytest.raises(ValueError, match="PCIM must not contain source_chunk"):
         runner.run(analyst="graham")
 
@@ -1241,7 +1240,7 @@ def test_missing_pcim_sections_are_reflected_as_uncertainty(tmp_path, monkeypatc
     fake_llm = FakeLLM(_llm_output(doctrine_id="graham", rating="insufficient_evidence"))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     payload = json.loads(written["graham_analysis.json"].read_text())
 
@@ -1258,7 +1257,7 @@ def test_prompt_includes_missing_evidence_discipline_for_graham(tmp_path, monkey
     fake_llm = FakeLLM(_llm_output(doctrine_id="graham", rating="mixed"))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     runner.run(analyst="graham")
 
     prompt = fake_llm.calls[0]["prompt"]
@@ -1272,7 +1271,7 @@ def test_rating_is_taken_from_llm_output_not_section_availability(tmp_path, monk
     fake_llm = FakeLLM(_llm_output(doctrine_id="graham", rating="weak"))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     payload = json.loads(written["graham_analysis.json"].read_text())
 
@@ -1298,7 +1297,7 @@ def test_rating_variants_are_normalized(tmp_path, monkeypatch, rating, expected)
     fake_llm = FakeLLM(_llm_output(doctrine_id="graham", rating=rating))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     payload = json.loads(written["graham_analysis.json"].read_text())
     diagnostics = json.loads(written["graham_analysis_diagnostics.json"].read_text())
@@ -1313,7 +1312,7 @@ def test_invalid_rating_still_fails_after_normalization_attempt(tmp_path, monkey
     fake_llm = FakeLLM(_llm_output(doctrine_id="graham", rating="maybe"))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     with pytest.raises(ValueError, match="rating must be one of strong, mixed, weak, insufficient_evidence"):
         runner.run(analyst="graham")
 
@@ -1350,7 +1349,7 @@ def test_evidence_ids_are_preserved_and_filtered_to_allowed_ids(tmp_path, monkey
     )
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     payload, diagnostics = _read_saved_outputs(written, "graham")
 
@@ -1407,7 +1406,7 @@ def test_section_name_evidence_ids_are_removed_before_save(tmp_path, monkeypatch
     )
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     payload, diagnostics = _read_saved_outputs(written, "graham")
 
@@ -1486,7 +1485,7 @@ def test_buffett_style_section_name_evidence_ids_are_removed_before_save(tmp_pat
     )
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="buffett")
     payload, diagnostics = _read_saved_outputs(written, "buffett")
     serialized_active_ids = json.dumps(
@@ -1525,7 +1524,7 @@ def test_alias_evidence_ids_are_normalized_to_canonical_ids(tmp_path, monkeypatc
         "ev_fy25_company_intelligence_json_risk_00001"
     ]
     pcim["evidence_map"]["risk_inputs"] = ["ev_fy25_company_intelligence_json_risk_00001"]
-    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+    save_vouched(pcim_path, pcim)
 
     fake_llm = FakeLLM(
         json.dumps(
@@ -1561,7 +1560,7 @@ def test_alias_evidence_ids_are_normalized_to_canonical_ids(tmp_path, monkeypatc
     )
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     payload, diagnostics = _read_saved_outputs(written, "graham")
 
@@ -1592,7 +1591,7 @@ def test_noncanonical_capalloc_ids_are_normalized_before_save(tmp_path, monkeypa
         "ev_fy25_company_intelligence_json_capalloc_00002"
     ]
     pcim["evidence_map"]["capital_allocation_inputs"] = ["ev_fy25_company_intelligence_json_capalloc_00002"]
-    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+    save_vouched(pcim_path, pcim)
 
     fake_llm = FakeLLM(
         json.dumps(
@@ -1628,7 +1627,7 @@ def test_noncanonical_capalloc_ids_are_normalized_before_save(tmp_path, monkeypa
     )
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     payload, diagnostics = _read_saved_outputs(written, "graham")
 
@@ -1674,7 +1673,7 @@ def test_unresolved_ids_are_preserved_and_reported(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     payload, diagnostics = _read_saved_outputs(written, "graham")
 
@@ -1732,7 +1731,7 @@ def test_unresolved_ids_cannot_coexist_with_pass_status(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="lynch")
     payload, diagnostics = _read_saved_outputs(written, "lynch")
 
@@ -1770,7 +1769,7 @@ def test_invalid_supporting_sections_are_safely_repaired(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="munger")
     payload = json.loads(written["munger_analysis.json"].read_text())
 
@@ -1785,7 +1784,7 @@ def test_munger_governance_routing_failure_is_repaired_deterministically_before_
     pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
     pcim["risk_inputs"]["risk_by_year"][0]["items"][0]["value"] = "Foreign exchange market risk"
     pcim["risk_inputs"]["risk_by_year"][0]["items"][0]["category"] = "Foreign exchange exposure"
-    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+    save_vouched(pcim_path, pcim)
 
     bad_payload = json.loads(_llm_output(doctrine_id="munger", evidence_ids=["ev_risk_1"]))
     bad_payload["assessment"]["governance_sanity_assessment"] = (
@@ -1802,7 +1801,7 @@ def test_munger_governance_routing_failure_is_repaired_deterministically_before_
     fake_llm = SequencedFakeLLM([json.dumps(bad_payload)])
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    written = InvestorPanelRunner(company="acme").run(analyst="munger")
+    written = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).run(analyst="munger")
     saved, diagnostics = _read_saved_outputs(written, "munger")
 
     assert len(fake_llm.calls) == 1
@@ -1822,7 +1821,7 @@ def test_munger_governance_routing_diagnostics_records_converted_limitation(tmp_
     pcim = json.loads(pcim_path.read_text(encoding="utf-8"))
     pcim["risk_inputs"]["risk_by_year"][0]["items"][0]["value"] = "Foreign exchange market risk"
     pcim["risk_inputs"]["risk_by_year"][0]["items"][0]["category"] = "Foreign exchange exposure"
-    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+    save_vouched(pcim_path, pcim)
 
     bad_payload = json.loads(_llm_output(doctrine_id="munger", evidence_ids=["ev_risk_1"]))
     bad_payload["assessment"]["governance_sanity_assessment"] = (
@@ -1849,12 +1848,12 @@ def test_munger_governance_routing_diagnostics_records_converted_limitation(tmp_
         "corporate_action_inputs",
     ):
         pcim["evidence_map"][section] = []
-    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+    save_vouched(pcim_path, pcim)
 
     fake_llm = SequencedFakeLLM([json.dumps(bad_payload)])
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    written = InvestorPanelRunner(company="acme").run(analyst="munger")
+    written = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).run(analyst="munger")
     saved, diagnostics = _read_saved_outputs(written, "munger")
 
     assert len(fake_llm.calls) == 1
@@ -1876,7 +1875,7 @@ def test_market_risk_routing_diagnostics_record_accepted_market_risk_evidence(tm
     pcim["risk_inputs"]["risk_by_year"][0]["items"][0]["value"] = (
         "Sensitivity to market-price movements remains visible."
     )
-    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+    save_vouched(pcim_path, pcim)
 
     payload = json.loads(_llm_output(doctrine_id="graham", evidence_ids=["ev_risk_1"]))
     payload["key_findings"] = [
@@ -1893,7 +1892,7 @@ def test_market_risk_routing_diagnostics_record_accepted_market_risk_evidence(tm
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    written = InvestorPanelRunner(company="acme").run(analyst="graham")
+    written = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).run(analyst="graham")
     saved, diagnostics = _read_saved_outputs(written, "graham")
 
     assert saved["evidence_grounding_status"] in {"pass", "warning"}
@@ -1930,7 +1929,7 @@ def test_supporting_sections_must_not_be_only_undeclared_sections(tmp_path, monk
     )
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
 
     with pytest.raises(ValueError, match="Invalid supporting_pcim_sections returned: \\['promise_tracker'\\]"):
         runner.run(analyst="munger")
@@ -1942,7 +1941,7 @@ def test_invalid_llm_json_fails_safely(tmp_path, monkeypatch):
     fake_llm = FakeLLM("not json")
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
 
     with pytest.raises(ValueError, match="Malformed JSON"):
         runner.run(analyst="graham")
@@ -1957,7 +1956,7 @@ def test_user_facing_brief_with_internal_jargon_is_repaired(tmp_path, monkeypatc
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     saved = json.loads(written["graham_analysis.json"].read_text())
 
@@ -1974,7 +1973,7 @@ def test_user_facing_brief_with_evidence_ids_is_repaired(tmp_path, monkeypatch):
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     saved = json.loads(written["graham_analysis.json"].read_text())
 
@@ -1992,7 +1991,7 @@ def test_user_facing_brief_shape_is_normalized_before_validation(tmp_path, monke
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="buffett")
     saved = json.loads(written["buffett_analysis.json"].read_text())
 
@@ -2010,7 +2009,7 @@ def test_all_analysts_receive_canonical_brief_titles(tmp_path, monkeypatch, anal
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst=analyst)
     saved, diagnostics = _read_saved_outputs(written, analyst)
 
@@ -2030,7 +2029,7 @@ def test_user_facing_brief_title_mismatch_is_overwritten(tmp_path, monkeypatch):
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="buffett")
     saved, diagnostics = _read_saved_outputs(written, "buffett")
 
@@ -2051,7 +2050,7 @@ def test_missing_user_facing_brief_uses_skeleton_defaults(tmp_path, monkeypatch)
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     saved, diagnostics = _read_saved_outputs(written, "graham")
 
@@ -2071,7 +2070,7 @@ def test_user_facing_brief_string_is_finalized_into_canonical_object(tmp_path, m
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="buffett")
     saved, diagnostics = _read_saved_outputs(written, "buffett")
 
@@ -2091,7 +2090,7 @@ def test_unknown_user_facing_brief_fields_go_to_diagnostics(tmp_path, monkeypatc
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="buffett")
     saved, diagnostics = _read_saved_outputs(written, "buffett")
 
@@ -2117,7 +2116,7 @@ def test_user_facing_brief_lengths_are_normalized_before_validation(tmp_path, mo
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="fisher")
     saved = json.loads(written["fisher_analysis.json"].read_text())
 
@@ -2134,7 +2133,7 @@ def test_missing_required_brief_key_uses_skeleton_default(tmp_path, monkeypatch)
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     saved, diagnostics = _read_saved_outputs(written, "graham")
 
@@ -2168,7 +2167,7 @@ def test_user_facing_brief_validation_happens_after_finalization(tmp_path, monke
     monkeypatch.setattr(panel_runner, "finalize_user_facing_brief_for_external_reader", wrapped_finalize)
     monkeypatch.setattr(panel_runner, "validate_user_facing_brief", wrapped_validate)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="buffett")
     saved = json.loads(written["buffett_analysis.json"].read_text(encoding="utf-8"))
 
@@ -2290,7 +2289,7 @@ def test_user_facing_brief_with_recommendation_language_is_rejected(tmp_path, mo
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
 
     with pytest.raises(ValueError, match='Invalid user_facing_brief for analyst graham: field "bottom_line" contains recommendation language'):
         runner.run(analyst="graham")
@@ -2306,7 +2305,7 @@ def test_user_facing_brief_with_too_many_items_is_capped(tmp_path, monkeypatch):
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
 
     written = runner.run(analyst="graham")
     saved = json.loads(written["graham_analysis.json"].read_text())
@@ -2321,7 +2320,7 @@ def test_dry_run_uses_deterministic_scaffold_and_does_not_overwrite_llm_output(t
     fake_llm = FakeLLM(_llm_output(doctrine_id="graham", rating="mixed"))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     llm_path = written["graham_analysis.json"]
     llm_payload = json.loads(llm_path.read_text())
@@ -2343,7 +2342,7 @@ def test_output_schema_is_valid_for_llm_mode(tmp_path, monkeypatch):
     fake_llm = FakeLLM(_llm_output(doctrine_id="munger", rating="mixed", evidence_ids=["ev_inc_1", "ev_risk_1"]))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="munger")
     payload, diagnostics = _read_saved_outputs(written, "munger")
 
@@ -2401,7 +2400,7 @@ def test_user_facing_brief_can_render_financial_lens_when_present(tmp_path, monk
     fake_llm = FakeLLM(_llm_output(doctrine_id="buffett", rating="strong"))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="buffett")
     payload = json.loads(written["buffett_analysis.json"].read_text())
 
@@ -2416,7 +2415,7 @@ def test_reasoning_limits_string_is_normalized_with_schema_warning(tmp_path, mon
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    written = InvestorPanelRunner(company="acme").run(analyst="buffett")
+    written = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).run(analyst="buffett")
     saved, diagnostics = _read_saved_outputs(written, "buffett")
 
     assert "No valuation was performed." in saved["reasoning_limits"]
@@ -2434,7 +2433,7 @@ def test_reasoning_limits_null_becomes_empty_list_with_schema_warning(tmp_path, 
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    written = InvestorPanelRunner(company="acme").run(analyst="buffett")
+    written = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).run(analyst="buffett")
     _saved, diagnostics = _read_saved_outputs(written, "buffett")
 
     assert any(
@@ -2455,7 +2454,7 @@ def test_financial_assessment_list_fields_normalize_safely(tmp_path, monkeypatch
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    written = InvestorPanelRunner(company="acme").run(analyst="buffett")
+    written = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).run(analyst="buffett")
     saved, diagnostics = _read_saved_outputs(written, "buffett")
 
     assert saved["financial_missing_data"] == ["Free cash flow is unavailable in the supplied financial sections."]
@@ -2482,7 +2481,7 @@ def test_source_chunk_in_normalized_list_field_still_fails(tmp_path, monkeypatch
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
     with pytest.raises(ValueError, match="source_chunk is not allowed in analyst output"):
-        InvestorPanelRunner(company="acme").run(analyst="buffett")
+        InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).run(analyst="buffett")
 
 
 def test_output_can_legitimately_reference_multi_year_inputs(tmp_path, monkeypatch):
@@ -2493,7 +2492,7 @@ def test_output_can_legitimately_reference_multi_year_inputs(tmp_path, monkeypat
     fake_llm = FakeLLM(json.dumps(payload))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     written = runner.run(analyst="graham")
     saved = json.loads(written["graham_analysis.json"].read_text())
 
@@ -2512,7 +2511,7 @@ def test_runner_all_analysts_auto_carry_fcf_missing_consistently(tmp_path, monke
         if metric["metric"] != "fcf"
     ]
     pcim["cash_conversion_inputs"]["warnings"] = ["free cash flow missing"]
-    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+    save_vouched(pcim_path, pcim)
 
     responses = {}
     doctrine_metrics = {
@@ -2536,7 +2535,7 @@ def test_runner_all_analysts_auto_carry_fcf_missing_consistently(tmp_path, monke
     fake_llm = PromptRoutingFakeLLM(responses)
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    written = InvestorPanelRunner(company="acme").run()
+    written = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).run()
 
     for doctrine_id in ("graham", "buffett", "fisher", "munger", "lynch"):
         saved = json.loads(written[f"{doctrine_id}_analysis.json"].read_text())
@@ -2577,7 +2576,7 @@ def test_runner_only_loads_pcim_not_raw_multi_year_json(tmp_path, monkeypatch):
 
     monkeypatch.setattr(panel_runner, "_load_json", tracking_load_json)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     runner.run(analyst="graham")
 
     assert any(path.endswith("pcim_v1.json") for path in loaded_paths)
@@ -2590,7 +2589,7 @@ def test_prompt_includes_munger_monitoring_guidance_for_related_party_items(tmp_
     fake_llm = FakeLLM(_llm_output(doctrine_id="munger", rating="mixed", evidence_ids=["ev_inc_1", "ev_risk_1"]))
     monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-    runner = InvestorPanelRunner(company="acme")
+    runner = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     runner.run(analyst="munger")
 
     prompt = fake_llm.calls[0]["prompt"]
@@ -2621,7 +2620,7 @@ def test_main_runs_investor_panel_without_year(monkeypatch):
 
 def test_runner_keeps_company_memory_panel_dir_when_context_is_active(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="acme", year="fy25")
+    context = CompanyContext(company="acme", year="fy25", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
     try:
@@ -2629,7 +2628,7 @@ def test_runner_keeps_company_memory_panel_dir_when_context_is_active(tmp_path, 
         fake_llm = FakeLLM(_llm_output(doctrine_id="graham"))
         monkeypatch.setattr(panel_runner, "get_llm", lambda: fake_llm)
 
-        written = InvestorPanelRunner(company="acme").run(analyst="graham")
+        written = InvestorPanelRunner(company="acme", companies_root=Path.cwd() / "companies", authorize_served_write=True).run(analyst="graham")
 
         assert written["graham_analysis.json"].resolve() == (
             tmp_path / "companies" / "acme" / "company_memory" / "investor_panel" / "graham_analysis.json"
@@ -2724,6 +2723,7 @@ def test_write_clean_artifacts_writes_diagnostics_even_on_clean_failure(tmp_path
             output_dir=output_dir,
             doctrine_id="graham",
             analysis_mode="llm_reasoning_v1",
+            root=tmp_path,
         )
 
     diagnostics_path = output_dir / "graham_analysis_diagnostics.json"
@@ -2747,7 +2747,7 @@ def test_full_panel_stage_uses_same_global_fcf_warning_carry_forward(tmp_path, m
         if metric["metric"] != "fcf"
     ]
     pcim["cash_conversion_inputs"]["warnings"] = ["free cash flow missing"]
-    pcim_path.write_text(json.dumps(pcim), encoding="utf-8")
+    save_vouched(pcim_path, pcim)
 
     responses = {}
     doctrine_metrics = {

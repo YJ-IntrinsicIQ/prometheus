@@ -6,30 +6,27 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from core.context_paths import guarded_write_text
+
 
 def write_json_file(
     path: Path,
     data: Dict[str, Any] | List[Any],
     indent: int = 2,
     sort_keys: bool = False,
+    *,
+    root: Path | str,
 ) -> None:
-    """Write a JSON file atomically."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Write to temp file first
-    temp_path = path.with_suffix(".tmp")
-    
-    with temp_path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=indent, sort_keys=sort_keys, default=str)
-    
-    # Atomic move
-    temp_path.replace(path)
+    """Write a JSON file atomically; the destination must lie inside the explicit, already-authorized output root."""
+    guarded_write_text(root, path, json.dumps(data, indent=indent, sort_keys=sort_keys, default=str))
 
 
 def write_risk_registry(
     path: Path,
     risks: List[Dict[str, Any]],
     metadata: Dict[str, Any] | None = None,
+    *,
+    root: Path | str,
 ) -> None:
     """Write the risk registry JSON file."""
     payload = {
@@ -37,13 +34,15 @@ def write_risk_registry(
         "risks": risks,
     }
     
-    write_json_file(path, payload)
+    write_json_file(path, payload, root=root)
 
 
 def write_risk_timelines(
     path: Path,
     timelines: List[Dict[str, Any]],
     metadata: Dict[str, Any] | None = None,
+    *,
+    root: Path | str,
 ) -> None:
     """Write the risk timelines JSON file."""
     payload = {
@@ -51,13 +50,15 @@ def write_risk_timelines(
         "timelines": timelines,
     }
     
-    write_json_file(path, payload)
+    write_json_file(path, payload, root=root)
 
 
 def write_risk_assessments(
     path: Path,
     assessments: List[Dict[str, Any]],
     metadata: Dict[str, Any] | None = None,
+    *,
+    root: Path | str,
 ) -> None:
     """Write the risk assessments JSON file."""
     payload = {
@@ -65,23 +66,27 @@ def write_risk_assessments(
         "assessments": assessments,
     }
     
-    write_json_file(path, payload)
+    write_json_file(path, payload, root=root)
 
 
 def write_risk_validation(
     path: Path,
     validation_report: Dict[str, Any],
+    *,
+    root: Path | str,
 ) -> None:
     """Write the risk validation report JSON file."""
-    write_json_file(path, validation_report)
+    write_json_file(path, validation_report, root=root)
 
 
 def write_risk_manifest(
     path: Path,
     manifest: Dict[str, Any],
+    *,
+    root: Path | str,
 ) -> None:
     """Write the risk manifest JSON file."""
-    write_json_file(path, manifest)
+    write_json_file(path, manifest, root=root)
 
 
 def write_all_risk_outputs(
@@ -91,15 +96,15 @@ def write_all_risk_outputs(
     assessments: List[Dict[str, Any]],
     validation_report: Dict[str, Any],
     manifest: Dict[str, Any],
+    *,
+    root: Path | str,
 ) -> Dict[str, Path]:
     """
-    Write all risk evolution artifacts.
-    
+    Write all risk evolution artifacts. Every destination must lie inside the explicit, already-authorized output root.
+
     Returns a dict mapping artifact names to their written paths.
     """
-    # Create risk directory
     risk_dir = company_root / "company_memory" / "risks"
-    risk_dir.mkdir(parents=True, exist_ok=True)
     
     output_paths = {}
     metadata = {
@@ -111,23 +116,23 @@ def write_all_risk_outputs(
     
     # Write each artifact
     registry_path = risk_dir / "risk_registry.json"
-    write_risk_registry(registry_path, risks, metadata)
+    write_risk_registry(registry_path, risks, metadata, root=root)
     output_paths["risk_registry.json"] = registry_path
     
     timelines_path = risk_dir / "risk_timelines.json"
-    write_risk_timelines(timelines_path, timelines, metadata)
+    write_risk_timelines(timelines_path, timelines, metadata, root=root)
     output_paths["risk_timelines.json"] = timelines_path
     
     assessments_path = risk_dir / "risk_assessments.json"
-    write_risk_assessments(assessments_path, assessments, metadata)
+    write_risk_assessments(assessments_path, assessments, metadata, root=root)
     output_paths["risk_assessments.json"] = assessments_path
     
     validation_path = risk_dir / "risk_validation.json"
-    write_risk_validation(validation_path, validation_report)
+    write_risk_validation(validation_path, validation_report, root=root)
     output_paths["risk_validation.json"] = validation_path
     
     manifest_path = risk_dir / "risk_manifest.json"
-    write_risk_manifest(manifest_path, manifest)
+    write_risk_manifest(manifest_path, manifest, root=root)
     output_paths["risk_manifest.json"] = manifest_path
     
     return output_paths

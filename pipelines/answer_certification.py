@@ -147,8 +147,27 @@ def compute_full_artifact_digest(answer: dict[str, Any]) -> str:
 
 # ── Stage helpers ─────────────────────────────────────────────────────────────
 
+_COMPANIES_ROOT: Path | None = None
+
+
+def configure_companies_root(companies_root, *, authorize_served: bool = False, read_only: bool = False) -> Path:
+    """Explicit company-data root for certification/approval. Required: no default, no fallback to the served tree. The approval registry
+    (governance/) is a separately controlled output and is not affected by this root."""
+    global _COMPANIES_ROOT
+    from core.context_paths import configure_company_root
+    _COMPANIES_ROOT = configure_company_root(companies_root, authorize_served=authorize_served, read_only=read_only)
+    return _COMPANIES_ROOT
+
+
+def companies_root() -> Path:
+    if _COMPANIES_ROOT is None:
+        from core.context_paths import WriteBoundaryError
+        raise WriteBoundaryError("answer_certification needs an explicit company-data root: pass --companies-root (call configure_companies_root first)")
+    return _COMPANIES_ROOT
+
+
 def _shadow_path(company: str) -> Path:
-    return _REPO_ROOT / "companies" / company / SHADOW_FILE
+    return companies_root() / company / SHADOW_FILE
 
 
 def _get_entry_meta(entry: dict[str, Any]) -> dict[str, Any]:
@@ -258,7 +277,7 @@ def stage_b(specs: list[tuple[str, str]]) -> dict[tuple[str, str], dict]:
         if not path.exists():
             results[(company, question)] = {
                 "ready": False,
-                "reason": f"shadow file missing: {path.relative_to(_REPO_ROOT)}",
+                "reason": f"shadow file missing: {path}",
             }
             continue
         try:
@@ -1234,7 +1253,10 @@ def main() -> None:
         ),
     )
     parser.add_argument("--note", help="Human reviewer note for --mode approve")
+    parser.add_argument("--companies-root", required=True, type=Path, help="absolute company-data root (required)")
+    parser.add_argument("--authorize-served-write", action="store_true", help="permit --companies-root to be the served companies/ tree")
     args = parser.parse_args()
+    configure_companies_root(args.companies_root, authorize_served=args.authorize_served_write)
     run(args.batch, args.mode, args.note)
 
 

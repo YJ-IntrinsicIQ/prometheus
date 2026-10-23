@@ -229,7 +229,7 @@ def test_end_to_end_gerund_commitment_captured(tmp_path, monkeypatch):
             "source_chunk": "Expanding distribution centres by FY25.",
         }
     ])
-    ManagementCommitmentsBuilder(company="alpha").build()
+    ManagementCommitmentsBuilder(company="alpha", companies_root=Path.cwd() / "companies").build()
     out = _load(tmp_path, "alpha")
     assert out["commitments"]["commitment_count"] >= 1
 
@@ -247,7 +247,7 @@ def test_end_to_end_generic_aspiration_excluded(tmp_path, monkeypatch):
             "source_chunk": "Committed to excellence.",
         }
     ])
-    ManagementCommitmentsBuilder(company="beta").build()
+    ManagementCommitmentsBuilder(company="beta", companies_root=Path.cwd() / "companies").build()
     out = _load(tmp_path, "beta")
     assert out["commitments"]["commitment_count"] == 0
 
@@ -265,7 +265,7 @@ def test_end_to_end_quarantine_reason_always_populated(tmp_path, monkeypatch):
             "source_chunk": "Committed to excellence.",
         }
     ])
-    ManagementCommitmentsBuilder(company="gamma").build()
+    ManagementCommitmentsBuilder(company="gamma", companies_root=Path.cwd() / "companies").build()
     out = _load(tmp_path, "gamma")
     q_candidates = out["commitments"].get("quarantined_candidates", [])
     for qc in q_candidates:
@@ -287,7 +287,7 @@ def test_end_to_end_imperative_with_fy_target_captured(tmp_path, monkeypatch):
             "source_chunk": "Launch next-generation product line by FY24.",
         }
     ])
-    ManagementCommitmentsBuilder(company="delta").build()
+    ManagementCommitmentsBuilder(company="delta", companies_root=Path.cwd() / "companies").build()
     out = _load(tmp_path, "delta")
     assert out["commitments"]["commitment_count"] >= 1
 

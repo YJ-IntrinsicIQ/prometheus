@@ -80,7 +80,7 @@ def _write_analyst_output(
 
 
 def _make_context(tmp_path: Path, company: str = "polymatech", year: str = "fy24") -> CompanyContext:
-    context = CompanyContext(company=company, year=year)
+    context = CompanyContext(company=company, year=year, companies_root=Path.cwd() / "companies")
     context.create_directories()
     return context
 
@@ -967,7 +967,7 @@ def test_investor_panel_stage_uses_current_pcim_freshness_audit(tmp_path, monkey
     monkeypatch.setattr(
         run_company_pipeline,
         "InvestorPanelRunner",
-        lambda company, output_dir=None: type(
+        lambda company, output_dir=None, **kwargs: type(
             "FakeRunner",
             (),
             {"run": lambda self, analyst=None: {"graham_analysis.json": _panel_dir(tmp_path) / "graham_analysis.json"}},

@@ -296,7 +296,7 @@ def test_question_count_increased_from_p2():
 def _live_answers() -> Dict[str, Any]:
     """Run the full generation pipeline once and cache for the session."""
     from intelligence.ask_intrinsiciq.generator import generate_ask_intrinsiciq_view
-    result = generate_ask_intrinsiciq_view("sun_pharma")
+    result = generate_ask_intrinsiciq_view("sun_pharma", Path.cwd() / "companies")
     return {a["question_id"]: a for a in result["answer_cards"].get("answers", [])}
 
 

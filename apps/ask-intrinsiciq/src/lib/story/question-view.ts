@@ -1,6 +1,7 @@
 // Presentation adapter for the investor question pages.
 // Reads the stored (approved) answer plus existing structured records and shapes them into
 // one reading journey: answer → explore → discover → evidence. It adds no conclusions of its own.
+import { enforceEvidenceSafety, INTERNAL_KEY, type AbsenceEntry } from "@/src/lib/provenance/absence";
 import { buildAccountability, type Accountability } from "./accountability";
 import { buildConnections, type Connection } from "./connections";
 import { buildDiscoveries, type Discovery, type Visual } from "./discoveries";
@@ -340,7 +341,7 @@ export function buildQuestionView(inp: QuestionInputs): QuestionView | null {
   LABELS = new Map(inp.commitments.map((m) => [String(m.id), commitmentLabel(m)]));
   const question = inp.question ?? QUESTIONS.find((x) => x.id === inp.questionId);
   if (!question || !inp.answer) return null;
-  const a = inp.answer;
+  const a = enforceEvidenceSafety(inp.answer, [...(Array.isArray(inp.answer.g5_absence) ? inp.answer.g5_absence : []), ...(Array.isArray(inp.answer.g5_review_pending) ? inp.answer.g5_review_pending : [])] as AbsenceEntry[]);
   const acct = buildAccountability(inp);
   const conns = buildConnections(inp);
   const all = buildDiscoveries(inp);
@@ -410,7 +411,7 @@ export function buildQuestionView(inp: QuestionInputs): QuestionView | null {
       limitations: listOf(a.what_is_not_yet_proven),
       monitor: listOf(a.what_to_monitor),
       original: Object.entries(a)
-        .filter(([k]) => k !== "behavioral_descriptor") // technical metadata, not investor-facing
+        .filter(([k]) => k !== "behavioral_descriptor" && !INTERNAL_KEY.test(k)) // technical and verification metadata (g4_*, g5_*), not investor-facing
         .filter(([k]) => !["claims", "relationships", "evidence_gaps"].includes(k) || (Array.isArray(a[k]) && (a[k] as unknown[]).length))
         .map(([k, v]) => ({ label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()), value: k === "relationships" ? readableLinks(v) : k === "claims" ? readableClaims(v) : deep(v) })),
     },

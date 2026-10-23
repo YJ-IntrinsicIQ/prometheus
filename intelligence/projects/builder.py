@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from knowledge.company_memory.guardrails import extract_dated_events
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -27,6 +28,9 @@ from .paths import (
 from .progression import ProjectsProgressionAdapter, build_project_event, build_timeline
 from .validators import validate_projects_payload
 from .writer import write_json_file
+from core.context_paths import logical_company_path, resolve_output_root, safe_destination
+
+_OUTPUT_FILES = ("projects_registry.json", "project_timelines.json", "project_assessments.json", "projects_validation.json", "projects_manifest.json")
 
 
 def _utc_now() -> str:
@@ -61,11 +65,20 @@ def _candidate_sources(company_root: Path) -> List[Tuple[str, Path]]:
     return sources
 
 
-def _load_year_record(year_dir: Path) -> Dict[str, Any]:
+def _logical_label(path: Path, companies_root: Path | None) -> str:
+    return str(path) if companies_root is None else logical_company_path(path, companies_root)
+
+
+def _chunk_list(payload: Any) -> List[Dict[str, Any]]:
+    chunks = payload.get("chunks") if isinstance(payload, dict) else payload
+    return [c for c in chunks if isinstance(c, dict)] if isinstance(chunks, list) else []
+
+
+def _load_year_record(year_dir: Path, companies_root: Path | None = None) -> Dict[str, Any]:
     record: Dict[str, Any] = {
         "year": year_dir.name,
         "sort_key": parse_financial_year(year_dir.name),
-        "paths": {"year_root": str(year_dir)},
+        "paths": {"year_root": _logical_label(year_dir, companies_root)},
         "source_artifacts": {},
     }
     for source_name, rel_path in _candidate_sources(year_dir):
@@ -73,10 +86,11 @@ def _load_year_record(year_dir: Path) -> Dict[str, Any]:
         payload = _load_json(path)
         found = bool(payload)
         record["source_artifacts"][source_name] = {
-            "path": str(path),
+            "path": _logical_label(path, companies_root),
             "found": found,
         }
         record[source_name] = payload if isinstance(payload, (dict, list)) else {}
+    record["dated_events"] = extract_dated_events(_chunk_list(_load_json(year_dir / "extracted" / "clean_chunks.json")))
     return record
 
 
@@ -117,6 +131,64 @@ def _merge_project_group(group: Dict[str, Any], candidate: Dict[str, Any]) -> No
         group["confidence"].append(candidate["confidence"])
     group["announcement_period"] = min(group["announcement_period"], candidate["announcement_period"], key=lambda value: parse_financial_year(value) if str(value).lower().startswith("fy") else 10_000)
     group["latest_period"] = max(group["latest_period"], candidate["source_year"], key=lambda value: parse_financial_year(value) if str(value).lower().startswith("fy") else -1)
+
+
+def _reference_keys(references: Sequence[Dict[str, Any]]) -> set:
+    return {(r.get("period"), r.get("source_artifact"), r.get("source_item_id")) for r in references or [] if r.get("source_item_id")}
+
+
+def _stable_project_ids(groups: Sequence[Dict[str, Any]], prior_registry: Dict[str, Any], *, prefix: str = "PJ", registry_key: str = "projects", id_key: str = "project_id",
+                        with_retired: bool = False):
+    """Project ids are historical identities: a group that carries source items of a previously registered project keeps that project's id, whatever its sort position
+    is now. Only genuinely new groups receive new ids, after the highest id ever issued. Ids are never renumbered by position and never reused. A prior id that no group
+    keeps is RETIRED, not silently dropped: with_retired=True also returns {id, name, latest_period, reason, merged_into} for each, so a reference to it can be resolved."""
+    prior = [(p.get(id_key), _reference_keys(p.get("source_references")), p.get("project_type") or p.get("capacity_type"), p.get("normalized_name"), p) for p in (prior_registry or {}).get(registry_key) or [] if p.get(id_key)]
+    issued = {entry[0] for entry in prior}
+    highest = max([int(str(pid).split("-")[-1]) for pid in issued if str(pid).split("-")[-1].isdigit()] or [0])
+    taken: set = set()
+    result: List[str | None] = []
+    for group in groups:
+        keys = _reference_keys(group.get("source_references"))
+        best, best_overlap = None, 0
+        for pid, prior_keys, ptype, pname, _ in prior:
+            if pid in taken:
+                continue
+            overlap = len(keys & prior_keys)
+            if overlap == 0 and ptype == (group.get("project_type") or group.get("capacity_type")) and pname == group.get("normalized_name"):
+                overlap = 1
+            if overlap > best_overlap:
+                best, best_overlap = pid, overlap
+        if best is not None:
+            taken.add(best)
+        result.append(best)
+    for i, pid in enumerate(result):
+        if pid is None:
+            highest += 1
+            result[i] = f"{prefix}-{highest:04d}"
+    if not with_retired:
+        return result  # type: ignore[return-value]
+    retired = []
+    for pid, prior_keys, _, pname, record in prior:
+        if pid in taken:
+            continue
+        merged_into = next((result[n] for n, group in enumerate(groups) if prior_keys & _reference_keys(group.get("source_references"))), None)
+        retired.append({id_key: pid, "normalized_name": pname, "latest_period": record.get("latest_period"), "merged_into": merged_into,
+                        "reason": "its source items were merged into another record" if merged_into else "the current inputs no longer produce this record"})
+    return result, retired  # type: ignore[return-value]
+
+
+def _keep_historical_identity(groups: Sequence[Dict[str, Any]], ids: Sequence[str], prior_registry: Dict[str, Any], *, registry_key: str, id_key: str, name_key: str) -> None:
+    """An id is a historical identity, so a record that keeps a prior id keeps that id's NAME. When later source items are merged into it and their wording is longer or more specific,
+    the group's name used to change to theirs (a floor-area expansion became "Satellite systems manufacturing capacity" under the same id); the original name stays and the wording
+    that arrived with the merged items is recorded as an alias."""
+    prior = {p.get(id_key): p for p in (prior_registry or {}).get(registry_key) or [] if p.get(id_key)}
+    for group, identity in zip(groups, ids):
+        before = prior.get(identity)
+        if not before or not before.get("normalized_name") or before.get("normalized_name") == group.get("normalized_name"):
+            continue
+        aliases = set(before.get("name_aliases") or []) | {str(group.get(name_key) or "")}
+        group[name_key], group["normalized_name"] = before.get(name_key) or group.get(name_key), before["normalized_name"]
+        group["name_aliases"] = sorted(a for a in aliases if a)
 
 
 def _merge_groups(groups: List[Dict[str, Any]], candidate: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
@@ -274,6 +346,7 @@ def _build_project_record(company: str, group: Dict[str, Any], project_id: str, 
         "project_id": project_id,
         "project_name": group["project_name"],
         "normalized_name": group["normalized_name"],
+        "name_aliases": list(group.get("name_aliases") or []),
         "project_type": group["project_type"],
         "objective": group["objective"],
         "business_rationale": group["business_rationale"],
@@ -292,6 +365,9 @@ def _build_project_record(company: str, group: Dict[str, Any], project_id: str, 
         ),
         "semantic_quality": (group.get("source_items") or [{}])[0].get("semantic_quality") or {},
     }
+    dated = next((i["announcement_basis"] for i in group["source_items"] if (i.get("announcement_basis") or {}).get("basis") == "dated_event"), None)
+    if dated:
+        project["announcement_evidence"] = dated      # the dated event (date, page, signed-but-pending flag) that fixes the announcement period; additive field
     project["candidate_commitment_links"] = _discover_candidate_commitment_links(project, commitments)
     # related_commitment_ids: NOT overwritten from heuristic candidate links — CANDIDATE_ONLY authority.
     timeline = build_timeline(project, candidate_events, unresolved_questions=[])
@@ -320,19 +396,25 @@ def _build_project_record(company: str, group: Dict[str, Any], project_id: str, 
 @dataclass
 class ProjectsBuilder:
     company: str
-    companies_root: Path | str = Path("companies")
+    companies_root: Path | str
+    authorize_served_write: bool = False
     output_dir: Path = field(init=False)
 
     def __post_init__(self) -> None:
-        self.companies_root = Path(self.companies_root)
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(self.companies_root, authorize_served=self.authorize_served_write)
         self.company_root = self.companies_root / self.company
-        self.output_dir = get_projects_dir(self.company)
+        self.output_dir = get_projects_dir(self.company, self.companies_root)
+
+    def plan_outputs(self) -> Dict[str, Path]:
+        """The exact files build() would write. Read-only: nothing is created."""
+        return {name: safe_destination(self.companies_root, self.output_dir / name) for name in _OUTPUT_FILES}
 
     def _discover_years(self) -> List[Path]:
         return _discover_years(self.company_root)
 
     def _load_year_record(self, year_dir: Path) -> Dict[str, Any]:
-        return _load_year_record(year_dir)
+        return _load_year_record(year_dir, self.companies_root)
 
     def _extract_candidates(self, year_record: Dict[str, Any]) -> List[Dict[str, Any]]:
         return _build_source_item_years(year_record)
@@ -362,8 +444,9 @@ class ProjectsBuilder:
         assessments: List[Dict[str, Any]] = []
         unresolved_projects = 0
         turning_points_detected = 0
-        for index, group in enumerate(groups, start=1):
-            project_id = f"PJ-{index:04d}"
+        project_ids, retired_project_ids = _stable_project_ids(groups, _load_json(self.output_dir / "projects_registry.json"), with_retired=True)
+        _keep_historical_identity(groups, project_ids, _load_json(self.output_dir / "projects_registry.json"), registry_key="projects", id_key="project_id", name_key="project_name")
+        for group, project_id in zip(groups, project_ids):
             project = _build_project_record(self.company, group, project_id, commitments)
             projects.append(project)
             timeline = project["progression"]
@@ -397,6 +480,7 @@ class ProjectsBuilder:
             "generator_version": PROJECTS_GENERATOR_VERSION,
             "project_count": len(projects),
             "projects": projects,
+            "retired_project_ids": retired_project_ids,      # ids from the previous registry that no record keeps: never reused, resolvable here
         }
         timelines_payload = {
             "schema_version": PROJECTS_SCHEMA_VERSION,
@@ -476,9 +560,9 @@ class ProjectsBuilder:
         }
         written_paths: Dict[str, Path] = {}
         for filename, payload in files.items():
-            written_paths[filename] = write_json_file(self.output_dir / filename, payload)
+            written_paths[filename] = write_json_file(self.output_dir / filename, payload, root=self.companies_root)
         return written_paths
 
 
-def build_projects(company: str, companies_root: Path | str = Path("companies")) -> Dict[str, Path]:
-    return ProjectsBuilder(company=company, companies_root=companies_root).build()
+def build_projects(company: str, companies_root: Path | str, *, authorize_served_write: bool = False) -> Dict[str, Path]:
+    return ProjectsBuilder(company=company, companies_root=companies_root, authorize_served_write=authorize_served_write).build()

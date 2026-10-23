@@ -191,7 +191,7 @@ class TestEarningsReleaseSemantics:
             encoding="utf-8",
         )
         monkeypatch.chdir(tmp_path)
-        result = EarningsReleaseProcessor().process(_make_manifest(), source)
+        result = EarningsReleaseProcessor().process(_make_manifest(), source, companies_root=tmp_path / "companies")
         assert result.status == "SUCCESS"
         assert result.financial_fact_count >= 1
         assert result.management_claim_count >= 1
@@ -217,5 +217,5 @@ class TestEarningsReleaseRouting:
         from knowledge.document_processor import process_document
         source = tmp_path / "release.txt"
         source.write_text("Press Release\nUnknown Company reports Q1FY27 results.\n", encoding="utf-8")
-        result = process_document(source, execute=True)
+        result = process_document(source, execute=True, companies_root=tmp_path / "companies")
         assert result.status.value in {"REVIEW_REQUIRED", "UNSUPPORTED"}

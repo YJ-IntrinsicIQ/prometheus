@@ -15,5 +15,7 @@ dump() {  # $1 = root, $2 = output json
 dump "$WORK/root" "$WORK/surf_pass1.json"
 dump "" "$WORK/surf_served.json" 2>/dev/null || true
 python3 tools/g5_clean_inventory.py --cand "$CAND" --root "$BASE" --surf-cand "$WORK/surf_pass1.json" --surf-served "$WORK/surf_served.json" --json "$WORK/clean_pass1.json" >/dev/null
-python3 tools/g5_build_sidecar.py --inventory "$WORK/clean_pass1.json" --ledger-root "$BASE" --sandbox-root "$WORK/root"
+python3 tools/g5_build_sidecar.py --inventory "$WORK/clean_pass1.json" --ledger-root "$BASE" --sandbox-root "$WORK/root" --surfaces "$WORK/surf_pass1.json"
 dump "$WORK/root" "$WORK/surf_pass2.json"
+python3 tools/g5_clean_inventory.py --cand "$CAND" --root "$BASE" --surf-cand "$WORK/surf_pass2.json" --surf-served "$WORK/surf_served.json" --bundle "$WORK/bundle" --sandbox-root "$WORK/root" --json "$WORK/clean_pass2.json" >/dev/null
+python3 tools/g5_review_queue.py --inventory "$WORK/clean_pass2.json" --root "$BASE" --json "$WORK/review_queue.json"

@@ -29,9 +29,9 @@ MANIFEST = ROOT / "preview" / "M59_3_FINAL_AUTHORIZATION_MANIFEST.json"
 REGISTRY = ROOT / "governance" / "approval_registry.json"
 COMPANIES = ["sun_pharma", "tanla", "ujjivan", "datapatterns"]
 ALLOWED_WARNS = {"check_runtime_sanitizer_compat", "check_capital_no_unattributed_roi"}   # both documented, non-blocking (fail safe by omission / false positive on 'Return on capital employed' in a monitor item)
-served = lambda c: ROOT / "companies" / c / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json"  # noqa: E731
-cand = lambda c: ROOT / "companies" / c / "company_memory/ask_intrinsiciq/m59_candidate_answers.json"  # noqa: E731
-repl = lambda c: ROOT / "companies" / c / "company_memory/ask_intrinsiciq/m59_3_replacement_candidates.json"  # noqa: E731
+served = lambda c: ac.companies_root() / c / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json"  # noqa: E731
+cand = lambda c: ac.companies_root() / c / "company_memory/ask_intrinsiciq/m59_candidate_answers.json"  # noqa: E731
+repl = lambda c: ac.companies_root() / c / "company_memory/ask_intrinsiciq/m59_3_replacement_candidates.json"  # noqa: E731
 sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()  # noqa: E731
 
 
@@ -173,7 +173,10 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--owner-authorized", default="")
     ap.add_argument("--simulate-failure", action="store_true", help="rehearsal only: fail after the first stage to prove the restore")
+    ap.add_argument("--companies-root", required=True, type=Path, help="absolute company-data root (required; no default)")
+    ap.add_argument("--authorize-served-write", action="store_true", help="permit --companies-root to be the served companies/ tree")
     a = ap.parse_args()
+    ac.configure_companies_root(a.companies_root, authorize_served=a.authorize_served_write)
     bad, info = preflight()
     print("PREFLIGHT", "FAILED" if bad else "PASSED", json.dumps(info))
     for b in bad:

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root
 
 import json
 import re
@@ -98,16 +99,13 @@ def _load_json(path: Path) -> Dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _write_json(path: Path, payload: Dict[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
+def _write_json(path: Path, payload: Dict[str, Any], *, root: Path | str) -> Path:
+    """The destination must lie inside the explicit, already-authorized output root."""
+    return guarded_write_text(root, path, json.dumps(payload, ensure_ascii=False, indent=2))
 
 
-def _write_text(path: Path, text: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    return path
+def _write_text(path: Path, text: str, *, root: Path | str) -> Path:
+    return guarded_write_text(root, path, text)
 
 
 def _append_unique(items: List[str], value: str) -> None:
@@ -341,7 +339,7 @@ def build_financial_pcim_validation(
     *,
     company: str,
     year: str,
-    companies_root: Path | str = Path("companies"),
+    companies_root: Path | str,
 ) -> Dict[str, Any]:
     companies_root = Path(companies_root)
     year_dir = companies_root / company / year / "financials"
@@ -527,12 +525,13 @@ def write_financial_pcim_validation(
     *,
     company: str,
     year: str,
-    companies_root: Path | str = Path("companies"),
+    companies_root: Path | str,
+    authorize_served_write: bool = False,
 ) -> Tuple[Dict[str, Any], Path]:
-    companies_root = Path(companies_root)
+    companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
     payload = build_financial_pcim_validation(company=company, year=year, companies_root=companies_root)
     output_path = companies_root / company / year / "financials" / "financial_pcim_validation.json"
-    return payload, _write_json(output_path, payload)
+    return payload, _write_json(output_path, payload, root=companies_root)
 
 
 def _dimension(score: int, reasons: Sequence[str]) -> Dict[str, Any]:
@@ -726,7 +725,7 @@ def _recommended_fixes(hard_failures: Sequence[str], warnings: Sequence[str]) ->
 def build_financial_quality_scorecard(
     *,
     company: str,
-    companies_root: Path | str = Path("companies"),
+    companies_root: Path | str,
 ) -> Dict[str, Any]:
     companies_root = Path(companies_root)
     company_root = companies_root / company
@@ -879,13 +878,14 @@ def render_financial_quality_scorecard_markdown(payload: Dict[str, Any]) -> str:
 def write_financial_quality_scorecard(
     *,
     company: str,
-    companies_root: Path | str = Path("companies"),
+    companies_root: Path | str,
+    authorize_served_write: bool = False,
 ) -> Dict[str, Path]:
-    companies_root = Path(companies_root)
+    companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
     payload = build_financial_quality_scorecard(company=company, companies_root=companies_root)
     audit_dir = companies_root / company / "audit"
-    json_path = _write_json(audit_dir / "financial_quality_scorecard.json", payload)
-    md_path = _write_text(audit_dir / "financial_quality_scorecard.md", render_financial_quality_scorecard_markdown(payload))
+    json_path = _write_json(audit_dir / "financial_quality_scorecard.json", payload, root=companies_root)
+    md_path = _write_text(audit_dir / "financial_quality_scorecard.md", render_financial_quality_scorecard_markdown(payload), root=companies_root)
     return {
         "financial_quality_scorecard.json": json_path,
         "financial_quality_scorecard.md": md_path,

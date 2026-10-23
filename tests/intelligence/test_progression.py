@@ -328,7 +328,7 @@ def test_management_commitments_remains_conservative_and_no_llm_call(tmp_path, m
     )
     (intelligence_dir / "management_summary.json").write_text(json.dumps({"major_promises": []}), encoding="utf-8")
 
-    written_paths = ManagementCommitmentsBuilder(company=company).build()
+    written_paths = ManagementCommitmentsBuilder(company=company, companies_root=Path.cwd() / "companies").build()
     output_dir = tmp_path / "companies" / company / "company_memory" / "management_commitments"
     commitments = json.loads((output_dir / "management_commitments.json").read_text())
 

@@ -283,6 +283,7 @@ def test_write_financial_driver_attribution_persists_output(tmp_path: Path):
         company="acme",
         company_root=company_root,
         output_path=output_path,
+        output_root=tmp_path,
     )
 
     saved = json.loads(output_path.read_text(encoding="utf-8"))

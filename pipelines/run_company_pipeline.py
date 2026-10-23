@@ -12,7 +12,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from core.company_context import CompanyContext, CompanyMemoryContext  # noqa: E402
-from core.context_paths import investor_panel_dir  # noqa: E402
 from pipelines.pipeline_context import get_context, set_context  # noqa: E402
 from knowledge.ai import get_llm  # noqa: E402
 from knowledge.ai.input_packs import call_llm_with_input_pack  # noqa: E402
@@ -57,6 +56,46 @@ from intelligence.investor_panel import (  # noqa: E402
 )
 from intelligence.investor_panel.committee_validator import CANONICAL_DISAGREEMENT_TYPES  # noqa: E402
 from intelligence.ask_intrinsiciq import generate_ask_intrinsiciq_view  # noqa: E402
+from core.context_paths import WriteBoundaryError, set_served_writes_authorized  # noqa: E402
+
+# Writes to the served companies/ tree are authorized only by the explicit --authorize-served-write flag (set in main()). The pipeline writes to the same cwd-relative
+# companies/ it always did, but every builder now receives that root as an explicit absolute path and refuses the served tree without the authorization.
+_SERVED_WRITE_AUTHORIZED = False
+
+
+def _pipeline_companies_root() -> Path:
+    """The ONE company-data root for this run: the active context's explicit root, else the working directory's companies/ (resolved, absolute). Reads and writes use it alike."""
+    active = get_context()
+    root = getattr(active, "companies_root", None)
+    return Path(root) if root is not None else (Path.cwd() / "companies").resolve()
+
+
+def _write_kwargs() -> dict:
+    return {"companies_root": _pipeline_companies_root(), "authorize_served_write": _SERVED_WRITE_AUTHORIZED}
+
+
+def _guarded_text(path, text) -> Path:
+    """Every direct pipeline write goes through the guard: the resolved destination must lie inside the run's one company-data root."""
+    from core.context_paths import guarded_write_text
+
+    return guarded_write_text(_pipeline_companies_root(), path, text)
+
+
+def _guarded_mkdir(path) -> None:
+    from core.context_paths import safe_destination
+
+    safe_destination(_pipeline_companies_root(), path).mkdir(parents=True, exist_ok=True)
+
+
+def _rec(path) -> str:
+    """How a path is recorded inside an artifact or summary: companies/<slug>/..., independent of the absolute root of this run."""
+    from core.context_paths import logical_company_path
+
+    return logical_company_path(path, _pipeline_companies_root())
+
+
+def _display_path(path) -> str:
+    return os.path.relpath(path)
 from intelligence.projects import ProjectsBuilder  # noqa: E402
 from intelligence.capacity import CapacityEvolutionBuilder  # noqa: E402
 from intelligence.risks import build_risk_evolution  # noqa: E402
@@ -65,6 +104,7 @@ from scripts.pdf_reader import extract_pages  # noqa: E402
 from scripts.smart_chunker import chunk_pages  # noqa: E402
 from knowledge.question_engine.schema import DiscoveryPlan, QuestionModule  # noqa: E402
 from knowledge.discovery_runtime.schema import DiscoveryResult, ExecutionStatistics  # noqa: E402
+from knowledge.financials.registry_authority import settle_financial_authority  # noqa: E402
 from knowledge.financials import (  # noqa: E402
     write_financial_memory_artifacts,
     write_financial_audit_report,
@@ -1131,7 +1171,7 @@ def _ensure_context(stage_name, context):
 
 
 def _valid_years_for_company(company):
-    company_root = Path("companies") / company
+    company_root = _pipeline_companies_root() / company
     return eligible_company_years(company=company, company_root=company_root)
 
 
@@ -1155,10 +1195,10 @@ def _build_company_memory_context(company):
         raise RuntimeError(
             f"company_memory requires at least one valid yearly intelligence snapshot for {company}"
         )
-    context = CompanyMemoryContext(company=company, eligible_years=eligible_years)
+    context = CompanyMemoryContext(company=company, eligible_years=eligible_years, **_write_kwargs())
     context.year_eligibility_manifest = build_company_year_eligibility_manifest(
         company=company,
-        company_root=Path("companies") / company,
+        company_root=_pipeline_companies_root() / company,
     )
     context.create_directories()
     return context
@@ -1185,10 +1225,7 @@ def _run_preflight(context):
 
     intake_report = build_document_intake_report(raw_docs, allow_ocr=True)
     intake_report_path = context.extracted_dir / "document_intake_report.json"
-    intake_report_path.write_text(
-        json.dumps(intake_report, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    _guarded_text(intake_report_path, json.dumps(intake_report, indent=2, ensure_ascii=False))
 
     extractable_docs = []
     for path in raw_docs:
@@ -1245,9 +1282,9 @@ def _run_preflight(context):
         )
 
     return {
-        "raw_documents": [str(path) for path in raw_docs],
-        "extractable_documents": [str(path) for path in extractable_docs],
-        "chunk_output": str(chunk_path),
+        "raw_documents": [_rec(path) for path in raw_docs],
+        "extractable_documents": [_rec(path) for path in extractable_docs],
+        "chunk_output": _rec(chunk_path),
         "chunk_count": chunk_count,
         "indexed_chunk_count": indexed_count,
     }
@@ -1304,6 +1341,7 @@ def _build_runtime_extractor():
                 if context is not None
                 else None
             ),
+            output_root=context.companies_root if context is not None else None,
             require_source_artifacts=True,
             response_schema={"type": "object"},
         )
@@ -1413,10 +1451,7 @@ def _load_saved_business_intelligence_bundle(context):
 
     canonicalized = _canonicalize_business_classification(business_classification)
     if canonicalized != business_classification:
-        classification_path.write_text(
-            json.dumps(canonicalized, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        _guarded_text(classification_path, json.dumps(canonicalized, indent=2, ensure_ascii=False))
 
     return {"business_classification": canonicalized}
 
@@ -1577,11 +1612,11 @@ def run_business_intelligence_stage(context=None, bundle=None):
         from core.context_paths import intelligence_path  # noqa: E402
         intelligence_dir = Path(str(intelligence_path("", context_dir="intelligence_dir")))
 
-    intelligence_dir.mkdir(parents=True, exist_ok=True)
+    _guarded_mkdir(intelligence_dir)
 
     def _write_json(filename, payload):
         path = intelligence_dir / filename
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        _guarded_text(path, json.dumps(payload, indent=2, ensure_ascii=False))
 
     _write_json("discovery_plan.json", plan.to_dict())
 
@@ -1740,6 +1775,7 @@ def run_financial_discovery(context=None):
         year=context.year,
         chunk_path=chunk_path,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIAL DISCOVERY]")
     print(f"Company: {context.company}")
@@ -1785,6 +1821,7 @@ def run_financial_extraction(context=None):
         chunk_path=chunk_path,
         discovery_path=discovery_path,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIAL EXTRACTION]")
     print(f"Company: {context.company}")
@@ -1815,6 +1852,7 @@ def run_financial_normalization(context=None):
         year=context.year,
         raw_tables_path=raw_tables_path,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIAL NORMALIZATION]")
     print(f"Company: {context.company}")
@@ -1843,6 +1881,7 @@ def run_financial_validation(context=None):
         year=context.year,
         normalized_path=normalized_path,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIAL VALIDATION]")
     print(f"Company: {context.company}")
@@ -1876,6 +1915,7 @@ def run_financial_reconciliation(context=None):
         year=context.year,
         normalized_path=normalized_path,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIAL RECONCILIATION]")
     print(f"Company: {context.company}")
@@ -1903,6 +1943,7 @@ def run_financial_basis_resolution(context=None):
         year=context.year,
         financial_root=context.financials_dir,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIAL BASIS RESOLUTION]")
     print(f"Company: {context.company}")
@@ -1935,6 +1976,7 @@ def run_financial_truth_registry(context=None):
         registry_output_path=registry_output_path,
         reconciliation_output_path=reconciliation_output_path,
         quarantine_output_path=quarantine_output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIAL TRUTH REGISTRY]")
     print(f"Company: {context.company}")
@@ -1953,6 +1995,19 @@ def run_financial_truth_registry(context=None):
         "financial_truth_reconciliation_report.json": reconciliation_output_path,
         "financial_artifact_quarantine_report.json": quarantine_output_path,
     }
+
+
+def run_financial_authority(context=None):
+    """The fact registry decides which extracted figures may be used; what it rejects leaves normalized_fundamentals.json before ratios, growth, trends, CIM or PCIM read it."""
+    context = _ensure_context("financial_authority", context)
+    set_context(context)
+    excluded = settle_financial_authority(
+        company=context.company, year=context.year, financial_root=context.financials_dir,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
+    )
+    print("[FINANCIAL AUTHORITY]")
+    print(f"Company: {context.company}  Year: {context.year}  Figures withheld by the registry: {sorted(excluded)}")
+    return {"normalized_fundamentals.json": context.financials_dir / "normalized_fundamentals.json"}
 
 
 def run_financial_ratios(context=None):
@@ -1977,6 +2032,7 @@ def run_financial_ratios(context=None):
         normalized_path=normalized_path,
         reconciliation_path=reconciliation_path,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIAL RATIOS]")
     print(f"Company: {context.company}")
@@ -2012,6 +2068,7 @@ def run_financial_growth(context=None):
         reconciliation_path=reconciliation_path,
         ratios_path=ratios_path if ratios_path.exists() else None,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIAL GROWTH]")
     print(f"Company: {context.company}")
@@ -2042,6 +2099,7 @@ def run_corporate_actions(context=None):
         raw_tables_path=raw_tables_path if raw_tables_path.exists() else None,
         chunk_path=(context.extracted_dir / "clean_chunks.json") if (context.extracted_dir / "clean_chunks.json").exists() else None,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[CORPORATE ACTIONS]")
     print(f"Company: {context.company}")
@@ -2071,6 +2129,7 @@ def run_shareholding_pattern(context=None):
         raw_tables_path=raw_tables_path,
         normalized_path=normalized_path,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[SHAREHOLDING PATTERN]")
     print(f"Company: {context.company}")
@@ -2095,6 +2154,9 @@ def run_financials_stage(context=None):
         run_financial_normalization(context=context)
         run_financial_validation(context=context)
         run_financial_reconciliation(context=context)
+        run_financial_authority(context=context)
+        run_financial_validation(context=context)
+        run_financial_reconciliation(context=context)
         run_financial_ratios(context=context)
         run_financial_growth(context=context)
         run_corporate_actions(context=context)
@@ -2107,6 +2169,7 @@ def run_financials_stage(context=None):
         year=context.year,
         financials_dir=context.financials_dir,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIALS]")
     print(f"Company: {context.company}")
@@ -2131,12 +2194,13 @@ def run_financials_stage(context=None):
 def run_financial_trends_stage(company, context=None):
     if context is not None:
         set_context(context)
-    company_root = Path("companies") / company
+    company_root = _pipeline_companies_root() / company
     output_path = company_root / "company_memory" / "financials" / "financial_trends.json"
     report = write_financial_trends(
         company=company,
         company_root=company_root,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIAL TRENDS]")
     print(f"Company: {company}")
@@ -2156,6 +2220,7 @@ def run_financial_quality_stage(company, context=None):
             year=context.year,
             financial_root=context.financials_dir,
             output_path=output_path,
+            output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
         )
         print("[FINANCIAL QUALITY]")
         print(f"Company: {company}")
@@ -2166,13 +2231,14 @@ def run_financial_quality_stage(company, context=None):
         print(f"Warnings: {len(report.warnings)}")
         return {"financial_quality_summary.json": output_path}
 
-    company_root = Path("companies") / company
+    company_root = _pipeline_companies_root() / company
     trends_path = company_root / "company_memory" / "financials" / "financial_trends.json"
     output_path = company_root / "company_memory" / "financials" / "financial_quality_summary.json"
     report = write_financial_quality_summary(
         company=company,
         trends_path=trends_path,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIAL QUALITY]")
     print(f"Company: {company}")
@@ -2185,12 +2251,13 @@ def run_financial_quality_stage(company, context=None):
 def run_financial_attribution_stage(company, context=None):
     if context is not None:
         set_context(context)
-    company_root = Path("companies") / company
+    company_root = _pipeline_companies_root() / company
     output_path = company_root / "company_memory" / "financials" / "financial_driver_attribution.json"
     report = write_financial_driver_attribution(
         company=company,
         company_root=company_root,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIAL ATTRIBUTION]")
     print(f"Company: {company}")
@@ -2201,7 +2268,7 @@ def run_financial_attribution_stage(company, context=None):
 
 
 def _refresh_year_level_financial_quality(company):
-    company_root = Path("companies") / company
+    company_root = _pipeline_companies_root() / company
     written = {}
     for year_dir in sorted(
         (
@@ -2220,6 +2287,7 @@ def _refresh_year_level_financial_quality(company):
             year=year_dir.name,
             financial_root=financial_root,
             output_path=output_path,
+            output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
         )
         written[f"{year_dir.name}/financial_quality_summary.json"] = output_path
     return written
@@ -2234,13 +2302,14 @@ def run_financial_memory_stage(company, context=None):
     paths.update(run_financial_quality_stage(company=company, context=None))
     paths.update(run_financial_attribution_stage(company=company, context=context))
 
-    company_root = Path("companies") / company
+    company_root = _pipeline_companies_root() / company
     financial_memory_dir = company_root / "company_memory" / "financials"
     paths.update(
         write_financial_memory_artifacts(
             company=company,
             company_root=company_root,
             output_dir=financial_memory_dir,
+            output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
         )
     )
     output_path = company_root / "company_memory" / "financials" / "financial_memory_audit_report.json"
@@ -2248,6 +2317,7 @@ def run_financial_memory_stage(company, context=None):
         company=company,
         company_root=company_root,
         output_path=output_path,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     print("[FINANCIAL MEMORY]")
     print(f"Company: {company}")
@@ -2262,12 +2332,13 @@ def run_financial_memory_stage(company, context=None):
 def run_investor_financials_stage(company, context=None):
     if context is not None:
         set_context(context)
-    company_root = Path("companies") / company
+    company_root = _pipeline_companies_root() / company
     output_dir = company_root / "company_memory" / "financials" / "investor_financial_modules"
     paths = write_investor_financial_modules(
         company=company,
         company_root=company_root,
         output_dir=output_dir,
+        output_root=_pipeline_companies_root(), authorize_served_write=_SERVED_WRITE_AUTHORIZED,
     )
     manifest_path = output_dir / "investor_financial_modules_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -2287,7 +2358,7 @@ def run_financial_pcim_validation_stage(context=None):
     payload, output_path = write_financial_pcim_validation(
         company=context.company,
         year=context.year,
-        companies_root=Path("companies"),
+        **_write_kwargs(),
     )
     print("[FINANCIAL PCIM VALIDATION]")
     print(f"Company: {context.company}")
@@ -2303,9 +2374,9 @@ def run_company_memory_stage(company, context=None):
     if context is not None:
         set_context(context)
     valid_years, warnings = _require_company_level_intelligence(company, "company_memory")
-    builder = CompanyMemoryAggregateBuilder(company=company)
+    builder = CompanyMemoryAggregateBuilder(company=company, **_write_kwargs())
     written_paths = builder.build()
-    output_dir = Path("companies") / company / "company_memory"
+    output_dir = _pipeline_companies_root() / company / "company_memory"
     print("[COMPANY MEMORY]")
     print(f"Company: {company}")
     print(f"Valid Years: {', '.join(valid_years)}")
@@ -2322,9 +2393,9 @@ def run_management_commitments_stage(company, context=None):
     if context is not None:
         set_context(context)
     valid_years, warnings = _require_company_level_intelligence(company, "management_commitments")
-    builder = ManagementCommitmentsBuilder(company=company)
+    builder = ManagementCommitmentsBuilder(company=company, **_write_kwargs())
     written_paths = builder.build()
-    output_dir = Path("companies") / company / "company_memory" / "management_commitments"
+    output_dir = _pipeline_companies_root() / company / "company_memory" / "management_commitments"
     commitments_path = output_dir / "management_commitments.json"
     validation_path = output_dir / "commitment_validation.json"
     commitments = _load_json_file(commitments_path) if commitments_path.exists() else {}
@@ -2347,9 +2418,9 @@ def run_management_commentary_stage(company, context=None):
     if context is not None:
         set_context(context)
     valid_years, warnings = _require_company_level_intelligence(company, "management_commentary")
-    builder = ManagementCommentaryBuilder(company=company)
+    builder = ManagementCommentaryBuilder(company=company, **_write_kwargs())
     written_paths = builder.build()
-    output_dir = Path("companies") / company / "company_memory" / "management_commentary"
+    output_dir = _pipeline_companies_root() / company / "company_memory" / "management_commentary"
     themes_path = output_dir / "commentary_themes.json"
     validation_path = output_dir / "commentary_validation.json"
     themes = _load_json_file(themes_path) if themes_path.exists() else {}
@@ -2372,9 +2443,9 @@ def run_capital_allocation_outcomes_stage(company, context=None):
     if context is not None:
         set_context(context)
     valid_years, warnings = _require_company_level_intelligence(company, "capital_allocation_outcomes")
-    builder = CapitalAllocationOutcomesBuilder(company=company)
+    builder = CapitalAllocationOutcomesBuilder(company=company, **_write_kwargs())
     written_paths = builder.build()
-    output_dir = Path("companies") / company / "company_memory" / "capital_allocation_outcomes"
+    output_dir = _pipeline_companies_root() / company / "company_memory" / "capital_allocation_outcomes"
     outcomes_path = output_dir / "capital_allocation_outcomes.json"
     timelines_path = output_dir / "capital_allocation_timelines.json"
     assessments_path = output_dir / "capital_allocation_assessments.json"
@@ -2385,13 +2456,17 @@ def run_capital_allocation_outcomes_stage(company, context=None):
     validation = _load_json_file(validation_path) if validation_path.exists() else {}
     # Derive Gold artifacts immediately after capital allocation outcomes are written
     try:
-        gold_path = write_capital_allocation_outcome_tracker(company)
-        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+        gold_path = write_capital_allocation_outcome_tracker(company, **_write_kwargs())
+        written_paths[_display_path(gold_path)] = gold_path
+    except WriteBoundaryError:
+        raise
     except Exception:
         pass  # Gold layer is best-effort; never block the capital allocation stage
     try:
-        gold_path = write_strategy_evolution_timeline(company, companies_root=Path("companies"))
-        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+        gold_path = write_strategy_evolution_timeline(company, **_write_kwargs())
+        written_paths[_display_path(gold_path)] = gold_path
+    except WriteBoundaryError:
+        raise
     except Exception:
         pass  # Gold layer is best-effort; never block the pipeline stage
     print("[CAPITAL ALLOCATION OUTCOMES]")
@@ -2414,9 +2489,9 @@ def run_management_quality_stage(company, context=None):
     if context is not None:
         set_context(context)
     valid_years, warnings = _require_company_level_intelligence(company, "management_quality")
-    builder = ManagementQualityBuilder(company=company)
+    builder = ManagementQualityBuilder(company=company, **_write_kwargs())
     written_paths = builder.build()
-    output_dir = Path("companies") / company / "company_memory" / "management_quality"
+    output_dir = _pipeline_companies_root() / company / "company_memory" / "management_quality"
     summary_path = output_dir / "management_quality_summary.json"
     dimensions_path = output_dir / "management_quality_dimensions.json"
     validation_path = output_dir / "management_quality_validation.json"
@@ -2443,9 +2518,9 @@ def run_projects_stage(company, context=None):
     if context is not None:
         set_context(context)
     valid_years, warnings = _require_company_level_intelligence(company, "projects")
-    builder = ProjectsBuilder(company=company)
+    builder = ProjectsBuilder(company=company, **_write_kwargs())
     written_paths = builder.build()
-    output_dir = Path("companies") / company / "company_memory" / "projects"
+    output_dir = _pipeline_companies_root() / company / "company_memory" / "projects"
     registry_path = output_dir / "projects_registry.json"
     assessments_path = output_dir / "project_assessments.json"
     validation_path = output_dir / "projects_validation.json"
@@ -2483,9 +2558,9 @@ def run_capacity_evolution_stage(company, context=None):
     if context is not None:
         set_context(context)
     valid_years, warnings = _require_company_level_intelligence(company, "capacity_evolution")
-    builder = CapacityEvolutionBuilder(company=company)
+    builder = CapacityEvolutionBuilder(company=company, **_write_kwargs())
     written_paths = builder.build()
-    output_dir = Path("companies") / company / "company_memory" / "capacity"
+    output_dir = _pipeline_companies_root() / company / "company_memory" / "capacity"
     registry_path = output_dir / "capacity_registry.json"
     assessments_path = output_dir / "capacity_assessments.json"
     validation_path = output_dir / "capacity_validation.json"
@@ -2527,18 +2602,20 @@ def run_risk_evolution_stage(company, context=None):
     if context is not None:
         set_context(context)
     valid_years, warnings = _require_company_level_intelligence(company, "risk_evolution")
-    company_root = Path("companies") / company
+    company_root = _pipeline_companies_root() / company
     # Gold owns canonical cross-year risk trajectory.  Build it before Risk
     # Registry so consequence/response accountability is never hydrated from
     # the previous generation's Gold artifact.
     gold_path = None
     try:
-        gold_path = write_risk_evolution_timeline(company, companies_root=Path("companies"))
+        gold_path = write_risk_evolution_timeline(company, **_write_kwargs())
+    except WriteBoundaryError:
+        raise
     except Exception:
         pass  # Gold layer is best-effort; never block the base risk stage
-    written_paths = build_risk_evolution(company, companies_root=Path("companies"))
+    written_paths = build_risk_evolution(company, **_write_kwargs())
     if gold_path is not None and isinstance(written_paths, dict):
-        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+        written_paths[_display_path(gold_path)] = gold_path
     output_dir = company_root / "company_memory" / "risks"
     registry_path = output_dir / "risk_registry.json"
     assessments_path = output_dir / "risk_assessments.json"
@@ -2583,9 +2660,9 @@ def run_cim_stage(company, context=None):
     if context is not None:
         set_context(context)
     valid_years, warnings = _require_company_level_intelligence(company, "cim/pcim")
-    builder = CIMContractBuilder(company=company)
+    builder = CIMContractBuilder(company=company, **_write_kwargs())
     written_paths = builder.build()
-    output_dir = Path("companies") / company / "company_memory"
+    output_dir = _pipeline_companies_root() / company / "company_memory"
     print("[CIM / PCIM]")
     print(f"Company: {company}")
     print(f"Valid Years: {', '.join(valid_years)}")
@@ -2602,9 +2679,9 @@ def run_multi_year_memory_stage(company, context=None):
     if context is not None:
         set_context(context)
     valid_years, warnings = _require_company_level_intelligence(company, "multi_year_memory")
-    builder = MultiYearCompanyMemoryBuilder(company=company)
+    builder = MultiYearCompanyMemoryBuilder(company=company, **_write_kwargs())
     written_paths = builder.build()
-    output_dir = Path("companies") / company / "company_memory" / "multi_year"
+    output_dir = _pipeline_companies_root() / company / "company_memory" / "multi_year"
     print("[MULTI-YEAR MEMORY]")
     print(f"Company: {company}")
     print(f"Valid Years: {', '.join(valid_years)}")
@@ -2620,8 +2697,8 @@ def run_multi_year_memory_stage(company, context=None):
 def run_ask_intrinsiciq_stage(company, context=None, force=False):
     if context is not None:
         set_context(context)
-    result = generate_ask_intrinsiciq_view(company, force=force)
-    output_dir = Path("companies") / company / "company_memory" / "ask_intrinsiciq"
+    result = generate_ask_intrinsiciq_view(company, force=force, **_write_kwargs())
+    output_dir = _pipeline_companies_root() / company / "company_memory" / "ask_intrinsiciq"
     manifest = result.get("manifest") or {}
     validation_report = result.get("validation_report") or {}
     business_journey = result.get("business_journey") or {}
@@ -2678,8 +2755,8 @@ def run_ask_intrinsiciq_stage(company, context=None, force=False):
 def run_company_model_stage(company, context=None):
     if context is not None:
         set_context(context)
-    written_paths = write_company_model(company)
-    output_dir = Path("companies") / company / "company_memory" / "company_model"
+    written_paths = write_company_model(company, **_write_kwargs())
+    output_dir = _pipeline_companies_root() / company / "company_memory" / "company_model"
     validation_path = output_dir / "company_model_validation.json"
     validation = _load_json_file(validation_path)
     model_path = output_dir / "company_model.json"
@@ -2702,20 +2779,24 @@ def run_management_progression_stage(company, context=None):
         set_context(context)
     # Canonical order: MC identity/ontology -> deterministic verification
     # evidence -> MP lifecycle -> derived Gold/credibility.
-    build_verification_events(company, Path("companies"))
-    written_paths = write_management_progression(company)
-    output_dir = Path("companies") / company / "company_memory" / "management_progression"
+    build_verification_events(company, **_write_kwargs())
+    written_paths = write_management_progression(company, **_write_kwargs())
+    output_dir = _pipeline_companies_root() / company / "company_memory" / "management_progression"
     validation = _load_json_file(output_dir / "management_progression_validation.json")
     payload = _load_json_file(output_dir / "management_progression.json")
     # Derive Gold artifact immediately after progression is written
     try:
-        gold_path = write_management_promise_tracker(company)
-        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+        gold_path = write_management_promise_tracker(company, **_write_kwargs())
+        written_paths[_display_path(gold_path)] = gold_path
+    except WriteBoundaryError:
+        raise
     except Exception:
         pass  # Gold layer is best-effort; never block the progression stage
     try:
-        gold_path = write_management_credibility_synthesis(company, companies_root=Path("companies"))
-        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+        gold_path = write_management_credibility_synthesis(company, **_write_kwargs())
+        written_paths[_display_path(gold_path)] = gold_path
+    except WriteBoundaryError:
+        raise
     except Exception:
         pass  # Gold layer is best-effort; never block the progression stage
     print("[MANAGEMENT PROGRESSION]")
@@ -2734,30 +2815,34 @@ def run_economic_attribution_stage(company, context=None):
     if context is not None:
         set_context(context)
     from intelligence.economic_attribution.runner import run as _run_economic_attribution
-    _run_economic_attribution(company)
+    _run_economic_attribution(company, **_write_kwargs())
 
 
 def run_audit_stage(company, context=None, fix_safe=False):
     if context is not None:
         set_context(context)
-    written_paths = run_company_artifact_audit(company, fix_safe=fix_safe)
+    written_paths = run_company_artifact_audit(company, fix_safe=fix_safe, **_write_kwargs())
     written_paths.update(
         write_financial_quality_scorecard(
             company=company,
-            companies_root=Path("companies"),
+            **_write_kwargs(),
         )
     )
     try:
-        gold_path = write_risk_evolution_timeline(company, companies_root=Path("companies"))
-        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+        gold_path = write_risk_evolution_timeline(company, **_write_kwargs())
+        written_paths[_display_path(gold_path)] = gold_path
+    except WriteBoundaryError:
+        raise
     except Exception:
         pass  # Gold layer is best-effort; never block audit
     try:
-        gold_path = write_management_credibility_synthesis(company, companies_root=Path("companies"))
-        written_paths[str(gold_path.relative_to(Path(".")))] = gold_path
+        gold_path = write_management_credibility_synthesis(company, **_write_kwargs())
+        written_paths[_display_path(gold_path)] = gold_path
+    except WriteBoundaryError:
+        raise
     except Exception:
         pass  # Gold layer is best-effort; never block audit
-    output_dir = Path("companies") / company / "audit"
+    output_dir = _pipeline_companies_root() / company / "audit"
     print("[ARTIFACT AUDIT]")
     print(f"Company: {company}")
     print(f"Output Dir: {output_dir}")
@@ -2768,7 +2853,7 @@ def run_audit_stage(company, context=None, fix_safe=False):
 
 
 def _load_audit_payload(company):
-    audit_path = Path("companies") / company / "audit" / "company_artifact_audit.json"
+    audit_path = _pipeline_companies_root() / company / "audit" / "company_artifact_audit.json"
     if not audit_path.exists():
         raise RuntimeError(f"audit stage did not write expected artifact: {audit_path}")
     try:
@@ -2793,7 +2878,7 @@ def _ensure_audit_allows_customer_output(company):
 def run_investor_panel_stage(company, analyst=None, context=None):
     if context is not None:
         set_context(context)
-    pcim_path = Path("companies") / company / "company_memory" / "pcim_v1.json"
+    pcim_path = _pipeline_companies_root() / company / "company_memory" / "pcim_v1.json"
     if not pcim_path.exists():
         raise RuntimeError(f"investor_panel requires PCIM: {pcim_path}")
     pcim_payload = json.loads(pcim_path.read_text(encoding="utf-8"))
@@ -2808,13 +2893,7 @@ def run_investor_panel_stage(company, analyst=None, context=None):
         print("[INVESTOR PANEL] Warning: PCIM source manifest status is warning.")
         for warning in freshness.get("warnings", []):
             print(f"Warning: {warning}")
-    try:
-        runner = InvestorPanelRunner(
-            company=company,
-            output_dir=_panel_output_dir(company, context=context),
-        )
-    except TypeError:
-        runner = InvestorPanelRunner(company=company)
+    runner = InvestorPanelRunner(company=company, **_write_kwargs())
     written_paths = runner.run(analyst=analyst)
     output_dir = _panel_output_dir(company, context=context)
     print("[INVESTOR PANEL]")
@@ -2830,7 +2909,7 @@ def run_investor_panel_stage(company, analyst=None, context=None):
 def run_investor_briefs_stage(company, context=None):
     if context is not None:
         set_context(context)
-    builder = InvestorBriefBuilder(company=company)
+    builder = InvestorBriefBuilder(company=company, **_write_kwargs())
     written_paths = builder.build()
     output_dir = _panel_output_dir(company, context=context) / "briefs"
     print("[INVESTOR BRIEFS]")
@@ -2849,7 +2928,7 @@ def run_committee_synthesis_stage(company, context=None, cleanup_only=False):
     analyst_paths = [panel_dir / f"{analyst}_analysis.json" for analyst in ("graham", "buffett", "fisher", "munger", "lynch")]
     if not any(path.exists() for path in analyst_paths):
         raise RuntimeError(f"committee_synthesis requires analyst outputs in {panel_dir}")
-    synthesizer = InvestmentCommitteeSynthesizer(company=company)
+    synthesizer = InvestmentCommitteeSynthesizer(company=company, **_write_kwargs())
     written_path = synthesizer.run(cleanup_only=cleanup_only)
     output_dir = panel_dir
     print("[COMMITTEE SYNTHESIS]")
@@ -2867,9 +2946,9 @@ def run_committee_brief_stage(company, context=None, include_evidence_ids=False)
     synthesis_path = _panel_output_dir(company, context=context) / "committee_synthesis.json"
     if not synthesis_path.exists():
         raise RuntimeError(f"committee_brief requires committee_synthesis.json: {synthesis_path}")
-    builder = CommitteeBriefRenderer(company=company)
+    builder = CommitteeBriefRenderer(company=company, **_write_kwargs())
     written_paths = builder.build(include_evidence_ids=include_evidence_ids)
-    qa_builder = CommitteeBriefQAGate(company=company)
+    qa_builder = CommitteeBriefQAGate(company=company, **_write_kwargs())
     written_paths.update(qa_builder.build(include_evidence_ids=include_evidence_ids))
     output_dir = _panel_output_dir(company, context=context)
     print("[COMMITTEE BRIEF]")
@@ -2892,9 +2971,9 @@ def run_committee_brief_qa_stage(company, context=None, include_evidence_ids=Fal
         raise RuntimeError(
             f"committee_brief_qa requires committee_synthesis.json and committee_brief.md in {panel_dir}"
         )
-    builder = CommitteeBriefQAGate(company=company)
+    builder = CommitteeBriefQAGate(company=company, **_write_kwargs())
     written_paths = builder.build(include_evidence_ids=include_evidence_ids)
-    output_dir = Path("companies") / company / "company_memory" / "investor_panel"
+    output_dir = _pipeline_companies_root() / company / "company_memory" / "investor_panel"
     print("[COMMITTEE BRIEF QA]")
     print(f"Company: {company}")
     print(f"Include Evidence IDs: {'yes' if include_evidence_ids else 'no'}")
@@ -2906,7 +2985,7 @@ def run_committee_brief_qa_stage(company, context=None, include_evidence_ids=Fal
 
 
 def _panel_output_dir(company, context=None):
-    return investor_panel_dir(company, prefer_company_memory=True)
+    return _pipeline_companies_root() / company / "company_memory" / "investor_panel"
 
 
 def _panel_summary_dir(company, context=None):
@@ -3017,7 +3096,7 @@ def _assess_panel_financial_context(context):
     payloads = {}
 
     if context is None:
-        companies_root = Path("companies")
+        companies_root = _pipeline_companies_root()
         company_dirs = [path for path in companies_root.iterdir() if path.is_dir()] if companies_root.exists() else []
         if len(company_dirs) != 1:
             return {
@@ -3035,10 +3114,10 @@ def _assess_panel_financial_context(context):
         company_truth_pack_path = company_memory_financial_dir / "financial_truth_pack.json"
         checked.extend(
             [
-                str(company_truth_pack_path),
-                str(company_memory_financial_dir / "financial_quality_summary.json"),
+                _rec(company_truth_pack_path),
+                _rec(company_memory_financial_dir / "financial_quality_summary.json"),
                 str(company_root / "company_memory" / "pcim_v1.json"),
-                str(panel_dir / "committee_synthesis.json"),
+                _rec(panel_dir / "committee_synthesis.json"),
             ]
         )
         truth_pack = _load_json_file(company_truth_pack_path) if company_truth_pack_path.exists() else {}
@@ -3048,7 +3127,7 @@ def _assess_panel_financial_context(context):
         analyst_financial_usage_detected = False
         if panel_dir.exists():
             for analyst_path in panel_dir.glob("*_analysis.json"):
-                checked.append(str(analyst_path))
+                checked.append(_rec(analyst_path))
                 try:
                     analyst_payload = _load_json_file(analyst_path)
                 except Exception:
@@ -3083,14 +3162,14 @@ def _assess_panel_financial_context(context):
             "hard_failures": [],
         }
 
-    company_root = Path("companies") / context.company
+    company_root = _pipeline_companies_root() / context.company
     company_memory_financial_dir = company_root / "company_memory" / "financials"
 
     for filename in PANEL_REQUIRED_FINANCIAL_ARTIFACTS:
         path = context.financials_dir / filename
-        checked.append(str(path))
+        checked.append(_rec(path))
         if not path.exists():
-            missing.append(str(path))
+            missing.append(_rec(path))
             continue
         try:
             payloads[filename] = _load_json_file(path)
@@ -3106,9 +3185,9 @@ def _assess_panel_financial_context(context):
     ]
     company_memory_payloads = {}
     for path in company_memory_candidates:
-        checked.append(str(path))
+        checked.append(_rec(path))
         if not path.exists():
-            optional_missing.append(str(path))
+            optional_missing.append(_rec(path))
             continue
         try:
             company_memory_payloads[path.name] = _load_json_file(path)
@@ -3128,9 +3207,9 @@ def _assess_panel_financial_context(context):
         ):
             year_truth_candidates.append(fin_dir / filename)
     for path in year_truth_candidates:
-        checked.append(str(path))
+        checked.append(_rec(path))
         if not path.exists():
-            optional_missing.append(str(path))
+            optional_missing.append(_rec(path))
 
     quality = payloads.get("financial_quality_summary.json")
     quality_status = str((quality or {}).get("status") or "").strip().lower()
@@ -3159,7 +3238,7 @@ def _assess_panel_financial_context(context):
     )
     truth_pack_status = str(company_truth_pack.get("financial_panel_status") or "").strip().lower()
     pcim_path = company_root / "company_memory" / "pcim_v1.json"
-    checked.append(str(pcim_path))
+    checked.append(_rec(pcim_path))
     pcim_payload = _load_json_file(pcim_path) if pcim_path.exists() else {}
     pcim_truth_present = any(
         key in pcim_payload
@@ -3169,11 +3248,11 @@ def _assess_panel_financial_context(context):
             "financial_quality_inputs",
         )
     )
-    panel_dir = investor_panel_dir(context.company)
+    panel_dir = _pipeline_companies_root() / context.company / "company_memory" / "investor_panel"
     analyst_financial_usage_detected = False
     for analyst in ("graham", "buffett", "fisher", "munger", "lynch"):
         analysis_path = panel_dir / f"{analyst}_analysis.json"
-        checked.append(str(analysis_path))
+        checked.append(_rec(analysis_path))
         if not analysis_path.exists():
             continue
         try:
@@ -3388,8 +3467,8 @@ def _validate_analyst_output(company, analyst, context=None):
         "status": analyst_status,
         "evidence_grounding_status": status,
         "warning_count": warning_count,
-        "output": str(path),
-        "failed_clean_candidate_path": str(failed_clean_candidate_path),
+        "output": _rec(path),
+        "failed_clean_candidate_path": _rec(failed_clean_candidate_path),
         "failed_clean_candidate_exists": failed_clean_candidate_path.exists(),
         "payload": finalized_payload,
         "diagnostics": diagnostics,
@@ -3418,8 +3497,8 @@ def validate_existing_panel_artifacts(company, panel_dir, *, context=None):
             result = {
                 "status": "fail",
                 "analyst": analyst,
-                "output": str(analysis_path),
-                "diagnostics_path": str(diagnostics_path),
+                "output": _rec(analysis_path),
+                "diagnostics_path": _rec(diagnostics_path),
                 "analysis_exists": False,
                 "diagnostics_exists": diagnostics_path.exists(),
                 "warnings": [],
@@ -3428,13 +3507,13 @@ def validate_existing_panel_artifacts(company, panel_dir, *, context=None):
                 "diagnostics": _load_json_file(diagnostics_path) if diagnostics_path.exists() else {},
                 "evidence_grounding_status": "fail",
                 "warning_count": 0,
-                "failed_clean_candidate_path": str(panel_dir / f"{analyst}_analysis_failed_clean_candidate.json"),
+                "failed_clean_candidate_path": _rec(panel_dir / f"{analyst}_analysis_failed_clean_candidate.json"),
                 "failed_clean_candidate_exists": (panel_dir / f"{analyst}_analysis_failed_clean_candidate.json").exists(),
             }
         else:
             result = _validate_analyst_output(company, analyst, context=context)
             result["analyst"] = analyst
-            result["diagnostics_path"] = str(diagnostics_path)
+            result["diagnostics_path"] = _rec(diagnostics_path)
             result["analysis_exists"] = True
             result["diagnostics_exists"] = diagnostics_path.exists()
         analyst_results[analyst] = result
@@ -3458,13 +3537,13 @@ def run_panel_doctor_stage(company, context=None):
     if context is not None:
         set_context(context)
     panel_dir = _panel_output_dir(company, context=context)
-    panel_dir.mkdir(parents=True, exist_ok=True)
-    source_pcim = Path("companies") / company / "company_memory" / "pcim_v1.json"
+    _guarded_mkdir(panel_dir)
+    source_pcim = _pipeline_companies_root() / company / "company_memory" / "pcim_v1.json"
     report = {
         "company": company,
         "scope": "company_memory",
-        "source_pcim": str(source_pcim),
-        "panel_dir": str(panel_dir),
+        "source_pcim": _rec(source_pcim),
+        "panel_dir": _rec(panel_dir),
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "analysts": [],
     }
@@ -3483,8 +3562,8 @@ def run_panel_doctor_stage(company, context=None):
                 {
                     "analyst": analyst,
                     "status": "fail",
-                    "analysis_path": str(analysis_path),
-                    "diagnostics_path": str(diagnostics_path),
+                    "analysis_path": _rec(analysis_path),
+                    "diagnostics_path": _rec(diagnostics_path),
                     "analysis_exists": analysis_exists,
                     "diagnostics_exists": diagnostics_exists,
                     "failed_clean_candidate_exists": failed_clean_candidate_exists,
@@ -3524,8 +3603,8 @@ def run_panel_doctor_stage(company, context=None):
             {
                 "analyst": analyst,
                 "status": status,
-                "analysis_path": str(analysis_path),
-                "diagnostics_path": str(diagnostics_path),
+                "analysis_path": _rec(analysis_path),
+                "diagnostics_path": _rec(diagnostics_path),
                 "analysis_exists": analysis_exists,
                 "diagnostics_exists": diagnostics_exists,
                 "failed_clean_candidate_exists": result.get("failed_clean_candidate_exists", False),
@@ -3557,7 +3636,7 @@ def run_panel_doctor_stage(company, context=None):
         )
     report["status"] = overall_status
     output_path = panel_dir / "panel_doctor_report.json"
-    output_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    _guarded_text(output_path, json.dumps(report, indent=2, ensure_ascii=False))
     print("[PANEL DOCTOR]")
     print(f"Company: {company}")
     print(f"Output: {output_path}")
@@ -3567,8 +3646,7 @@ def run_panel_doctor_stage(company, context=None):
 
 def _write_panel_run_summary(company, payload, *, context=None):
     path = _panel_summary_path(company, context=context)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    _guarded_text(path, json.dumps(payload, indent=2, ensure_ascii=False))
     return path
 
 
@@ -3681,8 +3759,8 @@ def canonicalize_panel_run_summary(summary):
 
     company = summary.get("company")
     year = summary.get("year")
-    panel_dir = investor_panel_dir(company) if company else Path()
-    company_root = Path("companies") / company if company else Path()
+    panel_dir = (_pipeline_companies_root() / company / "company_memory" / "investor_panel") if company else Path()
+    company_root = _pipeline_companies_root() / company if company else Path()
     pcim_path = company_root / "company_memory" / "pcim_v1.json"
     truth_pack_path = company_root / "company_memory" / "financials" / "financial_truth_pack.json"
 
@@ -3693,14 +3771,14 @@ def canonicalize_panel_run_summary(summary):
 
     if any_financial_usage:
         for analyst, data in analysts.items():
-            output_path = data.get("output_path") or str(panel_dir / f"{analyst}_analysis.json")
+            output_path = data.get("output_path") or _rec(panel_dir / f"{analyst}_analysis.json")
             if output_path:
-                artifacts_checked.append(str(output_path))
+                artifacts_checked.append(_rec(output_path))
         if company:
-            artifacts_checked.append(str(pcim_path))
-            artifacts_checked.append(str(truth_pack_path))
-            if not truth_pack_path.exists() and str(truth_pack_path) not in missing_artifacts:
-                missing_artifacts.append(str(truth_pack_path))
+            artifacts_checked.append(_rec(pcim_path))
+            artifacts_checked.append(_rec(truth_pack_path))
+            if not truth_pack_path.exists() and _rec(truth_pack_path) not in missing_artifacts:
+                missing_artifacts.append(_rec(truth_pack_path))
         financial_context["available"] = True
         if year is None:
             if str(financial_context.get("status") or "").strip().lower() in {"", "missing"}:
@@ -3753,7 +3831,7 @@ def canonicalize_panel_run_summary(summary):
 
 
 def _assess_pcim_freshness(company, pcim_payload):
-    company_root = Path("companies") / company
+    company_root = _pipeline_companies_root() / company
     result = audit_saved_pcim_manifest(
         company_root,
         pcim_payload.get("pcim_source_manifest") or {},
@@ -3779,7 +3857,7 @@ def _assess_pcim_freshness(company, pcim_payload):
                 "PCIM is stale relative to governed financial outputs; rebuild CIM/PCIM before running the investor panel."
             ]
         )
-        result["stale_financial_sources"] = [str(path) for path in newer_sources]
+        result["stale_financial_sources"] = [_rec(path) for path in newer_sources]
     return result
 
 
@@ -3788,8 +3866,8 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
         set_context(context)
 
     panel_dir = _panel_output_dir(company, context=context)
-    panel_dir.mkdir(parents=True, exist_ok=True)
-    pcim_path = Path("companies") / company / "company_memory" / "pcim_v1.json"
+    _guarded_mkdir(panel_dir)
+    pcim_path = _pipeline_companies_root() / company / "company_memory" / "pcim_v1.json"
 
     summary = {
         "company": company,
@@ -3857,7 +3935,7 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
     def finalize_and_raise(message):
         canonicalize_panel_run_summary(summary)
         summary["generated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        summary["outputs"]["panel_run_summary"] = str(_panel_summary_path(company, context=context))
+        summary["outputs"]["panel_run_summary"] = _rec(_panel_summary_path(company, context=context))
         summary_path = _write_panel_run_summary(company, summary, context=context)
         print(f"Panel Run — {company}")
         for stage_name, stage in summary["stages"].items():
@@ -3897,15 +3975,15 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
         record_stage(
             "cim",
             "pass",
-            output=str(cim_paths.get("cim_v1.json", "")),
+            output=_rec(cim_paths.get("cim_v1.json", "")),
         )
-        summary["outputs"].update({key: str(value) for key, value in cim_paths.items()})
+        summary["outputs"].update({key: _rec(value) for key, value in cim_paths.items()})
 
     pcim_failures = []
     pcim_warnings = []
     if not pcim_path.exists():
         pcim_failures.append(f"PCIM missing: {pcim_path}")
-        record_stage("pcim", "fail", output=str(pcim_path), failures=pcim_failures)
+        record_stage("pcim", "fail", output=_rec(pcim_path), failures=pcim_failures)
         finalize_and_raise(pcim_failures[0])
     pcim_payload = _load_json_file(pcim_path)
     if _contains_source_chunk(pcim_payload):
@@ -3919,19 +3997,19 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
         detailed_pcim_failures = list(freshness.get("failures", []))
         pcim_failures.append(generic_pcim_failure)
         pcim_failures.extend(detailed_pcim_failures)
-        record_stage("pcim", "fail", output=str(pcim_path), failures=pcim_failures)
+        record_stage("pcim", "fail", output=_rec(pcim_path), failures=pcim_failures)
         if detailed_pcim_failures and detailed_pcim_failures[0] != "Saved PCIM source manifest status is fail.":
             finalize_and_raise(detailed_pcim_failures[0])
         finalize_and_raise(generic_pcim_failure)
     if manifest_status == "warning":
         pcim_warnings.extend(freshness.get("warnings", []))
     pcim_status = "fail" if pcim_failures else ("warning" if pcim_warnings else "pass")
-    record_stage("pcim", pcim_status, output=str(pcim_path), warnings=pcim_warnings, failures=pcim_failures)
+    record_stage("pcim", pcim_status, output=_rec(pcim_path), warnings=pcim_warnings, failures=pcim_failures)
     if pcim_failures:
         finalize_and_raise(pcim_failures[0])
     if pcim_warnings:
         summary["status"] = _merge_status(summary["status"], "warning")
-    summary["outputs"]["pcim_v1.json"] = str(pcim_path)
+    summary["outputs"]["pcim_v1.json"] = _rec(pcim_path)
     if manifest_status == "warning":
         pass
     else:
@@ -4065,15 +4143,15 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
     if list(normalization.get("unresolved_ids", []) or []):
         synthesis_failures.append("committee_synthesis: unresolved_ids remain after cleanup")
     synthesis_status = "fail" if synthesis_failures else "pass"
-    summary["committee"]["synthesis_path"] = str(synthesis_path)
+    summary["committee"]["synthesis_path"] = _rec(synthesis_path)
     summary["committee"]["financial_committee_view_present"] = isinstance(
         synthesis_payload.get("financial_committee_view"), dict
     )
-    summary["outputs"]["committee_synthesis.json"] = str(synthesis_path)
+    summary["outputs"]["committee_synthesis.json"] = _rec(synthesis_path)
     record_stage(
         "committee_synthesis",
         synthesis_status,
-        output=str(synthesis_path),
+        output=_rec(synthesis_path),
         failures=synthesis_failures,
     )
     if synthesis_status == "fail":
@@ -4093,9 +4171,9 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
         )
         finalize_and_raise("Panel stopped: committee brief execution failed")
     brief_path = brief_paths["committee_brief.md"]
-    summary["committee"]["brief_path"] = str(brief_path)
-    summary["outputs"]["committee_brief.md"] = str(brief_path)
-    record_stage("committee_brief", "pass", output=str(brief_path))
+    summary["committee"]["brief_path"] = _rec(brief_path)
+    summary["outputs"]["committee_brief.md"] = _rec(brief_path)
+    record_stage("committee_brief", "pass", output=_rec(brief_path))
 
     try:
         qa_paths = run_committee_brief_qa_stage(
@@ -4113,15 +4191,15 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
     qa_path = qa_paths["committee_brief_qa.json"]
     qa_payload = _load_json_file(qa_path)
     qa_status = str(qa_payload.get("status") or "fail").lower()
-    summary["committee"]["qa_path"] = str(qa_path)
+    summary["committee"]["qa_path"] = _rec(qa_path)
     summary["committee"]["qa_status"] = qa_status
     summary["committee"]["warnings"] = list(qa_payload.get("warnings", []) or [])
     summary["committee"]["hard_failures"] = list(qa_payload.get("failures", []) or [])
-    summary["outputs"]["committee_brief_qa.json"] = str(qa_path)
+    summary["outputs"]["committee_brief_qa.json"] = _rec(qa_path)
     record_stage(
         "committee_brief_qa",
         qa_status,
-        output=str(qa_path),
+        output=_rec(qa_path),
         warnings=list(qa_payload.get("warnings", []) or []),
         failures=list(qa_payload.get("failures", []) or []),
     )
@@ -4132,9 +4210,9 @@ def run_panel_stage(company, context=None, include_evidence_ids=False, regenerat
 
     canonicalize_panel_run_summary(summary)
     summary["generated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    summary["outputs"]["panel_run_summary"] = str(_panel_summary_path(company, context=context))
+    summary["outputs"]["panel_run_summary"] = _rec(_panel_summary_path(company, context=context))
     summary_path = _write_panel_run_summary(company, summary, context=context)
-    summary["outputs"]["panel_run_summary"] = str(summary_path)
+    summary["outputs"]["panel_run_summary"] = _rec(summary_path)
 
     print(f"Panel Run — {company}")
     if context is not None:
@@ -4163,100 +4241,101 @@ def run_all(context=None):
 
 
 def _build_stage_output_map(context):
+    _logical = context.logical      # outputs are recorded as companies/<slug>/..., independent of the absolute root of this run
     return {
-        "preflight": lambda: [str(context.extracted_dir / "clean_chunks.json")],
-        "discovery": lambda: [str(context.raw_dir / filename) for filename in DISCOVERY_OUTPUT_FILES],
-        "financial_discovery": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_DISCOVERY_OUTPUT_FILES],
-        "financial_extraction": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_EXTRACTION_OUTPUT_FILES],
-        "financial_normalization": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_NORMALIZATION_OUTPUT_FILES],
-        "financial_validation": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_VALIDATION_OUTPUT_FILES],
-        "financial_reconciliation": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_RECONCILIATION_OUTPUT_FILES],
-        "financial_basis_resolution": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_BASIS_RESOLUTION_OUTPUT_FILES],
-        "financial_truth_registry": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_TRUTH_REGISTRY_OUTPUT_FILES],
-        "financial_ratios": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_RATIO_OUTPUT_FILES],
-        "financial_growth": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_GROWTH_OUTPUT_FILES],
-        "financial_quality": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_QUALITY_OUTPUT_FILES],
-        "corporate_actions": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_CORPORATE_ACTION_OUTPUT_FILES],
-        "shareholding_pattern": lambda: [str(context.financials_dir / filename) for filename in FINANCIAL_SHAREHOLDING_OUTPUT_FILES],
-        "financials": lambda: [str(context.financials_dir / "financial_audit_report.json")],
-        "financial_pcim_validation": lambda: [str(context.financials_dir / "financial_pcim_validation.json")],
-        "extraction": lambda: [str(context.extracted_dir / filename) for filename in EXTRACTION_OUTPUT_FILES],
-        "cleaning": lambda: [str(context.extracted_dir / filename) for filename in CLEANING_OUTPUT_FILES],
-        "business_understanding": lambda: [str(context.intelligence_dir / filename) for filename in BUSINESS_UNDERSTANDING_OUTPUT_FILES],
-        "business_intelligence": lambda: [str(context.intelligence_dir / filename) for filename in BUSINESS_INTELLIGENCE_OUTPUT_FILES],
-        "intelligence": lambda: [str(context.intelligence_dir / filename) for filename in INTELLIGENCE_OUTPUT_FILES],
+        "preflight": lambda: [_logical(context.extracted_dir / "clean_chunks.json")],
+        "discovery": lambda: [_logical(context.raw_dir / filename) for filename in DISCOVERY_OUTPUT_FILES],
+        "financial_discovery": lambda: [_logical(context.financials_dir / filename) for filename in FINANCIAL_DISCOVERY_OUTPUT_FILES],
+        "financial_extraction": lambda: [_logical(context.financials_dir / filename) for filename in FINANCIAL_EXTRACTION_OUTPUT_FILES],
+        "financial_normalization": lambda: [_logical(context.financials_dir / filename) for filename in FINANCIAL_NORMALIZATION_OUTPUT_FILES],
+        "financial_validation": lambda: [_logical(context.financials_dir / filename) for filename in FINANCIAL_VALIDATION_OUTPUT_FILES],
+        "financial_reconciliation": lambda: [_logical(context.financials_dir / filename) for filename in FINANCIAL_RECONCILIATION_OUTPUT_FILES],
+        "financial_basis_resolution": lambda: [_logical(context.financials_dir / filename) for filename in FINANCIAL_BASIS_RESOLUTION_OUTPUT_FILES],
+        "financial_truth_registry": lambda: [_logical(context.financials_dir / filename) for filename in FINANCIAL_TRUTH_REGISTRY_OUTPUT_FILES],
+        "financial_ratios": lambda: [_logical(context.financials_dir / filename) for filename in FINANCIAL_RATIO_OUTPUT_FILES],
+        "financial_growth": lambda: [_logical(context.financials_dir / filename) for filename in FINANCIAL_GROWTH_OUTPUT_FILES],
+        "financial_quality": lambda: [_logical(context.financials_dir / filename) for filename in FINANCIAL_QUALITY_OUTPUT_FILES],
+        "corporate_actions": lambda: [_logical(context.financials_dir / filename) for filename in FINANCIAL_CORPORATE_ACTION_OUTPUT_FILES],
+        "shareholding_pattern": lambda: [_logical(context.financials_dir / filename) for filename in FINANCIAL_SHAREHOLDING_OUTPUT_FILES],
+        "financials": lambda: [_logical(context.financials_dir / "financial_audit_report.json")],
+        "financial_pcim_validation": lambda: [_logical(context.financials_dir / "financial_pcim_validation.json")],
+        "extraction": lambda: [_logical(context.extracted_dir / filename) for filename in EXTRACTION_OUTPUT_FILES],
+        "cleaning": lambda: [_logical(context.extracted_dir / filename) for filename in CLEANING_OUTPUT_FILES],
+        "business_understanding": lambda: [_logical(context.intelligence_dir / filename) for filename in BUSINESS_UNDERSTANDING_OUTPUT_FILES],
+        "business_intelligence": lambda: [_logical(context.intelligence_dir / filename) for filename in BUSINESS_INTELLIGENCE_OUTPUT_FILES],
+        "intelligence": lambda: [_logical(context.intelligence_dir / filename) for filename in INTELLIGENCE_OUTPUT_FILES],
         "cim": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "cim_v1.json"),
-            str(Path("companies") / context.company / "company_memory" / "pcim_v1.json"),
+            _logical(context.company_root / "company_memory" / "cim_v1.json"),
+            _logical(context.company_root / "company_memory" / "pcim_v1.json"),
         ],
         "management_commitments": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "management_commitments" / filename)
+            _logical(context.company_root / "company_memory" / "management_commitments" / filename)
             for filename in MANAGEMENT_COMMITMENTS_OUTPUT_FILES
         ],
         "management_commentary": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "management_commentary" / filename)
+            _logical(context.company_root / "company_memory" / "management_commentary" / filename)
             for filename in MANAGEMENT_COMMENTARY_OUTPUT_FILES
         ],
         "capital_allocation_outcomes": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "capital_allocation_outcomes" / filename)
+            _logical(context.company_root / "company_memory" / "capital_allocation_outcomes" / filename)
             for filename in CAPITAL_ALLOCATION_OUTCOMES_OUTPUT_FILES
         ],
         "management_quality": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "management_quality" / filename)
+            _logical(context.company_root / "company_memory" / "management_quality" / filename)
             for filename in MANAGEMENT_QUALITY_OUTPUT_FILES
         ],
         "projects": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "projects" / filename)
+            _logical(context.company_root / "company_memory" / "projects" / filename)
             for filename in PROJECTS_OUTPUT_FILES
         ],
         "capacity_evolution": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "capacity" / filename)
+            _logical(context.company_root / "company_memory" / "capacity" / filename)
             for filename in CAPACITY_EVOLUTION_OUTPUT_FILES
         ],
         "risk_evolution": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "risks" / filename)
+            _logical(context.company_root / "company_memory" / "risks" / filename)
             for filename in RISK_EVOLUTION_OUTPUT_FILES
         ],
-        "pcim": lambda: [str(Path("companies") / context.company / "company_memory" / "pcim_v1.json")],
-        "multi_year_memory": lambda: [str(Path("companies") / context.company / "company_memory" / "multi_year" / "multi_year_index.json")],
+        "pcim": lambda: [_logical(context.company_root / "company_memory" / "pcim_v1.json")],
+        "multi_year_memory": lambda: [_logical(context.company_root / "company_memory" / "multi_year" / "multi_year_index.json")],
         "financial_memory": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "financials" / filename)
+            _logical(context.company_root / "company_memory" / "financials" / filename)
             for filename in FINANCIAL_MEMORY_OUTPUT_FILES
         ],
         "financial_trends": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "financials" / filename)
+            _logical(context.company_root / "company_memory" / "financials" / filename)
             for filename in FINANCIAL_TRENDS_OUTPUT_FILES
         ],
         "financial_attribution": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "financials" / filename)
+            _logical(context.company_root / "company_memory" / "financials" / filename)
             for filename in FINANCIAL_ATTRIBUTION_OUTPUT_FILES
         ],
         "investor_financials": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "financials" / "investor_financial_modules" / filename)
+            _logical(context.company_root / "company_memory" / "financials" / "investor_financial_modules" / filename)
             for filename in INVESTOR_FINANCIAL_MODULE_OUTPUT_FILES
         ],
         "investor_briefs": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "investor_panel" / "briefs")
+            _logical(context.company_root / "company_memory" / "investor_panel" / "briefs")
         ],
         "audit": lambda: [
-            str(Path("companies") / context.company / "audit" / "company_artifact_audit.json"),
-            str(Path("companies") / context.company / "audit" / "company_artifact_audit.md"),
-            str(Path("companies") / context.company / "audit" / "financial_quality_scorecard.json"),
-            str(Path("companies") / context.company / "audit" / "financial_quality_scorecard.md"),
+            _logical(context.company_root / "audit" / "company_artifact_audit.json"),
+            _logical(context.company_root / "audit" / "company_artifact_audit.md"),
+            _logical(context.company_root / "audit" / "financial_quality_scorecard.json"),
+            _logical(context.company_root / "audit" / "financial_quality_scorecard.md"),
         ],
-        "panel": lambda: [str(Path("companies") / context.company / "company_memory" / "investor_panel" / "panel_run_summary.json")],
-        "panel_doctor": lambda: [str(Path("companies") / context.company / "company_memory" / "panel_doctor_report.json")],
+        "panel": lambda: [_logical(context.company_root / "company_memory" / "investor_panel" / "panel_run_summary.json")],
+        "panel_doctor": lambda: [_logical(context.company_root / "company_memory" / "panel_doctor_report.json")],
         "ask_intrinsiciq": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "ask_intrinsiciq" / filename)
+            _logical(context.company_root / "company_memory" / "ask_intrinsiciq" / filename)
             for filename in ASK_INTRINSICIQ_OUTPUT_FILES
         ],
         "company_model": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "company_model" / filename)
+            _logical(context.company_root / "company_memory" / "company_model" / filename)
             for filename in COMPANY_MODEL_OUTPUT_FILES
         ],
-        "company_memory": lambda: [str(Path("companies") / context.company / "company_memory" / "company_memory.json")],
+        "company_memory": lambda: [_logical(context.company_root / "company_memory" / "company_memory.json")],
         "management_progression": lambda: [
-            str(Path("companies") / context.company / "company_memory" / "management_progression" / filename)
+            _logical(context.company_root / "company_memory" / "management_progression" / filename)
             for filename in MANAGEMENT_PROGRESSION_OUTPUT_FILES
         ],
     }
@@ -4287,7 +4366,7 @@ def _finalize_run_summary(summary, context, started_at, skipped_stages):
     summary["completed_stages"] = [stage["stage"] for stage in summary["stages"] if stage["status"] in {"pass", "warning"}]
     summary["skipped_stages"] = list(skipped_stages)
     summary_path = context.year_root / "run_summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    _guarded_text(summary_path, json.dumps(summary, indent=2, ensure_ascii=False))
     return summary_path
 
 
@@ -4533,7 +4612,7 @@ def _run_stage_by_name(stage_name, context, *, stage_outputs, options, state):
         return {"status": "pass", "outputs": stage_outputs["financial_pcim_validation"]()}
     if stage_name == "company_memory":
         written_paths = run_company_memory_stage(company=company, context=context)
-        outputs = [str(path) for path in written_paths.values()] if isinstance(written_paths, dict) else [str(path) for path in written_paths]
+        outputs = [_rec(path) for path in written_paths.values()] if isinstance(written_paths, dict) else [_rec(path) for path in written_paths]
         return {"status": "pass", "outputs": sorted(outputs)}
     if stage_name == "investor_briefs":
         run_investor_briefs_stage(company=company, context=context)
@@ -4773,13 +4852,21 @@ def build_parser():
         action="store_true",
         help="Print stage descriptions, dependencies, outputs, and LLM usage.",
     )
+    parser.add_argument(
+        "--authorize-served-write",
+        action="store_true",
+        help="Required to let a stage write the served companies/ tree. Without it every company-intelligence builder refuses the write.",
+    )
 
     return parser
 
 
 def main():
+    global _SERVED_WRITE_AUTHORIZED
     parser = build_parser()
     args = parser.parse_args()
+    _SERVED_WRITE_AUTHORIZED = bool(args.authorize_served_write)
+    set_served_writes_authorized(_SERVED_WRITE_AUTHORIZED)     # the process-wide backstop opens only with the explicit flag
 
     if args.list_stages:
         print_stage_catalog()
@@ -4798,6 +4885,7 @@ def main():
         context = CompanyContext(
             company=args.company,
             year=args.year,
+            **_write_kwargs(),
         )
         context.create_directories()
         set_context(context)

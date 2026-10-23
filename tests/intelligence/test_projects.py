@@ -58,7 +58,7 @@ def test_explicit_facility_announcement_creates_project(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, manifest = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] in {"pass", "warning"}
@@ -88,7 +88,7 @@ def test_vague_growth_ambition_does_not_create_project(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] in {"pass", "warning"}
@@ -113,7 +113,7 @@ def test_non_core_civic_renovation_is_quarantined(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] in {"pass", "warning"}
@@ -146,7 +146,7 @@ def test_rooftop_solar_and_ehs_projects_use_correct_precedence(tmp_path, monkeyp
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] in {"pass", "warning"}
@@ -190,7 +190,7 @@ def test_later_construction_update_advances_status(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, timelines, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -217,7 +217,7 @@ def test_commissioning_requires_explicit_evidence(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -242,7 +242,7 @@ def test_operational_requires_explicit_evidence(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -268,7 +268,7 @@ def test_commissioning_does_not_equal_economic_success(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     _, _, assessments, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -310,7 +310,7 @@ def test_delayed_timeframe_marks_delayed(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, timelines, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -336,7 +336,7 @@ def test_no_follow_up_becomes_unable_to_verify(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, manifest = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -363,7 +363,7 @@ def test_repeated_annual_mention_is_deduplicated(tmp_path, monkeypatch):
             ],
         )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     _, timelines, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -403,7 +403,7 @@ def test_differently_worded_same_project_merges(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -437,7 +437,7 @@ def test_distinct_phases_at_same_location_remain_separate(tmp_path, monkeypatch)
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -477,7 +477,7 @@ def test_cancellation_requires_explicit_evidence(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -510,7 +510,7 @@ def test_cost_revision_becomes_turning_point_candidate(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     _, timelines, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -543,7 +543,7 @@ def test_commissioning_becomes_turning_point(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     _, timelines, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -583,7 +583,7 @@ def test_revenue_growth_after_commissioning_does_not_prove_causality(tmp_path, m
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     _, _, assessments, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -625,7 +625,7 @@ def test_project_links_to_valid_management_commitment(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -739,8 +739,8 @@ def test_progression_order_is_deterministic(tmp_path, monkeypatch):
     _write_year_artifacts(tmp_path, "acme", "fy23", projects=fixture_a)
     _write_year_artifacts(tmp_path, "beta", "fy23", projects=fixture_b)
 
-    ProjectsBuilder(company="acme").build()
-    ProjectsBuilder(company="beta").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
+    ProjectsBuilder(company="beta", companies_root=tmp_path / "companies").build()
     acme_registry, _, _, _, _ = _load_outputs(tmp_path, "acme")
     beta_registry, _, _, _, _ = _load_outputs(tmp_path, "beta")
 
@@ -767,7 +767,7 @@ def test_confidence_preserves_evidence_limitations(tmp_path, monkeypatch):
         ],
     )
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
     registry, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -802,7 +802,7 @@ def test_no_raw_document_search_occurs(tmp_path, monkeypatch):
         return real_load_json(path)
 
     monkeypatch.setattr(builder_module, "_load_json", spy)
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()
 
     assert loaded_paths
     assert all("/raw/" not in path for path in loaded_paths)
@@ -835,4 +835,4 @@ def test_no_llm_call_occurs(tmp_path, monkeypatch):
     monkeypatch.setattr(knowledge.ai, "get_llm", _fail)
     monkeypatch.setattr(knowledge.ai.input_packs, "call_llm_with_input_pack", _fail)
 
-    ProjectsBuilder(company="acme").build()
+    ProjectsBuilder(company="acme", companies_root=tmp_path / "companies").build()

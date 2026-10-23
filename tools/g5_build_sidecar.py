@@ -36,7 +36,10 @@ def entry(L, u: dict, sys_ok: bool, sys_basis: str) -> dict | None:
         v = "CONTRADICTED"
     else:
         v = "UNRESOLVED"
-    return {**base, "kind": "absence", "topic": j["topic"] or "other", "state": j["state"], "verification": v, "basis": j["basis"], "locator": j.get("locator", ""), "evidence_group": j.get("evidence_group", ""), "review": j.get("review")}
+    fb = j.get("fallback")
+    return {**base, "kind": "absence", "topic": j["topic"] or "other", "state": j["state"], "verification": v, "basis": j["basis"], "locator": j.get("locator", ""), "evidence_group": j.get("evidence_group", ""),
+            "review": j.get("review"), "reasons": j.get("reasons", []), "record_verified": j.get("record_verified", False), "fallback": fb,
+            "record_statement_ok": j.get("record_statement_ok", False), "replacement": None if (u.get("anchor") and u["anchor"] != clause) else j.get("rewrite"), "sentence": u.get("context") or clause, "supplement": j.get("supplement") or None}
 
 
 def main() -> None:
@@ -45,6 +48,7 @@ def main() -> None:
     ap.add_argument("--ledger-root", required=True, help="evidence root used to resolve (read-only)")
     ap.add_argument("--sandbox-root", required=True, help="sandbox root to write the ledgers into")
     ap.add_argument("--scope", default="S2_candidate_story_panel_explorer")
+    ap.add_argument("--surfaces", default="", help="rendered-surface dump (pass 1): positive event claims are checked on every rendered string")
     a = ap.parse_args()
     inv = json.loads(Path(a.inventory).read_text())
     sys_ok, sys_basis = inv["system_limitation"]["verified"], inv["system_limitation"]["basis"]
@@ -56,6 +60,17 @@ def main() -> None:
                 e = entry(L, u, sys_ok, sys_basis)
                 if e:
                     by.setdefault(k, {})[(e["claim"], e["anchor"])] = e
+        if a.surfaces:
+            from pipelines import g5_verify as V
+            for sf in json.loads(Path(a.surfaces).read_text()).get(k, []):
+                if sf["name"].startswith("question:"):
+                    continue
+                for it in sf["items"]:
+                    for ev in V.verify_events(L, it["text"]):
+                        if ev["status"] != "SUPPORTED_EVENT":
+                            by.setdefault(k, {})[(ev["phrase"], "event")] = {"claim": ev["phrase"], "anchor": ev["phrase"], "kind": "event_claim", "topic": "event", "state": None, "verification": "UNRESOLVED", "basis": ev["status"],
+                                                                         "locator": "", "evidence_group": f"event|{k}|{ev['entity']}", "review": None, "reasons": [ev["status"]], "record_verified": False, "fallback": None,
+                                                                         "record_statement_ok": False, "replacement": ev["replacement"], "sentence": ev["phrase"], "supplement": None}
         entries = list(by.get(k, {}).values())
         d = Path(a.sandbox_root) / "companies" / k / "company_memory" / "ask_intrinsiciq"
         assert d.is_dir() and not d.is_symlink(), f"sandbox folder must be a real directory, not the protected link: {d}"

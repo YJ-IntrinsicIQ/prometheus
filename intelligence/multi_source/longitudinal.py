@@ -6,6 +6,7 @@ Produces companies/<company>/longitudinal/longitudinal_report.json
 and writes a manifest for downstream consumers (CIM, Panel, Ask layer).
 """
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root
 
 import json
 from collections import Counter
@@ -60,6 +61,8 @@ def build(
     companies_root: Path,
     output_dir: Optional[Path] = None,
     execute: bool = True,
+    *,
+    authorize_served_write: bool = False,
 ) -> LongitudinalReport:
     """Aggregate all processor outputs and produce the longitudinal report.
 
@@ -72,6 +75,8 @@ def build(
     Returns:
         LongitudinalReport dataclass.
     """
+    # writing needs an explicit, absolute root (the served tree only with authorize_served_write=True); a read-only run (execute=False) just reads
+    companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write) if execute else Path(companies_root)
     company_root = companies_root / company
     if not company_root.is_dir():
         raise FileNotFoundError(f"Company directory not found: {company_root}")
@@ -103,16 +108,14 @@ def build(
     # Write output
     if execute:
         out_dir = output_dir or (company_root / "longitudinal")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        _write_report(report, out_dir)
+        _write_report(report, out_dir, root=companies_root)
 
     return report
 
 
-def _write_report(report: LongitudinalReport, out_dir: Path) -> None:
+def _write_report(report: LongitudinalReport, out_dir: Path, *, root: Path | str) -> None:
     report_path = out_dir / "longitudinal_report.json"
-    with open(report_path, "w") as fh:
-        json.dump(report.to_dict(), fh, indent=2, ensure_ascii=False)
+    guarded_write_text(root, report_path, json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
 
     manifest = {
         "schema_version": "9.0",
@@ -125,5 +128,4 @@ def _write_report(report: LongitudinalReport, out_dir: Path) -> None:
         "stop_conditions": report.stop_conditions,
         "status": "MULTI_SOURCE_LONGITUDINAL_INTEGRATION_CLOSED" if not report.stop_conditions else "PARTIAL",
     }
-    with open(out_dir / "longitudinal_manifest.json", "w") as fh:
-        json.dump(manifest, fh, indent=2)
+    guarded_write_text(root, out_dir / "longitudinal_manifest.json", json.dumps(manifest, indent=2))

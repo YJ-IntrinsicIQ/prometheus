@@ -954,93 +954,6 @@ def _hydrate_module_metrics(company_root: Path) -> Dict[str, List[Dict[str, Any]
     }
 
 
-def _fallback_fact_map(bundle: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    normalized = bundle.get("normalized") or {}
-    ratios = bundle.get("ratios") or {}
-    fallback: Dict[str, Dict[str, Any]] = {}
-
-    def add(metric_id: str, item: Dict[str, Any], *, unit: str, source_statement: str, derived: bool = False) -> None:
-        if not isinstance(item, dict):
-            return
-        value = item.get("value_crore")
-        if not isinstance(value, (int, float)):
-            value = item.get("value")
-        if not isinstance(value, (int, float)) and isinstance(item.get("value_per_share"), (int, float)):
-            value = item.get("value_per_share")
-        if not isinstance(value, (int, float)) and isinstance(item.get("raw_number"), (int, float)):
-            value = item.get("raw_number")
-        availability = "present_derived" if derived and isinstance(value, (int, float)) else ("present_direct" if isinstance(value, (int, float)) else "missing")
-        fallback[metric_id] = {
-            "metric_id": metric_id,
-            "metric_name": metric_id.replace("_", " "),
-            "fiscal_year": str(bundle.get("year") or ""),
-            "period": str(item.get("period") or bundle.get("year") or ""),
-            "value": float(value) if isinstance(value, (int, float)) else None,
-            "unit": unit,
-            "basis": str(item.get("basis") or normalized.get("preferred_basis") or ratios.get("basis_used") or "unknown"),
-            "source_statement": source_statement,
-            "source_artifact": str(item.get("source_artifact") or ("financial_ratios.json" if derived else "normalized_fundamentals.json")),
-            "source_line_item": str(item.get("source_line_item") or metric_id),
-            "source_page": item.get("source_page"),
-            "confidence": str(item.get("confidence") or ("medium" if availability != "missing" else "missing")),
-            "availability_status": availability,
-            "derived": derived,
-            "formula": str(item.get("formula") or ""),
-            "inputs_used": list(item.get("inputs_used", [])) if isinstance(item.get("inputs_used"), list) else [],
-            "warnings": list(item.get("warnings", [])) if isinstance(item.get("warnings"), list) else [],
-            "reconciliation_status": "unknown",
-            "usable_downstream": availability in {"present_direct", "present_derived"},
-            "notes": ["Fallback fact used because financial_fact_registry.json is missing."],
-        }
-
-    for section_name, fields in (
-        ("profit_and_loss", ("revenue", "ebitda", "ebit", "pat", "pbt", "other_income", "total_income")),
-        ("balance_sheet", ("total_assets", "net_worth", "reserves", "cash_and_equivalents", "total_debt", "receivables", "inventories", "payables")),
-        ("cash_flow", ("cfo", "capex", "dividends_paid")),
-        ("share_data", ("shares_outstanding", "weighted_avg_shares", "diluted_shares", "eps_basic", "eps_diluted", "book_value_per_share")),
-    ):
-        section = normalized.get(section_name) if isinstance(normalized.get(section_name), dict) else {}
-        for field in fields:
-            item = section.get(field)
-            metric_id = {
-                "inventories": "inventory",
-                "shares_outstanding": "closing_shares",
-                "diluted_shares": "weighted_average_diluted_shares",
-            }.get(field, field)
-            add(metric_id, item, unit="₹ crore", source_statement=section_name)
-
-    ratio_map = ratios.get("ratios") if isinstance(ratios.get("ratios"), dict) else {}
-    for metric_id in (
-        "gross_margin",
-        "ebitda_margin",
-        "ebit_margin",
-        "opm",
-        "npm",
-        "roe",
-        "roce",
-        "roa",
-        "debt_to_equity",
-        "net_debt",
-        "net_debt_to_equity",
-        "interest_coverage",
-        "cfo_to_pat",
-        "fcf",
-        "fcf_to_pat",
-        "fcf_margin",
-        "receivable_days",
-        "inventory_days",
-        "payable_days",
-        "cash_conversion_cycle",
-        "eps_basic",
-        "eps_diluted",
-        "book_value_per_share",
-        "dividend_per_share",
-        "payout_ratio",
-    ):
-        add(metric_id, ratio_map.get(metric_id), unit=str((ratio_map.get(metric_id) or {}).get("unit") or ""), source_statement="financial_ratios", derived=True)
-    return fallback
-
-
 def _eligible_years_for_company_memory(company_root: Path) -> List[str]:
     if not company_root.exists():
         return []
@@ -1067,9 +980,9 @@ def load_financial_truth_by_year(*, company_root: Path, years: Optional[Sequence
             "normalized": _load_optional_json(financial_root / "normalized_fundamentals.json"),
             "shareholding": _load_optional_json(financial_root / "shareholding_pattern.json"),
         }
+        # The registry is the only authority. A year without one has NO facts here: figures read from the normalized / ratio files of a year whose registry is missing would be
+        # figures nothing has vouched for (this used to be a fallback, and it made every missing-registry state look healthy).
         bundle["fact_map"] = _gather_facts(bundle["registry"]) if bundle["registry"] else {}
-        if not bundle["fact_map"]:
-            bundle["fact_map"] = {metric_id: [fact] for metric_id, fact in _fallback_fact_map(bundle).items()}
         bundles[year] = bundle
     return bundles
 
@@ -1239,6 +1152,30 @@ def build_financial_truth_pack(*, company: str, company_root: Path) -> Dict[str,
             if (bundle["financial_root"] / artifact_name).exists():
                 _append_unique(source_provenance, f"{year}/financials/{artifact_name}")
 
+    # The fact registry is the authority for every (metric, fiscal year) it covers, whatever the fact's status there. A module artifact (working-capital drill-down, cash
+    # conversion tracker ...) is a downstream consumer: it may add a metric the registry does not define, never a competing value for one it does (it had put profit before tax
+    # in as CFO and a different payables balance beside the registry's).
+    registry_keys = {
+        (str(item.get("metric_id")), str(item.get("fiscal_year")))
+        for lst in (usable_current_metrics, usable_derived_metrics, partial_metrics, precise_missing_metrics, unreliable_metrics, invalid_metrics)
+        for item in lst if isinstance(item, dict)
+    }
+    module_rejected: List[Dict[str, Any]] = []
+
+    def _not_competing(items):
+        kept = []
+        for item in items:
+            if isinstance(item, dict) and (str(item.get("metric_id")), str(item.get("fiscal_year"))) in registry_keys:
+                module_rejected.append({"metric_id": item.get("metric_id"), "fiscal_year": item.get("fiscal_year"), "module_value": item.get("value"), "source_artifact": item.get("source_artifact"),
+                                        "reason": "the fact registry already defines this metric for this year"})
+            else:
+                kept.append(item)
+        return kept
+
+    module_hydration = {**module_hydration, **{key: _not_competing(module_hydration.get(key, [])) for key in
+                                               ("usable_current_metrics", "usable_derived_metrics", "partial_metrics", "precise_missing_metrics", "unreliable_metrics", "invalid_metrics")}}
+    if module_rejected:
+        _append_unique(precision_limits, f"{len(module_rejected)} module-derived figure(s) disagreed with or duplicated the fact registry and were not used (see module_hydration_rejected).")
     usable_current_metrics.extend(module_hydration["usable_current_metrics"])
     usable_derived_metrics.extend(module_hydration["usable_derived_metrics"])
     partial_metrics.extend(module_hydration["partial_metrics"])
@@ -1348,6 +1285,7 @@ def build_financial_truth_pack(*, company: str, company_root: Path) -> Dict[str,
         "derived_not_explicitly_reported": derived_not_explicitly_reported,
         "trend_durability_limits": trend_durability_limits,
         "precision_limits": precision_limits,
+        "module_hydration_rejected": module_rejected,
         "financial_warnings_allowed_downstream": allowed_warnings,
         "financial_warnings_blocked_downstream": blocked_warnings,
         "financial_warnings_rewritten": rewritten_warnings,

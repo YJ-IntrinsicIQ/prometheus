@@ -67,6 +67,7 @@ def _normalized_payload():
         "year": "fy25",
         "generated_at": "2026-07-17T00:00:00Z",
         "preferred_basis": "consolidated",
+        "cogs_complete": True,      # this fixture company's cost of materials IS its whole cost of goods sold; without the marker gross margin and the days ratios are withheld (see below)
         "basis_confidence": "high",
         "basis_manifest": {
             "preferred_basis": "consolidated",
@@ -554,7 +555,8 @@ def test_payable_days_rejects_stores_spares_denominator_and_absurd_days(tmp_path
     )
 
     assert report.ratios["payable_days"].value is None
-    assert any("stores/spares consumption" in warning for warning in report.ratios["payable_days"].warnings)
+    # the stores/spares line is now stopped even earlier - the registry rejects it as cost of materials and the ratio reads that rejection at calculation time - so the report names either
+    assert any("stores/spares consumption" in warning for warning in report.ratios["payable_days"].warnings) or any("withheld by the financial fact registry" in w for w in report.warnings)
 
 
 def test_payable_days_rejects_tiny_denominator_that_would_create_absurd_days(tmp_path):
@@ -608,6 +610,7 @@ def test_write_financial_ratios(tmp_path):
         normalized_path=normalized_path,
         reconciliation_path=reconciliation_path,
         output_path=output_path,
+        output_root=tmp_path,
     )
     assert output_path.exists()
     written = json.loads(output_path.read_text())
@@ -624,3 +627,19 @@ def test_no_company_specific_behavior():
     assert "tanla" not in text
     assert "tips" not in text
     assert "ujjivan" not in text
+
+
+def test_gross_margin_and_days_on_cost_of_materials_are_withheld_unless_the_cogs_is_complete(tmp_path):
+    """Revenue less MATERIALS CONSUMED is not a gross margin when the company also buys stock-in-trade and its inventories change: the ratio is withheld, not computed on part of COGS."""
+    normalized = _normalized_payload()
+    normalized.pop("cogs_complete")
+    normalized["profit_and_loss"]["revenue"] = _entry("revenue", value_crore=1000.0, value_original="1000")
+    normalized["profit_and_loss"]["pat"] = _entry("pat", value_crore=100.0, value_original="100")
+    normalized["profit_and_loss"]["cost_of_materials"] = _entry("cost_of_materials", value_crore=600.0, value_original="600")
+    normalized["balance_sheet"]["inventories"] = _entry("inventories", value_crore=100.0, value_original="100")
+    normalized["balance_sheet"]["payables"] = _entry("payables", value_crore=80.0, value_original="80")
+    _write_json(tmp_path / "normalized_fundamentals.json", normalized)
+    _write_json(tmp_path / "financial_reconciliation_report.json", _reconciliation_payload())
+    report = calculate_financial_ratios(company="acme", year="fy25", normalized_path=tmp_path / "normalized_fundamentals.json", reconciliation_path=tmp_path / "financial_reconciliation_report.json")
+    for name in ("gross_margin", "inventory_days", "payable_days"):
+        assert report.ratios[name].value is None and any("cost of goods sold" in w for w in report.ratios[name].warnings), name

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root
 
 import json
 from datetime import datetime
@@ -77,16 +78,13 @@ def _load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _write_json(path: Path, payload: Dict[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
+def _write_json(path: Path, payload: Dict[str, Any], *, root: Path | str) -> Path:
+    """The destination must lie inside the explicit, already-authorized output root."""
+    return guarded_write_text(root, path, json.dumps(payload, ensure_ascii=False, indent=2))
 
 
-def _write_text(path: Path, text: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    return path
+def _write_text(path: Path, text: str, *, root: Path | str) -> Path:
+    return guarded_write_text(root, path, text)
 
 
 def _sorted_years(years: Iterable[str]) -> List[str]:
@@ -187,7 +185,7 @@ def build_fundamentals_acceptance_report(
     *,
     company: str,
     year: str | None = None,
-    companies_root: Path | str = Path("companies"),
+    companies_root: Path | str,
 ) -> Dict[str, Any]:
     companies_root = Path(companies_root)
     company_root = companies_root / company
@@ -514,10 +512,11 @@ def run_fundamentals_acceptance(
     *,
     company: str,
     year: str | None = None,
-    companies_root: Path | str = Path("companies"),
+    companies_root: Path | str,
     output_md: bool = False,
+    authorize_served_write: bool = False,
 ) -> Dict[str, Path]:
-    companies_root = Path(companies_root)
+    companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
     report = build_fundamentals_acceptance_report(
         company=company,
         year=year,
@@ -528,11 +527,13 @@ def run_fundamentals_acceptance(
         "fundamentals_acceptance_report.json": _write_json(
             audit_dir / "fundamentals_acceptance_report.json",
             report,
+            root=companies_root,
         )
     }
     if output_md:
         outputs["fundamentals_acceptance_report.md"] = _write_text(
             audit_dir / "fundamentals_acceptance_report.md",
             render_fundamentals_acceptance_markdown(report),
+            root=companies_root,
         )
     return outputs

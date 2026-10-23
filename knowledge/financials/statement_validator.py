@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, planned_writes, resolve_output_root, safe_destination
 
 import json
 import time
@@ -303,12 +304,15 @@ def validate_normalized_fundamentals(*, company: str, year: str, normalized_path
         _append_unique(warnings, "PBT bridge could not be fully checked")
 
     pat = _value(_entry(payload, "profit_and_loss", "pat"))
-    tax = _value(_entry(payload, "profit_and_loss", "tax")) or 0.0
+    tax_value = _value(_entry(payload, "profit_and_loss", "tax"))
+    tax = tax_value if tax_value is not None else 0.0
     share_of_profit_associates = _value(_entry(payload, "profit_and_loss", "share_of_profit_associates")) or 0.0
     share_of_profit_jv = _value(_entry(payload, "profit_and_loss", "share_of_profit_jv")) or 0.0
     non_controlling_interests = _value(_entry(payload, "profit_and_loss", "non_controlling_interests")) or 0.0
 
-    if pbt is not None:
+    # A tax line that was not extracted (or that the fact registry withheld) is unknown, not zero: bridging PBT to PAT as if tax were nil reported a bank's 215-crore tax as a
+    # validation failure of the whole year. Without tax the bridge is "insufficient data".
+    if pbt is not None and tax_value is not None:
         simple_bridge = pbt - tax
         # Consolidated statements thread associates/JV share and non-controlling
         # interests between PBT and PAT. When any of those layers is present, the
@@ -475,8 +479,13 @@ def write_financial_validation_report(
     year: str,
     normalized_path: Path,
     output_path: Path,
+    output_root: Path | str,
+    authorize_served_write: bool = False,
+    dry_run: bool = False,
 ) -> FinancialValidationReport:
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
+    if dry_run:     # read-only: the exact files this call would write
+        return planned_writes(root, output_path)
     report = validate_normalized_fundamentals(company=company, year=year, normalized_path=normalized_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(report.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    guarded_write_text(root, output_path, json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
     return report

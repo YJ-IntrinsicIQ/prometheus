@@ -1,3 +1,4 @@
+from pathlib import Path
 import json
 
 from core.company_context import CompanyContext
@@ -45,7 +46,7 @@ def test_evidence_quality_ignores_source_chunk_year_noise_for_promises():
 
 def test_evidence_layer_summary_aggregates_counts(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="syntheticco", year="fy25")
+    context = CompanyContext(company="syntheticco", year="fy25", companies_root=tmp_path / "companies")
     context.create_directories()
 
     (context.raw_dir / "project_discovery_results.json").write_text(

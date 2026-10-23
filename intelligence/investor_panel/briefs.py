@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root
 
 import json
 import re
@@ -221,16 +222,13 @@ def _load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _write_json(path: Path, payload: Dict[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return path
+def _write_json(path: Path, payload: Dict[str, Any], *, root: Path | str) -> Path:
+    """The destination must lie inside the explicit, already-authorized output root."""
+    return guarded_write_text(root, path, json.dumps(payload, indent=2, ensure_ascii=False))
 
 
-def _write_text(path: Path, text: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    return path
+def _write_text(path: Path, text: str, *, root: Path | str) -> Path:
+    return guarded_write_text(root, path, text)
 
 
 def _normalize_bullet(text: Any) -> str:
@@ -755,9 +753,10 @@ def _render_brief(analyst: str, payload: Dict[str, Any]) -> str:
 
 
 class InvestorBriefBuilder:
-    def __init__(self, company: str, companies_root: Path | str = Path("companies")):
+    def __init__(self, company: str, companies_root: Path | str, *, authorize_served_write: bool = False):
         self.company = company
-        self.companies_root = Path(companies_root)
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
         self.panel_dir = self.companies_root / company / "company_memory" / "investor_panel"
         self.briefs_dir = self.panel_dir / "briefs"
 
@@ -807,7 +806,7 @@ class InvestorBriefBuilder:
                 limitations.append(f"{analyst}_analysis.json was skipped: {exc}")
                 continue
             brief_path = self._brief_path(analyst)
-            written[brief_path.name] = _write_text(brief_path, brief_text)
+            written[brief_path.name] = _write_text(brief_path, brief_text, root=self.companies_root)
             source_analysis_files.append(str(analysis_path))
             briefs_generated.append(str(brief_path))
             hidden_evidence_ids_by_analyst[analyst] = list(payload.get("evidence_ids", []) or [])
@@ -821,5 +820,5 @@ class InvestorBriefBuilder:
             ],
         )
         index_path = self.briefs_dir / "brief_index.json"
-        written[index_path.name] = _write_json(index_path, index_payload)
+        written[index_path.name] = _write_json(index_path, index_payload, root=self.companies_root)
         return written

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
+
+from core.context_paths import resolve_output_root, safe_destination
 from typing import Any, Dict, List
 
 from .answer_cards import build_answer_cards, build_question_catalog_view
@@ -9,7 +12,7 @@ from .contracts import ASK_INTRINSICIQ_SCHEMA_VERSION, CompanyResearchView, empt
 from .financial_visuals import build_financial_visual_summaries
 from .loader import load_company_memory_sources
 from .manifest import build_manifest
-from .paths import get_answer_cards_path, get_business_journey_path, get_company_research_view_path, get_financial_visual_summaries_path, get_manifest_path, get_uncertainty_map_path, get_validation_report_path
+from .paths import OUTPUT_FILE_NAMES, get_ask_intrinsiciq_dir, get_answer_cards_path, get_business_journey_path, get_company_research_view_path, get_financial_visual_summaries_path, get_manifest_path, get_uncertainty_map_path, get_validation_report_path
 from .paths import get_products_services_path
 from .sanitizer import sanitize_public_payload
 from .uncertainty_mapper import build_uncertainty_map, summarize_uncertainty_for_view
@@ -17,9 +20,17 @@ from .validator import build_validation_report, validate_answer_cards_payload, v
 from .writer import write_json_file
 
 
-def generate_ask_intrinsiciq_view(company_slug: str, *, force: bool = False) -> Dict[str, Any]:
+def plan_ask_intrinsiciq_outputs(company_slug: str, companies_root: Path | str, *, authorize_served_write: bool = False) -> Dict[str, Path]:
+    """The exact files generate_ask_intrinsiciq_view would write. Read-only: nothing is created."""
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    return {name: safe_destination(root, get_ask_intrinsiciq_dir(company_slug, root) / name) for name in OUTPUT_FILE_NAMES.values()}
+
+
+def generate_ask_intrinsiciq_view(company_slug: str, companies_root: Path | str, *, force: bool = False, authorize_served_write: bool = False) -> Dict[str, Any]:
+    # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True. Sources are read from, and outputs written under, this one root.
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
     generated_at = _now_iso()
-    source_bundle = load_company_memory_sources(company_slug)
+    source_bundle = load_company_memory_sources(company_slug, root)
     company_identity = _build_company_identity(company_slug, source_bundle)
     business_journey_payload, business_journey_diagnostics = build_business_journey_from_company_model(
         source_bundle,
@@ -108,27 +119,27 @@ def generate_ask_intrinsiciq_view(company_slug: str, *, force: bool = False) -> 
         generated_at=generated_at,
         source_bundle=source_bundle,
         outputs_written=[
-            str(get_company_research_view_path(company_slug).name),
-            str(get_business_journey_path(company_slug).name),
-            str(get_products_services_path(company_slug).name),
-            str(get_answer_cards_path(company_slug).name),
-            str(get_financial_visual_summaries_path(company_slug).name),
-            str(get_uncertainty_map_path(company_slug).name),
-            str(get_manifest_path(company_slug).name),
-            str(get_validation_report_path(company_slug).name),
+            get_company_research_view_path(company_slug, root).name,
+            get_business_journey_path(company_slug, root).name,
+            get_products_services_path(company_slug, root).name,
+            get_answer_cards_path(company_slug, root).name,
+            get_financial_visual_summaries_path(company_slug, root).name,
+            get_uncertainty_map_path(company_slug, root).name,
+            get_manifest_path(company_slug, root).name,
+            get_validation_report_path(company_slug, root).name,
         ],
         validation_status=validation_report["status"],
         generation_status=generation_status,
         limitations=limitations,
     )
-    write_json_file(get_business_journey_path(company_slug), business_journey_payload, force=True)
-    write_json_file(get_products_services_path(company_slug), products_services_payload, force=True)
-    write_json_file(get_answer_cards_path(company_slug), answer_cards_payload, force=True)
-    write_json_file(get_financial_visual_summaries_path(company_slug), financial_visual_summaries_payload, force=True)
-    write_json_file(get_uncertainty_map_path(company_slug), uncertainty_map_payload, force=True)
-    write_json_file(get_company_research_view_path(company_slug), public_view, force=True)
-    write_json_file(get_manifest_path(company_slug), manifest, force=True)
-    write_json_file(get_validation_report_path(company_slug), validation_report, force=True)
+    write_json_file(get_business_journey_path(company_slug, root), business_journey_payload, force=True, root=root)
+    write_json_file(get_products_services_path(company_slug, root), products_services_payload, force=True, root=root)
+    write_json_file(get_answer_cards_path(company_slug, root), answer_cards_payload, force=True, root=root)
+    write_json_file(get_financial_visual_summaries_path(company_slug, root), financial_visual_summaries_payload, force=True, root=root)
+    write_json_file(get_uncertainty_map_path(company_slug, root), uncertainty_map_payload, force=True, root=root)
+    write_json_file(get_company_research_view_path(company_slug, root), public_view, force=True, root=root)
+    write_json_file(get_manifest_path(company_slug, root), manifest, force=True, root=root)
+    write_json_file(get_validation_report_path(company_slug, root), validation_report, force=True, root=root)
     return {
         "business_journey": business_journey_payload,
         "business_journey_diagnostics": business_journey_diagnostics,

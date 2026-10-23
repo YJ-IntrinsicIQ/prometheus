@@ -17,18 +17,43 @@ _DEBT_LABEL_TOKENS = ("borrowing", "debt", "debenture", "loan")
 # A repayment / proceeds / cost / interest line describes a FLOW through the debt account, never the balance.
 # Phrases, not bare words: "Interest bearing borrowings" and "Borrowings at amortised cost" are debt BALANCES; "interest on", "finance cost" etc. are expenses.
 _DEBT_FLOW_TOKENS = ("repayment", "prepayment", "repaid", "proceeds", "interest on", "interest expense", "interest cost", "interest paid", "interest from", "accrued interest",
-                     "finance cost", "borrowing cost", "cost of borrowing", "cost of debt", "utilisation", "utilization", "lease liabilit")  # lease liabilities are not borrowings
+                     "finance cost", "borrowing cost", "cost of borrowing", "cost of debt", "utilisation", "utilization", "lease liabilit",
+                     # a cash-flow movement ("Increase/(Decrease) in Borrowings (Net)") is a flow, never the debt balance
+                     "increase in", "decrease in", "increase decrease", "net increase", "net decrease")  # lease liabilities are not borrowings
 # "Non-current liabilities (i) Borrowings" / "Current liabilities (i) Borrowings": a section-prefixed component, not the total.
-_SECTION_BORROWINGS = re.compile(r"^(?:liabilities )?(non current liabilities|current liabilities)( [ivx]+| [a-z])?(?: financial liabilities)? borrowings$")
+_SECTION_BORROWINGS = re.compile(r"^(?:liabilities )?(?:\d+ )?(non current liabilities|current liabilities)(?: [ivx]+| [a-z])*(?: financial liabilities)?(?: [ivx]+| [a-z])* borrowings$")
 
 _FORBIDDEN_BY_FIELD = {
+    # income received and gains/losses on investments are not finance cost or an investments balance (cash-flow / P&L lines that share the words)
+    "finance_cost": ("income", "received", "dividend", "lease", "earned"),
+    "investments": ("loss on", "gain on", "profit on", "sale of", "income from", "proceeds", "purchase of", "dividend", "increase", "decrease", "investment property", "gross value", "fixed deposit", "htm",
+                    "associate", "joint venture", "subsidiar"),       # equity-accounted and group holdings are one component of investments, not the balance
+    # the same contradictions the fact registry rejects (fact_registry.LABEL_CONTRADICTIONS), applied where the line is MAPPED so that the metric's true line can win
+    "other_income": ("comprehensive",),
+    "fixed_assets": ("purchase of", "payment", "reclassified", "additions", "proceeds"),
+    "equity_share_capital": ("to be issued", "fresh equity", "authorised", "authorized", "revised from", "furthermore", "pending allotment"),
+    "tax": ("adjustment",),
+    # stores and spares are consumed inside other expenses (a note), not the materials consumed in the cost of sales
+    "cost_of_materials": ("stores", "spare"),
+    "tax_paid": ("dividend",),
+    "employee_cost": ("director",),
+    # a sub-line ("Secured borrowings included in I and II", "of which ...") is a part of a debt figure, not the figure
+    "total_debt": ("included in", "of which"),
+    "short_term_debt": ("included in", "of which"),
+    "long_term_debt": ("included in", "of which"),
     "cash_and_equivalents": (*_NOT_CASH_EQUIVALENTS_TOKENS, "interest on", "interest income", "income on", "interest from"),
-    "other_bank_balances": ("interest on", "interest income", "income on", "interest from"),
+    "other_bank_balances": ("reserve bank", "interest on", "interest income", "income on", "interest from"),
     # G3: a dividend RECEIVED is income and an UNCLAIMED/payable dividend is a liability - neither is the dividend the company paid or declared
-    "dividend": ("received", "income", "unclaimed", "unpaid", "payable", "distribution tax"),
-    "dividends_paid": ("received", "income", "unclaimed", "unpaid", "payable"),
-    "buyback_paid": ("treasury", "esop", "employee", "trust", "dividend"),    # shares an ESOP trust buys are not a buyback
+    "dividend": ("received", "income", "unclaimed", "unpaid", "payable", "distribution tax", "non controlling", "non-controlling", "minority"),
+    "dividends_paid": ("received", "income", "unclaimed", "unpaid", "payable", "non controlling", "non-controlling", "minority", "proposed", "recommended", "distribution tax"),
+    "dividends_paid_to_non_controlling_interests": ("received", "income", "unclaimed", "unpaid", "payable"),
+    "dividends_received": ("paid", "payment", "non controlling", "non-controlling", "minority", "unclaimed", "payable"),
+    "buyback_paid": ("treasury", "esop", "employee", "trust", "dividend", "proceeds from", "issue of", "issuance", "escrow", "transfer to"),    # shares an ESOP trust buys are not a buyback
+    # annual charge, not the accumulated balance ("Depreciation to date" in a fixed-asset schedule is a stock)
+    "depreciation": ("to date", "accumulated", "cumulative", "up to", "upto", "provision for depreciation", "on disposal", "written back", "withdrawn"),
+    # the authorised ceiling is not the paid-up capital
     "ebit": (
+        "before working capital", "working capital changes", "operating profit before",
         "surplus",
         "opening balance",
         "retained earnings",
@@ -285,6 +310,7 @@ _WEIGHTED_AVG_SHARES_EXPLICIT_TOKENS = (
 )
 
 _DILUTED_SHARES_EXPLICIT_TOKENS = (
+    "weighted average shares outstanding diluted",
     "weighted average number of diluted equity shares",
     "diluted weighted average number of equity shares",
     "diluted weighted average shares",
@@ -491,6 +517,9 @@ def _contains_equity_shares_of_rs_each(normalized_label: str) -> bool:
     return bool(re.search(r"equity shares of r(?:s|e)\s*\d+(?:\.\d+)? each", normalized_label))
 
 
+_NARRATIVE_LABEL = re.compile(r"\b(?:was|were|has been|have been|furthermore|pursuant|consequent|hereby|thereof|aforesaid)\b")
+
+
 def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_label: str, table_type: str) -> bool:
     forbidden = _FORBIDDEN_BY_FIELD.get(canonical_field, ())
     if forbidden and _contains_any(normalized_label, forbidden):
@@ -499,12 +528,28 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
     if canonical_section == "balance_sheet" and _contains_any(normalized_label, _OPENING_BALANCE_TOKENS):
         return False
 
+    # A sentence is not a line item: a fragment of a note ("... the authorised share capital of the Bank was ...") carries amounts that belong to the sentence.
+    if _NARRATIVE_LABEL.search(normalized_label):
+        return False
+
     if canonical_field in _DEBT_FIELDS and (
         not _contains_any(normalized_label, _DEBT_LABEL_TOKENS)  # e.g. "Total non-current assets" is not debt, however its tokens overlap an alias
         or _contains_any(normalized_label, ("in million", "in crore", "in lakhs", "as at march"))  # a table title, not a line item
         or _contains_any(normalized_label, _DEBT_FLOW_TOKENS)
     ):
         return False
+
+    if canonical_field == "other_expenses":
+        # The residual heading only. A TOTAL ("Total expenses", "Total operating expenses", a bank's "Operating expenses (I to X)") contains the employee, finance and depreciation
+        # lines it sits beside, and a single sub-line (rent, printing) is one part of the residual: neither is "other expenses".
+        if not _contains_any(normalized_label, ("other expenses", "other expenditure", "miscellaneous expenses")) or _contains_any(normalized_label, ("total expenses", "total expenditure", "other comprehensive")):
+            return False
+
+    if canonical_field == "equity_share_capital" and "capital" in normalized_label.split() and "share" not in normalized_label and "paid" not in normalized_label \
+            and not _contains_any(normalized_label, ("issued", "subscribed", "called up")):
+        # the RBI bank balance sheet heads paid-up capital with the bare word "Capital"; any longer wording ("Working capital", "Capital reserve", "Capital work-in-progress") is not it
+        if normalized_label.strip() != "capital" or table_type != "balance_sheet":
+            return False
 
     if canonical_field == "total_assets":
         if "total assets" not in normalized_label and "total equity and liabilities" not in normalized_label:
@@ -543,12 +588,10 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
             return False
         # Accept banking "Other Assets" (Schedule 11) or standard "other assets"
         # Must contain "other assets" or start/end with "others" (not "from others")
-        if "other assets" not in normalized_label:
-            if "others" not in normalized_label:
-                return False
-            # Reject "from others" or similar patterns
-            if "from others" in normalized_label or "to others" in normalized_label:
-                return False
+        # A bare "Others" is a sub-line of some other heading (advances, investments, deposits): it is a component, never the other-assets balance. A long qualified wording ("All
+        # other assets not included in the above categories") is an exposure-category row of a regulatory disclosure.
+        if "other assets" not in normalized_label or len(normalized_label.split()) > 6 or _contains_any(normalized_label, ("not included", "above categories", "exposure", "risk weight")):
+            return False
 
     if canonical_field == "net_worth":
         if "liabilities" in normalized_label:
@@ -680,6 +723,8 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
     if canonical_field == "weighted_avg_shares":
         if _contains_any(normalized_label, _SHARE_COUNT_DISALLOWED_TOKENS):
             return False
+        if "diluted" in normalized_label and not re.search(r"basic (?:and|&) diluted|basic diluted", normalized_label):
+            return False                       # the diluted denominator is a different share count from the basic one
         if table_type != "eps":
             return False
         if not _contains_any(normalized_label, _WEIGHTED_AVG_SHARES_EXPLICIT_TOKENS):
@@ -687,6 +732,8 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
 
     if canonical_field == "diluted_shares":
         if _contains_any(normalized_label, _SHARE_COUNT_DISALLOWED_TOKENS):
+            return False
+        if "basic" in normalized_label and not re.search(r"basic (?:and|&) diluted|basic diluted", normalized_label):
             return False
         if table_type != "eps":
             return False
@@ -698,6 +745,7 @@ def _field_allowed(*, canonical_section: str, canonical_field: str, normalized_l
             return False
         if _contains_equity_shares_of_rs_each(normalized_label) and _contains_any(normalized_label, _FACE_VALUE_ROW_DISALLOWED_TOKENS):
             return False
+        # "Equity shares of Rs 10 each" heads an authorised/issued-capital AMOUNT row; the normalizer accepts it only when the row's cell equals the stated par (see _face_value_source_allowed).
         if not (
             _contains_any(normalized_label, _FACE_VALUE_EXPLICIT_TOKENS)
             or _contains_equity_shares_of_rs_each(normalized_label)

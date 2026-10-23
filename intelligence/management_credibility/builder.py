@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root, safe_destination
 
 import json
 import re
@@ -928,7 +929,7 @@ def _source_contracts(sources: Dict[str, Any]) -> Dict[str, Any]:
 
 def build_management_credibility_synthesis(
     company_slug: str,
-    companies_root: Path = Path("companies"),
+    companies_root: Path,
     generated_at: Optional[str] = None,
 ) -> Dict[str, Any]:
     sources = _load_sources(company_slug, companies_root)
@@ -958,13 +959,18 @@ def build_management_credibility_synthesis(
     return payload
 
 
+def plan_management_credibility_synthesis_output(company_slug: str, companies_root: Path | str, *, authorize_served_write: bool = False) -> Path:
+    """The exact file write_management_credibility_synthesis would write. Read-only: nothing is created."""
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    return safe_destination(root, root / company_slug / "company_memory" / "gold" / ARTIFACT_NAME)
+
+
 def write_management_credibility_synthesis(
     company_slug: str,
-    companies_root: Path = Path("companies"),
+    companies_root: Path | str,
+    *,
+    authorize_served_write: bool = False,
 ) -> Path:
-    payload = build_management_credibility_synthesis(company_slug, companies_root=companies_root)
-    out_dir = companies_root / company_slug / "company_memory" / "gold"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / ARTIFACT_NAME
-    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return out_path
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    payload = build_management_credibility_synthesis(company_slug, companies_root=root)
+    return guarded_write_text(root, plan_management_credibility_synthesis_output(company_slug, root, authorize_served_write=authorize_served_write), json.dumps(payload, indent=2, ensure_ascii=False))

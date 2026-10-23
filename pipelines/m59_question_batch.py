@@ -30,12 +30,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from pipelines import pacp_adversarial as pa  # noqa: E402
+from pipelines import answer_certification as ac  # noqa: E402
 from pipelines.answer_certification import compute_content_fingerprint, compute_full_artifact_digest  # noqa: E402
 
 
 def _load_catalog() -> list[dict]:
     """The canonical catalog, as the companies' generated research views carry it (they are produced from QUESTION_CATALOG and
     are identical across companies). Read from JSON so this module needs no import of the `intelligence` package."""
+    # READ-ONLY exception: a static, import-time catalog read; this module never writes through this path (all writes use ac.companies_root()).
     view = json.loads((ROOT / "companies" / "sun_pharma" / "company_memory" / "ask_intrinsiciq" / "company_research_view.json").read_text())
     return [{"id": c["id"], "title": c["title"], "questions": [{"id": q["id"], "title": q["title"]} for q in c["questions"]]} for c in view["categories"]]
 
@@ -172,7 +174,7 @@ class Co:
     def __init__(self, key: str, registry: dict) -> None:
         self.key = key
         self.name = NAMES[key]
-        self.dir = ROOT / "companies" / key / "company_memory"
+        self.dir = ac.companies_root() / key / "company_memory"
         self.registry = registry
         self._cache: dict[str, Any] = {}
         self.bank = key in BANKS
@@ -208,7 +210,7 @@ class Co:
     @property
     def latest_year(self) -> int:
         d = self.j("gold/strategy_evolution_timeline.json") or {}
-        return fyn((d.get("data_coverage") or {}).get("latest_period")) or max((fyn(p.name) or 0 for p in (ROOT / "companies" / self.key).glob("fy??")), default=26)
+        return fyn((d.get("data_coverage") or {}).get("latest_period")) or max((fyn(p.name) or 0 for p in (ac.companies_root() / self.key).glob("fy??")), default=26)
 
     def series(self, group: str, metric: str) -> list[dict]:
         t = self.j("financials/financial_trends.json") or {}
@@ -1322,7 +1324,7 @@ def assess(co: Co, qid: str) -> dict:
 def run(write: bool) -> list[dict]:
     registry = json.loads((ROOT / "governance" / "approval_registry.json").read_text())["approvals"]
     reg_digest_before = (ROOT / "governance" / "approval_registry.json").read_bytes()
-    served_before = {c: (ROOT / "companies" / c / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json").read_bytes() for c in COMPANIES}
+    served_before = {c: (ac.companies_root() / c / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json").read_bytes() for c in COMPANIES}
     out: list[dict] = []
     cos: dict[str, Co] = {}
     for key in COMPANIES:
@@ -1345,11 +1347,11 @@ def run(write: bool) -> list[dict]:
         for key in COMPANIES:
             ents = {r["question_id"]: {**r["entry"], "candidate": {"status": READY, "path": r["path"], "fingerprint": r["fingerprint"], "full_artifact_digest": r["full_artifact_digest"], "validation": {k: v["result"] for k, v in r["validation"].items()}, "pacp": r["pacp"]}} for r in out if r["company"] == key and r["status"] == READY}
             doc = {"schema_version": SCHEMA, "company_slug": key, "generated_at": datetime.now(timezone.utc).isoformat(), "mission": "M59", "note": "CANDIDATES ONLY. Not served: the app reads shadow_level3_hybrid_answers.json, and an answer is served only after its exact digest is registered by the owner via answer_certification.py --mode approve.", "ai_calls": 0, "answers": ents}
-            (ROOT / "companies" / key / "company_memory/ask_intrinsiciq/m59_candidate_answers.json").write_text(json.dumps(doc, indent=2, ensure_ascii=False))
+            (ac.companies_root() / key / "company_memory/ask_intrinsiciq/m59_candidate_answers.json").write_text(json.dumps(doc, indent=2, ensure_ascii=False))
     # safety: nothing governed was touched
     assert (ROOT / "governance" / "approval_registry.json").read_bytes() == reg_digest_before, "approval registry changed"
     for c in COMPANIES:
-        assert (ROOT / "companies" / c / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json").read_bytes() == served_before[c], "served answers changed"
+        assert (ac.companies_root() / c / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json").read_bytes() == served_before[c], "served answers changed"
     return out
 
 
@@ -1463,8 +1465,11 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--json", help="write full results JSON here")
+    ap.add_argument("--companies-root", required=True, type=Path, help="absolute company-data root (required; no default)")
+    ap.add_argument("--authorize-served-write", action="store_true", help="permit --companies-root to be the served companies/ tree")
     ap.add_argument("--package", action="store_true", help="write the owner review package under preview/")
     args = ap.parse_args()
+    ac.configure_companies_root(args.companies_root, authorize_served=args.authorize_served_write)
     rows = run(args.write)
     summarize(rows)
     if args.package:

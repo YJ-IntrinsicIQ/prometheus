@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, logical_company_path, resolve_output_root, safe_destination
 
 import json
 import re
@@ -78,10 +79,9 @@ def _load_json(path: Path) -> Dict[str, Any]:
         return {}
 
 
-def _write_json(path: Path, payload: Dict[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return path
+def _write_json(path: Path, payload: Dict[str, Any], *, root: Path | str) -> Path:
+    """The destination must lie inside the explicit, already-authorized output root."""
+    return guarded_write_text(root, path, json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def _slug(value: str) -> str:
@@ -337,18 +337,53 @@ def _entry_has_value(entry: Any) -> bool:
     return False
 
 
+def _withhold_rejected_figures(normalized: Dict[str, Any]) -> Dict[str, Any]:
+    """The year file keeps the figures the fact registry rejected, with their reasons, as evidence (`registry_exclusions`). CIM embeds the year's artifact: it carries WHICH metrics were
+    withheld and why, never the rejected values."""
+    if not isinstance(normalized, dict) or "registry_exclusions" not in normalized:
+        return normalized
+    cleaned = {k: v for k, v in normalized.items() if k not in {"registry_exclusions", "registry_context"}}
+    cleaned["withheld_by_registry"] = [{"metric": metric, "status": record.get("status"), "reasons": list(record.get("reasons") or [])[-1:]} for metric, record in sorted((normalized.get("registry_exclusions") or {}).items())]
+    return cleaned
+
+
+from knowledge.financials.authority_gate import annotate_projection, carries_financial_evidence, check_artifact  # noqa: E402
+
+
 class CIMContractBuilder:
-    def __init__(self, company: str, companies_root: Path | str = Path("companies")):
+    OUTPUT_FILES = ("cim_v1.json", "pcim_v1.json")
+
+    def __init__(self, company: str, companies_root: Path | str, *, authorize_served_write: bool = False):
         self.company = company
-        self.companies_root = Path(companies_root)
+        self.authorize_served_write = authorize_served_write
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
         self.company_root = self.companies_root / company
         self.output_dir = self.company_root / "company_memory"
+
+    def plan_outputs(self) -> Dict[str, Path]:
+        """The exact files build() would write (cim_v1.json, pcim_v1.json) plus the company-memory aggregate it refreshes first. Read-only: nothing is created."""
+        planned = {name: safe_destination(self.companies_root, self.output_dir / name) for name in self.OUTPUT_FILES}
+        planned.update(CompanyMemoryAggregateBuilder(self.company, self.companies_root, authorize_served_write=self.authorize_served_write).plan_outputs())
+        return planned
 
     def _ensure_company_memory(self) -> None:
         CompanyMemoryAggregateBuilder(
             company=self.company,
             companies_root=self.companies_root,
+            authorize_served_write=self.authorize_served_write,
         ).build()
+
+    def _load_financial_artifact(self, path: Path) -> Dict[str, Any]:
+        """A financial-derived input is read only if it was built against the registries that exist now and is untouched since (knowledge.financials.authority_gate); otherwise it is
+        absent, and everything that depends on it becomes unavailable instead of quietly using a stale or unrecorded file."""
+        try:
+            rel = str(Path(path).resolve().relative_to(self.company_root.resolve()))
+        except ValueError:
+            return {}
+        payload = _load_json(path)
+        status, _reason = check_artifact(self.company_root, rel)
+        return payload if status == "valid" or not carries_financial_evidence(payload) else {}
 
     def _load_company_memory_artifacts(self) -> Dict[str, Any]:
         return {
@@ -360,21 +395,21 @@ class CIMContractBuilder:
             "risk_evolution": _load_json(self.output_dir / "risk_evolution.json"),
             "capital_allocation_timeline": _load_json(self.output_dir / "capital_allocation_timeline.json"),
             "entity_registry": _load_json(self.output_dir / "entity_registry.json"),
-            "financial_year_index": _load_json(self.output_dir / "financials" / "financial_year_index.json"),
-            "financial_trends": _load_json(self.output_dir / "financials" / "financial_trends.json"),
-            "financial_quality_evolution": _load_json(self.output_dir / "financials" / "financial_quality_evolution.json"),
-            "capital_allocation_financial_timeline": _load_json(self.output_dir / "financials" / "capital_allocation_financial_timeline.json"),
-            "ownership_evolution": _load_json(self.output_dir / "financials" / "ownership_evolution.json"),
-            "financial_memory_summary": _load_json(self.output_dir / "financials" / "financial_memory_summary.json"),
-            "financial_truth_pack": _load_json(self.output_dir / "financials" / "financial_truth_pack.json"),
-            "financial_quality_summary": _load_json(self.output_dir / "financials" / "financial_quality_summary.json"),
-            "financial_driver_attribution": _load_json(self.output_dir / "financials" / "financial_driver_attribution.json"),
-            "owner_earnings_bridge": _load_json(self.output_dir / "financials" / "investor_financial_modules" / "owner_earnings_bridge.json"),
-            "capital_allocation_roi_ledger": _load_json(self.output_dir / "financials" / "investor_financial_modules" / "capital_allocation_roi_ledger.json"),
-            "working_capital_quality_drilldown": _load_json(self.output_dir / "financials" / "investor_financial_modules" / "working_capital_quality_drilldown.json"),
-            "order_revenue_cash_conversion_tracker": _load_json(self.output_dir / "financials" / "investor_financial_modules" / "order_revenue_cash_conversion_tracker.json"),
-            "per_share_compounding_analysis": _load_json(self.output_dir / "financials" / "investor_financial_modules" / "per_share_compounding_analysis.json"),
-            "investor_financial_modules_manifest": _load_json(self.output_dir / "financials" / "investor_financial_modules" / "investor_financial_modules_manifest.json"),
+            "financial_year_index": self._load_financial_artifact(self.output_dir / "financials" / "financial_year_index.json"),
+            "financial_trends": self._load_financial_artifact(self.output_dir / "financials" / "financial_trends.json"),
+            "financial_quality_evolution": self._load_financial_artifact(self.output_dir / "financials" / "financial_quality_evolution.json"),
+            "capital_allocation_financial_timeline": self._load_financial_artifact(self.output_dir / "financials" / "capital_allocation_financial_timeline.json"),
+            "ownership_evolution": self._load_financial_artifact(self.output_dir / "financials" / "ownership_evolution.json"),
+            "financial_memory_summary": self._load_financial_artifact(self.output_dir / "financials" / "financial_memory_summary.json"),
+            "financial_truth_pack": self._load_financial_artifact(self.output_dir / "financials" / "financial_truth_pack.json"),
+            "financial_quality_summary": self._load_financial_artifact(self.output_dir / "financials" / "financial_quality_summary.json"),
+            "financial_driver_attribution": self._load_financial_artifact(self.output_dir / "financials" / "financial_driver_attribution.json"),
+            "owner_earnings_bridge": self._load_financial_artifact(self.output_dir / "financials" / "investor_financial_modules" / "owner_earnings_bridge.json"),
+            "capital_allocation_roi_ledger": self._load_financial_artifact(self.output_dir / "financials" / "investor_financial_modules" / "capital_allocation_roi_ledger.json"),
+            "working_capital_quality_drilldown": self._load_financial_artifact(self.output_dir / "financials" / "investor_financial_modules" / "working_capital_quality_drilldown.json"),
+            "order_revenue_cash_conversion_tracker": self._load_financial_artifact(self.output_dir / "financials" / "investor_financial_modules" / "order_revenue_cash_conversion_tracker.json"),
+            "per_share_compounding_analysis": self._load_financial_artifact(self.output_dir / "financials" / "investor_financial_modules" / "per_share_compounding_analysis.json"),
+            "investor_financial_modules_manifest": self._load_financial_artifact(self.output_dir / "financials" / "investor_financial_modules" / "investor_financial_modules_manifest.json"),
         }
 
     def _year_artifact_paths(self, year: str) -> Dict[str, str]:
@@ -403,12 +438,12 @@ class CIMContractBuilder:
                 "business_classification": _load_json(intelligence_dir / "business_classification.json"),
                 "business_blueprint": _load_json(intelligence_dir / "business_blueprint.json"),
                 "management_summary": _load_json(intelligence_dir / "management_summary.json"),
-                "normalized_fundamentals": _load_json(financial_dir / "normalized_fundamentals.json"),
+                "normalized_fundamentals": _withhold_rejected_figures(self._load_financial_artifact(financial_dir / "normalized_fundamentals.json")),
                 "financial_validation_report": _load_json(financial_dir / "financial_validation_report.json"),
                 "financial_reconciliation_report": _load_json(financial_dir / "financial_reconciliation_report.json"),
-                "financial_ratios": _load_json(financial_dir / "financial_ratios.json"),
-                "financial_growth": _load_json(financial_dir / "financial_growth.json"),
-                "financial_quality_summary": _load_json(financial_dir / "financial_quality_summary.json"),
+                "financial_ratios": self._load_financial_artifact(financial_dir / "financial_ratios.json"),
+                "financial_growth": self._load_financial_artifact(financial_dir / "financial_growth.json"),
+                "financial_quality_summary": self._load_financial_artifact(financial_dir / "financial_quality_summary.json"),
                 "corporate_actions": _load_json(financial_dir / "corporate_actions.json"),
                 "shareholding_pattern": _load_json(financial_dir / "shareholding_pattern.json"),
                 "raw_financial_tables": _load_json(financial_dir / "raw_financial_tables.json"),
@@ -622,6 +657,10 @@ class CIMContractBuilder:
         for point in series:
             if not isinstance(point, dict):
                 continue
+            # A point the registry does not let the year use is NOT carried into CIM / PCIM at all (its value is the rejected figure); a point that is carried keeps the
+            # eligibility and verification state it had, so a consumer can see how far it was checked.
+            if point.get("usable_downstream") is False or str(point.get("availability_status") or "") in {"invalid", "unreliable"}:
+                continue
             compact_series.append(
                 {
                     "year": point.get("year"),
@@ -629,6 +668,9 @@ class CIMContractBuilder:
                     "basis": point.get("basis") or payload.get("basis") or "unknown",
                     "source_artifact": point.get("source_artifact") or "financial_trends.json",
                     "confidence": point.get("confidence"),
+                    "availability_status": point.get("availability_status"),
+                    "usable_downstream": point.get("usable_downstream"),
+                    "verification_status": point.get("verification_status"),
                     "warnings": list(point.get("warnings", [])) if isinstance(point.get("warnings"), list) else [],
                 }
             )
@@ -690,7 +732,7 @@ class CIMContractBuilder:
             exists = path.exists()
             entry = {
                 "name": path.name,
-                "path": str(path),
+                "path": logical_company_path(path, self.companies_root),
                 "exists": exists,
                 "loaded": False,
                 "years_detected": years_detected,
@@ -1583,6 +1625,11 @@ class CIMContractBuilder:
         financial_panel_ready = bool(financial_quality_by_year) and financial_manifest.get("financial_status") in {"pass", "warning"}
         if truth_pack.get("financial_panel_status") == "invalid":
             financial_panel_ready = False
+        # The truth pack is the company-level authority for investor financial inputs. Without it (a company whose years could not all be rebuilt) the panel is NOT ready: the
+        # year-level figures that remain are not a substitute, and an empty authority must not read as a passing one.
+        truth_pack_available = bool(truth_pack) and bool(truth_pack.get("usable_current_metrics") or truth_pack.get("usable_derived_metrics") or truth_pack.get("partial_metrics"))
+        if not truth_pack_available:
+            financial_panel_ready = False
         financial_warning_policy = {
             "allowed_financial_warnings": list(truth_pack.get("financial_warnings_allowed_downstream", [])),
             "financial_warnings_blocked_downstream": [
@@ -1597,6 +1644,12 @@ class CIMContractBuilder:
             "reason": truth_pack.get("financial_panel_status_reason") or "",
             "source_artifact": "financial_truth_pack.json",
         }
+        if not truth_pack_available:
+            financial_panel_status = {
+                "status": "unavailable",
+                "reason": "financial_truth_pack.json is absent or empty: the company-level financial authority was not built, so investor financial inputs are unavailable (not substituted from year-level files)",
+                "source_artifact": "financial_truth_pack.json",
+            }
 
         sections = {
             "financial_fundamentals_inputs": {
@@ -2110,8 +2163,7 @@ class CIMContractBuilder:
             "uncertainty_notes": self._missing_items_for_section("story_vs_numbers_inputs", present),
         }
 
-    @staticmethod
-    def _build_economic_attribution_inputs(company_slug: str) -> Dict[str, Any]:
+    def _build_economic_attribution_inputs(self, company_slug: str) -> Dict[str, Any]:
         """Project economic attribution intelligence into a top-level PCIM section.
 
         Reads from the canonical economic_attribution_intelligence.json artifact
@@ -2123,7 +2175,8 @@ class CIMContractBuilder:
           DIRECTLY_ATTRIBUTABLE only for deterministic transaction consequences.
           ASSOCIATED_NOT_ATTRIBUTABLE for confirmed deployment with unestablished causality.
         """
-        ea_path = Path("companies") / company_slug / "company_memory" / "economic_attribution" / "economic_attribution_intelligence.json"
+        # read from the SAME root as the rest of this build: a scratch root must never pick up the served tree's attribution through the working directory
+        ea_path = self.companies_root / company_slug / "company_memory" / "economic_attribution" / "economic_attribution_intelligence.json"
         if not ea_path.exists():
             return {"available": False, "reason": "economic_attribution_intelligence.json not found — run economic_attribution stage first"}
         try:
@@ -2810,7 +2863,8 @@ class CIMContractBuilder:
         if has_financial_content and not isinstance(financial_panel_ready, bool):
             raise ValueError("financial_panel_ready must be a boolean when financial PCIM sections exist")
         has_quality = bool((pcim_v1.get("financial_quality_inputs") or {}).get("by_year"))
-        if has_quality and financial_panel_ready is False and manifest.get("financial_status") in {"pass", "warning"}:
+        panel_unavailable = (pcim_v1.get("financial_panel_status") or {}).get("status") == "unavailable"
+        if has_quality and financial_panel_ready is False and manifest.get("financial_status") in {"pass", "warning"} and not panel_unavailable:
             raise ValueError("financial_panel_ready must be true when financial quality inputs are present and usable")
 
     def build(self) -> Dict[str, Path]:
@@ -2820,9 +2874,11 @@ class CIMContractBuilder:
         yearly_payloads = self._load_year_payloads(available_years)
         cim_v1 = self._build_cim_v1(artifacts, yearly_payloads)
         pcim_v1 = self._build_pcim_v1(cim_v1)
+        annotate_projection(cim_v1, self.company_root)       # each metric point says how far the filing check went (or that none was made): the uncertainty survives the copy
+        annotate_projection(pcim_v1, self.company_root)
 
         written = {
-            "cim_v1.json": _write_json(self.output_dir / "cim_v1.json", cim_v1),
-            "pcim_v1.json": _write_json(self.output_dir / "pcim_v1.json", pcim_v1),
+            "cim_v1.json": _write_json(self.output_dir / "cim_v1.json", cim_v1, root=self.companies_root),
+            "pcim_v1.json": _write_json(self.output_dir / "pcim_v1.json", pcim_v1, root=self.companies_root),
         }
         return written

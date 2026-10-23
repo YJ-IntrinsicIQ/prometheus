@@ -6,10 +6,13 @@ from pathlib import Path
 import pytest
 
 from knowledge.management_progression import (
+
     build_management_progression,
     validate_management_progression,
     write_management_progression,
 )
+
+READ_ONLY_COMPANIES = next(p for p in Path(__file__).resolve().parents if (p / "core" / "context_paths.py").is_file()) / "companies"   # explicit, absolute, READ-only source of served records
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -40,7 +43,7 @@ def _company_model(company: str) -> dict:
 
 
 def test_management_progression_contract_for_real_company():
-    payload = build_management_progression("tanla", generated_at="2026-08-13T00:00:00Z")
+    payload = build_management_progression("tanla", generated_at="2026-08-13T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
     validation = validate_management_progression(payload)
 
     assert validation["status"] == "pass"
@@ -386,7 +389,7 @@ def test_generic_legacy_strategy_bucket_is_not_promoted(tmp_path: Path):
 
 
 def test_statement_is_not_promoted_to_verified_outcome():
-    payload = build_management_progression("tanla", generated_at="2026-08-13T00:00:00Z")
+    payload = build_management_progression("tanla", generated_at="2026-08-13T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
     event = payload["progression_items"][0]["events"][0]
     event["role"] = "commitment"
     event["verification_status"] = "verified"
@@ -576,14 +579,14 @@ def test_heterogeneous_real_companies_build_without_company_branches():
         "tips": "insufficient_evidence",
     }
     for company, coverage in expected_minimum.items():
-        payload = build_management_progression(company, generated_at="2026-08-13T00:00:00Z")
+        payload = build_management_progression(company, generated_at="2026-08-13T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
         validation = validate_management_progression(payload)
         assert validation["status"] == "pass", (company, validation)
         assert payload["coverage_status"] == coverage
 
 
 def test_legacy_only_progression_is_insufficient_until_governed_stream_exists():
-    payload = build_management_progression("tips", generated_at="2026-08-13T00:00:00Z")
+    payload = build_management_progression("tips", generated_at="2026-08-13T00:00:00Z", companies_root=READ_ONLY_COMPANIES)
 
     assert payload["coverage_status"] == "insufficient_evidence"
     assert payload["progression_items"] == []

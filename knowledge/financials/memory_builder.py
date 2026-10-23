@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, planned_writes, resolve_output_root, safe_destination
 
 import json
 import time
@@ -682,12 +683,14 @@ def build_financial_memory_artifacts(*, company: str, company_root: Path) -> Dic
     }
 
 
-def write_financial_memory_artifacts(*, company: str, company_root: Path, output_dir: Path) -> Dict[str, Path]:
+def write_financial_memory_artifacts(*, company: str, company_root: Path, output_dir: Path, output_root: Path | str, authorize_served_write: bool = False, dry_run: bool = False) -> Dict[str, Path]:
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
+    if dry_run:     # read-only: the exact files this call would write
+        return planned_writes(root, output_dir)
     payloads = build_financial_memory_artifacts(company=company, company_root=company_root)
-    output_dir.mkdir(parents=True, exist_ok=True)
     written: Dict[str, Path] = {}
     for filename, payload in payloads.items():
         path = output_dir / filename
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        guarded_write_text(root, path, json.dumps(payload, indent=2, ensure_ascii=False))
         written[filename] = path
     return written

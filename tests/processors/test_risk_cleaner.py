@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_risk_cleaner_excludes_quarantined_items_without_failing(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="tanla", year="fy20")
+    context = CompanyContext(company="tanla", year="fy20", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -52,7 +52,7 @@ def test_risk_cleaner_excludes_quarantined_items_without_failing(tmp_path, monke
 
 def test_risk_cleaner_rejects_future_dated_near_neighbor_items(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="polymatech", year="fy24")
+    context = CompanyContext(company="polymatech", year="fy24", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -87,7 +87,7 @@ def test_risk_cleaner_rejects_future_dated_near_neighbor_items(tmp_path, monkeyp
 
 def test_risk_cleaner_accepts_current_risk_with_supported_future_target(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="polymatech", year="fy24")
+    context = CompanyContext(company="polymatech", year="fy24", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -113,7 +113,7 @@ def test_risk_cleaner_accepts_current_risk_with_supported_future_target(tmp_path
 
 def test_risk_cleaner_quarantines_demoted_ambiguous_secondary_item(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="sun_pharma", year="fy20")
+    context = CompanyContext(company="sun_pharma", year="fy20", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -156,7 +156,7 @@ def test_risk_cleaner_quarantines_demoted_ambiguous_secondary_item(tmp_path, mon
 
 def test_risk_cleaner_quarantines_low_materiality_ambiguous_non_promotable_item(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="sun_pharma", year="fy20")
+    context = CompanyContext(company="sun_pharma", year="fy20", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -184,7 +184,7 @@ def test_risk_cleaner_quarantines_low_materiality_ambiguous_non_promotable_item(
 
 def test_risk_cleaner_excludes_cross_year_source_period_mismatch(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="tanla", year="fy23")
+    context = CompanyContext(company="tanla", year="fy23", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -212,7 +212,7 @@ def test_risk_cleaner_excludes_cross_year_source_period_mismatch(tmp_path, monke
 
 def test_risk_cleaner_handles_example_years_inside_current_disclosures(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="tanla", year="fy20")
+    context = CompanyContext(company="tanla", year="fy20", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 

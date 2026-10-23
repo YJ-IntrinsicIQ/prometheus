@@ -281,6 +281,7 @@ def _build_business_understanding_bundle(
                 if context is not None
                 else None
             ),
+            output_root=context.companies_root if context is not None else None,
             require_source_artifacts=True,
             response_schema={"type": "object"},
         )
@@ -317,9 +318,10 @@ def _build_business_understanding_bundle(
     }
 
 
-def _write_json(path: Path, payload: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+def _write_json(path: Path, payload: Dict[str, Any], output_root=None) -> None:
+    from core.context_paths import guarded_write_or_refuse_served
+
+    guarded_write_or_refuse_served(path, json.dumps(payload, indent=2, ensure_ascii=False), output_root)
 
 
 def run_business_understanding(context=None) -> Dict[str, Any]:
@@ -340,9 +342,9 @@ def run_business_understanding(context=None) -> Dict[str, Any]:
     blueprint_path = intelligence_path("business_blueprint.json", context_dir="intelligence_dir")
     classification_path = intelligence_path("business_classification.json", context_dir="intelligence_dir")
 
-    save_company_memory(company_memory, memory_path)
-    _write_json(blueprint_path, business_blueprint.to_dict())
-    _write_json(classification_path, business_classification)
+    save_company_memory(company_memory, memory_path, output_root=context.companies_root)
+    _write_json(blueprint_path, business_blueprint.to_dict(), context.companies_root)
+    _write_json(classification_path, business_classification, context.companies_root)
 
     return {
         "company_memory": company_memory,

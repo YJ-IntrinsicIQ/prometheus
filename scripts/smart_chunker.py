@@ -54,12 +54,53 @@ def looks_like_table_row(text: str) -> bool:
     )
 
 
+_CELL_NUMBER = re.compile(r"[\(\[]?-?\d[\d,]*(?:\.\d+)?[\)\]]?%?|[-\u2013\u2014]")
+_SECTION_MARKER = re.compile(r"[IVX]{1,4}\.")
+_PL_TITLE = re.compile(r"profit\s+and\s+loss\s+account|statement\s+of\s+profit\s+and\s+loss|income\s+statement|balance\s+sheet\s+as\s+at", re.I)
+
+
+def split_cell_lines(raw: str):
+    """A statement page whose PDF text puts every table cell on its own line, with no blank line between rows, used to be collapsed into one blob in which no row could be
+    recognised (a bank's profit-and-loss account on one page became a single paragraph). Rebuild the rows instead: label lines accumulate until the numeric cells that
+    follow them, and each label plus its cells becomes one paragraph. Returns None unless the block really has the cell-per-line shape of an income statement."""
+    lines = [line.strip() for line in raw.split("\n") if line.strip()]
+    # Scope: an income statement page. Other statements (cash flow, balance sheet) are already recognised from their existing paragraph shape and are left alone.
+    head = " ".join(lines[:15])
+    body = " ".join(lines)
+    is_income_statement = bool(_PL_TITLE.search(head)) or bool(re.search(r"\bINCOME\b", body) and re.search(r"\bEXPENDITURE\b", body))
+    if not is_income_statement:
+        return None
+    numeric = [bool(_CELL_NUMBER.fullmatch(line)) for line in lines]
+    if len(lines) < 12 or sum(numeric) < 6 or sum(numeric) < 0.25 * len(lines):
+        return None
+    rows, labels, cells = [], [], []
+    for line, is_number in zip(lines, numeric):
+        if is_number:
+            cells.append(line)
+            continue
+        if cells:
+            rows.append(" ".join(labels + cells))
+            labels, cells = [], []
+        elif labels and _SECTION_MARKER.fullmatch(line):     # "I." / "II." opens a new section: what came before (title, signatures) is its own paragraph
+            rows.append(" ".join(labels))
+            labels = []
+        labels.append(line)
+    if labels or cells:
+        rows.append(" ".join(labels + cells))
+    return rows
+
+
+# A balance-sheet section heading on a line of its own ("Liabilities (1) Non-current liabilities (a) Financial liabilities"). It carries no figure, but the rows beneath it ("(i) Borrowings 21
+# 8,981.3") are only distinguishable from the current section's rows by it: dropped as a short non-row, the non-current borrowings read as a second bare "(i) Borrowings".
+_SECTION_HEADING = re.compile(r"^\W*(?:liabilities\W+)?(?:\(?\d\)?\W+)?(?:non[-\s]?current|current)\s+(?:liabilities|assets)(?:\W+\(?[a-z]\)?\W+financial\s+(?:liabilities|assets))?\W*$", re.I)
+
+
 def clean_paragraphs(text: str):
 
-    raw_paragraphs = re.split(
-        r"\n\s*\n",
-        text
-    )
+    raw_paragraphs = []
+    for block in re.split(r"\n\s*\n", text):
+        rows = split_cell_lines(block)
+        raw_paragraphs.extend(rows if rows is not None else [block])
 
     paragraphs = []
 
@@ -73,7 +114,7 @@ def clean_paragraphs(text: str):
 
         is_table_row = looks_like_table_row(para)
 
-        if len(para) < 150 and not is_table_row:
+        if len(para) < 150 and not is_table_row and not _SECTION_HEADING.match(para):
             continue
 
         if is_mostly_numeric(para) and not is_table_row:

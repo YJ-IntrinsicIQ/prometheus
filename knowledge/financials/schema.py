@@ -242,6 +242,8 @@ class CashFlow:
     capex: MonetaryValue = field(default_factory=_money_field)
     fcf: MonetaryValue = field(default_factory=_money_field)
     dividends_paid: MonetaryValue = field(default_factory=_money_field)
+    dividends_paid_to_non_controlling_interests: MonetaryValue = field(default_factory=_money_field)
+    dividends_received: MonetaryValue = field(default_factory=_money_field)
     buyback_paid: MonetaryValue = field(default_factory=_money_field)   # G3: cash paid to repurchase shares (incl. transaction cost) - differs from the disclosed consideration
     interest_paid: MonetaryValue = field(default_factory=_money_field)
     tax_paid: MonetaryValue = field(default_factory=_money_field)

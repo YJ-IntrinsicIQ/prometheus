@@ -164,7 +164,7 @@ def test_multi_year_memory_sorts_years_and_handles_missing_artifacts(tmp_path, m
     _write_year_artifacts(tmp_path, "acme", "fy24", complete=False)
 
     output_dir = tmp_path / "companies" / "acme" / "company_memory" / "multi_year"
-    written = MultiYearCompanyMemoryBuilder(company="acme").build()
+    written = MultiYearCompanyMemoryBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
 
     assert output_dir.exists()
     assert set(written) == {
@@ -246,7 +246,7 @@ def test_multi_year_memory_is_idempotent_and_preserves_provenance(tmp_path, monk
         ],
     )
 
-    builder = MultiYearCompanyMemoryBuilder(company="acme")
+    builder = MultiYearCompanyMemoryBuilder(company="acme", companies_root=Path.cwd() / "companies")
     builder.build()
     output_dir = tmp_path / "companies" / "acme" / "company_memory" / "multi_year"
     first_pass = {path.name: path.read_text() for path in sorted(output_dir.glob("*.json"))}
@@ -307,7 +307,7 @@ def test_risk_grouping_stays_item_specific_for_shared_financial_note(tmp_path, m
         ],
     )
 
-    MultiYearCompanyMemoryBuilder(company="acme").build()
+    MultiYearCompanyMemoryBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     risk_data = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "multi_year" / "risk_evolution.json").read_text())
     by_risk = {item["normalized_risk"]: item for item in risk_data["risks"]}
 
@@ -372,7 +372,7 @@ def test_major_projects_contribute_to_strategy_themes_and_are_compacted(tmp_path
     ]
     (intelligence_dir / "company_intelligence.json").write_text(json.dumps(company_intelligence), encoding="utf-8")
 
-    MultiYearCompanyMemoryBuilder(company="acme").build()
+    MultiYearCompanyMemoryBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     strategy = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "multi_year" / "strategy_timeline.json").read_text())
     consistency = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "multi_year" / "management_consistency.json").read_text())
     fy25 = next(item for item in strategy["timeline"] if item["year"] == "fy25")
@@ -414,7 +414,7 @@ def test_multi_year_memory_capital_taxonomy_classifies_share_split_treasury_and_
     ]
     _write_year_artifacts(tmp_path, "acme", "fy25", promise="Scale", capital_items=capital_items)
 
-    MultiYearCompanyMemoryBuilder(company="acme").build()
+    MultiYearCompanyMemoryBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     data = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "multi_year" / "capital_allocation_timeline.json").read_text())
     row = data["timeline"][0]
 
@@ -432,7 +432,7 @@ def test_multi_year_memory_dna_absence_is_not_disappearance_on_single_missing_ye
     _write_year_artifacts(tmp_path, "acme", "fy24", promise="Scale", dnas=["Manufacturing", "Export"])
     _write_year_artifacts(tmp_path, "acme", "fy25", promise="Scale", dnas=["Manufacturing"], rationale=[])
 
-    MultiYearCompanyMemoryBuilder(company="acme").build()
+    MultiYearCompanyMemoryBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     data = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "multi_year" / "business_dna_evolution.json").read_text())
 
     fy25 = next(item for item in data["timeline"] if item["year"] == "fy25")
@@ -494,7 +494,7 @@ def test_multi_year_memory_merges_theme_variants_into_canonical_buckets(tmp_path
         ],
     )
 
-    MultiYearCompanyMemoryBuilder(company="acme").build()
+    MultiYearCompanyMemoryBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     strategy = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "multi_year" / "strategy_timeline.json").read_text())
     consistency = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "multi_year" / "management_consistency.json").read_text())
 
@@ -535,7 +535,7 @@ def test_multi_year_memory_dedupes_risks_and_removes_full_source_chunk(tmp_path,
         ],
     )
 
-    MultiYearCompanyMemoryBuilder(company="acme").build()
+    MultiYearCompanyMemoryBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     risk_data = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "multi_year" / "risk_evolution.json").read_text())
 
     assert len(risk_data["timeline"][0]["risks"]) == 1
@@ -565,7 +565,7 @@ def test_unknown_labels_are_written_to_taxonomy_review_candidates(tmp_path, monk
         ],
     )
 
-    MultiYearCompanyMemoryBuilder(company="acme").build()
+    MultiYearCompanyMemoryBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     strategy = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "multi_year" / "strategy_timeline.json").read_text())
     review = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "multi_year" / "taxonomy_review_candidates.json").read_text())
 
@@ -612,7 +612,7 @@ def test_multi_year_memory_borrowings_increase_worsens_liquidity_risk(tmp_path, 
         ],
     )
 
-    MultiYearCompanyMemoryBuilder(company="acme").build()
+    MultiYearCompanyMemoryBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     risk_data = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "multi_year" / "risk_evolution.json").read_text())
 
     liquidity = next(item for item in risk_data["risks"] if item["normalized_risk"] == "liquidity_risk")
@@ -703,7 +703,7 @@ def test_borrowings_numeric_signal_does_not_leak_into_unrelated_risks(tmp_path, 
         ],
     )
 
-    MultiYearCompanyMemoryBuilder(company="acme").build()
+    MultiYearCompanyMemoryBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     risk_data = json.loads((tmp_path / "companies" / "acme" / "company_memory" / "multi_year" / "risk_evolution.json").read_text())
 
     liquidity = next(item for item in risk_data["risks"] if item["normalized_risk"] == "liquidity_risk")

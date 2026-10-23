@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_initiative_cleaner_accepts_award_period_year_range_inside_current_disclosures(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="datapatterns", year="fy23")
+    context = CompanyContext(company="datapatterns", year="fy23", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -36,7 +36,7 @@ def test_initiative_cleaner_accepts_award_period_year_range_inside_current_discl
 
 def test_initiative_cleaner_keeps_platform_partnerships(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="tanla", year="fy22")
+    context = CompanyContext(company="tanla", year="fy22", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -70,7 +70,7 @@ def test_initiative_cleaner_keeps_platform_partnerships(tmp_path, monkeypatch):
 
 def test_initiative_cleaner_handles_historical_completion_without_period_conflict(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="tanla", year="fy20")
+    context = CompanyContext(company="tanla", year="fy20", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -98,7 +98,7 @@ def test_initiative_cleaner_handles_historical_completion_without_period_conflic
 
 def test_initiative_cleaner_handles_future_milestone_without_period_conflict(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="tanla", year="fy23")
+    context = CompanyContext(company="tanla", year="fy23", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 

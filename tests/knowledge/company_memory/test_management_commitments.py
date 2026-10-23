@@ -90,7 +90,7 @@ def test_commitments_capture_delivery_after_later_confirmation(tmp_path, monkeyp
         ],
     )
 
-    ManagementCommitmentsBuilder(company="acme").build()
+    ManagementCommitmentsBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     commitments, timeline, validation, manifest = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -149,7 +149,7 @@ def test_commitments_detect_delay_after_later_contradiction(tmp_path, monkeypatc
         ],
     )
 
-    ManagementCommitmentsBuilder(company="acme").build()
+    ManagementCommitmentsBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     commitments, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -190,7 +190,7 @@ def test_commitments_mark_abandoned_after_follow_up(tmp_path, monkeypatch):
         ],
     )
 
-    ManagementCommitmentsBuilder(company="acme").build()
+    ManagementCommitmentsBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     commitments, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -216,7 +216,7 @@ def test_commitments_mark_unable_to_verify_without_follow_up(tmp_path, monkeypat
         ],
     )
 
-    ManagementCommitmentsBuilder(company="acme").build()
+    ManagementCommitmentsBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     commitments, _, validation, manifest = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -288,7 +288,7 @@ def test_commitments_keep_multiple_updates_in_progression(tmp_path, monkeypatch)
         ],
     )
 
-    ManagementCommitmentsBuilder(company="acme").build()
+    ManagementCommitmentsBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     commitments, timeline, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -336,7 +336,7 @@ def test_cross_year_reconfirmation_merges_into_one_commitment(tmp_path, monkeypa
         ],
     )
 
-    ManagementCommitmentsBuilder(company="acme").build()
+    ManagementCommitmentsBuilder(company="acme", companies_root=Path.cwd() / "companies").build()
     commitments_data, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     # Validation must pass — cross-year reconfirmation is not an error

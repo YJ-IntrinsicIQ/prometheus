@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, planned_writes, resolve_output_root, safe_destination
 
 import json
 import re
@@ -209,6 +210,17 @@ def _period_match_score(period: str, target_year: str) -> int:
     if "march 31" in lowered or "31 march" in lowered:
         score += 1
     return score
+
+
+def _period_names_other_year(period: str, target_year: str) -> bool:
+    """True when a column's period label names fiscal years and the target year is not among them ("FY2023" or "FY 2023-24" for a FY2025 report). A column of another year's figure is
+    that year's action, not this year's: a bank's FY24 dividend (68.34 crore) was filed as its FY25 dividend because the highlights table's only extractable column was the prior one."""
+    lowered = str(period or "").lower()
+    years = {int(y) for y in re.findall(r"(?<!\d)(20\d{2})(?!\d)", lowered)}
+    years |= {2000 + int(y) for y in re.findall(r"\bfy\s?(\d{2})\b", lowered)}
+    for start, end in re.findall(r"(20\d{2})\s*[-\u2013/]\s*(\d{2,4})", lowered):
+        years.add(int(start[:2] + end[-2:]) if len(end) <= 2 else int(end))
+    return bool(years) and bool(target_year) and int(target_year) not in years
 
 
 def _select_value(values: Sequence[Dict[str, Any]], target_year: str) -> Optional[Dict[str, Any]]:
@@ -573,6 +585,11 @@ def _build_from_raw(
                 rejection_items.append(_rejection_record(row=row, rejected_action_type=action_type, rejection_reason=reason))
                 continue
             selected_value = _select_value(row.get("values", []), target_year)
+            if selected_value is not None and action_type in {"dividend", "final_dividend", "interim_dividend"} and _period_names_other_year(str(selected_value.get("period", "") or ""), target_year):
+                _append_unique(rejection_reasons, f"Rejected {action_type}: the extractable column is {selected_value.get('period')!r}, not {target_year}: {line_item_raw}")
+                rejection_items.append(_rejection_record(row=row, rejected_action_type=action_type, rejection_reason="the only extractable column belongs to a different fiscal year",
+                                                         raw_value=str(selected_value.get("value_raw", "") or "")))
+                continue
             unit_hint = str(selected_value.get("unit_hint", "") or "") if selected_value else ""
             raw_value = str(selected_value.get("value_raw", "") or "") if selected_value else ""
             numeric_value = _parse_numeric(raw_value) if selected_value else None
@@ -951,7 +968,13 @@ def write_corporate_actions(
     output_path: Path,
     raw_tables_path: Optional[Path] = None,
     chunk_path: Optional[Path] = None,
+    output_root: Path | str,
+    authorize_served_write: bool = False,
+    dry_run: bool = False,
 ) -> CorporateActionsReport:
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
+    if dry_run:     # read-only: the exact files this call would write
+        return planned_writes(root, output_path, output_path.with_name("corporate_action_rejections.json"))
     report = extract_corporate_actions(
         company=company,
         year=year,
@@ -959,9 +982,8 @@ def write_corporate_actions(
         raw_tables_path=raw_tables_path,
         chunk_path=chunk_path,
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+    guarded_write_text(root, output_path, json.dumps(report.to_dict(), indent=2))
     rejection_path = output_path.with_name("corporate_action_rejections.json")
     rejection_items = getattr(report, "_rejection_items", [])
-    rejection_path.write_text(json.dumps(rejection_items, indent=2), encoding="utf-8")
+    guarded_write_text(root, rejection_path, json.dumps(rejection_items, indent=2))
     return report

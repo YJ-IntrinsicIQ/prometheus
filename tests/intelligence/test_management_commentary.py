@@ -75,7 +75,7 @@ def test_commentary_builder_tracks_progression_and_validation(tmp_path, monkeypa
         ],
     )
 
-    ManagementCommentaryBuilder(company="acme").build()
+    ManagementCommentaryBuilder(company="acme", companies_root=tmp_path / "companies").build()
     themes, timelines, assessments, validation, manifest = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -110,7 +110,7 @@ def test_external_context_is_not_promoted_into_commentary_themes(tmp_path, monke
         ],
     )
 
-    ManagementCommentaryBuilder(company="acme").build()
+    ManagementCommentaryBuilder(company="acme", companies_root=tmp_path / "companies").build()
     themes, _, _, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"
@@ -135,7 +135,7 @@ def test_commentary_records_carry_semantic_quality_metadata(tmp_path, monkeypatc
         ],
     )
 
-    ManagementCommentaryBuilder(company="acme").build()
+    ManagementCommentaryBuilder(company="acme", companies_root=tmp_path / "companies").build()
     themes, timelines, assessments, validation, _ = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from intelligence.projects.builder import _keep_historical_identity, _stable_project_ids
+from knowledge.company_memory.guardrails import extract_dated_events
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -26,6 +28,9 @@ from .progression import CapacityProgressionAdapter, build_capacity_event, build
 from .utilization import assess_utilization
 from .validators import validate_capacity_payload
 from .writer import write_json_file
+from core.context_paths import logical_company_path, resolve_output_root, safe_destination
+
+_OUTPUT_FILES = ("capacity_registry.json", "capacity_timelines.json", "capacity_assessments.json", "capacity_validation.json", "capacity_manifest.json")
 
 
 def _utc_now() -> str:
@@ -59,19 +64,29 @@ def _candidate_sources(year_dir: Path) -> List[Tuple[str, Path]]:
     ]
 
 
-def _load_year_record(year_dir: Path) -> Dict[str, Any]:
+def _logical_label(path: Path, companies_root: Path | None) -> str:
+    return str(path) if companies_root is None else logical_company_path(path, companies_root)
+
+
+def _chunk_list(payload: Any) -> List[Dict[str, Any]]:
+    chunks = payload.get("chunks") if isinstance(payload, dict) else payload
+    return [c for c in chunks if isinstance(c, dict)] if isinstance(chunks, list) else []
+
+
+def _load_year_record(year_dir: Path, companies_root: Path | None = None) -> Dict[str, Any]:
     record: Dict[str, Any] = {
         "year": year_dir.name,
         "sort_key": parse_financial_year(year_dir.name),
-        "paths": {"year_root": str(year_dir)},
+        "paths": {"year_root": _logical_label(year_dir, companies_root)},
         "source_artifacts": {},
     }
     for source_name, rel_path in _candidate_sources(year_dir):
         path = year_dir / rel_path
         payload = _load_json(path)
         found = bool(payload)
-        record["source_artifacts"][source_name] = {"path": str(path), "found": found}
+        record["source_artifacts"][source_name] = {"path": _logical_label(path, companies_root), "found": found}
         record[source_name] = payload if isinstance(payload, (dict, list)) else {}
+    record["dated_events"] = extract_dated_events(_chunk_list(_load_json(year_dir / "extracted" / "clean_chunks.json")))
     return record
 
 
@@ -293,6 +308,7 @@ def _build_registry_record(capacity_id: str, group: Dict[str, Any], utilization:
         "capacity_id": capacity_id,
         "capacity_name": group["capacity_name"],
         "normalized_name": group["normalized_name"],
+        "name_aliases": list(group.get("name_aliases") or []),
         "capacity_type": group["capacity_type"],
         "capacity_family": group.get("capacity_family") or "other",
         "location": group["location"],
@@ -386,13 +402,19 @@ def _latest_assessment_event(assessment: Dict[str, Any], capacity_id: str, seque
 @dataclass
 class CapacityEvolutionBuilder:
     company: str
-    companies_root: Path | str = Path("companies")
+    companies_root: Path | str
+    authorize_served_write: bool = False
     output_dir: Path = field(init=False)
 
     def __post_init__(self) -> None:
-        self.companies_root = Path(self.companies_root)
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(self.companies_root, authorize_served=self.authorize_served_write)
         self.company_root = self.companies_root / self.company
         self.output_dir = get_capacity_dir(self.company, self.companies_root)
+
+    def plan_outputs(self) -> Dict[str, Path]:
+        """The exact files build() would write. Read-only: nothing is created."""
+        return {name: safe_destination(self.companies_root, self.output_dir / name) for name in _OUTPUT_FILES}
 
     def _extract_candidates(self, year_record: Dict[str, Any]) -> List[Dict[str, Any]]:
         items = year_record.get("clean_capacity") or []
@@ -415,8 +437,9 @@ class CapacityEvolutionBuilder:
         registry: List[Dict[str, Any]] = []
         timelines: List[Dict[str, Any]] = []
         assessments: List[Dict[str, Any]] = []
-        for index, group in enumerate(groups, start=1):
-            capacity_id = f"CP-{index:04d}"
+        capacity_ids, self._retired_capacity_ids = _stable_project_ids(groups, _load_json(self.output_dir / "capacity_registry.json"), prefix="CP", registry_key="capacity_items", id_key="capacity_id", with_retired=True)
+        _keep_historical_identity(groups, capacity_ids, _load_json(self.output_dir / "capacity_registry.json"), registry_key="capacity_items", id_key="capacity_id", name_key="capacity_name")
+        for group, capacity_id in zip(groups, capacity_ids):
             linked_projects = _link_projects(group, projects)
             linked_commitments = _link_commitments(group, commitments)
             group["capacity_id"] = capacity_id
@@ -466,7 +489,7 @@ class CapacityEvolutionBuilder:
         return registry, timelines, assessments
 
     def build(self) -> Dict[str, Path]:
-        year_records = [_load_year_record(year_dir) for year_dir in _discover_years(self.company_root)]
+        year_records = [_load_year_record(year_dir, self.companies_root) for year_dir in _discover_years(self.company_root)]
         candidates: List[Dict[str, Any]] = []
         for year_record in year_records:
             candidates.extend(self._extract_candidates(year_record))
@@ -516,6 +539,7 @@ class CapacityEvolutionBuilder:
             "status_counts": {status: status_counts[status] for status in ["announced", "planned", "funded", "under_construction", "installed", "commissioned", "operational", "ramping", "partially_utilized", "materially_utilized", "underutilized", "delayed", "paused", "cancelled", "superseded", "unable_to_verify"]},
             "utilization_status_counts": {status: utilization_counts[status] for status in ["not_disclosed", "pre_operational", "ramping", "low", "moderate", "high", "fully_utilized", "unclear"]},
             "capacity_items": registry_records,
+            "retired_capacity_ids": list(getattr(self, "_retired_capacity_ids", [])),     # prior ids no record keeps: never reused, resolvable here
         }
 
         timeline_payload = {
@@ -566,7 +590,7 @@ class CapacityEvolutionBuilder:
             self.company_root / "company_memory" / "management_commitments" / "management_commitments.json",
             self.company_root / "company_memory" / "financials" / "financial_truth_pack.json",
         ]:
-            label = str(extra_path)
+            label = _logical_label(extra_path, self.companies_root)
             if extra_path.exists():
                 found_sources.append(label)
             else:
@@ -625,9 +649,9 @@ class CapacityEvolutionBuilder:
 
         written_paths: Dict[str, Path] = {}
         for filename, payload in files.items():
-            written_paths[filename] = write_json_file(self.output_dir / filename, payload)
+            written_paths[filename] = write_json_file(self.output_dir / filename, payload, root=self.companies_root)
         return written_paths
 
 
-def build_capacity_evolution(company: str, companies_root: Path | str = Path("companies")) -> Dict[str, Path]:
-    return CapacityEvolutionBuilder(company=company, companies_root=companies_root).build()
+def build_capacity_evolution(company: str, companies_root: Path | str, *, authorize_served_write: bool = False) -> Dict[str, Path]:
+    return CapacityEvolutionBuilder(company=company, companies_root=companies_root, authorize_served_write=authorize_served_write).build()

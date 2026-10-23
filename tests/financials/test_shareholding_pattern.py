@@ -240,6 +240,7 @@ def test_write_shareholding_pattern_persists_artifact(tmp_path):
         raw_tables_path=raw_path,
         normalized_path=normalized_path,
         output_path=output_path,
+        output_root=tmp_path,
     )
 
     assert output_path.exists()

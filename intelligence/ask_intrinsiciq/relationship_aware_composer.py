@@ -63,6 +63,62 @@ _COMPOSITION_SCHEMA = {
 }
 
 
+# ── Evidence-fidelity contract: shared by every generation prompt (composition, evidence reasoner, narrative) ─────────────────────────────
+EVIDENCE_FIDELITY_CONTRACT_VERSION = "g5-1"
+EVIDENCE_FIDELITY_RULES: List[str] = [
+    "Preserve the exact economic meaning of every structured fact. You may simplify the wording, never what happened: use each record's own event type. A share subscription or minority "
+    "investment is not an acquisition; a merger or amalgamation is not the purchase of a business unless the record says so; an announced, signed, proposed or pending transaction is not "
+    "a completed one (never write completed, closed or a past-tense 'acquired' unless the record states completion).",
+    "Never state a cause, motive, outcome or financial relationship that no cited record states. A missing figure, year or disclosure is a gap to report as a gap, not to explain.",
+    "Company-wide results (ROCE, margins, revenue, cash flow) are not the results of a project, deal, facility or programme; never attribute one to the other.",
+    "Carry company, fiscal year, standalone/consolidated basis, amount, unit and evidence reference exactly as given. A count (for example a number of shares) is not a currency amount; never mix bases or years.",
+    "Keep three things apart: facts (what a record states, with its reference), interpretation (labelled as yours, at the confidence the evidence allows) and unknowns (what no record establishes).",
+    "If a record's meaning is unclear, quote its own wording rather than choosing a more dramatic term. A bare 'recorded as' label from a classifier is not evidence of what the event was.",
+]
+
+
+def evidence_fidelity_block() -> str:
+    """The contract as numbered prompt text (same wording in every generation prompt)."""
+    return f"EVIDENCE FIDELITY CONTRACT ({EVIDENCE_FIDELITY_CONTRACT_VERSION}) — AI may simplify language, but must never change the economic meaning of evidence:\n" + "\n".join(f"  F{i}. {r}" for i, r in enumerate(EVIDENCE_FIDELITY_RULES, 1))
+
+
+def typed_event_lines(records: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """Typed capital-event evidence for the prompt: each record's event type, status, amount (with its unit wording), fiscal year and page, plus the wording that preserves its meaning.
+    Built from the capital-allocation records (category / value / status / amount / evidence_references.page), so the model does not have to infer the event type from a headline."""
+    from knowledge.capital_allocation_taxonomy import event_nature
+    lines: List[str] = []
+    for i, r in enumerate(records or [], 1):
+        ref = r.get("evidence_references") or {}
+        page = r.get("page") or ref.get("page")
+        nat = event_nature(r.get("category", ""), r.get("value", ""), r.get("status", ""))
+        bits = [f"recorded type: {r.get('category') or 'not stated'}", f"source wording: {str(r.get('value') or '').strip()}"]
+        if r.get("amount"):
+            bits.append(f"amount as stated: {r['amount']}")
+        bits.append(" ".join(x for x in (str(r.get("source_year") or r.get("fy") or "").upper(), f"p.{page}" if page else "") if x) or "period not stated")
+        bits.append(f"nature: {nat['nature']}; status: {nat['completion']}")
+        bits.append("say: " + " / ".join(nat["allowed_wording"]) + ("; never say: " + " / ".join(nat["forbidden_wording"]) if nat["forbidden_wording"] else ""))
+        lines.append(f"  [E{i}] " + " | ".join(bits))
+    return lines
+
+
+def typed_events_from_timeline(company_root: Any, names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Capital-event records for a plan's `typed_evidence`, read from the company's own capital-allocation timeline (category, value, amount, status, source year, page) - the typed
+    record, not a downstream summary of it. `names` limits the list to actions mentioning any of them."""
+    from pathlib import Path
+    f = Path(company_root) / "company_memory" / "capital_allocation_timeline.json"
+    try:
+        tl = json.loads(f.read_text()).get("timeline") or []
+    except Exception:
+        return []
+    out = []
+    for y in tl:
+        for a in y.get("capital_allocation_actions") or []:
+            if names and not any(n.lower() in (str(a.get("value")) + " " + str(a.get("purpose"))).lower() for n in names):
+                continue
+            out.append({k: a.get(k) for k in ("value", "category", "amount", "status", "source_year", "evidence_references", "purpose")})
+    return out
+
+
 # ── Core permission functions ──────────────────────────────────────────────────
 
 def get_prose_permission(acceptance: str, causal_confidence: str = "") -> str:
@@ -96,6 +152,7 @@ def build_composition_plan(
     rel_results: List[Dict[str, Any]],
     evidence_gaps: Optional[List[Any]] = None,
     uncertainty_items: Optional[List[str]] = None,
+    typed_evidence: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Build a structured composition plan with prose permissions.
 
@@ -114,6 +171,7 @@ def build_composition_plan(
         "unknown_relationships": [],
         "evidence_gaps": evidence_gaps or [],
         "uncertainty_items": uncertainty_items or [],
+        "typed_evidence": list(typed_evidence or []),
     }
 
     for c in claim_results:
@@ -225,6 +283,12 @@ def _build_composition_system_prompt(plan: Dict[str, Any], domain_question: str)
             )
         lines.append("")
 
+    typed = typed_event_lines(plan.get("typed_evidence"))
+    if typed:
+        lines.append("TYPED EVIDENCE RECORDS (authoritative event type and status — never restate a record as a different kind of event):")
+        lines.extend(typed)
+        lines.append("")
+
     if plan["evidence_gaps"]:
         lines.append("EVIDENCE GAPS — acknowledge these explicitly:")
         for g in plan["evidence_gaps"][:4]:
@@ -232,6 +296,7 @@ def _build_composition_system_prompt(plan: Dict[str, Any], domain_question: str)
             lines.append(f"  - {text}")
         lines.append("")
 
+    lines.extend([evidence_fidelity_block(), ""])
     lines.extend([
         "OUTPUT FORMAT: JSON with exactly these fields:",
         '  "simple_answer": string (1-2 sentences, direct answer)',
@@ -280,6 +345,7 @@ def compose_answer_from_plan(
         f"Question: {domain_question}\n\n"
         "Validated claims:\n"
         + "\n".join(evidence_lines)
+        + ("\n\nTyped evidence records:\n" + "\n".join(typed_event_lines(plan.get("typed_evidence"))) if plan.get("typed_evidence") else "")
         + "\n\nGenerate the investor answer as a JSON object following the composition contract."
     )
 

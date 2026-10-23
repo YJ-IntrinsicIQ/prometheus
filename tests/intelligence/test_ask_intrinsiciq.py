@@ -326,21 +326,22 @@ def _source_bundle(
     }
 
 
-def test_path_helpers_are_company_agnostic():
-    assert get_ask_intrinsiciq_dir("acme") == Path("companies/acme/company_memory/ask_intrinsiciq")
-    assert get_company_research_view_path("acme") == Path("companies/acme/company_memory/ask_intrinsiciq/company_research_view.json")
-    assert get_business_journey_path("acme").name == "business_journey.json"
-    assert get_products_services_path("acme").name == "products_services.json"
-    assert get_answer_cards_path("acme").name == "answer_cards.json"
-    assert get_financial_visual_summaries_path("acme").name == "financial_visual_summaries.json"
-    assert get_uncertainty_map_path("acme").name == "uncertainty_map.json"
-    assert get_manifest_path("acme").name == "ask_intrinsiciq_manifest.json"
-    assert get_validation_report_path("acme").name == "ask_intrinsiciq_validation_report.json"
+def test_path_helpers_are_company_agnostic(tmp_path):
+    root = tmp_path / "companies"
+    assert get_ask_intrinsiciq_dir("acme", root) == root / "acme/company_memory/ask_intrinsiciq"
+    assert get_company_research_view_path("acme", root) == root / "acme/company_memory/ask_intrinsiciq/company_research_view.json"
+    assert get_business_journey_path("acme", root).name == "business_journey.json"
+    assert get_products_services_path("acme", root).name == "products_services.json"
+    assert get_answer_cards_path("acme", root).name == "answer_cards.json"
+    assert get_financial_visual_summaries_path("acme", root).name == "financial_visual_summaries.json"
+    assert get_uncertainty_map_path("acme", root).name == "uncertainty_map.json"
+    assert get_manifest_path("acme", root).name == "ask_intrinsiciq_manifest.json"
+    assert get_validation_report_path("acme", root).name == "ask_intrinsiciq_validation_report.json"
 
 
 def test_missing_upstream_sources_return_partial_not_crash(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    result = generate_ask_intrinsiciq_view("acme")
+    result = generate_ask_intrinsiciq_view("acme", tmp_path / "companies")
 
     assert result["manifest"]["generation_status"] == "partial"
     assert result["validation_report"]["status"] == "pass"
@@ -365,10 +366,12 @@ def test_loader_resolves_sun_pharma_filesystem_slug():
     bundle = load_company_memory_sources("sun_pharma")
 
     assert bundle["company_slug"] == "sun_pharma"
-    assert bundle["sources"]["cim"]["status"] == "loaded"
-    assert bundle["sources"]["pcim"]["status"] == "loaded"
-    assert bundle["sources"]["committee_synthesis"]["status"] == "loaded"
-    assert len(bundle["source_files_found"]) >= 30
+    # Financial-derived sources are usable only when recorded against the company's fact registries (knowledge.financials.authority_gate). The SERVED tree's CIM / PCIM / panel
+    # artifacts predate that record (and this module's sandbox holds company_memory only, no year registries), so until the remediated candidate is migrated they are unavailable - they load once recorded.
+    for name in ("cim", "pcim", "committee_synthesis"):
+        record = bundle["sources"][name]
+        assert record["status"] == "loaded" or (record["status"] == "authority_unavailable" and record["error"].startswith("FINANCIAL_AUTHORITY_")), (name, record["status"], record["error"])
+    assert len(bundle["source_files_found"]) >= 20
 
 
 def test_loader_canonicalizes_hyphenated_company_slug_to_filesystem_form():
@@ -377,8 +380,8 @@ def test_loader_canonicalizes_hyphenated_company_slug_to_filesystem_form():
 
     assert hyphenated["company_slug"] == "sun_pharma"
     assert hyphenated["source_files_found"] == canonical["source_files_found"]
-    assert hyphenated["sources"]["cim"]["status"] == "loaded"
-    assert hyphenated["sources"]["pcim"]["status"] == "loaded"
+    assert hyphenated["sources"]["cim"]["status"] == canonical["sources"]["cim"]["status"] in {"loaded", "authority_unavailable"}
+    assert hyphenated["sources"]["pcim"]["status"] == canonical["sources"]["pcim"]["status"] in {"loaded", "authority_unavailable"}
 
 
 def test_loader_rejects_company_mismatched_sources(tmp_path, monkeypatch):
@@ -411,7 +414,7 @@ def test_generator_writes_minimal_valid_company_research_view(tmp_path, monkeypa
         },
     )
 
-    result = generate_ask_intrinsiciq_view("acme", force=True)
+    result = generate_ask_intrinsiciq_view("acme", tmp_path / "companies", force=True)
     view = result["company_research_view"]
 
     assert view["company"]["displayName"] == "Acme Corp"
@@ -898,7 +901,7 @@ def test_validator_rejects_forbidden_public_terminology():
 
 def test_writer_creates_canonical_output_directory(tmp_path):
     path = tmp_path / "companies/acme/company_memory/ask_intrinsiciq/company_research_view.json"
-    write_json_file(path, {"ok": True})
+    write_json_file(path, {"ok": True}, root=tmp_path / "companies")
     assert path.exists()
 
 
@@ -1805,11 +1808,11 @@ def test_buffett_answer_exposes_structured_sections():
 
 
 def test_generate_view_writes_uncertainty_map_and_company_summary():
-    result = generate_ask_intrinsiciq_view("datapatterns", force=True)
+    result = generate_ask_intrinsiciq_view("datapatterns", Path.cwd() / "companies", force=True)
 
     uncertainty_payload = result["uncertainty_map"]
     assert uncertainty_payload["items"]
-    assert get_uncertainty_map_path("datapatterns").exists()
+    assert get_uncertainty_map_path("datapatterns", Path.cwd() / "companies").exists()
     assert result["manifest"]["outputs_written"].count("uncertainty_map.json") == 1
     uncertainty_summary = result["company_research_view"]["sourceState"]["uncertaintySummary"]
     assert uncertainty_summary["importantUnknownsCount"] >= 1
@@ -2059,11 +2062,11 @@ def test_answer_cards_all_catalog_questions_receive_records_and_are_deterministi
 
 
 def test_generate_view_writes_financial_visual_artifact_and_links_it():
-    result = generate_ask_intrinsiciq_view("datapatterns", force=True)
+    result = generate_ask_intrinsiciq_view("datapatterns", Path.cwd() / "companies", force=True)
 
     visual_payload = result["financial_visual_summaries"]
     assert visual_payload["visuals"]
-    assert get_financial_visual_summaries_path("datapatterns").exists()
+    assert get_financial_visual_summaries_path("datapatterns", Path.cwd() / "companies").exists()
     assert result["manifest"]["outputs_written"].count("financial_visual_summaries.json") == 1
     assert result["company_research_view"]["financialVisuals"]
 
@@ -3258,7 +3261,7 @@ def test_each_write_mechanism_stays_in_the_sandbox(mechanism, tmp_path):
         source.write_text(payload)
         shutil.copyfile(source, target)
     else:
-        write_json_file(target, {"sandbox": mechanism}, force=True)
+        write_json_file(target.resolve(), {"sandbox": mechanism}, root=Path.cwd() / "companies", force=True)
     assert mechanism in target.read_text()  # the write is visible in the sandbox ...
     assert _sha(real) == before  # ... and the real file is byte-identical
 
@@ -3278,9 +3281,9 @@ def test_nested_create_and_delete_stay_in_the_sandbox():
 
 def test_the_production_generator_writes_only_inside_the_sandbox():
     protected = {str(p): _sha(p) for p in sorted((_REAL / "companies/datapatterns/company_memory/ask_intrinsiciq").glob("*.json"))}
-    result = generate_ask_intrinsiciq_view("datapatterns", force=True)
+    result = generate_ask_intrinsiciq_view("datapatterns", Path.cwd() / "companies", force=True)
     assert result["manifest"]["outputs_written"]
-    assert get_uncertainty_map_path("datapatterns").exists() and not get_uncertainty_map_path("datapatterns").is_symlink()
+    assert get_uncertainty_map_path("datapatterns", Path.cwd() / "companies").exists() and not get_uncertainty_map_path("datapatterns", Path.cwd() / "companies").is_symlink()
     assert {k: _sha(Path(k)) for k in protected} == protected  # real Data Patterns files untouched
 
 

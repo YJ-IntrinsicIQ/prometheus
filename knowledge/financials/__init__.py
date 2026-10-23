@@ -1,3 +1,4 @@
+from . import authority_gate  # noqa: F401  (registers the hook that records financial-derived artifacts against the registries they were built from)
 from .schema import (
     FINANCIAL_SCHEMA_VERSION,
     DEFAULT_CURRENCY,

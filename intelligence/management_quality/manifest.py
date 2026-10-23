@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List
 
 from .contracts import MANAGEMENT_QUALITY_GENERATOR_VERSION
-from .paths import get_management_quality_dir
+from .paths import logical_management_quality_dir
 
 
 def build_management_quality_manifest(
@@ -26,7 +26,7 @@ def build_management_quality_manifest(
         "generator_version": MANAGEMENT_QUALITY_GENERATOR_VERSION,
         "company_slug": company_slug,
         "generated_at": generated_at,
-        "output_directory": str(get_management_quality_dir(company_slug)),
+        "output_directory": str(logical_management_quality_dir(company_slug)),
         "source_files_considered": list(source_files_considered),
         "source_files_found": list(source_files_found),
         "source_files_missing": list(source_files_missing),

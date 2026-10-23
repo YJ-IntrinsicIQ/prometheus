@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, planned_writes, resolve_output_root, safe_destination
 
 import json
 import re
@@ -399,6 +400,10 @@ def _fcf_from(
     return cfo - capex
 
 
+COGS_INCOMPLETE = ("withheld: the cost of goods sold is not captured completely (materials consumed excludes purchases of stock-in-trade and changes in inventories), so a margin or "
+                   "days ratio on it is not defined; it needs a normalized `cogs_complete` marker, which no extraction currently sets")
+
+
 def calculate_financial_ratios(
     *,
     company: str,
@@ -408,6 +413,11 @@ def calculate_financial_ratios(
 ) -> FinancialRatioReport:
     normalized = _load_json(normalized_path)
     reconciliation = _load_json(reconciliation_path)
+    # Authority at the point of use: whatever the registry rejects for this year NOW is not an input, however valid it looks in the normalized file.
+    from .registry_authority import rejected_metric_ids, withhold_metrics
+    withheld_inputs = rejected_metric_ids(company=company, year=year, financial_root=Path(normalized_path).parent)
+    if withheld_inputs:
+        normalized = withhold_metrics(normalized, withheld_inputs)
 
     reconciliation_failures = reconciliation_blocks_stage(
         reconciliation,
@@ -449,11 +459,16 @@ def calculate_financial_ratios(
 
     basis = _basis_from_normalized(normalized)
     report_warnings: List[str] = []
+    if withheld_inputs:
+        report_warnings.append(f"inputs withheld by the financial fact registry at calculation time: {', '.join(withheld_inputs)}")
     ratios: Dict[str, RatioItem] = {name: _empty_ratio(name) for name in RATIO_FIELDS}
 
     cost_of_materials = _value(cost_entry)
     gross_profit = (revenue - cost_of_materials) if revenue is not None and cost_of_materials is not None else None
     gross_result, gross_issue = _safe_divide(gross_profit, revenue)
+    cogs_complete = normalized.get("cogs_complete") is True
+    if not cogs_complete:
+        gross_result, gross_issue = None, COGS_INCOMPLETE
     _set_ratio(
         ratios,
         "gross_margin",
@@ -618,8 +633,10 @@ def calculate_financial_ratios(
         ("inventory_days", avg_inventory, cost_of_materials, "average_inventory / cost_of_materials * 365", [inventory_entry, cost_entry], inv_closing_only),
         ("payable_days", avg_payables, cost_of_materials, "average_payables / cost_of_materials * 365", [payables_entry, cost_entry], pay_closing_only),
     ):
-        compatibility_issue = None
-        if name == "inventory_days":
+        compatibility_issue = None if cogs_complete or name == "receivable_days" else COGS_INCOMPLETE
+        if compatibility_issue:
+            pass
+        elif name == "inventory_days":
             compatibility_issue = _working_capital_denominator_warning(
                 ratio_name=name,
                 numerator=numerator,
@@ -825,13 +842,18 @@ def write_financial_ratios(
     normalized_path: Path,
     reconciliation_path: Path,
     output_path: Path,
+    output_root: Path | str,
+    authorize_served_write: bool = False,
+    dry_run: bool = False,
 ) -> FinancialRatioReport:
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
+    if dry_run:     # read-only: the exact files this call would write
+        return planned_writes(root, output_path)
     report = calculate_financial_ratios(
         company=company,
         year=year,
         normalized_path=normalized_path,
         reconciliation_path=reconciliation_path,
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(report.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    guarded_write_text(root, output_path, json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
     return report

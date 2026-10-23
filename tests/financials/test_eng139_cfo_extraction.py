@@ -390,6 +390,7 @@ def test_pbt_sourced_cfo_blocked_before_downstream(tmp_path):
         year=_YEAR,
         raw_tables_path=raw_path,
         output_path=out_path,
+        output_root=tmp_path,
     )
     normalized = json.loads(out_path.read_text())
     cfo_val = (normalized.get("cash_flow") or {}).get("cfo", {}).get("value_crore")

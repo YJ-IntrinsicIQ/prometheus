@@ -1,3 +1,4 @@
+from pathlib import Path
 import json
 
 from core.company_context import CompanyContext
@@ -6,7 +7,7 @@ from pipelines.pipeline_context import set_context
 
 
 def test_cim_builder_uses_classification_as_official_dna_source(tmp_path, monkeypatch):
-    context = CompanyContext(company="sample_manufacturing_co", year="fy25")
+    context = CompanyContext(company="sample_manufacturing_co", year="fy25", companies_root=tmp_path / "companies")
     monkeypatch.chdir(tmp_path)
     context.create_directories()
     set_context(context)
@@ -61,7 +62,7 @@ def test_cim_builder_uses_classification_as_official_dna_source(tmp_path, monkey
 
 
 def test_cim_builder_preserves_capital_allocation_taxonomy_fields(tmp_path, monkeypatch):
-    context = CompanyContext(company="sample_capital_co", year="fy25")
+    context = CompanyContext(company="sample_capital_co", year="fy25", companies_root=tmp_path / "companies")
     monkeypatch.chdir(tmp_path)
     context.create_directories()
     set_context(context)

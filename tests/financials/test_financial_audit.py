@@ -881,11 +881,13 @@ def test_write_financial_audit_reports_persist_valid_payloads(tmp_path: Path):
         year="fy25",
         financials_dir=financials_dir,
         output_path=year_output,
+        output_root=tmp_path,
     )
     company_report = write_financial_memory_audit_report(
         company="acme",
         company_root=company_root,
         output_path=company_output,
+        output_root=tmp_path,
     )
 
     assert json.loads(year_output.read_text(encoding="utf-8"))["status"] == year_report.status

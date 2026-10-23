@@ -1,8 +1,10 @@
+from pathlib import Path
 import json
 
 import pytest
 
 from knowledge.cim_contract import CIMContractBuilder
+from tests.authority_support import vouch
 
 
 def _write_year_intelligence(base_dir, company, year):
@@ -309,6 +311,11 @@ def _write_company_financials(base_dir, company, years):
         ),
         encoding="utf-8",
     )
+    (company_financial_dir / "financial_truth_pack.json").write_text(
+        json.dumps({"company": company, "years_covered": years, "financial_panel_status": "pass",
+                    "usable_current_metrics": [{"metric_id": "revenue", "fiscal_year": years[-1], "value": 100.0, "unit": "INR crore"}]}),
+        encoding="utf-8",
+    )
     (company_financial_dir / "financial_trends.json").write_text(
         json.dumps(
             {
@@ -522,7 +529,8 @@ def _build_company(tmp_path, company="finco", years=("fy24",)):
         _write_year_financials(tmp_path, company, year)
     _write_company_memory_multi_year(tmp_path, company, list(years))
     _write_company_financials(tmp_path, company, list(years))
-    return json.loads(CIMContractBuilder(company=company).build()["pcim_v1.json"].read_text()), json.loads(
+    vouch(tmp_path / "companies" / company, tmp_path / "companies")      # financial inputs are usable only when recorded against the company's fact registries
+    return json.loads(CIMContractBuilder(company=company, companies_root=Path.cwd() / "companies").build()["pcim_v1.json"].read_text()), json.loads(
         (tmp_path / "companies" / company / "company_memory" / "cim_v1.json").read_text()
     )
 
@@ -572,7 +580,7 @@ def test_pcim_financial_manifest_warns_when_company_level_financials_missing(tmp
     _write_year_financials(tmp_path, "warnco", "fy24")
     _write_company_memory_multi_year(tmp_path, "warnco", ["fy24"])
 
-    pcim = json.loads(CIMContractBuilder(company="warnco").build()["pcim_v1.json"].read_text())
+    pcim = json.loads(CIMContractBuilder(company="warnco", companies_root=Path.cwd() / "companies").build()["pcim_v1.json"].read_text())
 
     assert pcim["pcim_source_manifest"]["financial_status"] == "warning"
     assert any("financial_trends.json" in warning for warning in pcim["pcim_source_manifest"]["financial_warnings"])
@@ -584,6 +592,17 @@ def test_pcim_financial_manifest_fails_on_year_mismatch(tmp_path, monkeypatch):
     _write_year_financials(tmp_path, "badfinco", "fy24")
     _write_company_memory_multi_year(tmp_path, "badfinco", ["fy24"])
     _write_company_financials(tmp_path, "badfinco", ["fy23"])
+    vouch(tmp_path / "companies" / "badfinco", tmp_path / "companies")
 
     with pytest.raises(ValueError, match="financial years mismatch company years"):
-        CIMContractBuilder(company="badfinco").build()
+        CIMContractBuilder(company="badfinco", companies_root=Path.cwd() / "companies").build()
+
+
+def test_panel_is_not_ready_when_the_company_truth_pack_is_absent(tmp_path, monkeypatch):
+    """A company whose financial authority could not be built must not read as a ready, passing panel just because year-level files remain."""
+    monkeypatch.chdir(tmp_path)
+    _build_company(tmp_path)
+    (tmp_path / "companies" / "finco" / "company_memory" / "financials" / "financial_truth_pack.json").unlink()
+    pcim = json.loads(CIMContractBuilder(company="finco", companies_root=Path.cwd() / "companies").build()["pcim_v1.json"].read_text())
+    assert pcim["financial_panel_ready"] is False
+    assert pcim["financial_panel_status"]["status"] == "unavailable"

@@ -1,7 +1,10 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root, safe_destination
 
 import json
 import re
+
+from knowledge.capital_allocation_taxonomy import apply_label_verdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -126,10 +129,9 @@ def _load_json(path: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _write_json(path: Path, payload: Dict[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return path
+def _write_json(path: Path, payload: Dict[str, Any], *, root: Path | str) -> Path:
+    """The destination must lie inside the explicit, already-authorized output root."""
+    return guarded_write_text(root, path, json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def _field_value(item: Dict[str, Any], field_names: Iterable[str]) -> str:
@@ -310,6 +312,7 @@ def _capital_items(cim: Dict[str, Any], summary: Dict[str, Any], year: str) -> L
         value = _field_value(item, ("action",))
         if not value:
             continue
+        item = apply_label_verdict(item)       # a stored label the item's own wording does not support is replaced or quarantined here, before any consumer reads it
         item_id = str(item.get("id") or value)
         key = (year, item_id)
         if key in seen:
@@ -339,6 +342,7 @@ def _capital_items(cim: Dict[str, Any], summary: Dict[str, Any], year: str) -> L
             "relationship": item.get("relationship"),
             "reasoning": item.get("reasoning"),
             "confidence": item.get("confidence"),
+            **({"classification_status": item["classification_status"], "classification_stored_label": item.get("classification_stored_label")} if item.get("classification_status") else {}),
         }
         items.append(entry)
 
@@ -538,11 +542,19 @@ def _extract_named_entities(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 class CompanyMemoryAggregateBuilder:
-    def __init__(self, company: str, companies_root: Path | str = Path("companies")):
+    OUTPUT_FILES = ("company_memory_index.json", "yearly_intelligence_index.json", "company_cim.json", "strategy_timeline.json", "promise_tracker.json", "risk_evolution.json",
+                    "capital_allocation_timeline.json", "entity_registry.json")
+
+    def __init__(self, company: str, companies_root: Path | str, *, authorize_served_write: bool = False):
         self.company = company
-        self.companies_root = Path(companies_root)
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
         self.company_root = self.companies_root / company
         self.output_dir = self.company_root / "company_memory"
+
+    def plan_outputs(self) -> Dict[str, Path]:
+        """The exact files build() would write. Read-only: nothing is created."""
+        return {name: safe_destination(self.companies_root, self.output_dir / name) for name in self.OUTPUT_FILES}
 
     def _discover_years(self) -> List[Path]:
         if not self.company_root.exists():
@@ -823,5 +835,5 @@ class CompanyMemoryAggregateBuilder:
 
         written_paths: Dict[str, Path] = {}
         for filename, payload in files.items():
-            written_paths[filename] = _write_json(self.output_dir / filename, payload)
+            written_paths[filename] = _write_json(self.output_dir / filename, payload, root=self.companies_root)
         return written_paths

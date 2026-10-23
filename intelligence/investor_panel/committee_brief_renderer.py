@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root
 
 import json
 import re
@@ -120,10 +121,8 @@ def _load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _write_text(path: Path, text: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    return path
+def _write_text(path: Path, text: str, *, root: Path | str) -> Path:
+    return guarded_write_text(root, path, text)
 
 
 def _format_analysts(value: Any) -> str:
@@ -1953,9 +1952,10 @@ def validate_committee_brief_source(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class CommitteeBriefRenderer:
-    def __init__(self, company: str, companies_root: Path | str = Path("companies")):
+    def __init__(self, company: str, companies_root: Path | str, *, authorize_served_write: bool = False):
         self.company = company
-        self.companies_root = Path(companies_root)
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
         self.panel_dir = self.companies_root / company / "company_memory" / "investor_panel"
         self.source_path = self.panel_dir / "committee_synthesis.json"
         self.output_path = self.panel_dir / "committee_brief.md"
@@ -2351,5 +2351,5 @@ class CommitteeBriefRenderer:
         payload = self._load_committee_synthesis()
         markdown = self._render(payload, include_evidence_ids=include_evidence_ids)
         return {
-            "committee_brief.md": _write_text(self.output_path, markdown),
+            "committee_brief.md": _write_text(self.output_path, markdown, root=self.companies_root),
         }

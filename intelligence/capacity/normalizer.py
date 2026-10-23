@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, Tuple
 from intelligence.progression import build_confidence
 
 from knowledge.company_memory.guardrails import (
+    evidenced_announcement_period,
     assess_progression_materiality,
     build_semantic_quality,
     classify_business_relevance,
@@ -92,6 +93,7 @@ def normalize_candidate(year_record: Dict[str, Any], item: Dict[str, Any], *, so
     location = normalize_location(item)
     capacity_type = classify_capacity_type(raw_name, description, location, status_text, source_kind)
     capacity_name = build_capacity_name(raw_name, description, capacity_type)
+    announcement = evidenced_announcement_period(item.get("year"), year_record.get("year"), capacity_name, year_record.get("dated_events") or ())
     purpose = sanitize_public_text(build_purpose(capacity_name, description, capacity_type, location, _normalize_text(item.get("target_capacity"))))
     expected_timeframe = sanitize_public_text(
         _normalize_text(
@@ -193,7 +195,8 @@ def normalize_candidate(year_record: Dict[str, Any], item: Dict[str, Any], *, so
         "unit": unit,
         "expected_timeframe": expected_timeframe,
         "capital_deployed": capital_deployed,
-        "announcement_period": _year_label(item.get("year") or year_record.get("year")),
+        "announcement_period": announcement["period"],
+        "announcement_basis": {key: value for key, value in announcement.items() if key != "period"},
         "current_status_hint": status_text,
         "current_status": "unable_to_verify",
         "latest_period": _year_label(year_record.get("year")),

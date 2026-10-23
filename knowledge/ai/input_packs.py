@@ -377,6 +377,7 @@ def call_llm_with_input_pack(
     temperature: float = 0.0,
     max_tokens: Optional[int] = None,
     system_prompt: Optional[str] = None,
+    output_root: Path | str | None = None,
 ) -> Any:
     validate_llm_input_pack(input_pack, require_source_artifacts=require_source_artifacts)
     response = llm.generate(
@@ -391,6 +392,7 @@ def call_llm_with_input_pack(
             manifest_path,
             input_pack=input_pack,
             response=response,
+            output_root=output_root,
         )
     return response
 
@@ -400,6 +402,7 @@ def append_llm_call_manifest(
     *,
     input_pack: Dict[str, Any],
     response: Any,
+    output_root: Path | str | None = None,
 ) -> Path:
     existing = {"entries": []}
     if path.exists():
@@ -435,8 +438,9 @@ def append_llm_call_manifest(
     if isinstance(manifest_extra, dict):
         entry.update(deepcopy(manifest_extra))
     existing["entries"].append(entry)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    from core.context_paths import guarded_write_or_refuse_served
+
+    guarded_write_or_refuse_served(path, json.dumps(existing, indent=2, ensure_ascii=False), output_root)
     return path
 
 

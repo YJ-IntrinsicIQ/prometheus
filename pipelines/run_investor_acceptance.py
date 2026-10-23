@@ -1018,11 +1018,17 @@ def run_acceptance(
     company: str,
     questions: list[str],
     out_dir: Path,
+    *,
+    companies_root: Path,
 ) -> dict[str, Any]:
+    from core.context_paths import resolve_output_root
+    # the harness only READS company data (it writes reports to out_dir): the served tree is a legitimate read root, but it is never made writable here
+    companies_root = resolve_output_root(companies_root, authorize_served=True)
+    out_dir = resolve_output_root(out_dir)   # reports are never written into the served company tree
     company_internal_key = company.replace("-", "_").lower()
     company_public_slug = company.replace("_", "-").lower()
     run_timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    company_root = ROOT / "companies" / company_internal_key
+    company_root = Path(companies_root) / company_internal_key
 
     if not company_root.exists():
         print(f"ERROR: company directory not found: {company_root}", file=sys.stderr)
@@ -1232,13 +1238,14 @@ def main() -> None:
         default=None,
         help="Output directory (default: acceptance_reports/<company>/)",
     )
+    parser.add_argument("--companies-root", required=True, type=Path, help="absolute company-data root (required; no default)")
     args = parser.parse_args()
 
     company = args.company.replace("-", "_").lower()
     questions = QUESTION_SETS[args.questions]
     out_dir = Path(args.out_dir) if args.out_dir else ROOT / "acceptance_reports" / company
 
-    run_acceptance(company, questions, out_dir)
+    run_acceptance(company, questions, out_dir, companies_root=args.companies_root)
 
 
 if __name__ == "__main__":

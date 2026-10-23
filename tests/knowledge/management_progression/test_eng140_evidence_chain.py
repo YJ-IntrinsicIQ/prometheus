@@ -9,15 +9,19 @@ and that ACTION_COMPLETED items have non-empty evidence references.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
 
 from knowledge.management_progression.producer import (
+
     _status_to_current,
     _exec_states_for_item,
     _source_items_for_item,
 )
+
+READ_ONLY_COMPANIES = next(p for p in Path(__file__).resolve().parents if (p / "core" / "context_paths.py").is_file()) / "companies"   # explicit, absolute, READ-only source of served records
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +173,7 @@ def test_all_items_have_exec_states_populated():
     if not Path("companies/sun_pharma").exists():
         pytest.skip("sun_pharma data not available")
     from knowledge.management_progression.producer import build_management_progression
-    payload = build_management_progression("sun_pharma")
+    payload = build_management_progression("sun_pharma", companies_root=READ_ONLY_COMPANIES)
     items = payload["progression_items"]
     empty = [i["item_id"] for i in items if not i.get("exec_states")]
     assert empty == [], f"Items missing exec_states: {empty}"
@@ -181,7 +185,7 @@ def test_all_items_have_source_items_populated():
     if not Path("companies/sun_pharma").exists():
         pytest.skip("sun_pharma data not available")
     from knowledge.management_progression.producer import build_management_progression
-    payload = build_management_progression("sun_pharma")
+    payload = build_management_progression("sun_pharma", companies_root=READ_ONLY_COMPANIES)
     items = payload["progression_items"]
     empty = [i["item_id"] for i in items if not i.get("source_items")]
     assert empty == [], f"Items missing source_items: {empty}"
@@ -193,7 +197,7 @@ def test_action_completed_items_have_evidence_ids():
     if not Path("companies/sun_pharma").exists():
         pytest.skip("sun_pharma data not available")
     from knowledge.management_progression.producer import build_management_progression
-    payload = build_management_progression("sun_pharma")
+    payload = build_management_progression("sun_pharma", companies_root=READ_ONLY_COMPANIES)
     items = payload["progression_items"]
     violations = []
     for item in items:

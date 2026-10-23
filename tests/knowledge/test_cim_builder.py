@@ -1,3 +1,4 @@
+from pathlib import Path
 import json
 
 from core.company_context import CompanyContext
@@ -9,7 +10,7 @@ def test_build_company_intelligence_populates_business_section_from_upstream_art
     tmp_path,
     monkeypatch,
 ):
-    context = CompanyContext(company="polymatech", year="fy25")
+    context = CompanyContext(company="polymatech", year="fy25", companies_root=tmp_path / "companies")
     monkeypatch.chdir(tmp_path)
     context.create_directories()
     set_context(context)
@@ -86,7 +87,7 @@ def test_build_company_intelligence_expands_stale_platform_question_modules_from
     tmp_path,
     monkeypatch,
 ):
-    context = CompanyContext(company="tanla", year="fy25")
+    context = CompanyContext(company="tanla", year="fy25", companies_root=tmp_path / "companies")
     monkeypatch.chdir(tmp_path)
     context.create_directories()
     set_context(context)

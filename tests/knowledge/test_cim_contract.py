@@ -489,7 +489,7 @@ def test_cim_contract_generation_and_pcim_derivation(tmp_path, monkeypatch):
     _write_year_artifacts(tmp_path, "acme", "fy20")
     _write_year_artifacts(tmp_path, "acme", "fy24", complete=False)
 
-    builder = CIMContractBuilder(company="acme")
+    builder = CIMContractBuilder(company="acme", companies_root=Path.cwd() / "companies")
     written = builder.build()
 
     cim = json.loads(written["cim_v1.json"].read_text())
@@ -525,7 +525,7 @@ def test_pcim_includes_compact_multi_year_inputs_when_available(tmp_path, monkey
     _write_year_artifacts(tmp_path, "acme", "fy25")
     _write_multi_year_artifacts(tmp_path, "acme")
 
-    pcim = json.loads(CIMContractBuilder(company="acme").build()["pcim_v1.json"].read_text())
+    pcim = json.loads(CIMContractBuilder(company="acme", companies_root=Path.cwd() / "companies").build()["pcim_v1.json"].read_text())
     multi_year = pcim["multi_year_inputs"]
     manifest = pcim["pcim_source_manifest"]
 
@@ -597,7 +597,7 @@ def test_pcim_includes_compact_management_progression_inputs(tmp_path, monkeypat
         },
     )
 
-    pcim = json.loads(CIMContractBuilder(company="acme").build()["pcim_v1.json"].read_text())
+    pcim = json.loads(CIMContractBuilder(company="acme", companies_root=Path.cwd() / "companies").build()["pcim_v1.json"].read_text())
     progression = pcim["multi_year_inputs"]["management_progression"]
     item = progression["progression_items"][0]
     event = item["events"][0]
@@ -617,7 +617,7 @@ def test_pcim_validator_rejects_source_chunk_anywhere_in_pcim(tmp_path, monkeypa
     _write_year_artifacts(tmp_path, "acme", "fy24")
     _write_year_artifacts(tmp_path, "acme", "fy25")
 
-    builder = CIMContractBuilder(company="acme")
+    builder = CIMContractBuilder(company="acme", companies_root=Path.cwd() / "companies")
     pcim = json.loads(builder.build()["pcim_v1.json"].read_text())
     pcim["management_quality_inputs"]["management_focus_by_year"][0]["items"][0]["source_chunk"] = "raw excerpt should never survive"
 
@@ -629,7 +629,7 @@ def test_pcim_handles_missing_multi_year_artifacts(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_year_artifacts(tmp_path, "acme", "fy25")
 
-    pcim = json.loads(CIMContractBuilder(company="acme").build()["pcim_v1.json"].read_text())
+    pcim = json.loads(CIMContractBuilder(company="acme", companies_root=Path.cwd() / "companies").build()["pcim_v1.json"].read_text())
 
     assert pcim["multi_year_inputs"]["available"] is False
     assert pcim["multi_year_inputs"]["years_covered"] == []
@@ -641,7 +641,7 @@ def test_pcim_enhances_financial_and_governance_inputs_without_inventing_missing
     monkeypatch.chdir(tmp_path)
     _write_year_artifacts(tmp_path, "acme", "fy25")
 
-    pcim = json.loads(CIMContractBuilder(company="acme").build()["pcim_v1.json"].read_text())
+    pcim = json.loads(CIMContractBuilder(company="acme", companies_root=Path.cwd() / "companies").build()["pcim_v1.json"].read_text())
 
     financial_signals = pcim["financial_strength_inputs"]["dividend_and_distribution_signals_by_year"][0]["items"]
     governance_signals = pcim["governance_and_incentive_inputs"]["related_party_and_control_items_by_year"][0]["items"]
@@ -659,7 +659,7 @@ def test_cim_contract_preserves_provenance_and_is_deterministic(tmp_path, monkey
     _write_year_artifacts(tmp_path, "acme", "fy25")
     _write_multi_year_artifacts(tmp_path, "acme")
 
-    builder = CIMContractBuilder(company="acme")
+    builder = CIMContractBuilder(company="acme", companies_root=Path.cwd() / "companies")
     builder.build()
     output_dir = tmp_path / "companies" / "acme" / "company_memory"
     first = {
@@ -712,7 +712,7 @@ def test_pcim_includes_all_available_years_for_synthetic_company(tmp_path, monke
     multi_year_index["years_covered"] = ["fy21", "fy22", "fy23"]
     (multi_year_dir / "multi_year_index.json").write_text(json.dumps(multi_year_index), encoding="utf-8")
 
-    pcim = json.loads(CIMContractBuilder(company="multiyearco").build()["pcim_v1.json"].read_text())
+    pcim = json.loads(CIMContractBuilder(company="multiyearco", companies_root=Path.cwd() / "companies").build()["pcim_v1.json"].read_text())
 
     assert pcim["pcim_source_manifest"]["years_available"] == ["fy21", "fy22", "fy23"]
     assert pcim["multi_year_inputs"]["years_covered"] == ["fy21", "fy22", "fy23"]
@@ -734,7 +734,7 @@ def test_pcim_rebuild_picks_up_new_year_and_changes_manifest_hash(tmp_path, monk
     multi_year_index["years_covered"] = ["fy22"]
     multi_year_index_path.write_text(json.dumps(multi_year_index), encoding="utf-8")
 
-    first = json.loads(CIMContractBuilder(company="sampleco").build()["pcim_v1.json"].read_text())
+    first = json.loads(CIMContractBuilder(company="sampleco", companies_root=Path.cwd() / "companies").build()["pcim_v1.json"].read_text())
     first_hashes = {
         item["name"]: item["content_hash"]
         for item in first["pcim_source_manifest"]["source_files"]
@@ -748,7 +748,7 @@ def test_pcim_rebuild_picks_up_new_year_and_changes_manifest_hash(tmp_path, monk
     multi_year_index["years_covered"] = ["fy22", "fy23"]
     multi_year_index_path.write_text(json.dumps(multi_year_index), encoding="utf-8")
 
-    second = json.loads(CIMContractBuilder(company="sampleco").build()["pcim_v1.json"].read_text())
+    second = json.loads(CIMContractBuilder(company="sampleco", companies_root=Path.cwd() / "companies").build()["pcim_v1.json"].read_text())
     second_hashes = {
         item["name"]: item["content_hash"]
         for item in second["pcim_source_manifest"]["source_files"]
@@ -781,7 +781,7 @@ def test_pcim_source_manifest_warns_on_partial_multi_year_coverage(tmp_path, mon
     multi_year_index["years_covered"] = ["fy21", "fy22"]
     (multi_year_dir / "multi_year_index.json").write_text(json.dumps(multi_year_index), encoding="utf-8")
 
-    pcim = json.loads(CIMContractBuilder(company="partialco").build()["pcim_v1.json"].read_text())
+    pcim = json.loads(CIMContractBuilder(company="partialco", companies_root=Path.cwd() / "companies").build()["pcim_v1.json"].read_text())
 
     assert pcim["pcim_source_manifest"]["status"] == "warning"
     assert "fy23" in pcim["pcim_source_manifest"]["missing_years"]

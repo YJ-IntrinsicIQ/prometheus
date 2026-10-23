@@ -65,7 +65,7 @@ def test_generic_topic_cannot_merge_unrelated_commitments(tmp_path, monkeypatch)
         {"id": "A", "promise": "Evaluate new indications for product X in market Y.", "category": "Other", "page": 1, "source_chunk": "Evaluate new indications."},
         {"id": "B", "promise": "Establish an employee training programme across six thematic areas.", "category": "Other", "page": 2, "source_chunk": "Training programme."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) == 2, "Different initiatives must not merge via generic topic"
 
@@ -79,7 +79,7 @@ def test_same_category_alone_is_insufficient(tmp_path, monkeypatch):
         {"id": "A", "promise": "Enhance presence in high-growth international markets.", "category": "Growth", "page": 1, "source_chunk": "Enhance international markets."},
         {"id": "B", "promise": "Launch an employee inclusion and diversity programme.", "category": "Growth", "page": 2, "source_chunk": "Inclusion diversity programme."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) == 2, "Growth category alone must not merge different initiatives"
 
@@ -95,7 +95,7 @@ def test_investment_word_cannot_merge_rd_and_social(tmp_path, monkeypatch):
     _write(tmp_path, "co", "fy24", promise_items=[
         {"id": "B", "promise": "Evaluate the impact of social investments to inform equity decisions.", "category": "Capex", "page": 3, "source_chunk": "Social investment evaluation."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) == 2, "R&D investment and social investment must be separate commitments"
 
@@ -113,7 +113,7 @@ def test_growth_word_cannot_create_false_progress_link(tmp_path, monkeypatch):
     _write(tmp_path, "co", "fy25", promise_items=[
         {"id": "B", "promise": "The employee inclusion programme is now in progress and being implemented.", "category": "Growth", "page": 5, "source_chunk": "Inclusion programme in progress."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     # The market-expansion commitment must NOT be In Progress because of the HR item.
     # Either: (a) two separate commitments, or (b) one commitment that remains Unable To Verify.
@@ -138,7 +138,7 @@ def test_product_specific_continuation_merges(tmp_path, monkeypatch):
     _write(tmp_path, "co", "fy22", promise_items=[
         {"id": "P2", "promise": "The logistics platform rollout is now operational and customers are live.", "category": "Product", "page": 6, "source_chunk": "Logistics platform operational."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) == 1
     assert _commitment_by_index(result)["progression"]["current_state"] == "Delivered"
@@ -155,7 +155,7 @@ def test_facility_specific_continuation_merges(tmp_path, monkeypatch):
     _write(tmp_path, "co", "fy23", promise_items=[
         {"id": "F2", "promise": "Commercial production was commissioned and is now operational.", "category": "Manufacturing", "page": 8, "source_chunk": "Facility commissioned."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) == 1
     assert _commitment_by_index(result)["progression"]["current_state"] == "Delivered"
@@ -172,7 +172,7 @@ def test_geography_specific_continuation_merges(tmp_path, monkeypatch):
     _write(tmp_path, "co", "fy24", promise_items=[
         {"id": "M2", "promise": "We are no longer pursuing the European market entry plan due to regulatory barriers.", "category": "Market Entry", "page": 10, "source_chunk": "No longer pursuing European entry."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) == 1
     assert _commitment_by_index(result)["progression"]["current_state"] == "Abandoned"
@@ -189,7 +189,7 @@ def test_exact_text_restatement_becomes_reconfirmed(tmp_path, monkeypatch):
     _write(tmp_path, "co", "fy24", promise_items=[
         {"id": "C2", "promise": "We will expand capacity at the new plant.", "category": "Capacity", "page": 10, "source_chunk": "Expand capacity at the new plant."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) == 1
     assert _commitment_by_index(result)["progression"]["current_state"] == "Reconfirmed"
@@ -208,7 +208,7 @@ def test_reconfirmation_is_not_in_progress(tmp_path, monkeypatch):
     _write(tmp_path, "co", "fy23", promise_items=[
         {"id": "C2", "promise": "We intend to launch the capacity expansion project.", "category": "Capacity", "page": 5, "source_chunk": "Launch capacity expansion."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     c = _commitment_by_index(result)
     assert c["progression"]["current_state"] not in {"In Progress", "Delivered", "Partially Delivered"}
@@ -224,7 +224,7 @@ def test_material_scope_change_is_separate_commitment(tmp_path, monkeypatch):
         {"id": "A", "promise": "We plan to acquire a controlling interest in the target company.", "category": "Acquisition", "page": 2, "source_chunk": "Acquire controlling interest."},
         {"id": "B", "promise": "We will divest the legacy business unit to focus on core operations.", "category": "Acquisition", "page": 3, "source_chunk": "Divest legacy unit."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) == 2
 
@@ -241,7 +241,7 @@ def test_unrelated_evidence_does_not_upgrade_lifecycle(tmp_path, monkeypatch):
     _write(tmp_path, "co", "fy23", promise_items=[
         {"id": "B", "promise": "Employee awards programme was delivered across all business units.", "category": "Other", "page": 5, "source_chunk": "Employee awards delivered."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     # Separate commitments — the market entry is Unable To Verify
     market_entry = next((c for c in result["commitments"]["commitments"] if "market" in c["original_statement"].lower()), None)
@@ -257,7 +257,7 @@ def test_uncertain_match_remains_unverified(tmp_path, monkeypatch):
     _write(tmp_path, "co", "fy24", promise_items=[
         {"id": "A", "promise": "We aim to reduce water consumption by 25% by FY27.", "category": "Other", "page": 1, "source_chunk": "Water consumption reduction."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert _commitment_by_index(result)["status"] == "Unable To Verify"
 
@@ -273,7 +273,7 @@ def test_false_link_validation_rejects_incompatible_delivery(tmp_path, monkeypat
     _write(tmp_path, "co", "fy23", promise_items=[
         {"id": "B", "promise": "The employee recognition scheme was successfully implemented.", "category": "Other", "page": 4, "source_chunk": "Employee recognition implemented."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     # Distribution centre commitment must be Unable To Verify — the employee
     # recognition event must not cross-contaminate the lifecycle.
@@ -292,7 +292,7 @@ def test_evidence_ids_remain_resolvable(tmp_path, monkeypatch):
         for i in range(3)
     ]
     _write(tmp_path, "co", "fy23", promise_items=items)
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     all_ids = {item["id"] for item in items}
     for commitment in result["commitments"]["commitments"]:
@@ -312,7 +312,7 @@ def test_delivered_status_requires_later_decisive_evidence(tmp_path, monkeypatch
     _write(tmp_path, "co", "fy23", promise_items=[
         {"id": "X1", "promise": "We expect to launch the new product line next year.", "category": "Product", "page": 1, "source_chunk": "Launch new product line."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     c = _commitment_by_index(result)
     assert c["status"] != "Delivered"
@@ -348,7 +348,7 @@ def test_p1a_eligible_types_still_admitted(tmp_path, monkeypatch):
         {"id": "G1", "promise": "Deploying the cloud migration for all core systems by Q3.", "category": "Technology", "page": 3, "source_chunk": "Cloud migration by Q3."},
         {"id": "G2", "promise": "We will open five new branches in the eastern region.", "category": "Expansion", "page": 4, "source_chunk": "Open branches."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) >= 1
 
@@ -361,7 +361,7 @@ def test_p0_routing_commitment_count_nonzero_for_eligible_input(tmp_path, monkey
     _write(tmp_path, "co", "fy23", promise_items=[
         {"id": "R1", "promise": "We plan to launch the next-generation product line by FY24.", "category": "Product", "page": 7, "source_chunk": "Launch next-gen product."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert _commitment_count(result) >= 1
     assert result["validation"]["status"] == "pass"
@@ -375,7 +375,7 @@ def test_no_manual_downstream_patching(tmp_path, monkeypatch):
     _write(tmp_path, "co", "fy23", promise_items=[
         {"id": "S1", "promise": "We intend to commission a second data centre by FY26.", "category": "Capex", "page": 1, "source_chunk": "Second data centre."},
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert result["commitments"].get("schema_version") == "management_commitments.v1"
     assert result["commitments"].get("generated_at")
@@ -394,7 +394,7 @@ def test_no_company_specific_logic_required(tmp_path, monkeypatch):
         {"id": "M1", "promise": "We intend to acquire controlling interest in the target entity.", "category": "Acquisition", "page": 5, "source_chunk": "Acquire target."},
     ]
     _write(tmp_path, "co", "fy24", promise_items=items)
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     # All five are distinct — should produce 5 separate commitments
     assert _commitment_count(result) == 5

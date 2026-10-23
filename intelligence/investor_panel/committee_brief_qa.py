@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root
 
 import json
 from datetime import datetime
@@ -98,10 +99,9 @@ def _load_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _write_json(path: Path, payload: Dict[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return path
+def _write_json(path: Path, payload: Dict[str, Any], *, root: Path | str) -> Path:
+    """The destination must lie inside the explicit, already-authorized output root."""
+    return guarded_write_text(root, path, json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def _normalize_analyst_names(value: Any) -> List[str]:
@@ -120,9 +120,10 @@ def _append_issue(bucket: List[str], text: str) -> None:
 
 
 class CommitteeBriefQAGate:
-    def __init__(self, company: str, companies_root: Path | str = Path("companies")):
+    def __init__(self, company: str, companies_root: Path | str, *, authorize_served_write: bool = False):
         self.company = company
-        self.companies_root = Path(companies_root)
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
         self.panel_dir = self.companies_root / company / "company_memory" / "investor_panel"
         self.synthesis_path = self.panel_dir / "committee_synthesis.json"
         self.brief_path = self.panel_dir / "committee_brief.md"
@@ -824,5 +825,5 @@ class CommitteeBriefQAGate:
                 "generated_at": utc_now(),
             }
         return {
-            "committee_brief_qa.json": _write_json(self.output_path, payload),
+            "committee_brief_qa.json": _write_json(self.output_path, payload, root=self.companies_root),
         }

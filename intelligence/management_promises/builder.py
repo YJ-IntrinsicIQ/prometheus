@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root, safe_destination
 
 import json
 from collections import Counter
@@ -457,7 +458,7 @@ def _build_critical_followup(promises: List[Dict[str, Any]]) -> List[Dict[str, A
 def build_management_promise_tracker(
     company_slug: str,
     *,
-    companies_root: Path | str = Path("companies"),
+    companies_root: Path | str,
     generated_at: Optional[str] = None,
 ) -> Dict[str, Any]:
     companies_root = Path(companies_root)
@@ -584,17 +585,21 @@ def validate_management_promise_tracker(
         raise ValueError("Gold promise tracker resolved/unresolved partitions do not reconcile")
 
 
+def plan_management_promise_tracker_output(company_slug: str, *, companies_root: Path | str, authorize_served_write: bool = False) -> Path:
+    """The exact file write_management_promise_tracker would write. Read-only: nothing is created."""
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+    return safe_destination(root, _gold_output_path(company_slug, root))
+
+
 def write_management_promise_tracker(
     company_slug: str,
     *,
-    companies_root: Path | str = Path("companies"),
+    companies_root: Path | str,
     generated_at: Optional[str] = None,
+    authorize_served_write: bool = False,
 ) -> Path:
-    companies_root = Path(companies_root)
+    root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
     payload = build_management_promise_tracker(
-        company_slug, companies_root=companies_root, generated_at=generated_at
+        company_slug, companies_root=root, generated_at=generated_at
     )
-    output_path = _gold_output_path(company_slug, companies_root)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return output_path
+    return guarded_write_text(root, _gold_output_path(company_slug, root), json.dumps(payload, indent=2, ensure_ascii=False))

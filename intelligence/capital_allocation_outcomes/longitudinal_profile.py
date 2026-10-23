@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.context_paths import guarded_write_text, logical_company_path, resolve_output_root, safe_destination
 from .paths import (
     get_capital_allocation_assessments_path,
     get_capital_allocation_longitudinal_profile_path,
@@ -41,6 +42,11 @@ _INORGANIC = frozenset({
     "acquisition", "acquisition_integration", "strategic_investment",
     "joint_venture", "subsidiary_investment",
 })
+def _pending(record: Dict[str, Any]) -> bool:
+    """A dividend that is only proposed / recommended (no payment evidenced) has not distributed anything."""
+    return record.get("allocation_category") in {"dividend", "special_dividend"} and (record.get("lifecycle") == "proposed" or record.get("execution_state") == "NOT_STARTED")
+
+
 _DISTRIBUTION = frozenset({
     "dividend", "special_dividend", "share_buyback",
 })
@@ -129,7 +135,7 @@ def _amount_coverage(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     known_count = len(known)
     unit_ambiguous_count = sum(
         1 for r in records
-        if r.get("amount") in (None, "", 0) and r.get("amount_basis") == "unit_ambiguous"
+        if r.get("amount") in (None, "", 0) and r.get("amount_basis") in ("unit_ambiguous", "share_count_not_currency")
     )
     ratio = known_count / len(eligible) if eligible else 0.0
     trusted_ratio = known_count / total if total else 0.0
@@ -385,9 +391,9 @@ def _build_organic_reinvestment_profile(records: List[Dict[str, Any]]) -> Dict[s
 
 
 def _build_shareholder_return_profile(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    distributions = [r for r in records if r.get("allocation_category") in _DISTRIBUTION]
+    distributions = [r for r in records if r.get("allocation_category") in _DISTRIBUTION and not _pending(r)]       # a proposed dividend is not a distribution that happened
     if not distributions:
-        return {"count": 0, "note": "No distribution events in the ledger."}
+        return {"count": 0, "note": "No completed distribution events in the ledger."}
 
     buybacks = [r for r in distributions if r.get("allocation_category") == "share_buyback"]
     dividends = [
@@ -481,7 +487,7 @@ def _build_stewardship_observations(
         })
 
     # --- Distribution consistency ---
-    distributions = [r for r in records if r.get("allocation_category") in _DISTRIBUTION]
+    distributions = [r for r in records if r.get("allocation_category") in _DISTRIBUTION and not _pending(r)]
     dist_periods = sorted(
         {p for r in distributions for p in (r.get("deployment_periods") or [])},
         key=_fy_sort,
@@ -743,10 +749,12 @@ def build_longitudinal_profile(
     Reads Phase 2 assessments and outcomes; produces a synthesis artifact.
     No AI calls. No raw-document access.
     """
+    # Inputs come from the SAME root as the build (company_root = <companies_root>/<company>); they are never read from ./companies.
+    companies_root = Path(company_root).parent
     if assessments_path is None:
-        assessments_path = get_capital_allocation_assessments_path(company)
+        assessments_path = get_capital_allocation_assessments_path(company, companies_root)
     if outcomes_path is None:
-        outcomes_path = get_capital_allocation_outcomes_path(company)
+        outcomes_path = get_capital_allocation_outcomes_path(company, companies_root)
 
     if not assessments_path.exists():
         return {
@@ -835,7 +843,7 @@ def build_longitudinal_profile(
         "generated_at": _utc_now(),
         "generator_version": "ENG-105-Phase3-v1",
         "source_ledger": {
-            "assessments_artifact": str(assessments_path),
+            "assessments_artifact": logical_company_path(assessments_path, companies_root),
             "allocation_count": len(records),
             "source_fingerprint": source_fingerprint,
         },
@@ -890,16 +898,20 @@ def build_longitudinal_profile(
 # ---------------------------------------------------------------------------
 
 class CapitalAllocationLongitudinalProfileBuilder:
-    def __init__(self, company: str):
+    def __init__(self, company: str, companies_root: Path | str, *, authorize_served_write: bool = False):
         self.company = company
-        self.company_root = Path("companies") / company
-        self.output_path = get_capital_allocation_longitudinal_profile_path(company)
+        self.companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
+        self.company_root = self.companies_root / company
+        self.output_path = get_capital_allocation_longitudinal_profile_path(company, self.companies_root)
+
+    def plan_outputs(self) -> Dict[str, Path]:
+        return {self.output_path.name: safe_destination(self.companies_root, self.output_path)}
 
     def build(self) -> Path:
         profile = build_longitudinal_profile(self.company, self.company_root)
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        self.output_path.write_text(
-            json.dumps(profile, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        return self.output_path
+        return write_longitudinal_profile(self.companies_root, self.output_path, profile)
+
+
+def write_longitudinal_profile(output_root: Path | str, output_path: Path, profile: Dict[str, Any]) -> Path:
+    """Serialization is unchanged (indent=2, ensure_ascii=False, no trailing newline); the destination must lie inside the authorized output root."""
+    return guarded_write_text(output_root, output_path, json.dumps(profile, indent=2, ensure_ascii=False))

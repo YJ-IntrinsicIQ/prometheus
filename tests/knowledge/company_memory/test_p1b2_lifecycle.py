@@ -84,7 +84,7 @@ def test_unable_to_verify_in_allowed_statuses():
 def test_single_year_no_later_evidence_is_unable_to_verify(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_year(tmp_path, "co", "fy23", items=[_item("We will open five new branches by FY25.")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert result["commitments"]["commitment_count"] == 1
     commitment = result["commitments"]["commitments"][0]
@@ -99,7 +99,7 @@ def test_silence_is_unable_to_verify_not_missed(tmp_path, monkeypatch):
     # fy23 and fy24 exist but contain no mention of the commitment
     _write_year(tmp_path, "co", "fy23", items=[_item("Launch a new product line by FY24.", "Product")])
     _write_year(tmp_path, "co", "fy24", items=[_item("Enter the eastern European market.", "Expansion")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     cloud = next(c for c in result["commitments"]["commitments"] if "cloud" in c["original_statement"].lower())
     assert cloud["status"] == "Unable To Verify"
@@ -112,7 +112,7 @@ def test_same_text_later_year_is_reconfirmed(tmp_path, monkeypatch):
     promise = "We will expand capacity at the manufacturing plant by FY25."
     _write_year(tmp_path, "co", "fy23", items=[_item(promise)])
     _write_year(tmp_path, "co", "fy24", items=[_item(promise)])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert result["commitments"]["commitment_count"] == 1
     commitment = result["commitments"]["commitments"][0]
@@ -129,7 +129,7 @@ def test_validation_passes_for_cross_year_reconfirmation(tmp_path, monkeypatch):
     promise = "We will deploy a new distribution platform across all regions."
     _write_year(tmp_path, "co", "fy23", items=[_item(promise)])
     _write_year(tmp_path, "co", "fy24", items=[_item(promise)])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert result["validation"]["status"] == "pass", result["validation"].get("issues")
     assert not any(i["code"] == "identical_commitments_across_years" for i in result["validation"]["issues"])
@@ -142,7 +142,7 @@ def test_reconfirmation_appears_in_evidence_updates(tmp_path, monkeypatch):
     promise = "We will open five new outlets in the northern region by FY25."
     _write_year(tmp_path, "co", "fy23", items=[_item(promise)])
     _write_year(tmp_path, "co", "fy24", items=[_item(promise)])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
     evidence_updates = commitment.get("progression", {}).get("evidence_updates", [])
@@ -157,7 +157,7 @@ def test_reconfirmation_event_has_correct_period(tmp_path, monkeypatch):
     promise = "We will build three additional manufacturing facilities by FY26."
     _write_year(tmp_path, "co", "fy23", items=[_item(promise, "Capacity")])
     _write_year(tmp_path, "co", "fy25", items=[_item(promise, "Capacity")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
     evidence_updates = commitment.get("progression", {}).get("evidence_updates", [])
@@ -170,7 +170,7 @@ def test_reconfirmation_event_has_correct_period(tmp_path, monkeypatch):
 def test_lifecycle_source_year_is_announcement_period(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_year(tmp_path, "co", "fy22", items=[_item("We will expand into five new markets by FY24.")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
     lifecycle = commitment.get("lifecycle", {})
@@ -184,7 +184,7 @@ def test_lifecycle_check_years_excludes_announcement_year(tmp_path, monkeypatch)
     promise = "We intend to launch the next-generation product line by FY25."
     _write_year(tmp_path, "co", "fy23", items=[_item(promise, "Product")])
     _write_year(tmp_path, "co", "fy24", items=[_item(promise, "Product")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
     lifecycle = commitment.get("lifecycle", {})
@@ -199,7 +199,7 @@ def test_lifecycle_last_checked_year_is_latest(tmp_path, monkeypatch):
     promise = "We will commission a second data centre by FY26."
     _write_year(tmp_path, "co", "fy23", items=[_item(promise)])
     _write_year(tmp_path, "co", "fy25", items=[_item(promise)])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
     lifecycle = commitment.get("lifecycle", {})
@@ -211,7 +211,7 @@ def test_lifecycle_last_checked_year_is_latest(tmp_path, monkeypatch):
 def test_lifecycle_events_start_with_announcement(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_year(tmp_path, "co", "fy23", items=[_item("We plan to acquire a controlling stake in the target company.")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
     lifecycle_events = commitment.get("lifecycle", {}).get("lifecycle_events", [])
@@ -226,7 +226,7 @@ def test_multiple_reconfirmations_across_years(tmp_path, monkeypatch):
     promise = "We will increase our market share in the core segment by FY26."
     for yr in ("fy22", "fy23", "fy24"):
         _write_year(tmp_path, "co", yr, items=[_item(promise, "Growth")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert result["commitments"]["commitment_count"] == 1
     commitment = result["commitments"]["commitments"][0]
@@ -245,7 +245,7 @@ def test_reconfirmed_status_not_in_progress(tmp_path, monkeypatch):
     promise = "We will reduce fixed costs by 10% by FY25."
     _write_year(tmp_path, "co", "fy23", items=[_item(promise, "Financial Target")])
     _write_year(tmp_path, "co", "fy24", items=[_item(promise, "Financial Target")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
     assert commitment["progression"]["current_state"] != "In Progress"
@@ -268,7 +268,7 @@ def test_progress_evidence_overrides_reconfirmation(tmp_path, monkeypatch):
     _write_year(tmp_path, "co", "fy25", items=[
         _item("Expanding the distribution network; rollout is in progress.", "Capacity")
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitments = result["commitments"]["commitments"]
     # Original promise (FY23+FY24 exact same text) stays "Reconfirmed" —
@@ -290,7 +290,7 @@ def test_delivery_after_reconfirmation(tmp_path, monkeypatch):
     _write_year(tmp_path, "co", "fy25", items=[
         _item("The new logistics platform was successfully launched and is now operational.", "Technology")
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitments = result["commitments"]["commitments"]
     logistics = next((c for c in commitments if "logistics" in c["original_statement"].lower()), None)
@@ -308,7 +308,7 @@ def test_abandonment_after_reconfirmation(tmp_path, monkeypatch):
     _write_year(tmp_path, "co", "fy25", items=[
         _item("We have abandoned our plans to enter the southern market.", "Expansion")
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitments = result["commitments"]["commitments"]
     southern = next((c for c in commitments if "southern" in c["original_statement"].lower()), None)
@@ -326,7 +326,7 @@ def test_delay_after_reconfirmation(tmp_path, monkeypatch):
     _write_year(tmp_path, "co", "fy25", items=[
         _item("The plant upgrade has been delayed due to supply chain disruptions.", "Capacity")
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitments = result["commitments"]["commitments"]
     plant = next((c for c in commitments if "plant upgrade" in c["original_statement"].lower()), None)
@@ -341,7 +341,7 @@ def test_reconfirmation_does_not_inflate_commitment_count(tmp_path, monkeypatch)
     promise = "We will grow our revenue by 15% annually over the next three years."
     for yr in ("fy22", "fy23", "fy24", "fy25"):
         _write_year(tmp_path, "co", yr, items=[_item(promise, "Growth")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert result["commitments"]["commitment_count"] == 1
 
@@ -353,7 +353,7 @@ def test_reconfirmed_delivery_assessment_text(tmp_path, monkeypatch):
     promise = "We will open 10 new stores by FY25."
     _write_year(tmp_path, "co", "fy23", items=[_item(promise, "Expansion")])
     _write_year(tmp_path, "co", "fy24", items=[_item(promise, "Expansion")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
     # MC is not lifecycle authority; delivery_assessment reflects "Unable To Verify" status.
@@ -368,7 +368,7 @@ def test_reconfirmed_delivery_assessment_text(tmp_path, monkeypatch):
 def test_evidence_updates_empty_for_single_evidence(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_year(tmp_path, "co", "fy24", items=[_item("We plan to launch two new product SKUs next quarter.", "Product")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
     evidence_updates = commitment.get("progression", {}).get("evidence_updates", [])
@@ -387,7 +387,7 @@ def test_commitment_count_stable_with_reconfirmations(tmp_path, monkeypatch):
     _write_year(tmp_path, "co", "fy24", items=[
         _item("We will deploy new automation equipment at all plants by FY25.", "Technology"),
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert result["commitments"]["commitment_count"] == 2
 
@@ -399,7 +399,7 @@ def test_status_counts_include_reconfirmed(tmp_path, monkeypatch):
     promise = "We will increase production capacity by 500 units by FY25."
     _write_year(tmp_path, "co", "fy23", items=[_item(promise, "Capacity")])
     _write_year(tmp_path, "co", "fy24", items=[_item(promise, "Capacity")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
     # MC is not lifecycle authority; status_counts counts by top-level status (always "Unable To Verify").
@@ -417,7 +417,7 @@ def test_reconfirmation_three_years_still_one_commitment(tmp_path, monkeypatch):
     _write_year(tmp_path, "co", "fy23", items=[_item(promise, "Expansion")])
     _write_year(tmp_path, "co", "fy24", items=[_item(promise, "Expansion")])
     _write_year(tmp_path, "co", "fy25", items=[_item(promise, "Expansion")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     assert result["commitments"]["commitment_count"] == 1
     commitment = result["commitments"]["commitments"][0]
@@ -432,7 +432,7 @@ def test_reconfirmation_three_years_still_one_commitment(tmp_path, monkeypatch):
 def test_lifecycle_events_non_empty(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _write_year(tmp_path, "co", "fy23", items=[_item("We plan to invest in 50 new retail outlets by FY25.", "Expansion")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
     lifecycle = commitment.get("lifecycle", {})
@@ -446,7 +446,7 @@ def test_lifecycle_event_has_reconfirmation_period(tmp_path, monkeypatch):
     promise = "We will reduce fixed costs by 8% by FY25."
     _write_year(tmp_path, "co", "fy23", items=[_item(promise, "Financial Target")])
     _write_year(tmp_path, "co", "fy24", items=[_item(promise, "Financial Target")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
     lifecycle_events = commitment.get("lifecycle", {}).get("lifecycle_events", [])
@@ -462,7 +462,7 @@ def test_announcement_period_is_earliest_year(tmp_path, monkeypatch):
     promise = "We will build a new headquarters facility by FY27."
     _write_year(tmp_path, "co", "fy24", items=[_item(promise, "Capex")])
     _write_year(tmp_path, "co", "fy25", items=[_item(promise, "Capex")])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitment = result["commitments"]["commitments"][0]
     assert commitment["announcement_period"] == "fy24"
@@ -483,7 +483,7 @@ def test_mixed_portfolio_reconfirmed_and_delivered(tmp_path, monkeypatch):
         _item(promise_a, "Technology"),  # reconfirmation of A
         _item("The new customer portal was launched and is now live.", "Technology"),  # delivery of B
     ])
-    ManagementCommitmentsBuilder(company="co").build()
+    ManagementCommitmentsBuilder(company="co", companies_root=Path.cwd() / "companies").build()
     result = _load(tmp_path, "co")
     commitments = result["commitments"]["commitments"]
     assert result["commitments"]["commitment_count"] == 2

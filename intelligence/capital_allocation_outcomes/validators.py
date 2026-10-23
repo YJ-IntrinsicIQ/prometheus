@@ -112,6 +112,21 @@ def validate_capital_allocation_outcomes_payload(
         elif not _is_chronological(deployment_periods):
             issues.append({"code": "chronology_violation", "severity": "fail", "allocation_id": allocation_id, "message": "Deployment periods are not chronological."})
 
+        # SSOT amount contract: an amount is one source item's figure for one period, in a named unit, and never a share count or a per-share price.
+        amount = allocation.get("amount")
+        if amount is not None:
+            typed = "amount_unit" in allocation
+            if not allocation.get("amount_period"):
+                issues.append({"code": "amount_without_period", "severity": "fail" if typed else "warning", "allocation_id": allocation_id, "message": "An amount must name the one period it belongs to."})
+            elif allocation.get("amount_period") not in deployment_periods:
+                issues.append({"code": "amount_period_outside_deployment", "severity": "fail", "allocation_id": allocation_id, "message": "The amount's period is not one of the deployment periods."})
+            if typed and (allocation.get("amount_unit") != "INR crore" or allocation.get("amount_aggregation") != "single_period_flow"):
+                issues.append({"code": "amount_unit_or_aggregation_unsupported", "severity": "fail", "allocation_id": allocation_id, "message": "Amount unit must be INR crore and aggregation a single-period flow."})
+            if allocation.get("amount_basis") in {"share_count_not_currency", "unit_ambiguous", "face_value_not_consideration"}:
+                issues.append({"code": "non_currency_amount_promoted", "severity": "fail", "allocation_id": allocation_id, "message": "A share count, per-share figure or unit-ambiguous string must not be promoted to a currency amount."})
+        if allocation.get("event_nature") == "minority_or_subscription" and allocation_category in {"acquisition", "acquisition_integration", "research_and_development", "merger"}:
+            issues.append({"code": "event_nature_category_conflict", "severity": "fail", "allocation_id": allocation_id, "message": "A minority equity subscription must not be recorded as an acquisition or R&D."})
+
         if not allocation.get("source_references"):
             issues.append({"code": "missing_source_references", "severity": "fail", "allocation_id": allocation_id, "message": "Source references must be preserved."})
 
@@ -160,7 +175,7 @@ def validate_capital_allocation_outcomes_payload(
         if _scan_forbidden_terms(allocation):
             issues.append({"code": "public_term_leak", "severity": "fail", "allocation_id": allocation_id, "message": "Internal pipeline terminology leaked into public allocation fields."})
 
-    status = "pass" if not issues else "fail"
+    status = "fail" if any(issue.get("severity") != "warning" for issue in issues) else "pass"
     return {
         "status": status,
         "issue_count": len(issues),

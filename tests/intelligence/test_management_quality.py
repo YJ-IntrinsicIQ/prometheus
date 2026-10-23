@@ -357,7 +357,7 @@ def test_management_quality_builder_aggregates_longitudinal_evidence(tmp_path, m
     monkeypatch.chdir(tmp_path)
     _write_positive_fixture(tmp_path, "acme")
 
-    ManagementQualityBuilder(company="acme").build()
+    ManagementQualityBuilder(company="acme", companies_root=tmp_path / "companies").build()
     summary, dimensions, evidence, validation, manifest = _load_outputs(tmp_path, "acme")
 
     assert validation["status"] == "pass"

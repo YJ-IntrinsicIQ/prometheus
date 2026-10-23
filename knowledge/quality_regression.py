@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import resolve_output_root
 
 import json
 from datetime import datetime, timezone
@@ -95,7 +96,7 @@ def _merge_status(current: str, incoming: str) -> str:
     return incoming if _status_order(incoming) > _status_order(current) else current
 
 
-def discover_companies(companies_root: Path | str = Path("companies")) -> List[str]:
+def discover_companies(companies_root: Path | str) -> List[str]:
     root = Path(companies_root)
     if not root.exists():
         return []
@@ -106,7 +107,7 @@ def discover_companies(companies_root: Path | str = Path("companies")) -> List[s
     ]
 
 
-def parse_company_selector(selector: str, *, companies_root: Path | str = Path("companies")) -> List[str]:
+def parse_company_selector(selector: str, *, companies_root: Path | str) -> List[str]:
     if selector.strip().lower() == "all":
         return discover_companies(companies_root)
     requested = [item.strip() for item in selector.split(",") if item.strip()]
@@ -117,8 +118,9 @@ def _audit_payload_for_company(
     company: str,
     *,
     companies_root: Path | str,
+    authorize_served_write: bool = False,
 ) -> Dict[str, Any]:
-    outputs = run_company_artifact_audit(company, companies_root=companies_root, fix_safe=False)
+    outputs = run_company_artifact_audit(company, companies_root=companies_root, fix_safe=False, authorize_served_write=authorize_served_write)
     payload = _load_json(outputs["company_artifact_audit.json"])
     return payload if isinstance(payload, dict) else {}
 
@@ -405,11 +407,13 @@ def _archive_previous_scorecard(reports_dir: Path, baseline: Dict[str, Any]) -> 
 def run_quality_regression(
     *,
     companies: Sequence[str],
-    companies_root: Path | str = Path("companies"),
+    companies_root: Path | str,
     reports_root: Path | str = Path("reports") / "quality",
     include_panel: bool = False,
+    authorize_served_write: bool = False,
 ) -> Dict[str, Path]:
-    companies_root = Path(companies_root)
+    # the audits this run performs write under companies_root: explicit, absolute, and the served tree needs the authorization
+    companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
     reports_dir = Path(reports_root)
     current_path = reports_dir / "prometheus_quality_scorecard.json"
     previous_path = reports_dir / "prometheus_quality_scorecard.previous.json"
@@ -425,7 +429,7 @@ def run_quality_regression(
     overall_status = "pass"
 
     for company in companies:
-        audit_payload = _audit_payload_for_company(company, companies_root=companies_root)
+        audit_payload = _audit_payload_for_company(company, companies_root=companies_root, authorize_served_write=authorize_served_write)
         if not audit_payload:
             continue
         score = _company_score(audit_payload, include_panel=include_panel)

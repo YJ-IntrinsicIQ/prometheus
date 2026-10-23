@@ -5,7 +5,7 @@ from typing import Any, Dict, Iterable
 from intelligence.progression.manifest import PROGRESSION_ENGINE_VERSION
 
 from .contracts import CAPACITY_GENERATOR_VERSION
-from .paths import get_capacity_dir
+from .paths import logical_capacity_dir
 
 
 def build_capacity_manifest(
@@ -32,7 +32,7 @@ def build_capacity_manifest(
         "progression_engine_version": PROGRESSION_ENGINE_VERSION,
         "company_slug": company_slug,
         "generated_at": generated_at,
-        "output_directory": str(get_capacity_dir(company_slug)),
+        "output_directory": str(logical_capacity_dir(company_slug)),
         "upstream_sources_considered": list(upstream_sources_considered),
         "upstream_sources_found": list(upstream_sources_found),
         "upstream_sources_missing": list(upstream_sources_missing),

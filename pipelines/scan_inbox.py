@@ -191,6 +191,9 @@ def scan_inbox(
     force: bool = False,
     registry: Optional[DocumentIntakeRegistry] = None,
     inbox: Optional[Path] = None,
+    *,
+    companies_root: Optional[Path] = None,
+    authorize_served_write: bool = False,
 ) -> ScanReport:
     """Scan INBOX and process every PDF found.
 
@@ -200,6 +203,9 @@ def scan_inbox(
         force:   Force reprocessing of documents already marked REUSE_EXISTING.
         registry: Override the live registry (for testing).
         inbox:   Override the Inbox path (for testing).
+        companies_root: Explicit absolute company-data root; required for execute=True
+                 (processors fail closed without it). Inbox/Processed/Review/Failed
+                 live under data/ and are separate from company data.
     """
     ensure_workflow_dirs()
 
@@ -210,7 +216,10 @@ def scan_inbox(
     report = ScanReport(total_discovered=len(pdf_files))
 
     for pdf in pdf_files:
-        outcome = _process_one(pdf, execute=execute, force=force, registry=reg)
+        outcome = _process_one(
+            pdf, execute=execute, force=force, registry=reg,
+            companies_root=companies_root, authorize_served_write=authorize_served_write,
+        )
         report.outcomes.append(outcome)
 
         decision = outcome.decision
@@ -245,6 +254,8 @@ def _process_one(
     execute: bool,
     force: bool,
     registry: DocumentIntakeRegistry,
+    companies_root: Optional[Path] = None,
+    authorize_served_write: bool = False,
 ) -> DocumentOutcome:
     """Process a single Inbox PDF end-to-end."""
     document_hash = compute_content_hash(pdf)
@@ -336,7 +347,10 @@ def _process_one(
         )
 
     # --- Step 8: Execute ---
-    result = process_document(pdf, execute=True)
+    result = process_document(
+        pdf, execute=True, companies_root=companies_root,
+        authorize_served_write=authorize_served_write,
+    )
 
     if result.status == ProcessorStatus.EXECUTED:
         archive_dir = _derive_archive_dir(result)
@@ -415,6 +429,14 @@ def _main() -> None:
         help="Reprocess documents even if REUSE_EXISTING applies.",
     )
     parser.add_argument(
+        "--companies-root", type=Path, default=None,
+        help="Absolute company-data root for processor outputs (required with --execute).",
+    )
+    parser.add_argument(
+        "--authorize-served-write", action="store_true",
+        help="Permit --companies-root to be the served companies/ tree.",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Print full JSON report to stdout.",
@@ -424,7 +446,11 @@ def _main() -> None:
     if not args.execute:
         print("[DRY RUN] Passing --execute to actually process files.\n")
 
-    report = scan_inbox(execute=args.execute, force=args.force)
+    report = scan_inbox(
+        execute=args.execute, force=args.force,
+        companies_root=args.companies_root,
+        authorize_served_write=args.authorize_served_write,
+    )
     print(report.summary())
 
     if args.json:

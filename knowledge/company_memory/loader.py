@@ -16,11 +16,9 @@ def load_company_memory(path: Union[str, Path]) -> Optional[CompanyMemory]:
     return CompanyMemory.from_dict(payload)
 
 
-def save_company_memory(memory: CompanyMemory, path: Union[str, Path]) -> Path:
+def save_company_memory(memory: CompanyMemory, path: Union[str, Path], output_root: Union[str, Path, None] = None) -> Path:
+    from core.context_paths import guarded_write_or_refuse_served
+
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(memory.to_dict(), handle, indent=2, ensure_ascii=False)
-
+    guarded_write_or_refuse_served(path, json.dumps(memory.to_dict(), indent=2, ensure_ascii=False), output_root)
     return path

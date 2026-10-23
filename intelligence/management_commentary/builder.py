@@ -45,6 +45,9 @@ from .theme_mapper import (
 )
 from .validators import validate_commentary_payload
 from .writer import write_json_file
+from core.context_paths import logical_company_path, resolve_output_root, safe_destination
+
+_OUTPUT_FILES = ("commentary_themes.json", "commentary_timelines.json", "commentary_assessments.json", "commentary_validation.json", "commentary_manifest.json")
 
 
 def _utc_now() -> str:
@@ -76,17 +79,17 @@ def _candidate_sources() -> List[Tuple[str, Path]]:
     ]
 
 
-def _load_year_record(year_dir: Path) -> Dict[str, Any]:
+def _load_year_record(year_dir: Path, companies_root: Path | None = None) -> Dict[str, Any]:
     record: Dict[str, Any] = {
         "year": year_dir.name,
         "sort_key": parse_financial_year(year_dir.name),
-        "paths": {"year_root": str(year_dir)},
+        "paths": {"year_root": logical_company_path(year_dir, companies_root) if companies_root is not None else str(year_dir)},
         "source_artifacts": {},
     }
     for source_name, rel_path in _candidate_sources():
         path = year_dir / rel_path
         payload = _load_json(path)
-        record["source_artifacts"][source_name] = {"path": str(path), "found": bool(payload)}
+        record["source_artifacts"][source_name] = {"path": logical_company_path(path, companies_root) if companies_root is not None else str(path), "found": bool(payload)}
         record[source_name] = payload if isinstance(payload, (dict, list)) else {}
     return record
 
@@ -728,13 +731,19 @@ def _current_position_from_assessments(consistency: Dict[str, Any], specificity:
 @dataclass
 class ManagementCommentaryBuilder:
     company: str
-    companies_root: Path | str = Path("companies")
+    companies_root: Path | str
+    authorize_served_write: bool = False
     output_dir: Path = field(init=False)
 
     def __post_init__(self) -> None:
-        self.companies_root = Path(self.companies_root)
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(self.companies_root, authorize_served=self.authorize_served_write)
         self.company_root = self.companies_root / self.company
-        self.output_dir = get_commentary_dir(self.company)
+        self.output_dir = get_commentary_dir(self.company, self.companies_root)
+
+    def plan_outputs(self) -> Dict[str, Path]:
+        """The exact files build() would write. Read-only: nothing is created."""
+        return {name: safe_destination(self.companies_root, self.output_dir / name) for name in _OUTPUT_FILES}
 
     def _load_financial_metrics(self) -> Dict[str, List[str]]:
         return _load_related_financial_metrics(_load_financial_artifacts(self.company_root))
@@ -840,7 +849,7 @@ class ManagementCommentaryBuilder:
         return themes, timelines, assessments
 
     def build(self) -> Dict[str, Path]:
-        year_records = [_load_year_record(year_dir) for year_dir in _discover_years(self.company_root)]
+        year_records = [_load_year_record(year_dir, self.companies_root) for year_dir in _discover_years(self.company_root)]
         candidates: List[Dict[str, Any]] = []
         for year_record in year_records:
             candidates.extend(self._extract_candidates(year_record))
@@ -922,7 +931,7 @@ class ManagementCommentaryBuilder:
                 "companies/<company>/company_memory/financials/financial_driver_attribution.json",
                 "companies/<company>/company_memory/financials/capital_allocation_financial_timeline.json",
             ],
-            upstream_sources_found=[str(path) for path in [
+            upstream_sources_found=[logical_company_path(path, self.companies_root) for path in [
                 self.company_root / "company_memory" / "management_commitments" / "management_commitments.json",
                 self.company_root / "company_memory" / "projects" / "projects_registry.json",
                 self.company_root / "company_memory" / "capacity" / "capacity_registry.json",
@@ -931,7 +940,7 @@ class ManagementCommentaryBuilder:
                 self.company_root / "company_memory" / "financials" / "financial_driver_attribution.json",
                 self.company_root / "company_memory" / "financials" / "capital_allocation_financial_timeline.json",
             ] if path.exists()],
-            upstream_sources_missing=[str(path) for path in [
+            upstream_sources_missing=[logical_company_path(path, self.companies_root) for path in [
                 self.company_root / "company_memory" / "management_commitments" / "management_commitments.json",
                 self.company_root / "company_memory" / "projects" / "projects_registry.json",
                 self.company_root / "company_memory" / "capacity" / "capacity_registry.json",
@@ -964,9 +973,9 @@ class ManagementCommentaryBuilder:
 
         written: Dict[str, Path] = {}
         for filename, payload in files.items():
-            written[filename] = write_json_file(self.output_dir / filename, payload)
+            written[filename] = write_json_file(self.output_dir / filename, payload, root=self.companies_root)
         return written
 
 
-def build_management_commentary(company: str, companies_root: Path | str = Path("companies")) -> Dict[str, Path]:
-    return ManagementCommentaryBuilder(company=company, companies_root=companies_root).build()
+def build_management_commentary(company: str, companies_root: Path | str, *, authorize_served_write: bool = False) -> Dict[str, Path]:
+    return ManagementCommentaryBuilder(company=company, companies_root=companies_root, authorize_served_write=authorize_served_write).build()

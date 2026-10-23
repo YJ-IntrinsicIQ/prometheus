@@ -1,3 +1,4 @@
+from pathlib import Path
 import json
 
 from knowledge.cim_contract import CIMContractBuilder
@@ -96,7 +97,7 @@ def test_pcim_builder_uses_official_classification_dnas_only(tmp_path, monkeypat
     monkeypatch.chdir(tmp_path)
     _write_year_artifacts(tmp_path, "sample_platform_co", "fy25")
 
-    written = CIMContractBuilder(company="sample_platform_co").build()
+    written = CIMContractBuilder(company="sample_platform_co", companies_root=Path.cwd() / "companies").build()
     pcim = json.loads(written["pcim_v1.json"].read_text())
 
     assert pcim["business_understanding"]["latest_business_view"]["business_dnas"][0]["value"] == "Enterprise Platform"
@@ -108,7 +109,7 @@ def test_pcim_freshness_audit_detects_new_multi_year_source_state(tmp_path, monk
     monkeypatch.chdir(tmp_path)
     _write_year_artifacts(tmp_path, "sample_platform_co", "fy25")
 
-    first = json.loads(CIMContractBuilder(company="sample_platform_co").build()["pcim_v1.json"].read_text())
+    first = json.loads(CIMContractBuilder(company="sample_platform_co", companies_root=Path.cwd() / "companies").build()["pcim_v1.json"].read_text())
 
     multi_year_dir = tmp_path / "companies" / "sample_platform_co" / "company_memory" / "multi_year"
     multi_year_dir.mkdir(parents=True, exist_ok=True)
@@ -190,7 +191,7 @@ def test_pcim_capital_allocation_inputs_keep_treasury_and_corporate_actions_out_
     ]
     intelligence_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    written = CIMContractBuilder(company="sample_platform_co").build()
+    written = CIMContractBuilder(company="sample_platform_co", companies_root=Path.cwd() / "companies").build()
     pcim = json.loads(written["pcim_v1.json"].read_text())
     inputs = pcim["capital_allocation_inputs"]
 
@@ -243,7 +244,7 @@ def test_pcim_management_quality_excludes_external_context_and_business_context_
     ]
     intelligence_path.write_text(json.dumps(summary), encoding="utf-8")
 
-    written = CIMContractBuilder(company="sample_platform_co").build()
+    written = CIMContractBuilder(company="sample_platform_co", companies_root=Path.cwd() / "companies").build()
     pcim = json.loads(written["pcim_v1.json"].read_text())
 
     assert pcim["management_quality_inputs"]["management_focus_by_year"][0]["items"][0]["value"] == "fy25 Focus"

@@ -9,22 +9,45 @@ import json, shutil, sys, pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from knowledge.financials.normalizer import normalize_financial_tables
+from knowledge.financials.normalizer import fill_missing_fields, normalize_financial_tables
 from knowledge.financials.corporate_actions import write_corporate_actions
 from knowledge.financials.discovery import write_financial_discovery
-from knowledge.financials.extractor import write_financial_extraction
+from knowledge.financials.basis_resolver import write_financial_basis_resolution
+from knowledge.financials.financial_audit import write_financial_audit_report
+from knowledge.financials.growth_calculator import write_financial_growth
+from knowledge.financials.quality_summary import write_financial_quality_summary
+from knowledge.financials.extractor import merge_raw_tables, write_financial_extraction
 from knowledge.financials.statement_validator import write_financial_validation_report
 from knowledge.financials.reconciler import write_financial_reconciliation_report
 from knowledge.financials.ratio_calculator import write_financial_ratios
 from knowledge.financials.fact_registry import write_financial_fact_registry
+from knowledge.financials.registry_authority import settle_financial_authority
+from knowledge.financials.authority_gate import bind_company
 from knowledge.financials.trend_builder import write_financial_trends
 from knowledge.financials.financial_memory_truth import build_financial_truth_pack
+from knowledge.financials.investor_modules import write_investor_financial_modules
+from knowledge.financials.memory_builder import write_financial_memory_artifacts
 from intelligence.capital_allocation_outcomes.builder import build_capital_allocation_outcomes
 from intelligence.economic_attribution.builder import build_economic_attribution_intelligence
 from intelligence.management_promises.builder import build_management_promise_tracker
 from knowledge.management_progression.producer import build_management_progression
 from knowledge.company_memory import management_commitments as commitments_module
+from scripts.pdf_reader import extract_pages
+from scripts.smart_chunker import chunk_pages
 
+DATA_PROCESSED = pathlib.Path(__file__).resolve().parents[1] / "data" / "Processed"
+
+STALE_DERIVED = ("financial_validation_report.json", "financial_reconciliation_report.json", "financial_ratios.json", "financial_growth.json", "corporate_actions.json", "corporate_action_rejections.json",
+                 "financial_fact_registry.json", "financial_truth_reconciliation_report.json", "financial_artifact_quarantine_report.json", "financial_basis_resolution.json",
+                 "financial_quality_summary.json", "financial_audit_report.json", "_fact_registry_recon.json")
+# Company-level financial-memory artifacts that the served tree also holds INSIDE some year folders (Sun Pharma fy23 / fy26): a second, stale copy of the company-level truth pack, trends and
+# investor modules next to the year's own registry. They are not year-level artifacts; the candidate does not carry them (the migration tombstone manifest lists them) so that one company-
+# level authority remains.
+MISPLACED_COMPANY_LEVEL = ("financial_truth_pack.json", "financial_trends.json", "financial_memory_summary.json", "financial_memory_manifest.json", "financial_quality_evolution.json",
+                           "financial_year_index.json", "investor_financial_modules_manifest.json", "ownership_evolution.json", "per_share_compounding_analysis.json",
+                           "capital_allocation_roi_ledger.json", "capital_allocation_financial_timeline.json", "working_capital_quality_drilldown.json",
+                           "order_revenue_cash_conversion_tracker.json", "owner_earnings_bridge.json", "financial_pcim_validation.json", "financial_quarantine_report.json",
+                           "_fact_registry_recon.json")
 KEYS = ("cash_and_equivalents", "total_debt", "net_debt", "capex", "cfo", "revenue", "pat")
 
 
@@ -88,7 +111,7 @@ def commitments_stage(co: str, src: pathlib.Path, dst: pathlib.Path, out: pathli
 
 def main(argv):
     out = pathlib.Path(argv[0]).resolve()
-    flags = ("--no-commitments", "--reextract")
+    flags = ("--no-commitments", "--reextract", "--rechunk")
     opt = dict(zip([a for a in argv[1:] if a not in flags][0::2], [a for a in argv[1:] if a not in flags][1::2]))
     years = opt.get("--years", "fy25,fy26").split(",")
     companies = opt.get("--companies", "sun_pharma,tanla,ujjivan,datapatterns").split(",")
@@ -99,42 +122,109 @@ def main(argv):
         src, dst = ROOT / "companies" / co, out / "companies" / co
         for d in list(src.glob("fy*/financials")) + list(src.glob("fy*/intelligence")) + [src / "company_memory" / "financials"]:  # intelligence/: year-eligibility inputs only
             shutil.copytree(d, dst / d.relative_to(src), dirs_exist_ok=True)
+        for year_dir in dst.glob("fy*"):
+            for name in MISPLACED_COMPANY_LEVEL:
+                (year_dir / "financials" / name).unlink(missing_ok=True)
         for fy in years:
             fin = dst / fy / "financials"
             chunk_file = src / fy / "extracted" / "clean_chunks.json"
+            rechunked = None
+            if "--rechunk" in argv:
+                # Primary-source extraction starts from the filing: stored chunks can pre-date the current chunker (a balance sheet's trade-payables row is missing from them). The chunks
+                # are rebuilt from the annual-report PDF into the scratch tree and extracted SEPARATELY; their extra rows are merged into the baseline extraction (never replacing it).
+                pdfs = sorted(DATA_PROCESSED.glob(f"{co}/{fy}/annual_report/*.pdf"), key=lambda f: ("afr" in f.name, f.name))
+                reused = pathlib.Path(opt["--rechunked-from"]) / co / fy / "extracted" / "clean_chunks_rechunked.json" if opt.get("--rechunked-from") else None
+                if pdfs:
+                    rechunked = dst / fy / "extracted" / "clean_chunks_rechunked.json"
+                    rechunked.parent.mkdir(parents=True, exist_ok=True)
+                    if reused is not None and reused.exists():
+                        shutil.copyfile(reused, rechunked)         # the chunker has not changed: the PDF text is not re-read (the chunks of an earlier build of the same filing are reused, byte for byte)
+                    else:
+                        chunk_pages(extract_pages(pdfs[0]), company=co, year=fy, document_type="annual_report", output_path=rechunked)
             if "--reextract" in argv and chunk_file.exists():
                 # G3: the stored raw tables can pre-date the current extractor; re-run discovery + extraction from the stored chunks (no AI, scratch only)
                 try:
-                    write_financial_discovery(company=co, year=fy, chunk_path=chunk_file, output_path=fin / "financial_discovery.json")
-                    write_financial_extraction(company=co, year=fy, chunk_path=chunk_file, discovery_path=fin / "financial_discovery.json", output_path=fin / "raw_financial_tables.json")
+                    write_financial_discovery(company=co, year=fy, chunk_path=chunk_file, output_path=fin / "financial_discovery.json", output_root=out)
+                    write_financial_extraction(company=co, year=fy, chunk_path=chunk_file, discovery_path=fin / "financial_discovery.json", output_path=fin / "raw_financial_tables.json", output_root=out)
                 except RuntimeError as exc:
                     not_regenerated.append(f"{co}:{fy}:extraction: {exc}")
+            baseline_raw = (fin / "raw_financial_tables.json").read_text() if (fin / "raw_financial_tables.json").exists() else None
+            if rechunked is not None:
+                sup = out / "_supplement" / co / fy / "financials"
+                try:
+                    write_financial_discovery(company=co, year=fy, chunk_path=rechunked, output_path=sup / "financial_discovery.json", output_root=out)
+                    write_financial_extraction(company=co, year=fy, chunk_path=rechunked, discovery_path=sup / "financial_discovery.json", output_path=sup / "raw_financial_tables.json", output_root=out)
+                except RuntimeError as exc:
+                    not_regenerated.append(f"{co}:{fy}:rechunked-extraction: {exc}")
+                if (sup / "raw_financial_tables.json").exists() and baseline_raw is not None:
+                    merged = merge_raw_tables(json.loads(baseline_raw), json.loads((sup / "raw_financial_tables.json").read_text()))
+                    (fin / "raw_financial_tables.json").write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+            if baseline_raw is None and rechunked is not None and (out / "_supplement" / co / fy / "financials" / "raw_financial_tables.json").exists():
+                shutil.copyfile(out / "_supplement" / co / fy / "financials" / "raw_financial_tables.json", fin / "raw_financial_tables.json")     # no baseline at all: the re-chunked extraction is all there is
             if not (fin / "raw_financial_tables.json").exists():
                 continue
+            # No stale carry-over: the copied served year contained every derived artifact of the OLD run. For a year that is rebuilt here, each of them is removed first, so a stage
+            # that cannot run under the current code leaves the artifact ABSENT (and reported) instead of an old figure that disagrees with the rebuilt registry.
+            for stale in STALE_DERIVED:
+                (fin / stale).unlink(missing_ok=True)
+            norm = None
             try:
-                norm = normalize_financial_tables(company=co, year=fy, raw_tables_path=fin / "raw_financial_tables.json")
-            except RuntimeError as exc:  # current code cannot rebuild this year (pre-existing): keep the stored normalized file, still run downstream
-                not_regenerated.append(f"{co}:{fy}: {exc}")
+                norm = normalize_financial_tables(company=co, year=fy, raw_tables_path=fin / "raw_financial_tables.json", allow_partial_balance_sheet=True)
+                if baseline_raw is not None and rechunked is not None:
+                    # strictly additive: the baseline extraction's figures stay; the re-chunked rows only fill fields the baseline lacks
+                    base_path = out / "_supplement" / co / fy / "financials" / "raw_baseline.json"
+                    base_path.parent.mkdir(parents=True, exist_ok=True)
+                    base_path.write_text(baseline_raw, encoding="utf-8")
+                    try:
+                        norm = fill_missing_fields(normalize_financial_tables(company=co, year=fy, raw_tables_path=base_path, allow_partial_balance_sheet=True), norm)
+                    except RuntimeError as exc:         # the baseline alone cannot be normalized (nothing to protect): the supplemented normalization stands
+                        not_regenerated.append(f"{co}:{fy}:baseline-normalization: {exc}")
+            except RuntimeError as exc:  # the current code cannot normalize this year: its stored normalized file is removed above and stays absent (reported)
+                not_regenerated.append(f"{co}:{fy}:normalization: {exc}")
+                (fin / "normalized_fundamentals.json").unlink(missing_ok=True)
                 norm = None
             if norm is not None:
                 (fin / "normalized_fundamentals.json").write_text(json.dumps(norm, indent=2, ensure_ascii=False), encoding="utf-8")
             for stage, call in (
-                ("validation", lambda: write_financial_validation_report(company=co, year=fy, normalized_path=fin / "normalized_fundamentals.json", output_path=fin / "financial_validation_report.json")),
-                ("reconciliation", lambda: write_financial_reconciliation_report(company=co, year=fy, normalized_path=fin / "normalized_fundamentals.json", output_path=fin / "financial_reconciliation_report.json")),
-                ("ratios", lambda: write_financial_ratios(company=co, year=fy, normalized_path=fin / "normalized_fundamentals.json", reconciliation_path=fin / "financial_reconciliation_report.json", output_path=fin / "financial_ratios.json")),
+                ("validation", lambda: write_financial_validation_report(company=co, year=fy, normalized_path=fin / "normalized_fundamentals.json", output_path=fin / "financial_validation_report.json", output_root=out)),
+                ("reconciliation", lambda: write_financial_reconciliation_report(company=co, year=fy, normalized_path=fin / "normalized_fundamentals.json", output_path=fin / "financial_reconciliation_report.json", output_root=out)),
+                # the registry decides which figures may be used; what it rejects leaves normalized_fundamentals.json before anything is derived from it
+                ("authority", lambda: settle_financial_authority(company=co, year=fy, financial_root=fin, output_root=out, chunk_paths=[chunk_file])),
+                ("validation", lambda: write_financial_validation_report(company=co, year=fy, normalized_path=fin / "normalized_fundamentals.json", output_path=fin / "financial_validation_report.json", output_root=out)),
+                ("reconciliation", lambda: write_financial_reconciliation_report(company=co, year=fy, normalized_path=fin / "normalized_fundamentals.json", output_path=fin / "financial_reconciliation_report.json", output_root=out)),
+                ("basis_resolution", lambda: write_financial_basis_resolution(company=co, year=fy, financial_root=fin, output_path=fin / "financial_basis_resolution.json", output_root=out)),
+                ("ratios", lambda: write_financial_ratios(company=co, year=fy, normalized_path=fin / "normalized_fundamentals.json", reconciliation_path=fin / "financial_reconciliation_report.json", output_path=fin / "financial_ratios.json", output_root=out)),
+                ("growth", lambda: write_financial_growth(company=co, year=fy, normalized_path=fin / "normalized_fundamentals.json", reconciliation_path=fin / "financial_reconciliation_report.json",
+                                                          ratios_path=fin / "financial_ratios.json", output_path=fin / "financial_growth.json", output_root=out)),
                 ("corporate_actions", lambda: write_corporate_actions(company=co, year=fy, normalized_path=fin / "normalized_fundamentals.json", raw_tables_path=fin / "raw_financial_tables.json",
                                                                       chunk_path=chunk_file if chunk_file.exists() else None,
-                                                                      output_path=fin / "corporate_actions.json")),
+                                                                      output_path=fin / "corporate_actions.json", output_root=out)),
                 ("fact_registry", lambda: write_financial_fact_registry(company=co, year=fy, financial_root=fin, registry_output_path=fin / "financial_fact_registry.json",
-                                                                         reconciliation_output_path=fin / "financial_truth_reconciliation_report.json", quarantine_output_path=fin / "financial_artifact_quarantine_report.json")),
+                                                                         reconciliation_output_path=fin / "financial_truth_reconciliation_report.json", quarantine_output_path=fin / "financial_artifact_quarantine_report.json", output_root=out)),
+                # shareholding_pattern.json is NOT rebuilt: nothing changed here touches ownership, and re-extracting it from the filing lost facts the served file carries
+                ("audit", lambda: write_financial_audit_report(company=co, year=fy, financials_dir=fin, output_path=fin / "financial_audit_report.json", output_root=out)),
+                ("quality_summary", lambda: write_financial_quality_summary(company=co, financial_root=fin, year=fy, output_path=fin / "financial_quality_summary.json", output_root=out)),
             ):
                 try:
                     call()
-                except RuntimeError as exc:  # stage cannot run under current code (pre-existing): keep the stored artifact for it and say so
+                except (RuntimeError, ValueError, FileNotFoundError) as exc:  # the stage cannot run under the current code: its artifact stays absent and is reported
                     not_regenerated.append(f"{co}:{fy}:{stage}: {exc}")
-        write_financial_trends(company=co, company_root=dst, output_path=dst / "company_memory" / "financials" / "financial_trends.json")
+        write_financial_trends(company=co, company_root=dst, output_path=dst / "company_memory" / "financials" / "financial_trends.json", output_root=out)
         pack = build_financial_truth_pack(company=co, company_root=dst)
         (dst / "company_memory" / "financials" / "financial_truth_pack.json").write_text(json.dumps(pack, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+        # Phase 1: everything that is derived from the registry is rebuilt from the candidate registry (never left as the served copy): the financial memory set
+        # (year index, quality evolution, capital-allocation financial timeline, ownership, summary, manifest, truth pack) and the investor modules (ROI ledger, owner earnings, ...).
+        try:
+            write_financial_memory_artifacts(company=co, company_root=dst, output_dir=dst / "company_memory" / "financials", output_root=out)
+            write_investor_financial_modules(company=co, company_root=dst, output_dir=dst / "company_memory" / "financials" / "investor_financial_modules", output_root=out)
+            pack = json.loads((dst / "company_memory" / "financials" / "financial_truth_pack.json").read_text(encoding="utf-8"))
+        except (RuntimeError, ValueError) as exc:     # a company whose years cannot all be rebuilt keeps its served artifact for that stage, and says so
+            not_regenerated.append(f"{co}:financial_memory/investor_modules: {exc}")
+            # the copied served financial memory describes the OLD extraction: it is removed, not shipped as if it were the candidate's (the company then has year-level facts only)
+            memory_dir = dst / "company_memory" / "financials"
+            for stale in list(memory_dir.glob("*.json")) + list((memory_dir / "investor_financial_modules").glob("*.json")):
+                stale.unlink()
+            not_regenerated.append(f"{co}:financial_memory: stale served company-level financial memory removed from the candidate")
         # Capital ledger + economic attribution (the cases the Story/Discoveries/Question pages read). Inputs are read from the served tree.
         cao_dir = dst / "company_memory" / "capital_allocation_outcomes"
         cao_dir.mkdir(parents=True, exist_ok=True)
@@ -147,6 +237,10 @@ def main(argv):
                 (ledger_root / entry.name).mkdir()
                 for sub in entry.iterdir():
                     (ledger_root / entry.name / sub.name).symlink_to(dst / entry.name / "financials" if sub.name == "financials" else sub)
+            elif entry.name == "company_memory":          # served memory, except the financial set the candidate rebuilt above
+                (ledger_root / "company_memory").mkdir()
+                for sub in entry.iterdir():
+                    (ledger_root / "company_memory" / sub.name).symlink_to(dst / "company_memory" / "financials" if sub.name == "financials" else sub)
             else:
                 (ledger_root / entry.name).symlink_to(entry)
         for filename, payload in build_capital_allocation_outcomes(company=co, company_root=ledger_root).items():
@@ -158,6 +252,7 @@ def main(argv):
         (dst / "company_memory" / "economic_attribution" / "economic_attribution_intelligence.json").write_text(json.dumps(econ, indent=2, ensure_ascii=False), encoding="utf-8")
         if "--no-commitments" not in argv:
             commitments_stage(co, src, dst, out)
+        bind_company(dst, output_root=out)       # every financial-derived artifact is recorded against the registries that now exist (the last step of a build)
         stored = json.loads((src / "company_memory" / "financials" / "financial_truth_pack.json").read_text())
         before, after = facts(stored), facts(pack)
         summary[co] = {f"{m}:{fy}": {"stored": before.get(k), "candidate": after.get(k)} for k in sorted(set(before) | set(after)) for m, fy in [k] if before.get(k) != after.get(k)}

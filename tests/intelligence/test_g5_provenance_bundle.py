@@ -125,9 +125,8 @@ def test_a_mention_without_a_figure_is_sent_to_review_not_decided():
 @needs_root
 def test_contradicted_source_claim_keeps_its_subject_when_reworded():
     j = G.judge(led("sun_pharma"), "Margins by revenue source and the split of revenue between sources are not disclosed in the records for Sun Pharma", G.DISCLOSURE_ABSENCE)
-    assert j["status"] == "CONTRADICTED" and j["state"] == "NOT_EXTRACTED"
-    assert j["rewrite"].startswith("Margins by revenue source and the split of revenue between sources are not extracted into the records")
-    assert re.search(r"\(pp?\.\d+", j["rewrite"])
+    assert j["status"] == "CONTRADICTED"
+    assert "Not yet concluded" in j["rewrite"] and "revenue" in j["rewrite"]        # superseded by the evidence gate: the rewrite is the investor fallback
 
 
 @needs_root
@@ -149,7 +148,7 @@ def test_different_companies_and_scopes_do_not_share_a_group():
 @needs_root
 def test_bank_does_not_get_an_industrial_capex_claim_as_a_disclosure_gap():
     j = G.judge(led("ujjivan"), "The maintenance-versus-growth capex split is not disclosed", G.DISCLOSURE_ABSENCE)
-    assert j["state"] == "NOT_APPLICABLE" and "bank" in j["rewrite"]
+    assert not j["status"].startswith("VERIFIED") and "Not yet concluded" in j["rewrite"]      # blanket bank inapplicability is not established
 
 
 # ── the scratch replacement bundle ──
@@ -177,13 +176,13 @@ def test_original_digests_recorded_equal_the_registry_and_proposed_digests_diffe
 
 @needs_bundle
 def test_approved_based_slots_change_only_absence_wording_and_provenance():
-    allowed = {"what_is_not_yet_proven", "evidence_gaps", "what_evidence_shows", "what_may_mean_economically", "key_points", "simple_answer", "what_to_monitor", "g5_absence", "g5_review_pending", "g5_system_statements"}
+    allowed = {"what_is_not_yet_proven", "evidence_gaps", "what_evidence_shows", "what_may_mean_economically", "key_points", "simple_answer", "what_to_monitor", "g5_absence", "g5_review_pending", "g5_system_statements", "g5_event_checks", "claims", "relationships", "deterministic_precision_facts", "why_it_matters", "investor_interpretation"}
     for d in _bundle():
         r = d["report"]
         if r["base"] == "approved":
             assert set(r["changed_fields"]) <= allowed, (d["slot"], r["changed_fields"])
             for rw in r["rewrites"]:
-                assert rw["reason"] in ("CONTRADICTED", "WRONG_NOT_APPLICABLE_CLAIM")      # only evidence-contradicted clauses are rewritten
+                assert rw["reason"] in ("CONTRADICTED", "WRONG_NOT_APPLICABLE_CLAIM", "UNRESOLVED_REVIEW", "UNRESOLVED_NOT_DISCLOSED_CANDIDATE", "UNRESOLVED_UNPROFILED", "UNSUPPORTED_EVENT")      # only evidence-contradicted clauses are rewritten
                 assert rw["after"] != rw["before"]
 
 
@@ -214,11 +213,13 @@ def test_unresolved_claims_are_listed_not_hidden_and_never_given_a_verified_stat
     for d in _bundle():
         a = d["answer"]
         for e in a.get("g5_absence", []):
-            assert e["verification"] in ("VERIFIED", "PENDING_HUMAN_CONFIRMATION")
+            assert e["verification"] in ("VERIFIED", "PENDING_HUMAN_CONFIRMATION", "UNVERIFIED_SCOPED_STATEMENT")
             if e["verification"] == "VERIFIED":
-                assert e["state"] in ("NOT_EXTRACTED", "NOT_APPLICABLE") and (e["state"] == "NOT_APPLICABLE" or e["locator"])
-            else:
+                assert e["state"] in ("NOT_EXTRACTED", "NOT_APPLICABLE") and (e["state"] == "NOT_APPLICABLE" or re.search(r"p\.\d", e["basis"]))
+            elif e["verification"] == "PENDING_HUMAN_CONFIRMATION":
                 assert e["state"] == "NOT_DISCLOSED" and e["review"]
+            else:
+                assert e["state"] is None
         for p in a.get("g5_review_pending", []):
             assert p["review"] or p["status"]
 

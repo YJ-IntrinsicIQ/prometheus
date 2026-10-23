@@ -20,7 +20,7 @@ def _cleaner():
 
 def test_project_cleaner_accepts_historical_progression_years_inside_current_disclosures(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="datapatterns", year="fy23")
+    context = CompanyContext(company="datapatterns", year="fy23", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -78,7 +78,7 @@ def test_explicit_project_status_is_preserved():
 
 def test_non_promotable_ambiguous_historical_project_is_quarantined_with_diagnostics(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="sun_pharma", year="fy20")
+    context = CompanyContext(company="sun_pharma", year="fy20", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -125,7 +125,7 @@ def test_non_promotable_ambiguous_historical_project_is_quarantined_with_diagnos
 
 def test_generic_non_promotable_ambiguous_historical_project_variant_is_quarantined(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="acme", year="fy25")
+    context = CompanyContext(company="acme", year="fy25", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 
@@ -204,7 +204,7 @@ def test_ambiguous_period_with_other_validation_errors_still_hard_fails():
 
 def test_project_rejection_diagnostics_do_not_change_company_identity(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    context = CompanyContext(company="acme", year="fy25")
+    context = CompanyContext(company="acme", year="fy25", companies_root=tmp_path / "companies")
     context.create_directories()
     set_context(context)
 

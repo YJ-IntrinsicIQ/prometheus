@@ -240,6 +240,11 @@ def _write_year(company_root: Path, year: str, normalized, ratios=None, growth=N
         _write_json(fin / "corporate_actions.json", actions)
     if shareholding is not None:
         _write_json(fin / "shareholding_pattern.json", shareholding)
+    # The fact registry is the only authority a trend may be built from (a year without one contributes no facts), so the fixture year gets the registry its files imply.
+    from knowledge.financials.fact_registry import write_financial_fact_registry
+    write_financial_fact_registry(company=company_root.name, year=year, financial_root=fin, registry_output_path=fin / "financial_fact_registry.json",
+                                  reconciliation_output_path=fin / "financial_truth_reconciliation_report.json", quarantine_output_path=fin / "financial_artifact_quarantine_report.json",
+                                  output_root=company_root.parent)
     # Write stub intelligence artifacts so this year is ELIGIBLE (not PARTIAL).
     # The eligibility contract requires company_intelligence.json and
     # business_classification.json to be present and non-empty in
@@ -370,7 +375,7 @@ def test_write_financial_trends_persists_company_level_artifact(tmp_path):
     )
     output_path = company_root / "company_memory" / "financials" / "financial_trends.json"
 
-    report = write_financial_trends(company="acme", company_root=company_root, output_path=output_path)
+    report = write_financial_trends(company="acme", company_root=company_root, output_path=output_path, output_root=tmp_path)
     assert output_path.exists()
     saved = json.loads(output_path.read_text(encoding="utf-8"))
     assert saved["company"] == "acme"

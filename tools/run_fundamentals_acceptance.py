@@ -13,6 +13,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--company", required=True)
     parser.add_argument("--year")
+    parser.add_argument("--companies-root", required=True, help="absolute companies root (there is no default)")
+    parser.add_argument("--authorize-served-write", action="store_true", help="required when the root is the served companies/ tree")
     parser.add_argument(
         "--output-md",
         action="store_true",
@@ -26,7 +28,9 @@ def main() -> None:
     outputs = run_fundamentals_acceptance(
         company=args.company,
         year=args.year,
+        companies_root=args.companies_root,
         output_md=args.output_md,
+        authorize_served_write=args.authorize_served_write,
     )
     for name, path in outputs.items():
         print(f"{name}: {path}")

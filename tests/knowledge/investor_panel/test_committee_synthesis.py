@@ -532,7 +532,7 @@ def test_major_engine_trajectory_creates_prioritized_decision_diligence():
             ],
         ),
     ]
-    synthesizer = InvestmentCommitteeSynthesizer(company="polymatech")
+    synthesizer = InvestmentCommitteeSynthesizer(company="polymatech", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     registry = synthesizer._build_uncertainty_registry(analysts)
     skeleton = build_committee_synthesis_skeleton(
         "polymatech",
@@ -562,7 +562,7 @@ def test_unanimous_engine_uncertainty_does_not_require_disagreement():
         )
         for doctrine in ("buffett", "fisher", "lynch")
     ]
-    synthesizer = InvestmentCommitteeSynthesizer(company="polymatech")
+    synthesizer = InvestmentCommitteeSynthesizer(company="polymatech", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     skeleton = build_committee_synthesis_skeleton(
         "polymatech",
         analysts,
@@ -578,7 +578,7 @@ def test_unanimous_engine_uncertainty_does_not_require_disagreement():
 
 def test_non_material_or_resolved_engine_does_not_create_diligence_noise():
     analysts = [_analysis_payload("buffett", uncertainties=["Engine profitability remains unknown."])]
-    synthesizer = InvestmentCommitteeSynthesizer(company="polymatech")
+    synthesizer = InvestmentCommitteeSynthesizer(company="polymatech", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     skeleton = build_committee_synthesis_skeleton(
         "polymatech",
         analysts,
@@ -1528,7 +1528,7 @@ def test_committee_synthesizer_uses_deterministic_confidence_not_llm_confidence(
 
 
 def test_committee_enum_normalizer_repairs_rating_variants():
-    synthesizer = InvestmentCommitteeSynthesizer(company="polymatech")
+    synthesizer = InvestmentCommitteeSynthesizer(company="polymatech", companies_root=Path.cwd() / "companies", authorize_served_write=True)
     payload = {
         "overall_committee_view": {"confidence": "moderate"},
         "areas_of_agreement": [{"rating": "neutral"}],

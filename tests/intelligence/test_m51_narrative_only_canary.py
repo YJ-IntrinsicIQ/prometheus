@@ -443,7 +443,11 @@ def test_m51_28_idempotency(manifest):
     import sys; sys.path.insert(0, str(REPO))
     from intelligence.regeneration_executor import run_regeneration_v4
 
-    result = run_regeneration_v4(company="sun_pharma", dry_run=False)
+    # the executor may write its manifest under companies/: run it against a disposable COPY of the company, never the served tree
+    import shutil
+    scratch = Path(__import__("tempfile").mkdtemp()) / "companies"
+    shutil.copytree(REPO / "companies" / "sun_pharma", scratch / "sun_pharma", ignore=shutil.ignore_patterns("raw", "fy*"))
+    result = run_regeneration_v4(company="sun_pharma", companies_root=scratch, dry_run=False)
     # M52 changed the V4 FP, so executor detects contract identity mismatch
     expected_decisions = {"M51_CONTRACT_IDENTITY_MISMATCH", "REUSE_EXISTING_GENERATION"}
     assert result.get("decision") in expected_decisions, (

@@ -928,10 +928,10 @@ def quality_bucket_counts(items: Sequence[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
-def write_json(path: Path, payload: Dict[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return path
+def write_json(path: Path, payload: Dict[str, Any], output_root: Path | str | None = None) -> Path:
+    from core.context_paths import guarded_write_or_refuse_served
+
+    return guarded_write_or_refuse_served(path, json.dumps(payload, indent=2, ensure_ascii=False), output_root)
 
 
 def build_evidence_layer_summary(context: Any) -> Dict[str, Any]:
@@ -1009,7 +1009,7 @@ def build_evidence_layer_summary(context: Any) -> Dict[str, Any]:
 
 def write_evidence_layer_summary(context: Any) -> Path:
     summary = build_evidence_layer_summary(context)
-    return write_json(context.year_root / "evidence_layer_summary.json", summary)
+    return write_json(context.year_root / "evidence_layer_summary.json", summary, context.companies_root)
 
 
 def _load_json(path: Path) -> Any:

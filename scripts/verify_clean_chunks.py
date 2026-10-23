@@ -6,8 +6,12 @@ from pipelines.pipeline_context import set_context
 from scripts.pdf_reader import extract_pages
 from scripts.smart_chunker import chunk_pages
 
+import sys
+
+if len(sys.argv) < 2:
+    raise SystemExit('usage: python scripts/verify_clean_chunks.py <absolute companies root> [--authorize-served-write]')
 for company, year in [('polymatech', '2025'), ('tips', '2024')]:
-    context = CompanyContext(company=company, year=year)
+    context = CompanyContext(company=company, year=year, companies_root=sys.argv[1], authorize_served_write='--authorize-served-write' in sys.argv[2:])
     context.create_directories()
     set_context(context)
     from core.inbox_paths import PROCESSED

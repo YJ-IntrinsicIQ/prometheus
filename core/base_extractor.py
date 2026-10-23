@@ -111,6 +111,7 @@ class BaseExtractor:
             prompt=json.dumps(llm_input_pack, indent=2, ensure_ascii=False),
             input_pack=llm_input_pack,
             manifest_path=self.output_file.with_name(f"{self.output_file.stem}_llm_call_manifest.json"),
+            output_root=getattr(get_context(), "companies_root", None),
             require_source_artifacts=True,
             system_prompt=self.prompt,
             temperature=0,
@@ -224,7 +225,7 @@ class BaseExtractor:
             max_total_chars=self.max_total_chars,
             relevance_threshold=self.relevance_threshold,
         )
-        write_json(self.selection_metadata_path, selection_metadata)
+        write_json(self.selection_metadata_path, selection_metadata, getattr(get_context(), "companies_root", None))
 
         extracted_items = []
         context = get_context()

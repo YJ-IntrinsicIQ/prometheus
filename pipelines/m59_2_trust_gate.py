@@ -20,9 +20,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from pipelines import m59_question_batch as m  # noqa: E402
+from pipelines import answer_certification as ac  # noqa: E402
 from pipelines.answer_certification import compute_content_fingerprint as fingerprint, compute_full_artifact_digest as digest  # noqa: E402
 
-CAND = "companies/{c}/company_memory/ask_intrinsiciq/m59_candidate_answers.json"
+CAND = "{c}/company_memory/ask_intrinsiciq/m59_candidate_answers.json"
 PAIRS = ROOT / "preview" / "M59_pairs.json"
 PRIOR = ROOT / "preview" / "M59_2_FINAL_AUTHORIZATION_MANIFEST.json"   # frozen record of the M59.2 decision
 MANIFEST = ROOT / "preview" / "M59_3_FINAL_AUTHORIZATION_MANIFEST.json"
@@ -274,7 +275,7 @@ def build_replacements(registry: dict, cos: dict) -> list[dict]:
                "note": "REPLACEMENT CANDIDATES ONLY. Not served. They supersede approved answers and need separate, explicit reapproval; the existing approvals are untouched.", "answers": {}}
         for q in REPL_QUESTIONS:
             rec = registry[f"{c}:{q}"]
-            cur = json.loads((ROOT / "companies" / c / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json").read_text())["answers"][q]["answer"]
+            cur = json.loads((ac.companies_root() / c / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json").read_text())["answers"][q]["answer"]
             assert digest(cur) == rec["full_artifact_digest"], f"{c}:{q} approved answer no longer matches the registry"
 
             def fx(t: str, c=c) -> str:
@@ -294,14 +295,20 @@ def build_replacements(registry: dict, cos: dict) -> list[dict]:
                                  "replacement": {"full_artifact_digest": d, "fingerprint": f, "pacp_before": before["overall"], "pacp_after": after["overall"], "pacp_fails": after["fails"]}}
             out.append({"company": c, "question_id": q, "approved_digest": rec["full_artifact_digest"], "replacement_digest": d, "replacement_fingerprint": f, "pacp": f"{before['overall']} -> {after['overall']}",
                         "why": "headline 'hard commitment(s)' (described as specific target and deadline) overstates what the register's verifiable tier contains"})
-        (ROOT / "companies" / c / "company_memory/ask_intrinsiciq/m59_3_replacement_candidates.json").write_text(json.dumps(doc, indent=2, ensure_ascii=False))
+        (ac.companies_root() / c / "company_memory/ask_intrinsiciq/m59_3_replacement_candidates.json").write_text(json.dumps(doc, indent=2, ensure_ascii=False))
     return out
 
 
 def main() -> int:
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--companies-root", required=True, type=Path, help="absolute company-data root (required; no default)")
+    ap.add_argument("--authorize-served-write", action="store_true", help="permit --companies-root to be the served companies/ tree")
+    a = ap.parse_args()
+    ac.configure_companies_root(a.companies_root, authorize_served=a.authorize_served_write)
     registry = json.loads((ROOT / "governance/approval_registry.json").read_text())["approvals"]
     reg_before = (ROOT / "governance/approval_registry.json").read_bytes()
-    served_before = {c: (ROOT / "companies" / c / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json").read_bytes() for c in m.COMPANIES}
+    served_before = {c: (ac.companies_root() / c / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json").read_bytes() for c in m.COMPANIES}
     pairs_doc = json.loads(PAIRS.read_text())
     pairs = {(p["company"], p["question_id"]): p for p in pairs_doc["pairs"]}
     prev = json.loads(M591.read_text())
@@ -312,7 +319,7 @@ def main() -> int:
     out: list[dict] = []
     excl: list[dict] = []
     for c in m.COMPANIES:
-        path = ROOT / CAND.format(c=c)
+        path = ac.companies_root() / CAND.format(c=c)
         doc = json.loads(path.read_text())
         ans = doc["answers"]
         for q in [q for (cc, q) in ready_in if cc == c]:
@@ -356,7 +363,7 @@ def main() -> int:
             p.update({"answer": new["simple_answer"], "evidence": new["what_evidence_shows"], "economics": new["what_may_mean_economically"], "unproven": new["what_is_not_yet_proven"], "monitor": new["what_to_monitor"], "fingerprint": f, "full_artifact_digest": d, "validation": v["checks"], "pacp": v["pacp"]})
             if "entry" in p:
                 p["entry"]["answer"] = new
-            out.append({"company": c, "question_id": q, "family": p["family"], "title": p["title"], "verdict": verdict, "full_artifact_digest": d, "fingerprint": f, "m592_digest": prior.get((c, q)), "m593_status": "REINSTATED" if (c, q) not in prior else "CORRECTED" if prior[(c, q)] != d else "UNCHANGED", "source_verification": src, "investor_quality": QUALITY.get("commit" if kind == "commit" else kind, ""), "limitation": LIMITS[c], "corrections": log, "candidate_file": CAND.format(c=c)})
+            out.append({"company": c, "question_id": q, "family": p["family"], "title": p["title"], "verdict": verdict, "full_artifact_digest": d, "fingerprint": f, "m592_digest": prior.get((c, q)), "m593_status": "REINSTATED" if (c, q) not in prior else "CORRECTED" if prior[(c, q)] != d else "UNCHANGED", "source_verification": src, "investor_quality": QUALITY.get("commit" if kind == "commit" else kind, ""), "limitation": LIMITS[c], "corrections": log, "candidate_file": "companies/" + CAND.format(c=c)})
         doc["generated_note"] = "CANDIDATES ONLY. M59.3 final gate applied: excluded pairs removed; see preview/M59_3_FINAL_AUTHORIZATION_MANIFEST.json."
         path.write_text(json.dumps(doc, indent=2, ensure_ascii=False))
     PAIRS.write_text(json.dumps(pairs_doc, indent=2, ensure_ascii=False))
@@ -370,7 +377,7 @@ def main() -> int:
     MANIFEST.write_text(json.dumps(body, indent=2, ensure_ascii=False))
     assert (ROOT / "governance/approval_registry.json").read_bytes() == reg_before, "registry changed"
     for c in m.COMPANIES:
-        assert (ROOT / "companies" / c / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json").read_bytes() == served_before[c], "served answers changed"
+        assert (ac.companies_root() / c / "company_memory/ask_intrinsiciq/shadow_level3_hybrid_answers.json").read_bytes() == served_before[c], "served answers changed"
     print(body["counts"], "manifest sha256", hashlib.sha256(MANIFEST.read_bytes()).hexdigest())
     return 0
 

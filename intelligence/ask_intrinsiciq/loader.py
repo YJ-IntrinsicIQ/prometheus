@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
+from knowledge.financials.authority_gate import carries_financial_evidence, check_artifact, is_financial_dependent, load_company_authority
+
 
 SOURCE_REGISTRY = {
     "cim": "company_memory/cim_v1.json",
@@ -91,17 +93,20 @@ def _artifact_company_slug(payload: Dict[str, Any]) -> str:
     return _canonical_company_slug(payload.get("company"))
 
 
-def load_company_memory_sources(company_slug: str) -> Dict[str, Any]:
+def load_company_memory_sources(company_slug: str, companies_root: Path | str | None = None) -> Dict[str, Any]:
+    """READ-ONLY. With companies_root the sources are read from that root (the generator passes its own); without it the legacy cwd-relative companies/ is read."""
     company_slug = _canonical_company_slug(company_slug)
-    company_root = Path("companies") / company_slug
+    company_root = (Path(companies_root) if companies_root is not None else Path("companies")) / company_slug
+    logical_root = Path("companies") / company_slug
     sources: Dict[str, Any] = {}
     found: List[str] = []
     missing: List[str] = []
 
+    authority = load_company_authority(company_root)
     for source_name, relative_path in SOURCE_REGISTRY.items():
         path = company_root / relative_path
         record: Dict[str, Any] = {
-            "path": str(path),
+            "path": str(logical_root / relative_path),
             "relative_path": relative_path,
             "status": "missing",
             "payload": None,
@@ -126,6 +131,19 @@ def load_company_memory_sources(company_slug: str) -> Dict[str, Any]:
                     missing.append(relative_path)
                     sources[source_name] = record
                     continue
+            if isinstance(payload, dict) and is_financial_dependent(relative_path) and (carries_financial_evidence(payload) or relative_path.endswith("financial_truth_pack.json")):
+                # Financial authority at the point of consumption: evidence derived from financial facts is used only if it was built against the registries that exist NOW and is
+                # untouched since; a missing, empty, stale, unrecorded or edited artifact is UNAVAILABLE, whatever it says (a stored "ready" flag or a healthy-sounding summary included).
+                status, reason = check_artifact(company_root, relative_path, authority)
+                if status == "valid" and relative_path.endswith("financial_truth_pack.json") and not any(payload.get(k) for k in ("usable_current_metrics", "usable_derived_metrics", "partial_metrics")):
+                    status, reason = "empty", "the financial truth pack holds no metric"
+                if status != "valid":
+                    record["status"] = "authority_unavailable"
+                    record["error"] = f"FINANCIAL_AUTHORITY_{status.upper()}: {reason}"
+                    record["failure_class"] = "FINANCIAL_AUTHORITY_UNAVAILABLE"
+                    missing.append(relative_path)
+                    sources[source_name] = record
+                    continue
             record["payload"] = payload
             record["generated_at"] = str(payload.get("generated_at") or "") if isinstance(payload, dict) else ""
             try:
@@ -144,7 +162,7 @@ def load_company_memory_sources(company_slug: str) -> Dict[str, Any]:
 
     return {
         "company_slug": company_slug,
-        "company_root": str(company_root),
+        "company_root": str(logical_root),
         "sources": sources,
         "source_files_considered": list(SOURCE_REGISTRY.values()),
         "source_files_found": found,

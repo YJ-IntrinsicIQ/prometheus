@@ -25,7 +25,7 @@ def _quality() -> dict:
 
 
 def _base_year_context(tmp_path: Path, company: str = "cleanco", year: str = "fy25") -> CompanyContext:
-    context = CompanyContext(company=company, year=year)
+    context = CompanyContext(company=company, year=year, companies_root=Path.cwd() / "companies")
     context.create_directories()
     return context
 
@@ -258,7 +258,7 @@ def test_clean_company_audit_passes(tmp_path, monkeypatch):
     _seed_clean_year(tmp_path, year="fy24")
     _seed_clean_year(tmp_path, year="fy25")
 
-    outputs = run_company_artifact_audit("cleanco")
+    outputs = run_company_artifact_audit("cleanco", companies_root=Path.cwd() / "companies")
     payload = json.loads(outputs["company_artifact_audit.json"].read_text(encoding="utf-8"))
 
     assert payload["status"] == "pass"
@@ -292,7 +292,7 @@ def test_stale_pcim_is_detected(tmp_path, monkeypatch):
         },
     )
 
-    outputs = run_company_artifact_audit("staleco")
+    outputs = run_company_artifact_audit("staleco", companies_root=Path.cwd() / "companies")
     payload = json.loads(outputs["company_artifact_audit.json"].read_text(encoding="utf-8"))
 
     assert payload["status"] == "fail"
@@ -307,7 +307,7 @@ def test_business_identity_conflict_fails_audit(tmp_path, monkeypatch):
     blueprint["dnas"] = [{"name": "Enterprise Platform", "confidence": 0.9}]
     _write_json(context.intelligence_dir / "business_blueprint.json", blueprint)
 
-    outputs = run_company_artifact_audit("conflictco")
+    outputs = run_company_artifact_audit("conflictco", companies_root=Path.cwd() / "companies")
     payload = json.loads(outputs["company_artifact_audit.json"].read_text(encoding="utf-8"))
 
     assert payload["status"] == "fail"
@@ -337,7 +337,7 @@ def test_capital_allocation_violation_fails_audit(tmp_path, monkeypatch):
         }],
     )
 
-    outputs = run_company_artifact_audit("capviolco")
+    outputs = run_company_artifact_audit("capviolco", companies_root=Path.cwd() / "companies")
     payload = json.loads(outputs["company_artifact_audit.json"].read_text(encoding="utf-8"))
 
     assert payload["status"] == "fail"
@@ -378,7 +378,7 @@ def test_panel_qa_failure_fails_audit(tmp_path, monkeypatch):
     (panel_dir / "committee_brief.md").write_text("bad brief", encoding="utf-8")
     _write_json(panel_dir / "committee_brief_qa.json", {"status": "fail", "warnings": [], "failures": ["required_sections"]})
 
-    outputs = run_company_artifact_audit("panelco")
+    outputs = run_company_artifact_audit("panelco", companies_root=Path.cwd() / "companies")
     payload = json.loads(outputs["company_artifact_audit.json"].read_text(encoding="utf-8"))
 
     assert payload["status"] == "fail"

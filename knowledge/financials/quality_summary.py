@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, planned_writes, resolve_output_root, safe_destination
 
 import json
 import time
@@ -768,10 +769,9 @@ def _build_legacy_financial_quality_summary(*, company: str, trends_path: Path) 
     return report
 
 
-def _write_legacy_financial_quality_summary(*, company: str, trends_path: Path, output_path: Path) -> FinancialQualitySummary:
+def _write_legacy_financial_quality_summary(*, company: str, trends_path: Path, output_path: Path, root: Path | str) -> FinancialQualitySummary:
     report = _build_legacy_financial_quality_summary(company=company, trends_path=trends_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+    guarded_write_text(root, output_path, json.dumps(report.to_dict(), indent=2))
     return report
 
 
@@ -1531,18 +1531,24 @@ def write_financial_quality_summary(
     trends_path: Path | None = None,
     financial_root: Path | None = None,
     year: str | None = None,
+    output_root: Path | str,
+    authorize_served_write: bool = False,
+    dry_run: bool = False,
 ) -> FinancialQualitySummary | YearFinancialQualitySummary:
+    root = resolve_output_root(output_root, authorize_served=authorize_served_write)  # explicit, absolute; the served tree needs authorize_served_write=True
+    if dry_run:     # read-only: the exact files this call would write
+        return planned_writes(root, output_path)
     if trends_path is not None:
         return _write_legacy_financial_quality_summary(
             company=company,
             trends_path=trends_path,
             output_path=output_path,
+            root=root,
         )
     report = build_financial_quality_summary(
         company=company,
         financial_root=financial_root,
         year=year,
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+    guarded_write_text(root, output_path, json.dumps(report.to_dict(), indent=2))
     return report

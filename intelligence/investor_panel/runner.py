@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.context_paths import guarded_write_text, resolve_output_root, safe_destination
 
 import json
 import os
@@ -8,7 +9,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.context_paths import investor_panel_dir
 from knowledge.ai import get_llm
 from knowledge.ai.input_packs import (
     build_llm_input_pack,
@@ -38,6 +38,7 @@ from .evidence_router import (
     sanitize_active_evidence_ids,
     split_clean_and_diagnostics,
 )
+from knowledge.financials.authority_gate import carries_financial_evidence, check_artifact
 from .evidence_grounding import (
     PCIM_SECTION_NAME_DENYLIST,
     build_evidence_lookup,
@@ -49,6 +50,10 @@ from .evidence_grounding import (
 
 
 PCIM_FILE = "pcim_v1.json"
+
+
+class FinancialAuthorityUnavailable(RuntimeError):
+    """The PCIM (or a financial artifact) was not built against the financial registries that exist now: no panel input is built from it."""
 ALLOWED_RATINGS = {"strong", "mixed", "weak", "insufficient_evidence"}
 DEFAULT_MAX_ITEMS_PER_SECTION = 25
 DEFAULT_MAX_RISKS = 20
@@ -761,10 +766,9 @@ def _load_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _write_json(path: Path, payload: Dict[str, Any]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return path
+def _write_json(path: Path, payload: Dict[str, Any], *, root: Path | str) -> Path:
+    """The destination must lie inside the explicit, already-authorized output root."""
+    return guarded_write_text(root, path, json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 def _section_payload(pcim: Dict[str, Any], section: str) -> Any:
@@ -1119,7 +1123,6 @@ def _financial_period_sort_key(value: Any) -> Tuple[int, str]:
 def _build_financial_metric_registry(selected_pcim: Dict[str, Any], sections: List[str]) -> List[Dict[str, Any]]:
     registry: List[Dict[str, Any]] = []
     seen_metric_ids: set[str] = set()
-
     def add_entry(entry: Dict[str, Any]) -> None:
         metric_id = str(entry.get("metric_id") or "").strip()
         canonical = str(entry.get("canonical_metric") or "").strip()
@@ -7813,6 +7816,7 @@ def write_clean_analyst_artifacts(
     output_dir: Path,
     doctrine_id: str,
     analysis_mode: str,
+    root: Path | str,
 ) -> Dict[str, Path]:
     filename = _analysis_filename(
         doctrine_id=doctrine_id,
@@ -7832,24 +7836,24 @@ def write_clean_analyst_artifacts(
     diagnostics_payload.setdefault("clean_writer_status", "pending")
     diagnostics_payload.setdefault("clean_writer_error", "")
     clean_payload = _sanitize_clean_payload(clean_payload, "$", diagnostics_payload)
-    diagnostics_path = _write_json(output_dir / diagnostics_filename, diagnostics_payload)
+    diagnostics_path = _write_json(output_dir / diagnostics_filename, diagnostics_payload, root=root)
     try:
         assert_clean_analysis_payload(clean_payload)
         diagnostics_payload["remaining_forbidden_keys"] = []
         diagnostics_payload["remaining_forbidden_strings"] = []
-        clean_path = _write_json(output_dir / filename, clean_payload)
+        clean_path = _write_json(output_dir / filename, clean_payload, root=root)
         diagnostics_payload["clean_writer_status"] = "pass"
         diagnostics_payload["clean_writer_error"] = ""
-        diagnostics_path = _write_json(output_dir / diagnostics_filename, diagnostics_payload)
+        diagnostics_path = _write_json(output_dir / diagnostics_filename, diagnostics_payload, root=root)
     except Exception as exc:
         remaining_keys, remaining_strings = _scan_clean_payload_issues(clean_payload)
-        failed_candidate_path = _write_json(output_dir / failed_candidate_filename, clean_payload)
+        failed_candidate_path = _write_json(output_dir / failed_candidate_filename, clean_payload, root=root)
         diagnostics_payload["clean_writer_status"] = "fail"
         diagnostics_payload["clean_writer_error"] = str(exc)
         diagnostics_payload["failed_clean_candidate_path"] = str(failed_candidate_path)
         diagnostics_payload["remaining_forbidden_keys"] = remaining_keys
         diagnostics_payload["remaining_forbidden_strings"] = remaining_strings
-        diagnostics_path = _write_json(output_dir / diagnostics_filename, diagnostics_payload)
+        diagnostics_path = _write_json(output_dir / diagnostics_filename, diagnostics_payload, root=root)
         raise ValueError(f"clean analyst payload failed validation for {doctrine_id}: {exc}") from exc
     return {
         filename: clean_path,
@@ -7861,31 +7865,38 @@ class InvestorPanelRunner:
     def __init__(
         self,
         company: str,
-        companies_root: Path | str = Path("companies"),
+        companies_root: Path | str,
         doctrines_dir: Path | str = Path(__file__).resolve().parent / "doctrines",
         output_dir: Path | str | None = None,
+        *,
+        authorize_served_write: bool = False,
     ):
         self.company = company
-        self.companies_root = Path(companies_root)
+        # explicit, absolute, symlink-resolved; the served companies/ tree is refused unless authorize_served_write=True
+        self.companies_root = resolve_output_root(companies_root, authorize_served=authorize_served_write)
         self.company_root = self.companies_root / company
         self.company_memory_dir = self.company_root / "company_memory"
+        # the default output directory is derived from the SAME root (it used to be cwd-relative and ignore companies_root); an explicit output_dir must lie inside it
         self.output_dir = (
-            Path(output_dir)
+            safe_destination(self.companies_root, output_dir)
             if output_dir is not None
-            else investor_panel_dir(company)
+            else self.company_memory_dir / "investor_panel"
         )
         self.registry = InvestorDoctrineRegistry(doctrines_dir)
         self.llm = get_llm()
 
     def _write_prompt_budget_diagnostics(self, analyst: str, payload: Dict[str, Any]) -> Path:
         diagnostics_path = self.output_dir / f"prompt_budget_diagnostics_{_safe_slug(analyst)}.json"
-        return _write_json(diagnostics_path, payload)
+        return _write_json(diagnostics_path, payload, root=self.companies_root)
 
     def _load_pcim(self) -> Tuple[Path, Dict[str, Any]]:
         pcim_path = self.company_memory_dir / PCIM_FILE
         pcim = _load_json(pcim_path)
         if not pcim:
             raise FileNotFoundError(f"PCIM not found or unreadable: {pcim_path}")
+        status, reason = check_artifact(self.company_memory_dir.parent, "company_memory/" + PCIM_FILE)
+        if status != "valid" and carries_financial_evidence(pcim):
+            raise FinancialAuthorityUnavailable(f"PCIM is not usable as financial evidence ({status}): {reason}")
         if '"source_chunk"' in json.dumps(pcim, ensure_ascii=False):
             raise ValueError(f"PCIM must not contain source_chunk: {pcim_path}")
         return pcim_path, pcim
@@ -7993,6 +8004,7 @@ class InvestorPanelRunner:
             prompt=prompt,
             input_pack=llm_input_pack,
             manifest_path=self.output_dir / "investor_panel_llm_call_manifest.json",
+            output_root=self.companies_root,
             require_source_artifacts=True,
             response_schema={"type": "object"},
             temperature=0.0,
@@ -8023,6 +8035,7 @@ class InvestorPanelRunner:
                 prompt=repaired_prompt,
                 input_pack=llm_input_pack,
                 manifest_path=self.output_dir / "investor_panel_llm_call_manifest.json",
+            output_root=self.companies_root,
                 require_source_artifacts=True,
                 response_schema={"type": "object"},
                 temperature=0.0,
@@ -8132,6 +8145,7 @@ class InvestorPanelRunner:
                     output_dir=self.output_dir,
                     doctrine_id=doctrine["doctrine_id"],
                     analysis_mode=payload["analysis_mode"],
+                    root=self.companies_root,
                 )
             )
             analyses.append(
@@ -8159,5 +8173,5 @@ class InvestorPanelRunner:
             "analysts_run": analyses,
             "generated_at": utc_now(),
         }
-        written_paths["panel_index.json"] = _write_json(self.output_dir / "panel_index.json", panel_index)
+        written_paths["panel_index.json"] = _write_json(self.output_dir / "panel_index.json", panel_index, root=self.companies_root)
         return written_paths

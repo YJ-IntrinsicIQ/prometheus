@@ -27,6 +27,30 @@ ALLOWED_ARTIFACT_QUARANTINE_STATUS = {
 }
 
 
+OPENING_BALANCE_TOKENS = ("beginning of the", "at the beginning", "opening balance", "balance at the beginning", "at the start of the")
+# Metrics that are balances at the year end: an opening-balance row can never be their value.
+CLOSING_STOCK_METRICS = frozenset({
+    "cash_and_equivalents", "total_debt", "long_term_debt", "short_term_debt", "total_assets", "net_worth", "reserves", "receivables", "inventories", "payables",
+    "shares_outstanding", "closing_shares", "gross_debt",
+})
+_FLOW_STATEMENTS = ("profit_and_loss", "cash_flow", "income")
+
+
+def derive_period_role(metric_id: str, source_statement: str, source_line_item: str, derived: bool = False) -> str:
+    """The temporal role of a fact. A balance-sheet stock is a closing balance unless its source row states an opening one; P&L and cash-flow figures are annual flows."""
+    line = str(source_line_item or "").lower()
+    if any(token in line for token in OPENING_BALANCE_TOKENS):
+        return "opening_balance"
+    statement = str(source_statement or "").lower()
+    if metric_id in CLOSING_STOCK_METRICS or statement == "balance_sheet":
+        return "closing_balance"
+    if derived:
+        return "derived"
+    if any(flow in statement for flow in _FLOW_STATEMENTS):
+        return "annual_flow"
+    return "other"
+
+
 @dataclass
 class FinancialFact:
     metric_id: str
@@ -49,6 +73,11 @@ class FinancialFact:
     reconciliation_status: str = "unknown"
     usable_downstream: bool = False
     notes: List[str] = field(default_factory=list)
+    period_role: str = ""          # closing_balance | opening_balance | annual_flow | derived | other: what the figure IS in time (derived from statement and wording when not given)
+
+    def __post_init__(self) -> None:
+        if not self.period_role:
+            self.period_role = derive_period_role(self.metric_id, self.source_statement, self.source_line_item, self.derived)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -72,6 +101,7 @@ class FinancialFact:
             "reconciliation_status": self.reconciliation_status,
             "usable_downstream": self.usable_downstream,
             "notes": list(self.notes),
+            "period_role": self.period_role,
         }
 
 
